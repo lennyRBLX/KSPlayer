@@ -59,6 +59,14 @@ To experience the powerful features of the LGPL version, you can download the ap
 |KSMEPlayer supports all demuxing and decoding formats|✅|❌|
 |Full display of ass subtitles effect(Render as image using libass)|✅|❌|
 |FFmpeg version|8.1.0|6.1.0|
+|Video upscaling |💰|❌|
+|Dovi P5 displays HDR (not overheating)|💰|❌|
+|Live streaming supports rewind viewing|💰|❌|
+|ISO Blu-ray disc playback on all Apple platforms|💰|❌|
+|Cache data to Hard Drive,Preload data to Hard Drive|💰|❌|
+|Simultaneous playback of separate audio and video URLs|💰|❌|
+|Offline AI real-time subtitle generation and translation|💰|❌|
+|Play videos in a small window in the App (resumable, supports macOS、iOS and tvOS)|💰|❌|
 |Record video|✅|✅|
 |360° panorama video|✅|✅|
 |Picture in Picture|✅|✅|
