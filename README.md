@@ -42,6 +42,7 @@ To experience the powerful features of the LGPL version, you can download the ap
 |Dolby AC-4|✅|❌|
 |Swift Concurrency|✅|❌|
 |AV1 hardware decoding|✅|❌|
+|All demuxers, All decoders|✅|❌|
 |Word-by-word subtitles|✅|❌|
 |Text subtitle translation|✅|❌|
 |Use System Caption Appearance|✅|❌|
@@ -58,7 +59,7 @@ To experience the powerful features of the LGPL version, you can download the ap
 |Use memory cache for fast seek in short time range|✅|❌|
 |KSMEPlayer supports all demuxing and decoding formats|✅|❌|
 |Full display of ass subtitles effect(Render as image using libass)|✅|❌|
-|FFmpeg version|8.1.0|6.1.0|
+|FFmpeg version|8.0.1|6.1.0|
 |Video upscaling |💰|❌|
 |Dovi P5 displays HDR (not overheating)|💰|❌|
 |Live streaming supports rewind viewing|💰|❌|
