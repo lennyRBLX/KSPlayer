@@ -42,6 +42,7 @@ To experience the powerful features of the LGPL version, you can download the ap
 |Dolby AC-4|✅|❌|
 |Swift Concurrency|✅|❌|
 |AV1 hardware decoding|✅|❌|
+|Word-by-word subtitles|✅|❌|
 |All demuxers, All decoders|✅|❌|
 |Word-by-word subtitles|✅|❌|
 |Text subtitle translation|✅|❌|
@@ -61,10 +62,11 @@ To experience the powerful features of the LGPL version, you can download the ap
 |Full display of ass subtitles effect(Render as image using libass)|✅|❌|
 |FFmpeg version|8.0.1|6.1.0|
 |Video upscaling |💰|❌|
+|Precache data to Hard Drive|💰|❌|
+|Video switching with zero delay|💰|❌|
 |Dovi P5 displays HDR (not overheating)|💰|❌|
 |Live streaming supports rewind viewing|💰|❌|
 |ISO Blu-ray disc playback on all Apple platforms|💰|❌|
-|Cache data to Hard Drive,Preload data to Hard Drive|💰|❌|
 |Simultaneous playback of separate audio and video URLs|💰|❌|
 |Offline AI real-time subtitle generation and translation|💰|❌|
 |Play videos in a small window in the App (resumable, supports macOS、iOS and tvOS)|💰|❌|
