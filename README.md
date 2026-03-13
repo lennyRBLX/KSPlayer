@@ -69,6 +69,7 @@ To experience the powerful features of the LGPL version, you can download the ap
 |ISO Blu-ray disc playback on all Apple platforms|💰|❌|
 |Simultaneous playback of separate audio and video URLs|💰|❌|
 |Offline AI real-time subtitle generation and translation|💰|❌|
+|ProAVPlayer supports MKV, native Dolby Vision and Dolby Atmos.|💰|❌|
 |Play videos in a small window in the App (resumable, supports macOS、iOS and tvOS)|💰|❌|
 |Record video|✅|✅|
 |360° panorama video|✅|✅|
