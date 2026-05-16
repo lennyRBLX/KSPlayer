@@ -15,6 +15,67 @@ import OSLog
 import UIKit
 #endif
 open class KSOptions {
+    // MARK: - Forward additions (RE/76: 29 fields added)
+
+    /// App context identifier (e.g., source screen)
+    public var context: String = ""
+    /// Live stream detection (nil = auto-detect)
+    public var isLive: Bool?
+    /// Start position as percentage (0.0–1.0)
+    public var startPlayTimePercentage: Double = 0
+    /// Resume from last saved position on re-enter
+    public var enterForgeResumePlay: Bool = false
+    /// DLNA/UPnP casting active
+    public var isDLNARunning: Bool = false
+    /// Interval for saving playback progress (seconds)
+    public var playbackTimeInterval: Double = 0
+    /// Instance-level player type list (upstream uses static only)
+    public var playerTypes: [MediaPlayerProtocol.Type] = []
+    /// Mix audio with other apps (vs. solo category)
+    public var mixAudio: Bool = false
+    /// Video content mode (fit/fill)
+    public var contentMode: UIViewContentMode = .scaleAspectFit
+    /// Output media type for recording
+    public var outputMediaType: AVMediaType?
+    /// Output format context options
+    public var outputFormatContextOptions = [String: Any]()
+    /// Instance-level HTTP proxy (upstream static only)
+    public var useSystemHTTPProxy: Bool = true
+    /// Use packet cache during seeks (memory cache for fast short-range seek)
+    public var seekUsePacketCache: Bool = false
+    /// Custom fonts directory for ASS/SSA subtitle rendering
+    public var fontsDir: URL?
+    /// Speech recognition engines for subtitle generation
+    public var audioRecognizes: [Any] = []
+    /// Current content dynamic range
+    public var dynamicRange: DynamicRange = .sdr
+    /// Specific video pipeline selection
+    public var videoPipeline: VideoPipeline?
+    /// Rotate video via FFmpeg filter (vs. display transform)
+    public var isRotateByFilter: Bool = false
+    /// Decode type selection (auto/hardware/software)
+    public var decodeType: DecodeType = .auto
+    /// Software decode thread count (0 = auto)
+    public var videoSoftDecodeThreadCount: Int = 0
+    /// Double display refresh rate (120Hz)
+    public var isDoubleRefreshRate: Bool = false
+    /// Use dispatch timer vs CADisplayLink for render loop
+    public var renderUseDispatchSourceTimer: Bool = false
+    /// Video brightness adjustment (Metal uniform)
+    public var brightness: Float = 0.0
+    /// Video contrast adjustment (Metal uniform)
+    public var contrast: Float = 1.0
+    /// Video saturation adjustment (Metal uniform)
+    public var saturation: Float = 1.0
+    /// First playable state timing metric
+    public internal(set) var firstPlayableTime: Double = 0.0
+    /// Spatial audio enabled for this session
+    public var isSpatialAudioEnabled: Bool = false
+    /// Audio engine type selection (0=AudioEngine, 1=AudioUnit, 2=AudioGraph, 3=AudioRenderer)
+    public var audioEngineType: Int = 0
+
+    // MARK: - Upstream fields
+
     /// 最低缓存视频时间
     @Published
     public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
@@ -454,7 +515,27 @@ public enum VideoInterlacingType: String {
     case undetermined
 }
 
+// MARK: - Forward enums (RE/76)
+
+public enum DecodeType: Int, Sendable {
+    case auto = 0
+    case hardware = 1
+    case software = 2
+}
+
+public enum VideoPipeline: Int, Sendable {
+    case auto = 0
+    case videoToolbox = 1
+    case metal = 2
+    case libplacebo = 3
+}
+
 public extension KSOptions {
+    /// Master flag for Dolby Vision enhanced decode path (ProAVPlayer routing).
+    /// RE/76: DAT_104450978, AppStorage key "enhance_dolby".
+    /// Set TRUE on player launch, FALSE on dismiss.
+    static var enhanceDolby: Bool = false
+
     static var firstPlayerType: MediaPlayerProtocol.Type = KSAVPlayer.self
     static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
     /// 最低缓存视频时间

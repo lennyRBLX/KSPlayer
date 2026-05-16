@@ -84,7 +84,7 @@ public extension KSOptions {
     static var isClearVideoWhereReplace = true
     static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self
     static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
-    static var yadifMode = 1
+    static var yadifMode = 0
     static var deInterlaceAddIdet = false
     static func colorSpace(ycbcrMatrix: CFString?, transferFunction: CFString?) -> CGColorSpace? {
         switch ycbcrMatrix {
