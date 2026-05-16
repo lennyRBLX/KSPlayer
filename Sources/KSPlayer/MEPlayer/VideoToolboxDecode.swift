@@ -21,6 +21,8 @@ class VideoToolboxDecode: DecodeProtocol {
     private var startTime = Int64(0)
     private var lastPosition = Int64(0)
     private var needReconfig = false
+    /// Tracks whether VTB has ever produced a frame (RE/67: 3-tier error handling)
+    private var hasDecodeSuccess = false
 
     init(options: KSOptions, session: DecompressionSession) {
         self.options = options
@@ -53,15 +55,20 @@ class VideoToolboxDecode: DecodeProtocol {
                 }
                 guard status == noErr else {
                     if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                        if packet.isKeyFrame {
+                        if !self.hasDecodeSuccess {
+                            // Tier 1: never succeeded — retry session
+                            self.needReconfig = true
+                        } else if packet.isKeyFrame {
+                            // Tier 2: succeeded before, keyframe failed — permanent fallback
                             completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
                         } else {
-                            // 解决从后台切换到前台，解码失败的问题
+                            // Tier 3: succeeded before, non-keyframe — reconfig and continue
                             self.needReconfig = true
                         }
                     }
                     return
                 }
+                self.hasDecodeSuccess = true
                 let frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
                 frame.corePixelBuffer = imageBuffer
                 frame.timebase = session.assetTrack.timebase
@@ -81,10 +88,11 @@ class VideoToolboxDecode: DecodeProtocol {
                     VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
                 }
             } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                if packet.isKeyFrame {
+                if !hasDecodeSuccess {
+                    needReconfig = true
+                } else if packet.isKeyFrame {
                     throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
                 } else {
-                    // 解决从后台切换到前台，解码失败的问题
                     needReconfig = true
                 }
             }
