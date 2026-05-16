@@ -75,6 +75,30 @@ class MetalRender {
         return buffer
     }()
 
+    // MARK: - Forward additions (RE/62): BCS adjustment buffer
+
+    /// Metal buffer for brightness/contrast/saturation uniforms (float3)
+    private var bcsBuffer: MTLBuffer? = {
+        var bcs = SIMD3<Float>(0.0, 1.0, 1.0) // brightness=0, contrast=1, saturation=1
+        let buffer = MetalRender.device.makeBuffer(bytes: &bcs, length: MemoryLayout<SIMD3<Float>>.size)
+        buffer?.label = "bcsAdjust"
+        return buffer
+    }()
+
+    /// Update BCS buffer from KSOptions values
+    func updateBCS(brightness: Float, contrast: Float, saturation: Float) {
+        var bcs = SIMD3<Float>(brightness, contrast, saturation)
+        bcsBuffer?.contents().copyMemory(from: &bcs, byteCount: MemoryLayout<SIMD3<Float>>.size)
+    }
+
+    /// Whether BCS adjustments are non-identity (requires post-processing)
+    var needsBCSAdjustment: Bool {
+        guard let buffer = bcsBuffer else { return false }
+        let ptr = buffer.contents().bindMemory(to: SIMD3<Float>.self, capacity: 1)
+        let bcs = ptr.pointee
+        return bcs.x != 0.0 || bcs.y != 1.0 || bcs.z != 1.0
+    }
+
     func clear(drawable: MTLDrawable) {
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
@@ -132,6 +156,9 @@ class MetalRender {
             encoder.setFragmentBuffer(colorOffset, offset: 0, index: 1)
             let leftShift = pixelBuffer.leftShift == 0 ? leftShiftMatrixBuffer : leftShiftSixMatrixBuffer
             encoder.setFragmentBuffer(leftShift, offset: 0, index: 2)
+        }
+        if needsBCSAdjustment {
+            encoder.setFragmentBuffer(bcsBuffer, offset: 0, index: 3)
         }
     }
 

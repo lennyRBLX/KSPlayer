@@ -66,6 +66,33 @@ fragment half4 displayNV12Texture(VertexOut in [[ stage_in ]],
     return half4(half3x3(yuvToBGRMatrix)*(yuv*half3(leftShift)+half3(colorOffset)), 1);
 }
 
+// Forward addition (RE/62): BCS adjustment applied after color conversion
+// bcs.x = brightness (-1..+1), bcs.y = contrast (0..2), bcs.z = saturation (0..2)
+half3 applyBCS(half3 rgb, float3 bcs) {
+    rgb += half3(bcs.x);
+    rgb = (rgb - half3(0.5)) * half3(bcs.y) + half3(0.5);
+    half luma = dot(rgb, half3(0.2126, 0.7152, 0.0722));
+    rgb = mix(half3(luma), rgb, half3(bcs.z));
+    return saturate(rgb);
+}
+
+fragment half4 displayNV12BCSTexture(VertexOut in [[ stage_in ]],
+                                texture2d<half> lumaTexture [[ texture(0) ]],
+                                texture2d<half> chromaTexture [[ texture(1) ]],
+                                sampler textureSampler [[ sampler(0) ]],
+                                constant float3x3& yuvToBGRMatrix [[ buffer(0) ]],
+                                constant float3& colorOffset [[ buffer(1) ]],
+                                constant uchar3& leftShift [[ buffer(2) ]],
+                                constant float3& bcs [[ buffer(3) ]])
+{
+    half3 yuv;
+    yuv.x = lumaTexture.sample(textureSampler, in.textureCoordinate).r;
+    yuv.yz = chromaTexture.sample(textureSampler, in.textureCoordinate).rg;
+    half3 rgb = half3x3(yuvToBGRMatrix)*(yuv*half3(leftShift)+half3(colorOffset));
+    rgb = applyBCS(rgb, bcs);
+    return half4(rgb, 1);
+}
+
 half3 shaderLinearize(half3 rgb) {
     rgb = pow(max(rgb,0), half3(4096.0/(2523 * 128)));
     rgb = max(rgb - half3(3424./4096), 0.0) / (half3(2413./4096 * 32) - half3(2392./4096 * 32) * rgb);
