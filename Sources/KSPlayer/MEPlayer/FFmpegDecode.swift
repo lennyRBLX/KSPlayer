@@ -61,6 +61,8 @@ class FFmpegDecode: DecodeProtocol {
                 var displayData: MasteringDisplayMetadata?
                 var contentData: ContentLightMetadata?
                 var ambientViewingEnvironment: AmbientViewingEnvironment?
+                var doviRPU: Data?
+                var doviMetadataPtr: UnsafePointer<AVDOVIMetadata>?
                 // filter之后，side_data信息会丢失，所以放在这里
                 if inputFrame.pointee.nb_side_data > 0 {
                     for i in 0 ..< inputFrame.pointee.nb_side_data {
@@ -92,13 +94,9 @@ class FFmpegDecode: DecodeProtocol {
                                     options.sei(string: str)
                                 }
                             } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
-                                let data = sideData.data.withMemoryRebound(to: [UInt8].self, capacity: 1) { $0 }
-                            } else if sideData.type == AV_FRAME_DATA_DOVI_METADATA { // AVDOVIMetadata
-                                let data = sideData.data.withMemoryRebound(to: AVDOVIMetadata.self, capacity: 1) { $0 }
-                                let header = av_dovi_get_header(data)
-                                let mapping = av_dovi_get_mapping(data)
-                                let color = av_dovi_get_color(data)
-//                                frame.corePixelBuffer?.transferFunction = kCVImageBufferTransferFunction_ITU_R_2020
+                                doviRPU = Data(bytes: sideData.data, count: Int(sideData.size))
+                            } else if sideData.type == AV_FRAME_DATA_DOVI_METADATA {
+                                doviMetadataPtr = sideData.data.withMemoryRebound(to: AVDOVIMetadata.self, capacity: 1) { $0 }
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_PLUS { // AVDynamicHDRPlus
                                 let data = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { $0 }.pointee
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_VIVID { // AVDynamicHDRVivid
@@ -143,6 +141,14 @@ class FFmpegDecode: DecodeProtocol {
                             }
                             if displayData != nil || contentData != nil || ambientViewingEnvironment != nil {
                                 videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment)
+                            }
+                            if let doviMetadataPtr {
+                                videoFrame.doviData = DOVIFrameMetadata(
+                                    rpuData: doviRPU,
+                                    header: av_dovi_get_header(doviMetadataPtr),
+                                    mapping: av_dovi_get_mapping(doviMetadataPtr),
+                                    color: av_dovi_get_color(doviMetadataPtr)
+                                )
                             }
                         }
                         frame.timebase = filter.timebase

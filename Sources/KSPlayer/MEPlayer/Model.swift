@@ -417,6 +417,14 @@ public final class AudioFrame: MEFrame {
     }
 }
 
+/// Per-frame Dolby Vision metadata extracted from AVFrame side data (RE/67).
+public struct DOVIFrameMetadata {
+    public let rpuData: Data?
+    public let header: UnsafePointer<AVDOVIRpuDataHeader>?
+    public let mapping: UnsafePointer<AVDOVIDataMapping>?
+    public let color: UnsafePointer<AVDOVIColorMetadata>?
+}
+
 public final class VideoVTBFrame: MEFrame {
     public var timebase = Timebase.defaultValue
     // 交叉视频的duration会不准，直接减半了
@@ -427,6 +435,8 @@ public final class VideoVTBFrame: MEFrame {
     public let fps: Float
     public let isDovi: Bool
     public var edrMetaData: EDRMetaData? = nil
+    /// Per-frame DV RPU + mapping data for Metal reshape shader (RE/67)
+    public var doviData: DOVIFrameMetadata?
     var corePixelBuffer: PixelBufferProtocol?
     init(fps: Float, isDovi: Bool) {
         self.fps = fps
