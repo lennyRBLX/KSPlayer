@@ -354,6 +354,9 @@ open class KSPlayerLayer: NSObject {
 extension KSPlayerLayer: MediaPlayerDelegate {
     public func readyToPlay(player: some MediaPlayerProtocol) {
         state = .readyToPlay
+        if options.firstPlayableTime == 0 {
+            options.firstPlayableTime = CACurrentMediaTime()
+        }
         #if os(macOS)
         runOnMainThread { [weak self] in
             guard let self else { return }

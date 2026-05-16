@@ -536,6 +536,15 @@ public extension KSOptions {
     /// Set TRUE on player launch, FALSE on dismiss.
     static var enhanceDolby: Bool = false
 
+    /// Whether the simple (non-BCS, non-HDR) render pipeline can be used.
+    /// RE/62: true only when no EDR metadata, BCS are identity, display is .plane,
+    /// no custom pipeline configured.
+    func canUseSimpleRenderPipeline() -> Bool {
+        brightness == 0.0 && contrast == 1.0 && saturation == 1.0
+            && display == .plane
+            && videoPipeline == nil
+    }
+
     static var firstPlayerType: MediaPlayerProtocol.Type = KSAVPlayer.self
     static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
     /// 最低缓存视频时间
