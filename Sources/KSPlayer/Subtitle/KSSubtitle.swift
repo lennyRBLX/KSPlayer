@@ -323,6 +323,24 @@ open class SubtitleModel: ObservableObject {
         }
     }
 
+    // MARK: - Forward additions (RE/78): dual subtitles + HDR rendering
+
+    /// Secondary subtitle track (displayed above primary)
+    @Published
+    public var selectedSecondSubtitleInfo: (any SubtitleInfo)? {
+        didSet {
+            oldValue?.isEnabled = false
+            selectedSecondSubtitleInfo?.isEnabled = true
+        }
+    }
+
+    /// Secondary subtitle parts for display
+    @Published
+    public private(set) var secondParts = [SubtitlePart]()
+
+    /// Whether subtitles should render with HDR-aware compositing
+    public static var useHDREffect: Bool = false
+
     public init() {}
 
     public func addSubtitle(info: any SubtitleInfo) {
@@ -332,6 +350,7 @@ open class SubtitleModel: ObservableObject {
     }
 
     public func subtitle(currentTime: TimeInterval) -> Bool {
+        var changed = false
         var newParts = [SubtitlePart]()
         if let subtile = selectedSubtitleInfo {
             let currentTime = currentTime - subtile.delay - subtitleDelay
@@ -342,7 +361,6 @@ open class SubtitleModel: ObservableObject {
                 }
             }
         }
-        // swiftUI不会判断是否相等。所以需要这边判断下。
         if newParts != parts {
             for part in newParts {
                 if let text = part.text as? NSMutableAttributedString {
@@ -351,10 +369,25 @@ open class SubtitleModel: ObservableObject {
                 }
             }
             parts = newParts
-            return true
-        } else {
-            return false
+            changed = true
         }
+        // Secondary subtitle track
+        var newSecondParts = [SubtitlePart]()
+        if let secondSub = selectedSecondSubtitleInfo {
+            let currentTime = currentTime - secondSub.delay - subtitleDelay
+            newSecondParts = secondSub.search(for: currentTime)
+        }
+        if newSecondParts != secondParts {
+            for part in newSecondParts {
+                if let text = part.text as? NSMutableAttributedString {
+                    text.addAttributes([.font: SubtitleModel.textFont],
+                                       range: NSRange(location: 0, length: text.length))
+                }
+            }
+            secondParts = newSecondParts
+            changed = true
+        }
+        return changed
     }
 
     public func searchSubtitle(query: String?, languages: [String]) {
