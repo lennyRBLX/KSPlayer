@@ -40,6 +40,23 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     var closedCaptionsTrack: FFmpegAssetTrack?
     let isConvertNALSize: Bool
     var seekByBytes = false
+
+    // MARK: - Forward additions (RE/67)
+
+    /// Subtitle vertical offset for positioning
+    public var translateY: Float = 0.0
+    /// Per-track subtitle renderer (libass/bitmap/text)
+    public var subtitleRender: KSSubtitleProtocol?
+    /// Track contains image data (non-video)
+    public var isImage: Bool = false
+    /// Single-frame still image (e.g., cover art)
+    public var isStillImage: Bool = false
+    /// Bit stream filter type for annex-B conversion
+    public var bitStreamFilter: (any BitStreamFilterProtocol.Type)?
+    /// Container default track flag (AV_DISPOSITION_DEFAULT)
+    public var isDefault: Bool = false
+    /// Dual-language audio detection
+    public var isBilingual: Bool = false
     public var description: String {
         var description = codecName
         if let formatName {
@@ -113,7 +130,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         } else {
             name = languageCode ?? codecName
         }
-        // AV_DISPOSITION_DEFAULT
+        isDefault = stream.pointee.disposition & AV_DISPOSITION_DEFAULT == AV_DISPOSITION_DEFAULT
         if mediaType == .subtitle {
             isEnabled = !isImageSubtitle || stream.pointee.disposition & AV_DISPOSITION_FORCED == AV_DISPOSITION_FORCED
             if stream.pointee.disposition & AV_DISPOSITION_HEARING_IMPAIRED == AV_DISPOSITION_HEARING_IMPAIRED {
@@ -281,4 +298,12 @@ extension FFmpegAssetTrack {
         let format = AVPixelFormat(codecpar.format)
         return format.osType(fullRange: formatDescription?.fullRangeVideo ?? false)
     }
+}
+
+// MARK: - BitStreamFilterProtocol (Forward addition)
+
+/// Protocol for packet-level bit stream filtering (e.g., Annex-B to AVCC conversion).
+public protocol BitStreamFilterProtocol {
+    init()
+    func filter(packet: UnsafeMutablePointer<AVPacket>) -> Bool
 }
