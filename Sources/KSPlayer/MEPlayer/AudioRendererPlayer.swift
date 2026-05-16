@@ -35,11 +35,20 @@ public class AudioRendererPlayer: AudioOutput {
         }
     }
 
+    // MARK: - Forward additions (RE/66)
+
+    /// Output latency for A/V sync calibration
+    public var outputLatency: Double = 0.0
+    /// Flush state flag — prevents enqueueing during flush
+    private var flushTime: Bool = false
+    /// Seek target timestamp for synchronized seeking
+    private var seekCMtime: CMTime?
+
     public weak var renderSource: OutputRenderSourceDelegate?
     private var periodicTimeObserver: Any?
     private let renderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
-    private let serializationQueue = DispatchQueue(label: "ks.player.serialization.queue")
+    private let requestQueue = DispatchQueue(label: "ks.player.serialization.queue")
     var isPaused: Bool {
         synchronizer.rate == 0
     }
@@ -63,8 +72,10 @@ public class AudioRendererPlayer: AudioOutput {
 
     public func play() {
         let time: CMTime
-        if #available(macOS 11.3, iOS 14.5, tvOS 14.5, *) {
-            // 判断是否有足够的缓存，有的话就用当前的时间。seek的话，需要清空缓存，这样才能取到最新的时间。
+        if let seekTarget = seekCMtime {
+            time = seekTarget
+            seekCMtime = nil
+        } else if #available(macOS 11.3, iOS 14.5, tvOS 14.5, *) {
             if renderer.hasSufficientMediaDataForReliablePlaybackStart {
                 time = synchronizer.currentTime()
             } else {
@@ -81,10 +92,10 @@ public class AudioRendererPlayer: AudioOutput {
                 time = .zero
             }
         }
+        flushTime = false
         synchronizer.setRate(playbackRate, time: time)
-        // 要手动的调用下，这样才能及时的更新音频的时间
         renderSource?.setAudio(time: time, position: -1)
-        renderer.requestMediaDataWhenReady(on: serializationQueue) { [weak self] in
+        renderer.requestMediaDataWhenReady(on: requestQueue) { [weak self] in
             guard let self else {
                 return
             }
@@ -108,11 +119,22 @@ public class AudioRendererPlayer: AudioOutput {
     }
 
     public func flush() {
+        flushTime = true
         renderer.flush()
+        synchronizer.setRate(0, time: .zero)
+        seekCMtime = nil
+    }
+
+    /// Seek-aware flush: stores target time for synchronized resume.
+    public func flush(seekTime: CMTime) {
+        flushTime = true
+        renderer.flush()
+        synchronizer.setRate(0, time: .zero)
+        seekCMtime = seekTime
     }
 
     private func request() {
-        while renderer.isReadyForMoreMediaData, !isPaused {
+        while renderer.isReadyForMoreMediaData, !isPaused, !flushTime {
             guard var render = renderSource?.getAudioOutputRender() else {
                 break
             }
