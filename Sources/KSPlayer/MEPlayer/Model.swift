@@ -82,7 +82,7 @@ public extension KSOptions {
     static var enableSensor = true
     static var stackSize = 65536
     static var isClearVideoWhereReplace = true
-    static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self
+    static var audioPlayerType: AudioOutput.Type = AudioEngineDynamicsPlayer.self
     static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
     static var yadifMode = 0
     static var deInterlaceAddIdet = false
