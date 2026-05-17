@@ -110,9 +110,12 @@ class VideoSwresample: FrameChange {
         } else {
             let dstFormat = dstFormat ?? format.bestPixelFormat
             pixelFormatType = dstFormat.osType()!
-//            imgConvertCtx = sws_getContext(width, height, self.format, width, height, dstFormat, SWS_FAST_BILINEAR, nil, nil, nil)
-            // AV_PIX_FMT_VIDEOTOOLBOX格式是无法进行swscale的
             imgConvertCtx = sws_getCachedContext(imgConvertCtx, width, height, self.format, dstWidth, dstHeight, dstFormat, SWS_FAST_BILINEAR, nil, nil, nil)
+            if isDovi, let imgConvertCtx {
+                let srcCoeffs = sws_getCoefficients(SWS_CS_BT2020)
+                let dstCoeffs = sws_getCoefficients(SWS_CS_ITU709)
+                sws_setColorspaceDetails(imgConvertCtx, srcCoeffs, 1, dstCoeffs, 0, 0, 1 << 16, 1 << 16)
+            }
         }
         pool = CVPixelBufferPool.create(width: dstWidth, height: dstHeight, bytesPerRowAlignment: linesize, pixelFormatType: pixelFormatType)
     }

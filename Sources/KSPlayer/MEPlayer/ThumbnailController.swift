@@ -90,7 +90,7 @@ public final class ThumbnailSession {
     private var intervalPTS: Int64 = 0
     private var intervalSeconds: Double = 0
     private var startTime: Int64 = 0
-    private var frameCount: Int64 = 0
+    public private(set) var frameCount: Int = 0
     public private(set) var isHDR: Bool = false
     public private(set) var duration: Double = 0
     private var isCancelled = false
@@ -162,8 +162,8 @@ public final class ThumbnailSession {
 
         let durationPTS = av_rescale_q(fmtCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
         self.duration = Double(durationPTS) * av_q2d(videoStream.pointee.time_base)
-        self.frameCount = Int64(max(10, requestedFrameCount))
-        self.intervalPTS = durationPTS / frameCount
+        self.frameCount = max(10, requestedFrameCount)
+        self.intervalPTS = durationPTS / Int64(frameCount)
         self.intervalSeconds = duration / Double(frameCount)
 
         let thumbHeight = thumbWidth * ctx.pointee.height / ctx.pointee.width
@@ -179,10 +179,19 @@ public final class ThumbnailSession {
         let targetPTS = Int64(index) * intervalPTS + startTime
         let targetSeconds = intervalSeconds * Double(index)
 
+        if let result = extractFrame(targetPTS: targetPTS, targetSeconds: targetSeconds, index: index, flags: AVSEEK_FLAG_BACKWARD) {
+            return result
+        }
+        // Retry with AVSEEK_FLAG_ANY for content with sparse keyframes
+        return extractFrame(targetPTS: targetPTS, targetSeconds: targetSeconds, index: index, flags: AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY)
+    }
+
+    private func extractFrame(targetPTS: Int64, targetSeconds: Double, index: Int, flags: Int32) -> (image: UIImage, time: TimeInterval)? {
+        guard let formatCtx, let codecContext, let reScale, !isCancelled else { return nil }
+
         let seekStart = CACurrentMediaTime()
-        av_seek_frame(formatCtx, videoStreamIndex, targetPTS, AVSEEK_FLAG_BACKWARD)
+        av_seek_frame(formatCtx, videoStreamIndex, targetPTS, flags)
         avcodec_flush_buffers(codecContext)
-        let seekTime = CACurrentMediaTime() - seekStart
 
         var frame = av_frame_alloc()!
         defer { av_frame_free(&frame) }
@@ -215,11 +224,12 @@ public final class ThumbnailSession {
             let decodeTime = CACurrentMediaTime() - readStart
             if let pixelBuffer = reScale.transfer(frame: frame.pointee),
                let cgImage = pixelBuffer.cgImage() {
-                let image = UIImage(cgImage: cgImage)
+                let finalImage = isHDR ? Self.toSDR(cgImage) : cgImage
+                let image = UIImage(cgImage: finalImage)
                 let time = timeBase.cmtime(for: framePTS).seconds
                 result = (image, time)
                 let totalTime = CACurrentMediaTime() - seekStart
-                KSLog("[Thumb] \(index) seek=\(Int(seekTime * 1000))ms, decode=\(Int(decodeTime * 1000))ms, total=\(Int(totalTime * 1000))ms, packets=\(packetsRead)")
+                KSLog("[Thumb] \(index) seek=\(Int((CACurrentMediaTime() - seekStart) * 1000))ms, decode=\(Int(decodeTime * 1000))ms, total=\(Int(totalTime * 1000))ms, packets=\(packetsRead)")
             }
             break
         }
@@ -252,7 +262,8 @@ public final class ThumbnailSession {
 
                 if let pixelBuffer = reScale?.transfer(frame: frame.pointee),
                    let cgImage = pixelBuffer.cgImage() {
-                    let image = UIImage(cgImage: cgImage)
+                    let finalImage = isHDR ? Self.toSDR(cgImage) : cgImage
+                    let image = UIImage(cgImage: finalImage)
                     let time = timeBase.cmtime(for: framePTS).seconds
                     savedCount += 1
                     if !progress(image, index, time) { return }
@@ -261,6 +272,19 @@ public final class ThumbnailSession {
             }
         }
         av_packet_unref(&packet)
+    }
+
+    /// Tone-map an HDR CGImage to sRGB for SDR thumbnail display.
+    /// CoreGraphics handles PQ EOTF → linear → gamut mapping → sRGB OETF.
+    private static func toSDR(_ cgImage: CGImage) -> CGImage {
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: cgImage.width, height: cgImage.height,
+                                 bitsPerComponent: 8, bytesPerRow: 0, space: srgb,
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return cgImage
+        }
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        return ctx.makeImage() ?? cgImage
     }
 
     public func cancel() { isCancelled = true }
@@ -293,10 +317,9 @@ public final class RealtimeThumbnailGenerator: @unchecked Sendable {
     private let dispatchQueue = DispatchQueue(label: "thumbnail.realtime", qos: .userInteractive)
     private let lock = NSLock()
 
-    // 50-entry frame-level LRU cache (RE: dictionary + ordered array, 0x32 max)
     private var cacheDict = [Int64: CGImage]()
     private var cacheOrder = [Int64]()
-    private static let maxCacheSize = 50
+    private static let maxCacheSize = 16
 
     private var currentWorkItem: DispatchWorkItem?
     public let thumbState = ThumbState()
@@ -381,7 +404,7 @@ public final class RealtimeThumbnailGenerator: @unchecked Sendable {
     public func frameIndex(for time: TimeInterval) -> Int {
         guard session.duration > 0 else { return 0 }
         let fraction = time / session.duration
-        let count = max(10, Int(session.duration / session.duration * 100))
+        let count = session.frameCount
         return max(0, min(count - 1, Int(fraction * Double(count))))
     }
 

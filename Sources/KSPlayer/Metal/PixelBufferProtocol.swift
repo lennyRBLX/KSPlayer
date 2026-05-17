@@ -260,7 +260,15 @@ class PixelBuffer: PixelBufferProtocol {
             image = CGImage.make(rgbData: buffers[0]!.contents().assumingMemoryBound(to: UInt8.self), linesize: Int(lineSize[0]), width: width, height: height)
         } else {
             let scale = VideoSwresample(isDovi: false)
-            image = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) })?.cgImage()
+            if let pbuf = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) }) {
+                pbuf.yCbCrMatrix = yCbCrMatrix
+                pbuf.colorPrimaries = colorPrimaries
+                pbuf.transferFunction = transferFunction
+                pbuf.colorspace = colorspace
+                image = pbuf.cgImage()
+            } else {
+                image = nil
+            }
             scale.shutdown()
         }
         return image
