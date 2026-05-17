@@ -81,6 +81,13 @@ public class LibassSubtitleRenderer {
         header.withCString { cStr in
             ass_process_codec_private(track, UnsafeMutablePointer(mutating: cStr), Int32(header.utf8.count))
         }
+
+        if track.pointee.PlayResX <= 0 {
+            track.pointee.PlayResX = 1280
+        }
+        if track.pointee.PlayResY <= 0 {
+            track.pointee.PlayResY = 720
+        }
     }
 
     public func loadData(_ data: String, pts: Int64, duration: Int64) {
