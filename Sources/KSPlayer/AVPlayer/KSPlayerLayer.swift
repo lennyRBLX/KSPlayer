@@ -176,9 +176,10 @@ open class KSPlayerLayer: NSObject {
         guard let self, self.player.isReadyToPlay else {
             return
         }
-        self.delegate?.player(layer: self, currentTime: self.player.currentPlaybackTime, totalTime: self.player.duration)
+        if self.subtitleTimeObserver == nil {
+            self.delegate?.player(layer: self, currentTime: self.player.currentPlaybackTime, totalTime: self.player.duration)
+        }
         if self.player.playbackState == .playing, self.player.loadState == .playable, self.state == .buffering {
-            // 一个兜底保护，正常不能走到这里
             self.state = .bufferFinished
         }
         if self.player.isPlaying {
@@ -186,6 +187,7 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
+    private var subtitleTimeObserver: Any?
     private var urls = [URL]()
     private var isAutoPlay: Bool
     private var isWirelessRouteActive = false
@@ -296,6 +298,7 @@ open class KSPlayerLayer: NSObject {
                 player.play()
             }
             timer.fireDate = Date.distantPast
+            addSubtitleTimeObserver()
         }
         state = player.loadState == .playable ? .bufferFinished : .buffering
         MPNowPlayingInfoCenter.default().playbackState = .playing
@@ -308,6 +311,7 @@ open class KSPlayerLayer: NSObject {
         isAutoPlay = false
         player.pause()
         timer.fireDate = Date.distantFuture
+        removeSubtitleTimeObserver()
         state = .paused
         MPNowPlayingInfoCenter.default().playbackState = .paused
         runOnMainThread {
@@ -318,6 +322,7 @@ open class KSPlayerLayer: NSObject {
     public func stop() {
         KSLog("stop Player")
         state = .initialized
+        removeSubtitleTimeObserver()
         player.shutdown()
         bufferedCount = 0
         shouldSeekTo = 0
@@ -346,6 +351,27 @@ open class KSPlayerLayer: NSObject {
             shouldSeekTo = time
             completion(false)
         }
+    }
+
+    private func addSubtitleTimeObserver() {
+        guard subtitleTimeObserver == nil, let synchronizer = player.renderSynchronizer else {
+            return
+        }
+        let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        subtitleTimeObserver = synchronizer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self, self.player.isReadyToPlay else {
+                return
+            }
+            self.delegate?.player(layer: self, currentTime: time.seconds, totalTime: self.player.duration)
+        }
+    }
+
+    private func removeSubtitleTimeObserver() {
+        guard let observer = subtitleTimeObserver, let synchronizer = player.renderSynchronizer else {
+            return
+        }
+        synchronizer.removeTimeObserver(observer)
+        subtitleTimeObserver = nil
     }
 }
 

@@ -47,7 +47,7 @@ public class AudioRendererPlayer: AudioOutput {
     public weak var renderSource: OutputRenderSourceDelegate?
     private var periodicTimeObserver: Any?
     private let renderer = AVSampleBufferAudioRenderer()
-    private let synchronizer = AVSampleBufferRenderSynchronizer()
+    public let synchronizer = AVSampleBufferRenderSynchronizer()
     private let requestQueue = DispatchQueue(label: "ks.player.serialization.queue")
     var isPaused: Bool {
         synchronizer.rate == 0

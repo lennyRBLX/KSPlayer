@@ -293,6 +293,10 @@ extension KSMEPlayer: MEPlayerDelegate {
 }
 
 extension KSMEPlayer: MediaPlayerProtocol {
+    public var renderSynchronizer: AVSampleBufferRenderSynchronizer? {
+        audioOutput.synchronizer
+    }
+
     public var chapters: [Chapter] {
         playerItem.chapters
     }

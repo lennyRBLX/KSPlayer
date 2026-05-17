@@ -102,6 +102,8 @@ public extension MediaPlayerProtocol {
     var nominalFrameRate: Float {
         tracks(mediaType: .video).first { $0.isEnabled }?.nominalFrameRate ?? 0
     }
+
+    var renderSynchronizer: AVSampleBufferRenderSynchronizer? { nil }
 }
 
 @MainActor
