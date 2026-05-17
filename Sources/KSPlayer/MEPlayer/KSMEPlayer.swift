@@ -207,8 +207,12 @@ extension KSMEPlayer: MEPlayerDelegate {
                 KSLog("[audio] audio type: \(audioOutput) prepare audioFormat )")
                 audioOutput.prepare(audioFormat: audioDescriptor.audioFormat)
             }
-            if let controlTimebase = videoOutput?.displayLayer.controlTimebase, options.startPlayTime > 1 {
-                CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(options.startPlayTime), timescale: 1))
+            if options.startPlayTime > 1 {
+                if let metalPlayView = videoOutput as? MetalPlayView {
+                    metalPlayView.displayView.seek(to: CMTimeMake(value: Int64(options.startPlayTime), timescale: 1))
+                } else if let controlTimebase = videoOutput?.displayLayer.controlTimebase {
+                    CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(options.startPlayTime), timescale: 1))
+                }
             }
             delegate?.readyToPlay(player: self)
         }
@@ -368,10 +372,15 @@ extension KSMEPlayer: MediaPlayerProtocol {
             guard let self else { return }
             if result {
                 self.audioOutput.flush()
-                runOnMainThread { [weak self] in
-                    guard let self else { return }
-                    if let controlTimebase = self.videoOutput?.displayLayer.controlTimebase {
-                        CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1))
+                let seekCMTime = CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1)
+                if let metalPlayView = self.videoOutput as? MetalPlayView {
+                    metalPlayView.displayView.seek(to: seekCMTime)
+                } else {
+                    runOnMainThread { [weak self] in
+                        guard let self else { return }
+                        if let controlTimebase = self.videoOutput?.displayLayer.controlTimebase {
+                            CMTimebaseSetTime(controlTimebase, time: seekCMTime)
+                        }
                     }
                 }
             }
@@ -421,7 +430,11 @@ extension KSMEPlayer: MediaPlayerProtocol {
         options.decodeAudioTime = 0
         options.decodeVideoTime = 0
         if KSOptions.isClearVideoWhereReplace {
-            videoOutput?.flush()
+            if let metalPlayView = videoOutput as? MetalPlayView {
+                metalPlayView.flushAndRemoveImage()
+            } else {
+                videoOutput?.flush()
+            }
         }
     }
 
