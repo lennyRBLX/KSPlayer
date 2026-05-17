@@ -258,9 +258,18 @@ open class LimitCacheAVIOContext: CacheAVIOContext {
 
 // MARK: - PreLoadAVIOContext
 
-/// Moov protection (10MB) and preload scheduling (RE/40).
+/// Moov protection (10MB), preload scheduling, and URL-based zero-delay switching (RE/40, RE/68).
+/// RE source: Forward v1.3.15 PreLoadIOContext_initURLDownload (0x10157f818)
 public final class PreLoadAVIOContext: LimitCacheAVIOContext {
     let moovProtectionSize: Int64 = 10 * 1024 * 1024
+    /// RE-confirmed: Forward uses 0x40000 (256KB) buffer for preload downloads
+    public static let preloadBufferSize: Int = 0x40000
+
+    /// Queue of URLs to preload for zero-delay switching (e.g., next episode)
+    private var preloadQueue = [URL]()
+    private var preloadedContexts = [String: PreLoadAVIOContext]()
+    private var preloadTask: Task<Void, Never>?
+    private let preloadLock = NSLock()
 
     /// Ensure the moov atom region (first 10MB) is cached for fast seeking.
     public func ensureMoovCached() {
@@ -274,6 +283,50 @@ public final class PreLoadAVIOContext: LimitCacheAVIOContext {
             defer { buf.deallocate() }
             _ = read(buffer: buf, size: Int32(moovEnd))
             _ = seek(offset: saved, whence: 0)
+        }
+    }
+
+    /// Schedule a URL for background preloading (moov + initial data).
+    /// Used for next-episode zero-delay switching.
+    public func schedulePreload(url: URL) {
+        preloadLock.lock()
+        defer { preloadLock.unlock() }
+        let key = url.absoluteString
+        guard preloadedContexts[key] == nil else { return }
+        preloadQueue.append(url)
+        startPreloadIfNeeded()
+    }
+
+    /// Check if a URL has been preloaded and return its cache context for zero-delay open.
+    public func preloadedContext(for url: URL) -> PreLoadAVIOContext? {
+        preloadLock.lock()
+        defer { preloadLock.unlock() }
+        return preloadedContexts[url.absoluteString]
+    }
+
+    /// Cancel all pending preloads
+    public func cancelPreloads() {
+        preloadLock.lock()
+        defer { preloadLock.unlock() }
+        preloadTask?.cancel()
+        preloadTask = nil
+        preloadQueue.removeAll()
+    }
+
+    private func startPreloadIfNeeded() {
+        guard preloadTask == nil, !preloadQueue.isEmpty else { return }
+        let url = preloadQueue.removeFirst()
+        preloadTask = Task.detached { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            let context = PreLoadAVIOContext(url: url)
+            context.ensureMoovCached()
+            self.preloadLock.lock()
+            self.preloadedContexts[url.absoluteString] = context
+            self.preloadTask = nil
+            self.preloadLock.unlock()
+            self.preloadLock.lock()
+            self.startPreloadIfNeeded()
+            self.preloadLock.unlock()
         }
     }
 }

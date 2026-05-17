@@ -22,8 +22,7 @@ let package = Package(
             name: "KSPlayer",
             dependencies: [
                 .product(name: "FFmpegKit", package: "FFmpegKit"),
-//                .product(name: "Libass", package: "FFmpegKit"),
-//                .product(name: "Libmpv", package: "FFmpegKit"),
+                .product(name: "Libass", package: "FFmpegKit"),
                 "DisplayCriteria",
             ],
             resources: [.process("Metal/Shaders.metal")],
@@ -43,5 +42,5 @@ let package = Package(
 )
 
 package.dependencies += [
-    .package(url: "https://github.com/kingslay/FFmpegKit.git", from: "6.1.3"),
+    .package(url: "https://github.com/danielebogo/FFmpegKit.git", branch: "main"),
 ]

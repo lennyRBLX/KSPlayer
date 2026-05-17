@@ -19,6 +19,7 @@ class SubtitleDecode: DecodeProtocol {
     private var subtitle = AVSubtitle()
     private var startTime = TimeInterval(0)
     private let assParse = AssParse()
+    private var libassRenderer: LibassSubtitleRenderer?
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         startTime = assetTrack.startTime.seconds
         do {
@@ -26,6 +27,16 @@ class SubtitleDecode: DecodeProtocol {
             if let pointer = codecContext?.pointee.subtitle_header {
                 let subtitleHeader = String(cString: pointer)
                 _ = assParse.canParse(scanner: Scanner(string: subtitleHeader))
+                // RE: Forward uses libass for full ASS rendering with embedded font extraction
+                if KSOptions.useLibassForASS {
+                    let renderer = LibassSubtitleRenderer(
+                        videoWidth: assetTrack.naturalSize.width > 0 ? Int32(assetTrack.naturalSize.width) : 1920,
+                        videoHeight: assetTrack.naturalSize.height > 0 ? Int32(assetTrack.naturalSize.height) : 1080,
+                        fontsDir: options.fontsDir
+                    )
+                    renderer.loadHeader(subtitleHeader)
+                    libassRenderer = renderer
+                }
             }
         } catch {
             KSLog(error as CustomStringConvertible)
@@ -78,6 +89,8 @@ class SubtitleDecode: DecodeProtocol {
     func doFlushCodec() {}
 
     func shutdown() {
+        libassRenderer?.shutdown()
+        libassRenderer = nil
         scale.shutdown()
         avsubtitle_free(&subtitle)
         if let codecContext {

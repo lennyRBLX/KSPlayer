@@ -280,7 +280,15 @@ open class SubtitleModel: ObservableObject {
     public static var textColor: Color = .white
     public static var textBackgroundColor: Color = .clear
     public static var textFont: UIFont {
-        textBold ? .boldSystemFont(ofSize: textFontSize) : .systemFont(ofSize: textFontSize)
+        if let captionFontName, let font = UIFont(name: captionFontName, size: effectiveFontSize) {
+            return font
+        }
+        return textBold ? .boldSystemFont(ofSize: effectiveFontSize) : .systemFont(ofSize: effectiveFontSize)
+    }
+
+    /// Font size adjusted by system caption relative size preference
+    public static var effectiveFontSize: CGFloat {
+        textFontSize * captionRelativeSize
     }
 
     public static var textFontSize = SubtitleModel.Size.standard.rawValue
@@ -288,6 +296,22 @@ open class SubtitleModel: ObservableObject {
     public static var textItalic = false
     public static var textPosition = TextPosition()
     public static var audioRecognizes = [any AudioRecognize]()
+
+    /// Effective foreground color — prefers system caption setting when applied
+    public static var effectiveTextColor: Color {
+        if isSystemCaptionAppearanceApplied, let color = captionForegroundColor {
+            return color
+        }
+        return textColor
+    }
+
+    /// Effective background color — prefers system caption setting when applied
+    public static var effectiveBackgroundColor: Color {
+        if isSystemCaptionAppearanceApplied, let color = captionBackgroundColor {
+            return color
+        }
+        return textBackgroundColor
+    }
     private var subtitleDataSouces: [SubtitleDataSouce] = KSOptions.subtitleDataSouces
     @Published
     public private(set) var subtitleInfos = [any SubtitleInfo]()

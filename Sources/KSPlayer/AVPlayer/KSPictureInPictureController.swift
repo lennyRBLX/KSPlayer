@@ -4,8 +4,17 @@
 //
 //  Created by kintan on 2023/1/28.
 //
+//  RE source: Forward v1.3.15 KSComplexPlayerLayer_setupSubtitleAndPipDelegate (0x1013b6f48)
+//
 
 import AVKit
+
+/// Callback for providing subtitle content to PiP overlay
+@available(tvOS 14.0, *)
+public protocol KSPipSubtitleDelegate: AnyObject {
+    func pipSubtitleImage(at time: TimeInterval) -> UIImage?
+    func pipSubtitleAttributedText(at time: TimeInterval) -> NSAttributedString?
+}
 
 @available(tvOS 14.0, *)
 public class KSPictureInPictureController: AVPictureInPictureController {
@@ -14,6 +23,10 @@ public class KSPictureInPictureController: AVPictureInPictureController {
     private var view: KSPlayerLayer?
     private weak var viewController: UIViewController?
     private weak var presentingViewController: UIViewController?
+    /// Delegate for subtitle overlay in PiP window
+    public weak var subtitleDelegate: KSPipSubtitleDelegate?
+    /// Callback invoked when PiP is about to restore — use to re-sync subtitle state
+    public var pipRestoreCallback: (() -> Void)?
     #if canImport(UIKit)
     private weak var navigationController: UINavigationController?
     #endif
@@ -53,6 +66,7 @@ public class KSPictureInPictureController: AVPictureInPictureController {
             view?.play()
         }
 
+        pipRestoreCallback?()
         originalViewController = nil
         view = nil
     }

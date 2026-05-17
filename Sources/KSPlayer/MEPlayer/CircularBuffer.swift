@@ -135,6 +135,37 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         return result
     }
 
+    // RE source: Forward v1.3.15 CircularBuffer_search_time (0x1013fc3c0)
+    // Finds frames containing the given timestamp (start <= ts < end), removes up to that point.
+    public func search(for timestamp: Int64) -> [Item] {
+        search { item in
+            item.timestamp <= timestamp && (item.timestamp + item.duration) > timestamp
+        }
+    }
+
+    /// Non-destructive peek at the head item without removing it
+    public func peek() -> Item? {
+        condition.lock()
+        defer { condition.unlock() }
+        guard headIndex < tailIndex else { return nil }
+        return _buffer[Int(headIndex & mask)]
+    }
+
+    /// Non-destructive scan returning all items matching a predicate without removal
+    public func scan(where predicate: (Item) -> Bool) -> [Item] {
+        condition.lock()
+        defer { condition.unlock() }
+        var result = [Item]()
+        var i = headIndex
+        while i < tailIndex {
+            if let item = _buffer[Int(i & mask)], predicate(item) {
+                result.append(item)
+            }
+            i += 1
+        }
+        return result
+    }
+
     public func flush() {
         condition.lock()
         defer { condition.unlock() }

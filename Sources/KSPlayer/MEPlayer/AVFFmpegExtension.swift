@@ -3,6 +3,7 @@ import FFmpegKit
 import Libavcodec
 import Libavfilter
 import Libavformat
+import VideoToolbox
 
 func toDictionary(_ native: OpaquePointer?) -> [String: String] {
     var dict = [String: String]()
@@ -88,7 +89,18 @@ extension AVCodecParameters {
             throw NSError(errorCode: .codecContextSetParam, avErrorCode: result)
         }
         if codec_type == AVMEDIA_TYPE_VIDEO, options?.hardwareDecode ?? false {
-            codecContext.getFormat()
+            // RE: Forward 0x1012d680c — skip VT setup for AV1 on hardware that doesn't support it
+            var skipHWDecode = false
+            if codecContext.pointee.codec_id == AV_CODEC_ID_AV1 {
+                if #available(iOS 16.0, macOS 13.0, tvOS 16.0, *) {
+                    skipHWDecode = !VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
+                } else {
+                    skipHWDecode = true
+                }
+            }
+            if !skipHWDecode {
+                codecContext.getFormat()
+            }
         }
         guard let codec = avcodec_find_decoder(codecContext.pointee.codec_id) else {
             avcodec_free_context(&codecContextOption)

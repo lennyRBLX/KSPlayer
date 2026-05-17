@@ -393,6 +393,12 @@ open class KSOptions {
                     assetTrack.nominalFrameRate = assetTrack.nominalFrameRate * 2
                 }
             }
+            // HDR→SDR tone mapping via libplacebo FFmpeg filter (RE/19: pl_shader_detect_peak_hdr)
+            if KSOptions.enableHDRToSDRToneMapping, dynamicRange != .sdr {
+                let algo = KSOptions.tonemapAlgorithm
+                videoFilters.append("libplacebo=tonemapping=\(algo):apply_dolbyvision=1:colorspace=bt709:color_primaries=bt709:color_trc=bt709")
+                destinationDynamicRange = .sdr
+            }
         }
     }
 
@@ -566,6 +572,19 @@ public extension KSOptions {
     static var asynchronousDecompression = false
     static var isPipPopViewController = false
     static var canStartPictureInPictureAutomaticallyFromInline = true
+    /// Use libass C library for ASS/SSA subtitle rendering (enables embedded font extraction)
+    public static var useLibassForASS = true
+    /// Enable HDR→SDR tone mapping via libplacebo FFmpeg filter.
+    /// RE source: Forward v1.3.15 libplacebo pipeline with pl_shader_detect_peak_hdr,
+    /// apply_dolbyvision=1 default. See RE/19.
+    public static var enableHDRToSDRToneMapping = false
+    /// Tone mapping algorithm for HDR→SDR conversion.
+    /// Supported: "hable", "mobius", "reinhard", "bt2390", "gamma", "linear"
+    public static var tonemapAlgorithm = "hable"
+    /// Enable Anime4K real-time upscaling (GLSL→Metal transpiled shaders)
+    public static var enableAnime4K = false
+    /// Anime4K preset name (e.g., "Mode A", "Mode B", "Mode C", "Mode A+A")
+    public static var anime4KPreset = "Mode A"
     static var preferredFrame = true
     static var useSystemHTTPProxy = true
     /// 日志级别
