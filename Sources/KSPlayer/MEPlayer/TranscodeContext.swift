@@ -2,15 +2,19 @@
 //  TranscodeContext.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15
-//  - OutputStreamInfo_createForRemuxing (0x1012ED66C)
-//  - TranscodeContext_createForStreamIndex (0x1012E8BEC)
-//  - BSFContext_findAndInitFilter (0x1012E9060)
-//  - AudioTranscodeContext_init (0x1012E9EE4)
-//  - Remuxer_readLoop_body (0x1012E815C)
-//  - Remuxer_setupSubtitleTranscodeContexts (0x1012E83E0)
+//  RE source: Forward v1.3.15 (verified via Ghidra decompilation)
+//  - FUN_1014010f4: Remux stream setup (avformat_new_stream + codec_tag resolution)
+//  - FUN_1013fd1dc: DV-aware codec_tag resolver (DOVIDecoderConfigurationRecord → dvh1/dvhe/dav1)
+//  - FUN_1013eaa1c: BSFTranscodeContext.init (av_bsf_get_by_name + alloc + init)
+//  - FUN_1013fd548: Remuxer.remux() main loop (calls FUN_1014010f4 then per-packet processing)
+//  - Remuxer_configureOutputStreams @ 0x1014291a4: Sets AV dictionary options on output
 //
-//  Pipeline: Remuxer → OutputStreamInfo → per-stream TranscodeContext → packet delivery
+//  Key binary findings:
+//  - codec_tag is ALWAYS overwritten after avcodec_parameters_copy using DV-aware resolver
+//  - BSFs (hevc_mp4toannexb, aac_adtstoasc) are NOT manually applied — HLS/MOV muxers auto-insert
+//  - All streams use passthrough (CopyTranscodeContext equivalent)
+//
+//  Pipeline: Remuxer → OutputStreamInfo → CopyTranscodeContext (passthrough) → muxer
 //
 
 import Foundation
@@ -340,7 +344,13 @@ public final class OutputStreamInfo {
     public private(set) var timeBases: [AVRational?] = []
     private var hasWrittenTrailer = false
 
-    public init?(url: String, formatName: String?, inputFormatContext: UnsafeMutablePointer<AVFormatContext>) {
+    /// Initialize output stream info with DV-aware codec_tag handling.
+    /// Binary ref: FUN_1014010f4 in Forward v1.3.15
+    /// - Parameter doviRecord: DOVIDecoderConfigurationRecord from the video track's side data.
+    ///   Used to resolve the correct codec_tag (dvh1/dvhe/dav1) for DV content.
+    ///   Pass nil for non-DV content or when DV detection has not been performed.
+    public init?(url: String, formatName: String?, inputFormatContext: UnsafeMutablePointer<AVFormatContext>,
+                 doviRecord: DOVIDecoderConfigurationRecord? = nil) {
         self.url = url
         self.formatName = formatName ?? "mp4"
         var outputCtx: UnsafeMutablePointer<AVFormatContext>?
@@ -365,7 +375,20 @@ public final class OutputStreamInfo {
 
             guard let outputStream = avformat_new_stream(outputCtx, nil) else { continue }
             avcodec_parameters_copy(outputStream.pointee.codecpar, codecpar)
-            outputStream.pointee.codecpar.pointee.codec_tag = 0
+
+            // DV-aware codec_tag resolution (binary ref: FUN_1013fd1dc)
+            // Binary always overwrites codec_tag after avcodec_parameters_copy using
+            // the DV profile-aware resolver. For video: determines dvh1/dvhe/dav1/hevc.
+            // For audio/subtitle: zeros the tag (lets muxer determine).
+            if mediaType == AVMEDIA_TYPE_VIDEO {
+                applyResolvedCodecTag(
+                    to: outputStream.pointee.codecpar,
+                    codecID: codecpar.pointee.codec_id,
+                    dovi: doviRecord
+                )
+            } else {
+                outputStream.pointee.codecpar.pointee.codec_tag = 0
+            }
 
             streamMapping[i] = outputStreamIndex
             timeBases.append(outputStream.pointee.time_base)
@@ -382,6 +405,15 @@ public final class OutputStreamInfo {
         }
     }
 
+    /// Select the appropriate transcode context per stream.
+    /// Binary ref: FUN_1014010f4 stream loop in Forward v1.3.15
+    ///
+    /// Key finding from binary analysis:
+    /// - The binary does NOT manually apply hevc_mp4toannexb or h264_mp4toannexb for HLS output.
+    ///   FFmpeg's HLS muxer auto-inserts these BSFs internally (confirmed: no BSF string refs
+    ///   from within the remux setup function FUN_1014010f4).
+    /// - The binary does NOT manually apply aac_adtstoasc; the MP4/MOV muxer handles this.
+    /// - All streams use passthrough (CopyTranscodeContext) — the muxer handles conversion.
     private func createTranscodeContext(
         codecpar: UnsafeMutablePointer<AVCodecParameters>,
         mediaType: AVMediaType,
@@ -389,38 +421,9 @@ public final class OutputStreamInfo {
         outputFormatName: String,
         streamCount: Int
     ) -> TranscodeProtocol {
-        if mediaType == AVMEDIA_TYPE_AUDIO {
-            let codecID = codecpar.pointee.codec_id
-            if codecID == AV_CODEC_ID_AAC, streamCount >= 3 {
-                let isMPEGTS = outputFormatName == "mpegts" || outputFormatName == "hls"
-                if !isMPEGTS {
-                    if let bsf = BSFTranscodeContext(filterName: "aac_adtstoasc",
-                                                     codecpar: codecpar,
-                                                     timeBase: inputTimeBase) {
-                        return bsf
-                    }
-                }
-            }
-        } else if mediaType == AVMEDIA_TYPE_VIDEO {
-            let codecID = codecpar.pointee.codec_id
-            let outputIsMPEGTS = outputFormatName == "mpegts" || outputFormatName == "hls"
-            if outputIsMPEGTS {
-                if codecID == AV_CODEC_ID_H264 {
-                    if let bsf = BSFTranscodeContext(filterName: "h264_mp4toannexb",
-                                                     codecpar: codecpar,
-                                                     timeBase: inputTimeBase) {
-                        return bsf
-                    }
-                } else if codecID == AV_CODEC_ID_HEVC {
-                    if let bsf = BSFTranscodeContext(filterName: "hevc_mp4toannexb",
-                                                     codecpar: codecpar,
-                                                     timeBase: inputTimeBase) {
-                        return bsf
-                    }
-                }
-            }
-        }
-
+        // Binary behavior: all streams pass through as copy. BSF insertion is delegated
+        // to FFmpeg's muxer internals (HLS muxer auto-inserts annexb filters, MOV muxer
+        // handles AAC ADTS→ASC conversion internally).
         return CopyTranscodeContext.shared
     }
 
@@ -498,10 +501,33 @@ public final class Remuxer: @unchecked Sendable {
             return false
         }
 
+        // Extract DOVIDecoderConfigurationRecord from video stream side data
+        // Binary ref: detection stored at object offset +0x132, read by FUN_1013fd1dc
+        var doviRecord: DOVIDecoderConfigurationRecord?
+        let streamCount = Int(formatCtx.pointee.nb_streams)
+        for i in 0 ..< streamCount {
+            guard let stream = formatCtx.pointee.streams[i] else { continue }
+            let codecpar = stream.pointee.codecpar.pointee
+            if codecpar.codec_type == AVMEDIA_TYPE_VIDEO,
+               codecpar.nb_coded_side_data > 0,
+               let sideDatas = codecpar.coded_side_data {
+                for j in 0 ..< Int(codecpar.nb_coded_side_data) {
+                    if sideDatas[j].type == AV_PKT_DATA_DOVI_CONF {
+                        doviRecord = sideDatas[j].data.withMemoryRebound(
+                            to: DOVIDecoderConfigurationRecord.self, capacity: 1
+                        ) { $0 }.pointee
+                        break
+                    }
+                }
+                break
+            }
+        }
+
         let outputPath = outputURL.path
         guard let info = OutputStreamInfo(url: outputPath,
                                           formatName: outputFormat,
-                                          inputFormatContext: formatCtx) else {
+                                          inputFormatContext: formatCtx,
+                                          doviRecord: doviRecord) else {
             cleanup()
             return false
         }

@@ -9,6 +9,7 @@ import AVFoundation
 #if os(tvOS) || os(xrOS)
 import DisplayCriteria
 #endif
+import Metal
 import OSLog
 
 #if canImport(UIKit)
@@ -67,6 +68,10 @@ open class KSOptions {
     public var contrast: Float = 1.0
     /// Video saturation adjustment (Metal uniform)
     public var saturation: Float = 1.0
+    /// Metal uniform buffer for brightness/contrast/saturation adjustments.
+    /// RE: KSOptions field #66, MTLBuffer? at 0x103B3CCA0 area. Passed to Metal render pipeline
+    /// as fragment buffer for real-time BCS adjustment.
+    public var adjustBuffer: MTLBuffer?
     /// First playable state timing metric
     public internal(set) var firstPlayableTime: Double = 0.0
     /// Spatial audio enabled for this session
@@ -578,6 +583,10 @@ public extension KSOptions {
     /// RE source: Forward v1.3.15 libplacebo pipeline with pl_shader_detect_peak_hdr,
     /// apply_dolbyvision=1 default. See RE/19.
     public static var enableHDRToSDRToneMapping = false
+    /// Enable HDR-aware subtitle compositing via MetalSubtitleView.
+    /// RE: KSOptions instance field, gates CAMetalLayer EDR + CIColorControls pipeline
+    /// for subtitle rendering in HDR/DV content.
+    public static var enableHDRSubtitle: Bool = false
     /// Tone mapping algorithm for HDR→SDR conversion.
     /// Supported: "hable", "mobius", "reinhard", "bt2390", "gamma", "linear"
     public static var tonemapAlgorithm = "hable"

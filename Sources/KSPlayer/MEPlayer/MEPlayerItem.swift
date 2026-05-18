@@ -222,6 +222,12 @@ extension MEPlayerItem {
         if let maxAnalyzeDuration = options.maxAnalyzeDuration {
             formatCtx.pointee.max_analyze_duration = maxAnalyzeDuration
         }
+        // RE: Forward v1.3.15 large file optimization — files >50GB get increased
+        // timestamp probe count for reliable seeking in very large containers.
+        let pbSize = avio_size(formatCtx.pointee.pb)
+        if pbSize > 50 * 1024 * 1024 * 1024 {
+            formatCtx.pointee.max_ts_probe = Int32(clamping: pbSize / 235)
+        }
         result = avformat_find_stream_info(formatCtx, nil)
         guard result == 0 else {
             error = .init(errorCode: .formatFindStreamInfo, avErrorCode: result)
@@ -306,8 +312,18 @@ extension MEPlayerItem {
                         if codecType == AVMEDIA_TYPE_SUBTITLE, formatName == "mp4" || formatName == "mov" {
                             outStream.pointee.codecpar.pointee.codec_id = AV_CODEC_ID_MOV_TEXT
                         }
-                        if inputStream.pointee.codecpar.pointee.codec_id == AV_CODEC_ID_HEVC {
-                            outStream.pointee.codecpar.pointee.codec_tag = CMFormatDescription.MediaSubType.hevc.rawValue.bigEndian
+                        // DV-aware codec_tag resolution (binary ref: FUN_1013fd1dc)
+                        // Determines correct tag from DOVIDecoderConfigurationRecord
+                        // instead of blindly overwriting with generic HEVC.
+                        if codecType == AVMEDIA_TYPE_VIDEO {
+                            let doviRecord = assetTracks.first(where: {
+                                $0.mediaType == .video && $0.dovi != nil
+                            })?.dovi
+                            applyResolvedCodecTag(
+                                to: outStream.pointee.codecpar,
+                                codecID: inputStream.pointee.codecpar.pointee.codec_id,
+                                dovi: doviRecord
+                            )
                         } else {
                             outStream.pointee.codecpar.pointee.codec_tag = 0
                         }
@@ -374,6 +390,11 @@ extension MEPlayerItem {
                     }
                 }
                 naturalSize = abs(rotation - 90) <= 1 || abs(rotation - 270) <= 1 ? first.naturalSize.reverse : first.naturalSize
+                // RE: Forward v1.3.15 DV codec detection — DV video (old camcorder format)
+                // cannot be hardware decoded by VideoToolbox, force software decode path.
+                if first.codecpar.codec_id == AV_CODEC_ID_DVVIDEO {
+                    options.hardwareDecode = false
+                }
                 options.process(assetTrack: first)
                 let frameCapacity = options.videoFrameMaxCount(fps: first.nominalFrameRate, naturalSize: naturalSize, isLive: duration == 0)
                 let track = options.syncDecodeVideo ? SyncPlayerItemTrack<VideoVTBFrame>(mediaType: .video, frameCapacity: frameCapacity, options: options) : AsyncPlayerItemTrack<VideoVTBFrame>(mediaType: .video, frameCapacity: frameCapacity, options: options)
