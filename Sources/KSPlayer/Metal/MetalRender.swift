@@ -99,6 +99,12 @@ class MetalRender {
         return bcs.x != 0.0 || bcs.y != 1.0 || bcs.z != 1.0
     }
 
+    // MARK: - Dolby Vision display model (RE: MetalPlayView_renderFrameImpl @ 0x10144529c)
+
+    /// Singleton DoviDisplayModel, created on first DV frame.
+    /// Binary uses swift_once(&DAT_103d06108, KSOptions_createDoviDisplayModel) → DAT_104458878
+    private lazy var doviDisplayModel: DoviDisplayModel? = DoviDisplayModel(device: MetalRender.device)
+
     func clear(drawable: MTLDrawable) {
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
@@ -130,6 +136,32 @@ class MetalRender {
         }
         setFragmentBuffer(pixelBuffer: pixelBuffer, encoder: encoder)
         display.set(encoder: encoder)
+        encoder.popDebugGroup()
+        encoder.endEncoding()
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+    }
+
+    /// Dolby Vision render path (RE: MetalPlayView_renderFrameImpl @ 0x10144529c).
+    /// When options.display holds the DoviDisplayModel singleton, the binary routes here
+    /// instead of the standard DisplayEnum path. Uses runtime-generated reshape shaders.
+    @MainActor
+    func drawDovi(pixelBuffer: PixelBufferProtocol, drawable: CAMetalDrawable, metadata: DoviGPUMetadata) {
+        let inputTextures = pixelBuffer.textures()
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture
+        guard !inputTextures.isEmpty,
+              let commandBuffer = commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor),
+              let dovi = doviDisplayModel
+        else {
+            return
+        }
+        encoder.pushDebugGroup("RenderDovi")
+        // Binary checks planeCount for ICtCp vs NV12 routing (DoviDisplayModel_draw @ 0x1014673f4)
+        let pixelFormat: DoviPixelFormat = pixelBuffer.planeCount >= 3 ? .ictcp : .nv12
+        dovi.draw(encoder: encoder, metadata: metadata, pixelFormat: pixelFormat,
+                  bitDepth: pixelBuffer.bitDepth, textures: inputTextures)
         encoder.popDebugGroup()
         encoder.endEncoding()
         commandBuffer.present(drawable)

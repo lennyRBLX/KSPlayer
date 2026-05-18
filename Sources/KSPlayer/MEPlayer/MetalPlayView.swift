@@ -243,7 +243,15 @@ extension MetalPlayView {
                 metalView.metalLayer.edrMetadata = frame.edrMetadata
             }
             #endif
-            metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size)
+            // DV routing (RE: MEPlayerItem_processFrameSideData @ 0x101407908 + MetalPlayView_renderFrameImpl @ 0x10144529c)
+            // Binary detects side data type 0x18 (DOVI_METADATA), converts to GPU metadata, routes to DoviDisplayModel.draw()
+            var doviMetadata: DoviGPUMetadata?
+            if isDovi, KSOptions.enhanceDolby,
+               let doviData = frame.doviData,
+               let header = doviData.header, let mapping = doviData.mapping {
+                doviMetadata = DoviGPUMetadata.from(header: header, mapping: mapping, color: doviData.color)
+            }
+            metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, doviMetadata: doviMetadata)
             renderSource?.setVideo(time: cmtime, position: frame.position)
         }
     }
@@ -298,33 +306,61 @@ class MetalView: UIView {
         }
     }
 
-    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize) {
+    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize,
+              doviMetadata: DoviGPUMetadata? = nil) {
         metalLayer.drawableSize = size
         metalLayer.pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
-        let colorspace = pixelBuffer.colorspace
-        if colorspace != nil, metalLayer.colorspace != colorspace {
-            metalLayer.colorspace = colorspace
-            KSLog("[video] CAMetalLayer colorspace \(String(describing: colorspace))")
-            #if !os(tvOS)
-            if #available(iOS 16.0, *) {
-                if let name = colorspace?.name, name != CGColorSpace.sRGB {
+
+        // DV path: force ITU-R 2100 PQ color space (RE: MetalPlayView_renderFrameImpl @ 0x10144529c)
+        // Binary checks if display == doviSingleton → CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ)
+        if doviMetadata != nil {
+            let pqColorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+            if metalLayer.colorspace != pqColorspace {
+                metalLayer.colorspace = pqColorspace
+                KSLog("[video] CAMetalLayer colorspace \(String(describing: pqColorspace)) (DV)")
+                #if !os(tvOS)
+                if #available(iOS 16.0, *) {
                     #if os(macOS)
                     metalLayer.wantsExtendedDynamicRangeContent = window?.screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0 > 1.0
                     #else
                     metalLayer.wantsExtendedDynamicRangeContent = true
                     #endif
-                } else {
-                    metalLayer.wantsExtendedDynamicRangeContent = false
+                    KSLog("[video] CAMetalLayer wantsExtendedDynamicRangeContent \(metalLayer.wantsExtendedDynamicRangeContent)")
                 }
-                KSLog("[video] CAMetalLayer wantsExtendedDynamicRangeContent \(metalLayer.wantsExtendedDynamicRangeContent)")
+                #endif
             }
-            #endif
+        } else {
+            let colorspace = pixelBuffer.colorspace
+            if colorspace != nil, metalLayer.colorspace != colorspace {
+                metalLayer.colorspace = colorspace
+                KSLog("[video] CAMetalLayer colorspace \(String(describing: colorspace))")
+                #if !os(tvOS)
+                if #available(iOS 16.0, *) {
+                    if let name = colorspace?.name, name != CGColorSpace.sRGB {
+                        #if os(macOS)
+                        metalLayer.wantsExtendedDynamicRangeContent = window?.screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0 > 1.0
+                        #else
+                        metalLayer.wantsExtendedDynamicRangeContent = true
+                        #endif
+                    } else {
+                        metalLayer.wantsExtendedDynamicRangeContent = false
+                    }
+                    KSLog("[video] CAMetalLayer wantsExtendedDynamicRangeContent \(metalLayer.wantsExtendedDynamicRangeContent)")
+                }
+                #endif
+            }
         }
+
         guard let drawable = metalLayer.nextDrawable() else {
             KSLog("[video] CAMetalLayer not readyForMoreMediaData")
             return
         }
-        render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
+
+        if let metadata = doviMetadata {
+            render.drawDovi(pixelBuffer: pixelBuffer, drawable: drawable, metadata: metadata)
+        } else {
+            render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
+        }
     }
 }
 
