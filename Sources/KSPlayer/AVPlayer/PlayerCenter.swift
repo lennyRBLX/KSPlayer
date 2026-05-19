@@ -15,6 +15,11 @@ import Foundation
 /// that gates the ProAVPlayer Dolby Vision decode path.
 @MainActor
 public final class PlayerCenter: ObservableObject {
+    /// Shared singleton instance for app-wide player session management.
+    /// RE: PlayerCenter uses a shared instance pattern for coordinating
+    /// enhanceDolby state across player presentation and PiP lifecycle.
+    public static let shared = PlayerCenter()
+
     @Published public var isPlayerPresented = false
     @Published public var isPipActive = false
 

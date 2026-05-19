@@ -218,6 +218,9 @@ extension MEPlayerItem {
             return
         }
         options.openTime = CACurrentMediaTime()
+        // RE: Log output format name on open URL (FormatContext_getOutputFormatName)
+        let openFormatName = FormatContext.getOutputFormatName(for: url)
+        KSLog("[MEPlayerItem] openURL format: \(openFormatName)")
         formatCtx.pointee.flags |= AVFMT_FLAG_GENPTS
         if options.nobuffer {
             formatCtx.pointee.flags |= AVFMT_FLAG_NOBUFFER
@@ -286,6 +289,9 @@ extension MEPlayerItem {
 
     func startRecord(url: URL) {
         stopRecord()
+        // RE: Log output format name on record/open URL (FormatContext_getOutputFormatName)
+        let outputFormatName = FormatContext.getOutputFormatName(for: url)
+        KSLog("[MEPlayerItem] startRecord format: \(outputFormatName)")
         let filename = url.isFileURL ? url.path : url.absoluteString
         var ret = avformat_alloc_output_context2(&outputFormatCtx, nil, nil, filename)
         guard let outputFormatCtx, let formatCtx else {

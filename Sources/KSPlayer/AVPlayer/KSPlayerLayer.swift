@@ -381,11 +381,20 @@ open class KSPlayerLayer: NSObject {
 // MARK: - MediaPlayerDelegate
 
 extension KSPlayerLayer: MediaPlayerDelegate {
+    /// Hook for subclasses to perform setup when the player becomes ready.
+    /// Called from `readyToPlay(player:)` after state is set.
+    /// RE: KSComplexPlayerLayer overrides this to set up PiP and subtitle delegates.
+    open func onPlayerReady() {}
+
     public func readyToPlay(player: some MediaPlayerProtocol) {
         state = .readyToPlay
         if options.firstPlayableTime == 0 {
             options.firstPlayableTime = CACurrentMediaTime()
+            // RE: Build playback timing metrics on first readyToPlay transition
+            let metrics = options.buildPlaybackTimingMetrics()
+            KSLog("[timing] First playback timing metrics: \(metrics)")
         }
+        onPlayerReady()
         #if os(macOS)
         runOnMainThread { [weak self] in
             guard let self else { return }

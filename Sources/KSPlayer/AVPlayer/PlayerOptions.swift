@@ -29,6 +29,13 @@ open class PlayerOptions: KSOptions {
         }
     }
 
+    /// Override wantedAudio to use the 4-tier wantedAudioTrack cascade.
+    /// RE: PlayerOptions_wantedAudioTrack wired as backing implementation for wantedAudio.
+    open override func wantedAudio(tracks: [MediaPlayerTrack]) -> Int? {
+        guard let selected = wantedAudioTrack(from: tracks) else { return nil }
+        return tracks.firstIndex(where: { $0.trackID == selected.trackID })
+    }
+
     /// 4-tier audio track selection cascade.
     /// RE: PlayerOptions_wantedAudioTrack at 0x100923EA4 (~3072 bytes)
     /// Priority: preferAudioId > videoPreference language > AppStorage language pref > system locale
@@ -109,6 +116,24 @@ public final class VideoCoverViewModel: ObservableObject {
         newPlayer.isMuted = isMuted
         player = newPlayer
         newPlayer.prepareToPlay()
+    }
+
+    /// RE: playTrailer — entry point for media ID changes.
+    /// Validates the URL, loads and starts the trailer player.
+    /// Wire from Combine publisher on media ID change or metadata load.
+    public func playTrailer(url: URL?) {
+        guard let url, !url.absoluteString.isEmpty else {
+            resetTrailer()
+            return
+        }
+        loadTrailer(from: url)
+        play()
+    }
+
+    /// RE: resetTrailer — tear down on validation failure, navigation away,
+    /// content change, or error conditions.
+    public func resetTrailer() {
+        reset()
     }
 
     /// Start trailer playback.

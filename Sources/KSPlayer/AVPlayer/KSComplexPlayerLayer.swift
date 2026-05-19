@@ -75,6 +75,10 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     func pipDidStop() {
         isPictureInPictureStoped = true
         postPiPStopCleanup()
+        // RE: checkEnhanceDolbyPiP — notify PlayerCenter that PiP has stopped
+        Task { @MainActor in
+            PlayerCenter.shared.handlePipStateChange(isActive: false)
+        }
     }
 
     func pipFailedToStart() {
@@ -85,6 +89,10 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
 
     func restoreFromPiP() {
         isPictureInPictureStoped = false
+        // RE: checkEnhanceDolbyPiP — notify PlayerCenter that PiP is active
+        Task { @MainActor in
+            PlayerCenter.shared.handlePipStateChange(isActive: true)
+        }
     }
 
     // MARK: - PiP Restore Callback (RE: KSComplexPlayerLayer_pipRestoreCallback @ 0x1000357f0)
@@ -122,7 +130,17 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     // MARK: - Subtitle and PiP Delegate (RE: KSComplexPlayerLayer_setupSubtitleAndPipDelegate @ 0x1013b6f48)
 
     func setupSubtitleAndPipDelegate() {
-        // Wire up subtitle insertion and PiP delegate
+        // Wire up PiP controller delegate and subtitle rendering delegate
+        #if canImport(UIKit) && !os(xrOS)
+        if #available(tvOS 14.0, *) {
+            pipController?.delegate = self
+            // Connect subtitle delegate from the player layer's pipSubtitleProvider
+            if let subtitleProvider = pipSubtitleProvider as? KSPipSubtitleDelegate,
+               let pip = player.pipController {
+                pip.subtitleDelegate = subtitleProvider
+            }
+        }
+        #endif
     }
 
     // MARK: - PiP Delegate Dispatch (RE: KSComplexPlayerLayer_pipDelegateDispatch_MainActor @ 0x1013b8144)
@@ -155,6 +173,12 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
             }
             return .success
         }
+    }
+
+    // MARK: - Player Ready Hook (RE: wire onPlayerReadySetupAll from KSPlayerLayer.readyToPlay)
+
+    open override func onPlayerReady() {
+        onPlayerReadySetupAll()
     }
 
     // MARK: - Deinit (RE: KSComplexPlayerLayer_deinit_cleanup @ 0x1013b43d0)

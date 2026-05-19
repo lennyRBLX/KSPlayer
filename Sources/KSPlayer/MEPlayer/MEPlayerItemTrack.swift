@@ -92,6 +92,16 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     }
 
     func getOutputRender(where predicate: ((Frame, Int) -> Bool)?) -> Frame? {
+        // RE: When a seek target exists, use CircularBuffer.search(for:) to find
+        // the frame at the target timestamp directly, skipping earlier frames.
+        // Converts seekTime (seconds) to the stream timebase for comparison.
+        if seekTime > 0, let firstFrame = outputRenderQueue.peek() {
+            let seekTs = firstFrame.timebase.cmtime(for: seekTime).value
+            let found = outputRenderQueue.search(for: seekTs)
+            if let frame = found.last {
+                return frame
+            }
+        }
         let outputFecthRender = outputRenderQueue.pop(where: predicate)
         if outputFecthRender == nil {
             if state == .finished, frameCount == 0 {

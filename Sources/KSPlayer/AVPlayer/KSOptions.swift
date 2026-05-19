@@ -339,7 +339,11 @@ open class KSOptions {
 
     // 虽然只有iOS才支持PIP。但是因为AVSampleBufferDisplayLayer能够支持HDR10+。所以默认还是推荐用AVSampleBufferDisplayLayer
     open func isUseDisplayLayer() -> Bool {
-        display == .plane
+        if display != .plane { return false }
+        if dynamicRange == .dolbyVision && KSOptions.enhanceDolby {
+            return false
+        }
+        return true
     }
 
     open func urlIO(log: String) {
@@ -394,6 +398,19 @@ open class KSOptions {
      */
     open func process(assetTrack: some MediaPlayerTrack) {
         if assetTrack.mediaType == .video {
+            // RE: classifyDynamicRange call on video track open (0x1012B0C44)
+            // Classify dynamic range from the track's color transfer characteristic and Dolby Vision flag.
+            if let ffmpegTrack = assetTrack as? FFmpegAssetTrack {
+                let hasDovi = ffmpegTrack.dovi != nil
+                let classified = KSOptions.classifyDynamicRange(colorTrc: ffmpegTrack.codecpar.color_trc, hasDovi: hasDovi)
+                dynamicRange = classified
+                if classified == .dolbyVision || classified == .hdr10 || classified == .hlg {
+                    // HDR content: disable async decompression and force hardware decode
+                    // for correct HDR metadata passthrough (RE: onVideoTrackOpened behavior)
+                    asynchronousDecompression = false
+                    hardwareDecode = true
+                }
+            }
             if [FFmpegFieldOrder.bb, .bt, .tt, .tb].contains(assetTrack.fieldOrder) {
                 // todo 先不要用yadif_videotoolbox，不然会crash。这个后续在看下要怎么解决
                 hardwareDecode = false

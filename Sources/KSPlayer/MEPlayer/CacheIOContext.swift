@@ -98,6 +98,9 @@ open class CacheIOContext: AbstractAVIOContext {
         super.init(bufferSize: 32 * 1024, writable: false)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         loadExistingSegments()
+        // RE: Log output format name on IO context open (FormatContext_getOutputFormatName)
+        let formatName = FormatContext.getOutputFormatName(for: url)
+        KSLog("[CacheIO] openURL format: \(formatName)")
     }
 
     // MARK: - AbstractAVIOContext overrides
