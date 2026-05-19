@@ -105,6 +105,15 @@ public final class AudioEngineDynamicsPlayer: AudioEnginePlayer, AudioDynamicsPr
         engine.attach(nbandEQ)
         engine.attach(dynamicsProcessor)
     }
+
+    /// Configure the N-band parametric EQ gains.
+    /// Each element in `bands` sets the gain (in dB) for the corresponding EQ band.
+    /// Indices beyond the EQ's band count are ignored.
+    public func configureEqualizer(bands: [Float]) {
+        for (i, gain) in bands.enumerated() where i < nbandEQ.numberOfBands {
+            nbandEQ.bands[i].gain = gain
+        }
+    }
 }
 
 public class AudioEnginePlayer: AudioOutput {
@@ -117,6 +126,22 @@ public class AudioEnginePlayer: AudioOutput {
     private var currentRenderReadOffset = UInt32(0)
     private var outputLatency = TimeInterval(0)
     public weak var renderSource: OutputRenderSourceDelegate?
+
+    /// Timestamp of last prepare() call for debounce protection.
+    /// RE: Forward v1.3.15 AudioEnginePlayer debounce fields
+    private var lastPrepareTime: CFTimeInterval = 0
+
+    /// Minimum delay between prepare() calls (seconds).
+    private let minDelayAfterPrepare: CFTimeInterval = 0.1
+
+    /// System-level audio output latency.
+    public var outputLatencySystem: TimeInterval {
+        #if os(macOS)
+        return 0
+        #else
+        return AVAudioSession.sharedInstance().outputLatency
+        #endif
+    }
     private var currentRender: AudioFrame? {
         didSet {
             if currentRender == nil {
@@ -163,6 +188,9 @@ public class AudioEnginePlayer: AudioOutput {
     }
 
     public func prepare(audioFormat: AVAudioFormat) {
+        let now = CACurrentMediaTime()
+        guard now - lastPrepareTime >= minDelayAfterPrepare else { return }
+        lastPrepareTime = now
         if sourceNodeAudioFormat == audioFormat {
             return
         }

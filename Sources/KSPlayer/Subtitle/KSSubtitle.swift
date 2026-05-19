@@ -365,7 +365,18 @@ open class SubtitleModel: ObservableObject {
     /// Whether subtitles should render with HDR-aware compositing
     public static var useHDREffect: Bool = false
 
-    public init() {}
+    /// Set the secondary subtitle track for dual subtitle display.
+    public func selectSecondSubtitle(_ info: (any SubtitleInfo)?) {
+        selectedSecondSubtitleInfo = info
+    }
+
+    public init() {
+        if !SubtitleModel.isSystemCaptionAppearanceApplied {
+            Task { @MainActor in
+                SubtitleModel.applySystemCaptionAppearance()
+            }
+        }
+    }
 
     public func addSubtitle(info: any SubtitleInfo) {
         if subtitleInfos.first(where: { $0.subtitleID == info.subtitleID }) == nil {

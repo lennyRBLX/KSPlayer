@@ -142,6 +142,180 @@ public struct ASSStyle {
     let textPosition: TextPosition
 }
 
+// MARK: - ASS Override Tag Processing
+
+/// Parsed result from an ASS override tag block (content between `{` and `}`).
+/// RE: processStyleOverrideTags at 0x10135fac0
+public struct ASSOverrideResult {
+    public var attributes: [NSAttributedString.Key: Any]
+    public var textPosition: TextPosition
+    /// Parsed `\pos(x,y)` override, if present
+    public var position: CGPoint?
+    /// Parsed `\fad(fadeIn,fadeOut)` in milliseconds, if present
+    public var fade: (fadeIn: Int, fadeOut: Int)?
+    /// Parsed `\be<n>` edge blur value
+    public var edgeBlur: Float?
+    /// Parsed `\blur<n>` gaussian blur value
+    public var gaussianBlur: Float?
+}
+
+public extension AssParse {
+    /// Process an ASS override tag block string (content between `{` and `}`).
+    /// Parses known tags and returns an `ASSOverrideResult` with the style dictionary
+    /// and any positional/effect overrides.
+    /// RE: 0x10135fac0
+    static func processStyleOverrideTags(
+        _ tagBlock: String,
+        baseAttributes: [NSAttributedString.Key: Any] = [:],
+        basePosition: TextPosition = TextPosition()
+    ) -> ASSOverrideResult {
+        var attributes = baseAttributes
+        var textPosition = basePosition
+        var position: CGPoint?
+        var fade: (Int, Int)?
+        var edgeBlur: Float?
+        var gaussianBlur: Float?
+        var fontName: String?
+        var fontSize: Float?
+        var shadow = attributes[.shadow] as? NSShadow
+
+        let subStyleArr = tagBlock.components(separatedBy: "\\")
+        for item in subStyleArr {
+            let itemStr = item.trimmingCharacters(in: .whitespaces)
+            guard !itemStr.isEmpty else { continue }
+            let scanner = Scanner(string: itemStr)
+
+            // \pos(x,y)
+            if itemStr.hasPrefix("pos(") {
+                _ = scanner.scanString("pos(")
+                if let x = scanner.scanFloat() {
+                    _ = scanner.scanString(",")
+                    if let y = scanner.scanFloat() {
+                        position = CGPoint(x: CGFloat(x), y: CGFloat(y))
+                    }
+                }
+                continue
+            }
+
+            // \fad(fadeIn,fadeOut)
+            if itemStr.hasPrefix("fad(") {
+                _ = scanner.scanString("fad(")
+                if let t1 = scanner.scanInt() {
+                    _ = scanner.scanString(",")
+                    if let t2 = scanner.scanInt() {
+                        fade = (t1, t2)
+                    }
+                }
+                continue
+            }
+
+            // \be<n> — edge blur
+            if itemStr.hasPrefix("be") {
+                _ = scanner.scanString("be")
+                if let n = scanner.scanFloat() {
+                    edgeBlur = n
+                }
+                continue
+            }
+
+            // \blur<n> — gaussian blur
+            if itemStr.hasPrefix("blur") {
+                _ = scanner.scanString("blur")
+                if let n = scanner.scanFloat() {
+                    gaussianBlur = n
+                }
+                continue
+            }
+
+            let char = scanner.scanCharacter()
+            switch char {
+            case "a":
+                // \an<1-9> alignment
+                let nextChar = scanner.scanCharacter()
+                if nextChar == "n" {
+                    textPosition.ass(alignment: scanner.scanUpToCharacters(from: .newlines))
+                }
+            case "b":
+                // \b<0|1> bold
+                if let val = scanner.scanInt() {
+                    if val == 1 {
+                        attributes[.expansion] = Float(1)
+                    } else {
+                        attributes[.expansion] = Float(0)
+                    }
+                }
+            case "c":
+                // \c&H<color>& — primary color shorthand
+                attributes[.foregroundColor] = scanner.scanUpToCharacters(from: .newlines).flatMap(UIColor.init(assColor:))
+            case "f":
+                let nextChar = scanner.scanCharacter()
+                if nextChar == "n" {
+                    // \fn<name>
+                    fontName = scanner.scanUpToCharacters(from: .newlines)
+                } else if nextChar == "s" {
+                    // \fs<n>
+                    fontSize = scanner.scanFloat()
+                }
+            case "i":
+                // \i<0|1> italic
+                if let val = scanner.scanInt() {
+                    attributes[.obliqueness] = val == 1 ? Float(0.3) : Float(0)
+                }
+            case "s":
+                // \s<0|1> strikethrough
+                if scanner.scanString("had") != nil {
+                    if let size = scanner.scanFloat() {
+                        shadow = shadow ?? NSShadow()
+                        shadow?.shadowOffset = CGSize(width: CGFloat(size), height: CGFloat(size))
+                        shadow?.shadowBlurRadius = CGFloat(size)
+                    }
+                    attributes[.shadow] = shadow
+                } else {
+                    attributes[.strikethroughStyle] = scanner.scanInt()
+                }
+            case "u":
+                // \u<0|1> underline
+                attributes[.underlineStyle] = scanner.scanInt()
+            case "1", "2", "3", "4":
+                // \1c, \2c, \3c, \4c — color channels
+                let twoChar = scanner.scanCharacter()
+                if twoChar == "c" {
+                    let color = scanner.scanUpToCharacters(from: .newlines).flatMap(UIColor.init(assColor:))
+                    if char == "1" {
+                        attributes[.foregroundColor] = color
+                    } else if char == "3" {
+                        attributes[.strokeColor] = color
+                    } else if char == "4" {
+                        shadow = shadow ?? NSShadow()
+                        shadow?.shadowColor = color
+                        attributes[.shadow] = shadow
+                    }
+                }
+            default:
+                break
+            }
+        }
+
+        // Apply font if both name and size were specified
+        if let fontName {
+            let size = CGFloat(fontSize ?? 24)
+            let font = UIFont(name: fontName, size: size) ?? UIFont.systemFont(ofSize: size)
+            attributes[.font] = font
+        } else if let fontSize {
+            attributes[.font] = UIFont.systemFont(ofSize: CGFloat(fontSize))
+        }
+
+        return ASSOverrideResult(
+            attributes: attributes,
+            textPosition: textPosition,
+            position: position,
+            fade: fade,
+            edgeBlur: edgeBlur,
+            gaussianBlur: gaussianBlur
+        )
+    }
+}
+
 // swiftlint:disable cyclomatic_complexity
 extension String {
     func build(textPosition: inout TextPosition, attributed: [NSAttributedString.Key: Any]? = nil) -> NSAttributedString {
@@ -163,10 +337,29 @@ extension String {
             if scanner.scanString("{") != nil {
                 sytle = scanner.scanUpToString("}")
                 _ = scanner.scanString("}")
-            } else if let text = scanner.scanUpToString("{") {
-                result.append((text, sytle))
-            } else if let text = scanner.scanUpToCharacters(from: .newlines) {
-                result.append((text, sytle))
+            } else if scanner.scanString("<") != nil {
+                // Forward compatibility: support <...> as alternative ASS override delimiters
+                sytle = scanner.scanUpToString(">")
+                _ = scanner.scanString(">")
+            } else {
+                // Scan text up to the next override block (either { or <)
+                let remaining = self[scanner.currentIndex...]
+                let nextBrace = remaining.firstIndex(of: "{")
+                let nextAngle = remaining.firstIndex(of: "<")
+                let nextDelim: String.Index?
+                switch (nextBrace, nextAngle) {
+                case let (b?, a?): nextDelim = min(b, a)
+                case let (b?, nil): nextDelim = b
+                case let (nil, a?): nextDelim = a
+                case (nil, nil): nextDelim = nil
+                }
+                if let delim = nextDelim, delim > scanner.currentIndex {
+                    let text = String(self[scanner.currentIndex..<delim])
+                    scanner.currentIndex = delim
+                    result.append((text, sytle))
+                } else if let text = scanner.scanUpToCharacters(from: .newlines) {
+                    result.append((text, sytle))
+                }
             }
         }
         return result

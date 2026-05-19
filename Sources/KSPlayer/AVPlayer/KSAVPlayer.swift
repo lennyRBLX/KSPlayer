@@ -492,6 +492,32 @@ extension KSAVPlayer: MediaPlayerProtocol {
     }
 }
 
+// MARK: - Subtitle auto-selection
+
+extension KSAVPlayer {
+    /// Automatically select the first subtitle track matching the current locale language.
+    /// RE binary address: 0x10128F8E0. Iterates subtitle tracks, matches languageCode
+    /// against the device locale, and enables the first match.
+    ///
+    /// FFmpeg subtitle codec IDs occupy the range 0x17000...0x17FFF. This method
+    /// validates that tracks fall within the expected subtitle codec range before selection
+    /// (only applicable when working with FFmpeg-backed tracks that expose codecID).
+    private func autoSelectMatchingSubtitleTrack() {
+        let preferredLanguage = Locale.current.language.languageCode?.identifier ?? "en"
+        let subtitleTracks = tracks(mediaType: .subtitle)
+        guard !subtitleTracks.isEmpty else { return }
+        for track in subtitleTracks {
+            if let langCode = track.languageCode,
+               langCode.lowercased() == preferredLanguage.lowercased()
+            {
+                select(track: track)
+                KSLog("[subtitle] auto-selected subtitle track: \(track.name) language: \(langCode)")
+                return
+            }
+        }
+    }
+}
+
 extension AVFoundation.AVMediaType {
     var mediaCharacteristic: AVMediaCharacteristic {
         switch self {

@@ -19,7 +19,7 @@ extension DisplayEnum {
 
     func set(encoder: MTLRenderCommandEncoder) {
         switch self {
-        case .plane:
+        case .plane, .auto, .metalPQ:
             DisplayEnum.planeDisplay.set(encoder: encoder)
         case .vr:
             DisplayEnum.vrDiaplay.set(encoder: encoder)
@@ -30,7 +30,7 @@ extension DisplayEnum {
 
     func pipeline(planeCount: Int, bitDepth: Int32) -> MTLRenderPipelineState {
         switch self {
-        case .plane:
+        case .plane, .auto, .metalPQ:
             return DisplayEnum.planeDisplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         case .vr:
             return DisplayEnum.vrDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)

@@ -23,6 +23,15 @@ public final class AudioGraphPlayer: AudioOutput, AudioDynamicsProcessor {
     #endif
     private var outputLatency = TimeInterval(0)
     public weak var renderSource: OutputRenderSourceDelegate?
+
+    /// System-level audio output latency.
+    public var outputLatencySystem: TimeInterval {
+        #if os(macOS)
+        return 0
+        #else
+        return AVAudioSession.sharedInstance().outputLatency
+        #endif
+    }
     private var currentRender: AudioFrame? {
         didSet {
             if currentRender == nil {

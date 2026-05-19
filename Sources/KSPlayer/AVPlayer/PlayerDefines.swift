@@ -143,6 +143,12 @@ public enum DisplayEnum {
     case vr
     // swiftlint:enable identifier_name
     case vrBox
+    /// Content-based automatic display selection (AVSBDL vs Metal).
+    /// RE: Forward selects the display path based on dynamic range and codec properties.
+    case auto
+    /// Force PQ (SMPTE ST 2084) colorspace in Metal rendering pipeline.
+    /// RE: Used when the display should apply PQ EOTF regardless of content signaling.
+    case metalPQ
 }
 
 public struct VideoAdaptationState {

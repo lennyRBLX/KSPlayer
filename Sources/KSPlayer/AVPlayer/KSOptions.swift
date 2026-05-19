@@ -19,30 +19,43 @@ open class KSOptions {
     // MARK: - Forward additions (RE/76: 29 fields added)
 
     /// App context identifier (e.g., source screen)
+    // RE stub: not yet wired to consumers
     public var context: String = ""
     /// Live stream detection (nil = auto-detect)
+    // RE stub: not yet wired to consumers
     public var isLive: Bool?
     /// Start position as percentage (0.0–1.0)
+    // RE stub: not yet wired to consumers
     public var startPlayTimePercentage: Double = 0
     /// Resume from last saved position on re-enter
+    // RE stub: not yet wired to consumers
     public var enterForgeResumePlay: Bool = false
     /// DLNA/UPnP casting active
+    // RE stub: not yet wired to consumers
     public var isDLNARunning: Bool = false
     /// Interval for saving playback progress (seconds)
+    // RE stub: not yet wired to consumers
     public var playbackTimeInterval: Double = 0
     /// Instance-level player type list (upstream uses static only)
+    // RE stub: not yet wired to consumers
     public var playerTypes: [MediaPlayerProtocol.Type] = []
     /// Mix audio with other apps (vs. solo category)
+    // RE stub: not yet wired to consumers
     public var mixAudio: Bool = false
     /// Video content mode (fit/fill)
+    // RE stub: not yet wired to consumers
     public var contentMode: UIViewContentMode = .scaleAspectFit
     /// Output media type for recording
+    // RE stub: not yet wired to consumers
     public var outputMediaType: AVMediaType?
     /// Output format context options
+    // RE stub: not yet wired to consumers
     public var outputFormatContextOptions = [String: Any]()
     /// Instance-level HTTP proxy (upstream static only)
+    // RE stub: not yet wired to consumers
     public var useSystemHTTPProxy: Bool = true
     /// Use packet cache during seeks (memory cache for fast short-range seek)
+    // RE stub: not yet wired to consumers
     public var seekUsePacketCache: Bool = false
     /// Custom fonts directory for ASS/SSA subtitle rendering
     public var fontsDir: URL?
@@ -51,16 +64,22 @@ open class KSOptions {
     /// Current content dynamic range
     public var dynamicRange: DynamicRange = .sdr
     /// Specific video pipeline selection
+    // RE stub: not yet wired to consumers
     public var videoPipeline: VideoPipeline?
     /// Rotate video via FFmpeg filter (vs. display transform)
+    // RE stub: not yet wired to consumers
     public var isRotateByFilter: Bool = false
     /// Decode type selection (auto/hardware/software)
+    // RE stub: not yet wired to consumers
     public var decodeType: DecodeType = .auto
     /// Software decode thread count (0 = auto)
+    // RE stub: not yet wired to consumers
     public var videoSoftDecodeThreadCount: Int = 0
     /// Double display refresh rate (120Hz)
+    // RE stub: not yet wired to consumers
     public var isDoubleRefreshRate: Bool = false
     /// Use dispatch timer vs CADisplayLink for render loop
+    // RE stub: not yet wired to consumers
     public var renderUseDispatchSourceTimer: Bool = false
     /// Video brightness adjustment (Metal uniform)
     public var brightness: Float = 0.0
@@ -514,8 +533,11 @@ open class KSOptions {
 //        }
     }
 
-    open func process(url _: URL) -> AbstractAVIOContext? {
-        nil
+    open func process(url: URL) -> AbstractAVIOContext? {
+        if seekUsePacketCache, !url.isFileURL {
+            return PreLoadIOContext(url: url)
+        }
+        return nil
     }
 }
 
@@ -546,6 +568,46 @@ public extension KSOptions {
     /// RE/76: DAT_104450978, AppStorage key "enhance_dolby".
     /// Set TRUE on player launch, FALSE on dismiss.
     static var enhanceDolby: Bool = false
+
+    /// Classify dynamic range from FFmpeg transfer characteristics and Dolby Vision side data.
+    /// RE binary address: 0x1012B0C44. Maps to Forward's compact DynamicRange scheme:
+    ///   0=SDR, 1=HDR10(PQ), 2=HLG, 3=DolbyVision
+    /// - Parameters:
+    ///   - colorTrc: The track's color transfer characteristic (color_trc from AVCodecParameters).
+    ///   - hasDovi: Whether Dolby Vision side data / configuration record is present.
+    /// - Returns: The classified `DynamicRange` value.
+    static func classifyDynamicRange(colorTrc: AVColorTransferCharacteristic, hasDovi: Bool) -> DynamicRange {
+        if hasDovi {
+            return .dolbyVision
+        }
+        switch colorTrc {
+        case AVCOL_TRC_SMPTE2084:
+            return .hdr10
+        case AVCOL_TRC_ARIB_STD_B67:
+            return .hlg
+        default:
+            return .sdr
+        }
+    }
+
+    /// Build a dictionary of playback timing metrics from the instance's recorded timestamps.
+    /// Useful for analytics / debugging first-frame latency breakdown.
+    func buildPlaybackTimingMetrics() -> [String: TimeInterval] {
+        var metrics = [String: TimeInterval]()
+        metrics["prepareTime"] = prepareTime
+        metrics["dnsStartTime"] = dnsStartTime
+        metrics["tcpStartTime"] = tcpStartTime
+        metrics["tcpConnectedTime"] = tcpConnectedTime
+        metrics["openTime"] = openTime
+        metrics["findTime"] = findTime
+        metrics["readyTime"] = readyTime
+        metrics["readAudioTime"] = readAudioTime
+        metrics["readVideoTime"] = readVideoTime
+        metrics["decodeAudioTime"] = decodeAudioTime
+        metrics["decodeVideoTime"] = decodeVideoTime
+        metrics["firstPlayableTime"] = firstPlayableTime
+        return metrics
+    }
 
     /// Whether the simple (non-BCS, non-HDR) render pipeline can be used.
     /// RE/62: true only when no EDR metadata, BCS are identity, display is .plane,
@@ -594,6 +656,16 @@ public extension KSOptions {
     public static var enableAnime4K = false
     /// Anime4K preset name (e.g., "Mode A", "Mode B", "Mode C", "Mode A+A")
     public static var anime4KPreset = "Mode A"
+    #if canImport(Speech)
+    @available(iOS 10.0, macOS 10.15, *)
+    static func registerSpeechRecognition() {
+        SubtitleModel.audioRecognizes.append(SpeechRecognizeSubtitle())
+    }
+    #endif
+
+    /// Use a single shared CADisplayLink across all MetalPlayView instances
+    /// instead of one CADisplayLink per view. Preferred for multi-view layouts.
+    static var useSharedDisplayLink = false
     static var preferredFrame = true
     static var useSystemHTTPProxy = true
     /// 日志级别

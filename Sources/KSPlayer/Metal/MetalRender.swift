@@ -127,7 +127,12 @@ class MetalRender {
             return
         }
         encoder.pushDebugGroup("RenderFrame")
-        let state = display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
+        let state: MTLRenderPipelineState
+        if needsBCSAdjustment, pixelBuffer.planeCount == 2, display == .plane {
+            state = MetalRender.bcsPipelineState(bitDepth: pixelBuffer.bitDepth)
+        } else {
+            state = display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
+        }
         encoder.setRenderPipelineState(state)
         encoder.setFragmentSamplerState(samplerState, index: 0)
         for (index, texture) in inputTextures.enumerated() {
@@ -225,6 +230,18 @@ class MetalRender {
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: formats[index], width: width, height: height, mipmapped: false)
             return device.makeTexture(descriptor: descriptor, iosurface: iosurface, plane: index)
         }
+    }
+
+    /// Update BCS buffer from current KSOptions values
+    func updateBCSFromOptions(_ options: KSOptions) {
+        updateBCS(brightness: options.brightness, contrast: options.contrast, saturation: options.saturation)
+    }
+
+    private static var nv12BCS: MTLRenderPipelineState = makePipelineState(fragmentFunction: "displayNV12BCSTexture")
+    private static var nv12BCS10: MTLRenderPipelineState = makePipelineState(fragmentFunction: "displayNV12BCSTexture", bitDepth: 10)
+
+    static func bcsPipelineState(bitDepth: Int32) -> MTLRenderPipelineState {
+        bitDepth == 10 ? nv12BCS10 : nv12BCS
     }
 
     static func textures(formats: [MTLPixelFormat], widths: [Int], heights: [Int], buffers: [MTLBuffer?], lineSizes: [Int]) -> [MTLTexture] {

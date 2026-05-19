@@ -66,6 +66,9 @@ public protocol KSPlayerLayerDelegate: AnyObject {
 
 open class KSPlayerLayer: NSObject {
     public weak var delegate: KSPlayerLayerDelegate?
+    /// External provider for PiP subtitle rendering (set by the view layer).
+    /// Typed as AnyObject to avoid availability constraints; cast to KSPipSubtitleDelegate at use site.
+    public weak var pipSubtitleProvider: AnyObject?
     @Published
     public var bufferingProgress: Int = 0
     @Published
@@ -508,6 +511,39 @@ extension KSPlayerLayer: AVPictureInPictureControllerDelegate {
 
     public func pictureInPictureController(_: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler _: @escaping (Bool) -> Void) {
         isPipActive = false
+    }
+}
+
+// MARK: - KSPipSubtitleDelegate
+
+@available(tvOS 14.0, *)
+extension KSPlayerLayer: KSPipSubtitleDelegate {
+    public func pipSubtitleImage(at time: TimeInterval) -> UIImage? {
+        (pipSubtitleProvider as? KSPipSubtitleDelegate)?.pipSubtitleImage(at: time)
+    }
+
+    public func pipSubtitleAttributedText(at time: TimeInterval) -> NSAttributedString? {
+        (pipSubtitleProvider as? KSPipSubtitleDelegate)?.pipSubtitleAttributedText(at: time)
+    }
+}
+
+// MARK: - Display layer selection
+
+extension KSPlayerLayer {
+    /// Whether the content should use AVSampleBufferDisplayLayer instead of Metal custom shaders.
+    /// RE source: DisplayMetal.md — content-based display path selection.
+    ///
+    /// When Dolby Vision content is present and `enhanceDolby` is disabled, we need
+    /// custom Metal shaders for RPU processing, so AVSBDL is not suitable (return false).
+    /// In all other cases (SDR, HDR10, HLG, or DV with enhanceDolby enabled),
+    /// AVSampleBufferDisplayLayer handles the output correctly (return true).
+    public func shouldUseAVSBDL() -> Bool {
+        let isDovi = options.dynamicRange == .dolbyVision
+        if isDovi && !KSOptions.enhanceDolby {
+            // Dolby Vision without enhanced decode path needs Metal for RPU/shader processing
+            return false
+        }
+        return true
     }
 }
 

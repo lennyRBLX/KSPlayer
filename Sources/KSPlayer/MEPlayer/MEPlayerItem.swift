@@ -20,6 +20,12 @@ public final class MEPlayerItem: Sendable {
     private var outputFormatCtx: UnsafeMutablePointer<AVFormatContext>?
     private var outputPacket: UnsafeMutablePointer<AVPacket>?
     private var streamMapping = [Int: Int]()
+    /// Remuxer for TranscodeContext-based recording/transcoding pipeline.
+    /// Activated when options.outputURL is set and options.outputMediaType specifies
+    /// which stream types to include. Uses TranscodeContext hierarchy for per-stream
+    /// processing (copy, BSF, or full transcode).
+    /// RE: Forward v1.3.15 MEPlayerItem_createRemuxer (0x10130D7D0)
+    private var remuxer: Remuxer?
     private var openOperation: BlockOperation?
     private var readOperation: BlockOperation?
     private var closeOperation: BlockOperation?
@@ -265,6 +271,10 @@ extension MEPlayerItem {
 
         if let outputURL = options.outputURL {
             startRecord(url: outputURL)
+            // RE: Forward v1.3.15 MEPlayerItem_createRemuxer (0x10130D7D0)
+            // When outputURL is set, also create a Remuxer with the TranscodeContext
+            // pipeline for proper stream processing (BSF, transcode, etc.)
+            createRemuxer(outputURL: outputURL)
         }
         if videoTrack == nil, audioTrack == nil {
             state = .failed
@@ -615,6 +625,63 @@ extension MEPlayerItem {
             condition.signal()
         }
     }
+
+    /// RE: Forward v1.3.15 (0x10131EB9C)
+    /// Reconnects a network stream by closing the current format context and
+    /// fully reopening it. Configures a reconnect count in format context options,
+    /// recreates codecs from the new context, and resumes reading.
+    func reconnect() {
+        guard state != .closed else { return }
+        KSLog("[reconnect] initiating stream reconnection")
+        // Pause reading while we reconnect
+        let wasReading = state == .reading
+        if wasReading {
+            state = .paused
+        }
+        // Configure reconnect attempts
+        options.formatContextOptions["reconnect"] = 10
+
+        // Close current format context
+        allPlayerItemTracks.forEach { $0.shutdown() }
+        avformat_close_input(&self.formatCtx)
+
+        // Reopen from scratch — openThread handles alloc, open, find_stream_info, createCodec, and read()
+        openThread()
+    }
+
+    /// RE: Forward v1.3.15 (0x10131D888)
+    /// Checks whether all active video/audio track packet buffers contain data spanning
+    /// the target seek time. If all tracks can serve the seek from their in-memory packet
+    /// cache, returns true — allowing a fast seek without an expensive `av_seek_frame` call.
+    ///
+    /// - Parameter time: The target seek time in seconds
+    /// - Returns: `true` if all tracks can serve the seek from their packet cache
+    func usePacketCacheSeek(time: TimeInterval) -> Bool {
+        guard !videoAudioTracks.isEmpty else { return false }
+        for track in videoAudioTracks {
+            // Only AsyncPlayerItemTrack has a packetQueue we can scan
+            if let asyncTrack = track as? AsyncPlayerItemTrack<VideoVTBFrame> {
+                let found = asyncTrack.packetQueue.scan { packet in
+                    // Compare using seconds (packet timestamps are in per-track timebase)
+                    let packetStartSec = packet.seconds
+                    let packetEndSec = packetStartSec + packet.timebase.cmtime(for: packet.duration).seconds
+                    return packetStartSec <= time && packetEndSec > time
+                }
+                if found.isEmpty { return false }
+            } else if let asyncTrack = track as? AsyncPlayerItemTrack<AudioFrame> {
+                let found = asyncTrack.packetQueue.scan { packet in
+                    let packetStartSec = packet.seconds
+                    let packetEndSec = packetStartSec + packet.timebase.cmtime(for: packet.duration).seconds
+                    return packetStartSec <= time && packetEndSec > time
+                }
+                if found.isEmpty { return false }
+            } else {
+                // SyncPlayerItemTrack doesn't buffer packets — can't do cache seek
+                return false
+            }
+        }
+        return true
+    }
 }
 
 // MARK: MediaPlayback
@@ -694,6 +761,8 @@ extension MEPlayerItem: MediaPlayback {
         if let outputFormatCtx {
             av_write_trailer(outputFormatCtx)
         }
+        remuxer?.cancel()
+        remuxer = nil
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
@@ -877,6 +946,146 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
         } else {
             return nil
         }
+    }
+}
+
+// MARK: - TranscodeContext Factory & Remuxer Wiring
+
+extension MEPlayerItem {
+    /// Factory method that creates the appropriate TranscodeContext based on stream type.
+    /// RE: Forward v1.3.15 TranscodeContext_createForStreamIndex (0x1012E8BEC)
+    ///
+    /// Decision criteria from binary analysis:
+    /// - Audio: If AAC with ADTS headers (0xFF, >= 0xF0) and streamCount >= 3,
+    ///   use BSFTranscodeContext("aac_adtstoasc"); otherwise CopyTranscodeContext
+    /// - Video: CopyTranscodeContext (passthrough) -- muxer handles annexb filters
+    /// - Subtitle: SubtitleTranscodeContext targeting ASS or WEBVTT
+    /// - Default: CopyTranscodeContext.shared (singleton passthrough)
+    static func createTranscodeContext(
+        for stream: UnsafeMutablePointer<AVStream>,
+        streamCount: Int,
+        outputFormatName: String?
+    ) -> TranscodeProtocol {
+        let codecpar = stream.pointee.codecpar!
+        let mediaType = codecpar.pointee.codec_type
+        let timeBase = stream.pointee.time_base
+
+        switch mediaType {
+        case AVMEDIA_TYPE_AUDIO:
+            // RE: BSF decision criteria -- AAC codec with ADTS sync word and >= 3 streams
+            if codecpar.pointee.codec_id == AV_CODEC_ID_AAC, streamCount >= 3 {
+                // Check for ADTS sync word in extradata
+                let hasADTS: Bool
+                if let extradata = codecpar.pointee.extradata,
+                   codecpar.pointee.extradata_size >= 2 {
+                    hasADTS = extradata[0] == 0xFF && extradata[1] >= 0xF0
+                } else {
+                    hasADTS = false
+                }
+                if hasADTS {
+                    if let bsf = BSFTranscodeContext(filterName: "aac_adtstoasc",
+                                                     codecpar: codecpar,
+                                                     timeBase: timeBase) {
+                        return bsf
+                    }
+                }
+            }
+            return CopyTranscodeContext.shared
+
+        case AVMEDIA_TYPE_VIDEO:
+            // RE: Binary does NOT manually apply hevc_mp4toannexb or h264_mp4toannexb.
+            // FFmpeg's HLS/MOV muxer auto-inserts these BSFs internally.
+            return CopyTranscodeContext.shared
+
+        case AVMEDIA_TYPE_SUBTITLE:
+            // RE: Target codecs AV_CODEC_ID_ASS (94213) or AV_CODEC_ID_WEBVTT (94226)
+            if let sub = SubtitleTranscodeContext(inputCodecpar: codecpar,
+                                                  outputCodecID: AV_CODEC_ID_WEBVTT) {
+                return sub
+            }
+            return CopyTranscodeContext.shared
+
+        default:
+            return CopyTranscodeContext.shared
+        }
+    }
+
+    /// Create and attach a Remuxer for TranscodeContext-based output.
+    /// RE: Forward v1.3.15 MEPlayerItem_createRemuxer (0x10130D7D0), size 0x2FC
+    ///
+    /// Flow:
+    /// 1. If existing remuxer, cancel and clean up
+    /// 2. Create new Remuxer with input formatCtx and output URL
+    /// 3. OutputStreamInfo handles stream mapping and TranscodeContext creation
+    /// 4. Start the remux operation asynchronously
+    ///
+    /// Trigger: Called from openThread when options.outputURL is present.
+    private func createRemuxer(outputURL: URL) {
+        // Cancel any existing remuxer
+        remuxer?.cancel()
+        remuxer = nil
+
+        let outputFormat = outputURL.pathExtension.isEmpty ? nil : outputURL.pathExtension
+        let newRemuxer = Remuxer(inputURL: url, outputURL: outputURL, outputFormat: outputFormat)
+
+        // Wire progress handler
+        newRemuxer.progressHandler = { [weak self] progress in
+            KSLog("[remuxer] progress: \(Int(progress * 100))%")
+            _ = self // prevent unused capture warning
+        }
+
+        self.remuxer = newRemuxer
+
+        // Start remux asynchronously -- the Remuxer opens its own input context
+        // and runs the av_read_frame loop in a cancellable Task.
+        Task.detached { [weak self] in
+            let success = await newRemuxer.remux()
+            if !success {
+                KSLog("[remuxer] remux failed for \(outputURL)")
+            }
+            // Clean up on main
+            await MainActor.run {
+                if self?.remuxer === newRemuxer {
+                    self?.remuxer = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Cache I/O Pipeline
+
+extension MEPlayerItem {
+    /// Select the appropriate cache context based on KSOptions configuration.
+    /// RE: Forward v1.3.15 I/O Context Selection table:
+    ///   HTTP/HTTPS -> PreLoadIOContext (cache hierarchy)
+    ///   SMB/CIFS   -> SMB I/O context
+    ///   File       -> Default FFmpeg I/O
+    ///   Custom     -> AbstractAVIOContext subclass
+    ///
+    /// This method creates a cache-aware I/O context for network URLs
+    /// when seekUsePacketCache is enabled. The cache hierarchy provides:
+    ///   URLContextDownload -> ReadCacheIOContext -> LimitCacheIOContext
+    ///   -> LimitPreLoadIOContext (with moov protection)
+    ///
+    /// - Parameter url: The media URL to create a cache context for
+    /// - Returns: An AbstractAVIOContext subclass, or nil to use default FFmpeg I/O
+    private func createCacheContext(for url: URL) -> AbstractAVIOContext? {
+        guard options.seekUsePacketCache, !url.isFileURL else {
+            return nil
+        }
+
+        // Estimate bitrate for preload target size.
+        // Use file size / duration as a rough estimate, or a reasonable default.
+        let estimatedBitrate: Double
+        if duration > 0, fileSize > 0 {
+            estimatedBitrate = fileSize / duration // bytes per second
+        } else {
+            estimatedBitrate = 500_000 // ~4 Mbps default
+        }
+
+        let cacheSize = options.preferredForwardBufferDuration * estimatedBitrate
+        return LimitPreLoadIOContext(url: url, cacheSize: cacheSize)
     }
 }
 

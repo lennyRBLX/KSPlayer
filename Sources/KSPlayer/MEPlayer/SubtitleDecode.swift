@@ -20,8 +20,16 @@ class SubtitleDecode: DecodeProtocol {
     private var startTime = TimeInterval(0)
     private let assParse = AssParse()
     private var libassRenderer: LibassSubtitleRenderer?
+
+    /// ASS image renderer for complex subtitle styling (Forward v1.3.15).
+    public var assImageRenderer: AssIncrementImageRenderer?
+
+    /// Whether current subtitle stream is ASS/SSA format.
+    public var isASS: Bool = false
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         startTime = assetTrack.startTime.seconds
+        let codecId = assetTrack.codecpar.codec_id
+        isASS = (codecId == AV_CODEC_ID_ASS || codecId == AV_CODEC_ID_SSA)
         do {
             codecContext = try assetTrack.createContext(options: options)
             if let pointer = codecContext?.pointee.subtitle_header {

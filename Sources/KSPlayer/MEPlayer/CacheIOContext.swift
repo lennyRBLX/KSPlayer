@@ -1,5 +1,5 @@
 //
-//  CacheAVIOContext.swift
+//  CacheIOContext.swift
 //  KSPlayer
 //
 //  Forward addition (RE/40, RE/68): Progressive download cache with
@@ -7,9 +7,9 @@
 //  transparent caching of network media reads.
 //
 //  Hierarchy:
-//    CacheAVIOContext         — Core cache with HTTP range requests
-//      LimitCacheAVIOContext  — 512MB max per file
-//        PreLoadAVIOContext   — Moov protection (10MB), preload scheduling
+//    CacheIOContext         — Core cache with HTTP range requests
+//      LimitCacheIOContext  — 512MB max per file
+//        PreLoadIOContext   — Moov protection (10MB), preload scheduling
 //
 
 import Foundation
@@ -74,13 +74,13 @@ final class CacheFileSegment {
     deinit { close() }
 }
 
-// MARK: - CacheAVIOContext
+// MARK: - CacheIOContext
 
 /// Disk-caching AVIO layer for progressive download of network media.
 /// Thread-safe via NSRecursiveLock. Each segment maps a byte range to a file.
 ///
 /// Disk layout: NSTemporaryDirectory()/videoCaches/<md5(url)>/<position>
-open class CacheAVIOContext: AbstractAVIOContext {
+open class CacheIOContext: AbstractAVIOContext {
     private(set) var segments: [CacheFileSegment] = []
     private let cacheDirectory: URL
     private var totalFileSize: Int64 = 0
@@ -237,10 +237,10 @@ open class CacheAVIOContext: AbstractAVIOContext {
     }
 }
 
-// MARK: - LimitCacheAVIOContext
+// MARK: - LimitCacheIOContext
 
 /// 512MB max cache per file (RE/40: maxSize = 0x20000000).
-open class LimitCacheAVIOContext: CacheAVIOContext {
+open class LimitCacheIOContext: CacheIOContext {
     let maxSize: Int64 = 512 * 1024 * 1024
 
     override open func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
@@ -256,18 +256,18 @@ open class LimitCacheAVIOContext: CacheAVIOContext {
     }
 }
 
-// MARK: - PreLoadAVIOContext
+// MARK: - PreLoadIOContext
 
 /// Moov protection (10MB), preload scheduling, and URL-based zero-delay switching (RE/40, RE/68).
 /// RE source: Forward v1.3.15 PreLoadIOContext_initURLDownload (0x10157f818)
-public final class PreLoadAVIOContext: LimitCacheAVIOContext {
+public final class PreLoadIOContext: LimitCacheIOContext {
     let moovProtectionSize: Int64 = 10 * 1024 * 1024
     /// RE-confirmed: Forward uses 0x40000 (256KB) buffer for preload downloads
     public static let preloadBufferSize: Int = 0x40000
 
     /// Queue of URLs to preload for zero-delay switching (e.g., next episode)
     private var preloadQueue = [URL]()
-    private var preloadedContexts = [String: PreLoadAVIOContext]()
+    private var preloadedContexts = [String: PreLoadIOContext]()
     private var preloadTask: Task<Void, Never>?
     private let preloadLock = NSLock()
 
@@ -298,7 +298,7 @@ public final class PreLoadAVIOContext: LimitCacheAVIOContext {
     }
 
     /// Check if a URL has been preloaded and return its cache context for zero-delay open.
-    public func preloadedContext(for url: URL) -> PreLoadAVIOContext? {
+    public func preloadedContext(for url: URL) -> PreLoadIOContext? {
         preloadLock.lock()
         defer { preloadLock.unlock() }
         return preloadedContexts[url.absoluteString]
@@ -318,7 +318,7 @@ public final class PreLoadAVIOContext: LimitCacheAVIOContext {
         let url = preloadQueue.removeFirst()
         preloadTask = Task.detached { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            let context = PreLoadAVIOContext(url: url)
+            let context = PreLoadIOContext(url: url)
             context.ensureMoovCached()
             self.preloadLock.lock()
             self.preloadedContexts[url.absoluteString] = context

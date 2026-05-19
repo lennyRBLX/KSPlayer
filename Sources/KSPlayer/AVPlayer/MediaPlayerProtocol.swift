@@ -241,7 +241,7 @@ public extension MediaPlayerTrack {
 public extension CMFormatDescription {
     var dynamicRange: DynamicRange {
         let contentRange: DynamicRange
-        if codecType.string == "dvhe" || codecType == kCMVideoCodecType_DolbyVisionHEVC {
+        if codecType.string == "dvhe" || codecType.string == "dvh1" || codecType == kCMVideoCodecType_DolbyVisionHEVC {
             contentRange = .dolbyVision
         } else if bitDepth == 10 || transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String { /// HDR
             contentRange = .hdr10

@@ -17,9 +17,24 @@ class FFmpegDecode: DecodeProtocol {
     private let frameChange: FrameChange
     private let filter: MEFilter
     private let seekByBytes: Bool
+    /// Actively configured color space parameters from the codec context.
+    /// Updated after codec init and when frame color params change.
+    private var configuredColorPrimaries: AVColorPrimaries = AVCOL_PRI_UNSPECIFIED
+    private var configuredColorTrc: AVColorTransferCharacteristic = AVCOL_TRC_UNSPECIFIED
+    private var configuredColorSpace: AVColorSpace = AVCOL_SPC_UNSPECIFIED
+    private var configuredColorRange: AVColorRange = AVCOL_RANGE_UNSPECIFIED
+
+    /// True after first successful frame decode. Used for two-tier VTB fallback.
+    /// RE: FFmpegDecode field #7 (Forward v1.3.15)
+    public var hasDecodeSuccess: Bool = false
+
+    /// Cached media type check. Micro-optimization for high frame rate decode.
+    /// RE: FFmpegDecode field #8 (Forward v1.3.15)
+    public let isVideo: Bool
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.options = options
         seekByBytes = assetTrack.seekByBytes
+        isVideo = assetTrack.mediaType == .video
         do {
             codecContext = try assetTrack.createContext(options: options)
         } catch {
@@ -29,6 +44,10 @@ class FFmpegDecode: DecodeProtocol {
         filter = MEFilter(timebase: assetTrack.timebase, isAudio: assetTrack.mediaType == .audio, nominalFrameRate: assetTrack.nominalFrameRate, options: options)
         if assetTrack.mediaType == .video {
             frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, isDovi: assetTrack.dovi != nil)
+            // RE: actively configure color space after codec initialization
+            if let codecContext {
+                configureVideoColorSpace(codecContext)
+            }
         } else {
             frameChange = AudioSwresample(audioDescriptor: assetTrack.audioDescriptor!)
         }
@@ -58,6 +77,8 @@ class FFmpegDecode: DecodeProtocol {
         while true {
             let result = avcodec_receive_frame(codecContext, coreFrame)
             if result == 0, let inputFrame = coreFrame {
+                // RE: check for mid-stream color space changes on each decoded frame
+                checkFrameColorSpaceChange(inputFrame)
                 var displayData: MasteringDisplayMetadata?
                 var contentData: ContentLightMetadata?
                 var ambientViewingEnvironment: AmbientViewingEnvironment?
@@ -171,6 +192,7 @@ class FFmpegDecode: DecodeProtocol {
                         }
                         frame.timestamp = timestamp
                         bestEffortTimestamp = timestamp &+ frame.duration
+                        hasDecodeSuccess = true
                         completionHandler(.success(frame))
                     } catch {
                         completionHandler(.failure(error))
@@ -207,6 +229,67 @@ class FFmpegDecode: DecodeProtocol {
         bestEffortTimestamp = Int64(0)
         if codecContext != nil {
             avcodec_flush_buffers(codecContext)
+        }
+    }
+
+    // MARK: - Video Color Space Configuration
+
+    /// Actively configure video color space parameters from AVCodecContext fields.
+    /// Called after codec initialization and after each decoded frame where color
+    /// parameters may have changed (e.g., mid-stream color space switches).
+    /// Follows the same pattern as AV_FRAME_DATA_DOVI_METADATA side-data reading
+    /// but reads from the codec context / frame fields directly.
+    /// RE: configureVideoColorSpace — maps to the binary's active color config path
+    private func configureVideoColorSpace(_ codecContext: UnsafeMutablePointer<AVCodecContext>) {
+        let colorRange = codecContext.pointee.color_range
+        let colorPrimaries = codecContext.pointee.color_primaries
+        let colorTrc = codecContext.pointee.color_trc
+        let colorSpace = codecContext.pointee.colorspace
+
+        // Only log and update when something actually changed
+        guard colorPrimaries != configuredColorPrimaries
+                || colorTrc != configuredColorTrc
+                || colorSpace != configuredColorSpace
+                || colorRange != configuredColorRange
+        else {
+            return
+        }
+
+        configuredColorPrimaries = colorPrimaries
+        configuredColorTrc = colorTrc
+        configuredColorSpace = colorSpace
+        configuredColorRange = colorRange
+
+        let isFullRange = colorRange == AVCOL_RANGE_JPEG
+        let primariesStr = colorPrimaries.colorPrimaries as String? ?? "unknown"
+        let transferStr = colorTrc.transferFunction as String? ?? "unknown"
+        let matrixStr = colorSpace.ycbcrMatrix as String? ?? "unknown"
+
+        KSLog("[ColorSpace] configured: primaries=\(primariesStr), transfer=\(transferStr), matrix=\(matrixStr), fullRange=\(isFullRange)")
+    }
+
+    /// Check if a decoded frame has different color parameters than the codec context
+    /// and reconfigure if needed. Called per-frame in the decode loop.
+    private func checkFrameColorSpaceChange(_ frame: UnsafeMutablePointer<AVFrame>) {
+        guard let codecContext else { return }
+        let framePrimaries = frame.pointee.color_primaries
+        let frameTrc = frame.pointee.color_trc
+        let frameColorSpace = frame.pointee.colorspace
+        let frameColorRange = frame.pointee.color_range
+
+        // Detect mid-stream color space change from frame fields
+        if framePrimaries != AVCOL_PRI_UNSPECIFIED, framePrimaries != configuredColorPrimaries {
+            codecContext.pointee.color_primaries = framePrimaries
+            configureVideoColorSpace(codecContext)
+        } else if frameTrc != AVCOL_TRC_UNSPECIFIED, frameTrc != configuredColorTrc {
+            codecContext.pointee.color_trc = frameTrc
+            configureVideoColorSpace(codecContext)
+        } else if frameColorSpace != AVCOL_SPC_UNSPECIFIED, frameColorSpace != configuredColorSpace {
+            codecContext.pointee.colorspace = frameColorSpace
+            configureVideoColorSpace(codecContext)
+        } else if frameColorRange != AVCOL_RANGE_UNSPECIFIED, frameColorRange != configuredColorRange {
+            codecContext.pointee.color_range = frameColorRange
+            configureVideoColorSpace(codecContext)
         }
     }
 }

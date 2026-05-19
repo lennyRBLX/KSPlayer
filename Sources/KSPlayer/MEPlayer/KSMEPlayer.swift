@@ -167,8 +167,65 @@ private extension KSMEPlayer {
 
     @objc private func spatialCapabilityChange(notification _: Notification) {
         KSLog("[audio] spatialCapabilityChange")
+        #if !os(macOS)
+        checkSpatialAudioAndSetMultichannel()
+        #endif
         for track in tracks(mediaType: .audio) {
             (track as? FFmpegAssetTrack)?.audioDescriptor?.updateAudioFormat()
+        }
+    }
+
+    /// RE: Forward v1.3.15 (0x101296B88)
+    /// Checks if any audio output port supports spatial audio and configures
+    /// multichannel output accordingly.
+    #if !os(macOS)
+    private func checkSpatialAudioAndSetMultichannel() {
+        guard #available(iOS 15.0, tvOS 15.0, *) else { return }
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let hasSpatial = route.outputs.contains { $0.isSpatialAudioEnabled }
+        KSLog("[audio] checkSpatialAudio: hasSpatial=\(hasSpatial)")
+        if hasSpatial {
+            // Let the system decide channel count for multichannel spatial output
+            try? AVAudioSession.sharedInstance().setSupportsMultichannelContent(true)
+            options.isSpatialAudioEnabled = true
+        } else {
+            options.isSpatialAudioEnabled = false
+        }
+    }
+    #endif
+
+    /// RE: Forward v1.3.15 (0x1013085A4)
+    /// Flushes the video output buffer and, if paused with a seekable source using
+    /// hardware decode, re-seeks to the current position to refresh the displayed frame.
+    private func flushVideoAndReseek() {
+        videoOutput?.flush()
+        let isPaused = playbackState == .paused
+        if isPaused, playerItem.seekable, playerItem.duration > 0, options.hardwareDecode {
+            let currentTime = playerItem.currentPlaybackTime
+            playerItem.seek(time: currentTime) { _ in }
+        }
+    }
+
+    /// RE: Forward v1.3.15 (0x101305968)
+    /// Updates `playableTime` from current loading state and calculates buffering
+    /// percentage from (loadedTime / preferredForwardBufferDuration). If buffering
+    /// is complete (progress >= 100), transitions load state to playable.
+    private func updateBufferingState() {
+        let loadedTime = playableTime - currentPlaybackTime
+        let targetDuration = options.preferredForwardBufferDuration
+        let progress: Int
+        if targetDuration == 0 {
+            progress = 100
+        } else {
+            progress = min(100, Int(loadedTime * 100.0 / targetDuration))
+        }
+        if progress >= 100, loadState != .playable {
+            loadState = .playable
+        }
+        if playbackState == .playing {
+            runOnMainThread { [weak self] in
+                self?.bufferingProgress = progress
+            }
         }
     }
 
@@ -375,8 +432,12 @@ extension KSMEPlayer: MediaPlayerProtocol {
         playerItem.seek(time: seekTime) { [weak self] result in
             guard let self else { return }
             if result {
-                self.audioOutput.flush()
                 let seekCMTime = CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1)
+                if let renderer = self.audioOutput as? AudioRendererPlayer {
+                    renderer.flush(seekTime: seekCMTime)
+                } else {
+                    self.audioOutput.flush()
+                }
                 if let metalPlayView = self.videoOutput as? MetalPlayView {
                     metalPlayView.displayView.seek(to: seekCMTime)
                 } else {

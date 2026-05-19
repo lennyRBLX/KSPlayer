@@ -74,6 +74,7 @@ public class KSPictureInPictureController: AVPictureInPictureController {
     func start(view: KSPlayerLayer) {
         startPictureInPicture()
         delegate = view
+        subtitleDelegate = view
         guard KSOptions.isPipPopViewController else {
             #if canImport(UIKit)
             // 直接退到后台

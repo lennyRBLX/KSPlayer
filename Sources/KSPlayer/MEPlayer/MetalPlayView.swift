@@ -42,10 +42,14 @@ public final class MetalPlayView: UIView, VideoOutput {
             if fps != oldValue {
                 if KSOptions.preferredFrame {
                     let preferredFramesPerSecond = ceil(fps)
-                    if #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
-                        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
-                    } else {
-                        displayLink.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
+                    if let displayLink {
+                        if #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
+                            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
+                        } else {
+                            displayLink.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
+                        }
+                    } else if sharedDisplayLinkSubscription != nil {
+                        SharedDisplayLink.shared.updatePreferredFPS(preferredFramesPerSecond)
                     }
                 }
                 options.updateVideo(refreshRate: fps, isDovi: isDovi, formatDescription: formatDescription)
@@ -55,7 +59,11 @@ public final class MetalPlayView: UIView, VideoOutput {
 
     public private(set) var pixelBuffer: PixelBufferProtocol?
     /// displayLink drives Metal path only. AVSBDL path uses requestMediaDataWhenReady.
-    private var displayLink: CADisplayLink!
+    private var displayLink: CADisplayLink?
+    /// Subscription token when using SharedDisplayLink instead of per-view CADisplayLink.
+    private var sharedDisplayLinkSubscription: SharedDisplayLink.Subscription?
+    /// Tracks paused state for SharedDisplayLink mode (shared link doesn't support per-subscriber pause).
+    private var isRenderPaused = true
     public var options: KSOptions
     public weak var renderSource: OutputRenderSourceDelegate?
     var displayView = AVSampleBufferDisplayView() {
@@ -72,12 +80,20 @@ public final class MetalPlayView: UIView, VideoOutput {
         addSubview(displayView)
         addSubview(metalView)
         metalView.isHidden = true
-        displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
-        displayLink.add(to: .main, forMode: .common)
+        if KSOptions.useSharedDisplayLink {
+            sharedDisplayLinkSubscription = SharedDisplayLink.shared.subscribe { [weak self] in
+                self?.renderFrame()
+            }
+        } else {
+            let link = CADisplayLink(target: self, selector: #selector(renderFrame))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
         pause()
     }
 
     public func play() {
+        isRenderPaused = false
         if options.isUseDisplayLayer() {
             if displayView.isHidden {
                 displayView.isHidden = false
@@ -87,15 +103,18 @@ public final class MetalPlayView: UIView, VideoOutput {
             displayView.owner = self
             displayView.play(renderSource: renderSource)
         } else {
-            displayLink.isPaused = false
+            displayLink?.isPaused = false
+            // SharedDisplayLink stays running; renderFrame checks isRenderPaused
         }
     }
 
     public func pause() {
+        isRenderPaused = true
         if options.isUseDisplayLayer() {
             displayView.pause()
         }
-        displayLink.isPaused = true
+        displayLink?.isPaused = true
+        // SharedDisplayLink stays running; renderFrame checks isRenderPaused
     }
 
     @available(*, unavailable)
@@ -168,7 +187,11 @@ public final class MetalPlayView: UIView, VideoOutput {
 
     public func invalidate() {
         displayView.stopRequestingData()
-        displayLink.invalidate()
+        displayLink?.invalidate()
+        if let sub = sharedDisplayLinkSubscription {
+            SharedDisplayLink.shared.unsubscribe(sub)
+            sharedDisplayLinkSubscription = nil
+        }
     }
 
     public func readNextFrame() {
@@ -186,7 +209,7 @@ public final class MetalPlayView: UIView, VideoOutput {
 
 extension MetalPlayView {
     @objc private func renderFrame() {
-        if options.isUseDisplayLayer() {
+        if options.isUseDisplayLayer() || isRenderPaused {
             return
         }
         draw(force: false)
@@ -251,7 +274,7 @@ extension MetalPlayView {
                let header = doviData.header, let mapping = doviData.mapping {
                 doviMetadata = DoviGPUMetadata.from(header: header, mapping: mapping, color: doviData.color)
             }
-            metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, doviMetadata: doviMetadata)
+            metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, doviMetadata: doviMetadata, options: options)
             renderSource?.setVideo(time: cmtime, position: frame.position)
         }
     }
@@ -259,7 +282,7 @@ extension MetalPlayView {
     private func checkFormatDescription(pixelBuffer: PixelBufferProtocol) {
         if formatDescription == nil || !pixelBuffer.matche(formatDescription: formatDescription!) {
             if formatDescription != nil {
-                let wasPlaying = !displayLink.isPaused || displayView.isPlaying
+                let wasPlaying = !(displayLink?.isPaused ?? isRenderPaused) || displayView.isPlaying
                 displayView.stopRequestingData()
                 displayView.removeFromSuperview()
                 displayView = AVSampleBufferDisplayView()
@@ -276,6 +299,11 @@ extension MetalPlayView {
 
 class MetalView: UIView {
     private let render = MetalRender()
+    private lazy var anime4KPipeline: Anime4KPipeline? = {
+        guard KSOptions.enableAnime4K else { return nil }
+        return Anime4KPipeline(device: MetalRender.device)
+    }()
+
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { CAMetalLayer.self }
     #endif
@@ -307,7 +335,10 @@ class MetalView: UIView {
     }
 
     func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize,
-              doviMetadata: DoviGPUMetadata? = nil) {
+              doviMetadata: DoviGPUMetadata? = nil, options: KSOptions? = nil) {
+        if let options, !options.canUseSimpleRenderPipeline() {
+            render.updateBCSFromOptions(options)
+        }
         metalLayer.drawableSize = size
         metalLayer.pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
 
@@ -360,6 +391,17 @@ class MetalView: UIView {
             render.drawDovi(pixelBuffer: pixelBuffer, drawable: drawable, metadata: metadata)
         } else {
             render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
+        }
+        // Anime4K upscaling pass — runs after main render, before display
+        if KSOptions.enableAnime4K, let pipeline = anime4KPipeline {
+            if !pipeline.isConfigured {
+                let inputW = pixelBuffer.cvPixelBuffer.map { CVPixelBufferGetWidth($0) } ?? Int(size.width)
+                let inputH = pixelBuffer.cvPixelBuffer.map { CVPixelBufferGetHeight($0) } ?? Int(size.height)
+                _ = pipeline.loadPreset(KSOptions.anime4KPreset, inputWidth: inputW, inputHeight: inputH)
+            }
+            if pipeline.isConfigured {
+                _ = pipeline.process(inputTexture: drawable.texture)
+            }
         }
     }
 }

@@ -44,19 +44,39 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     // MARK: - Forward additions (RE/67)
 
     /// Subtitle vertical offset for positioning
+    // RE stub: not yet wired
     public var translateY: Float = 0.0
     /// Per-track subtitle renderer (libass/bitmap/text)
+    // RE stub: not yet wired
     public var subtitleRender: KSSubtitleProtocol?
     /// Track contains image data (non-video)
+    // RE stub: not yet wired
     public var isImage: Bool = false
     /// Single-frame still image (e.g., cover art)
+    // RE stub: not yet wired
     public var isStillImage: Bool = false
     /// Bit stream filter type for annex-B conversion
+    // RE stub: not yet wired
     public var bitStreamFilter: (any BitStreamFilterProtocol.Type)?
     /// Container default track flag (AV_DISPOSITION_DEFAULT)
     public var isDefault: Bool = false
     /// Dual-language audio detection
+    // RE stub: not yet wired
     public var isBilingual: Bool = false
+
+    /// Native AVAudioFormat for Atmos E-AC-3 JOC passthrough routing.
+    /// RE: FFmpegAssetTrack field #29 (Forward v1.3.15)
+    public var audioFormat: AVAudioFormat?
+
+    /// Subtitle scale factor.
+    /// RE: FFmpegAssetTrack field #28 (Forward v1.3.15)
+    // RE stub: not yet wired to consumers
+    public var scale: Float = 1.0
+
+    /// Reorder buffer size for B-frame reordering.
+    /// RE: FFmpegAssetTrack field #26 (Forward v1.3.15)
+    // RE stub: not yet wired to consumers
+    public var reorderSize: Int32 = 0
     public var description: String {
         var description = codecName
         if let formatName {

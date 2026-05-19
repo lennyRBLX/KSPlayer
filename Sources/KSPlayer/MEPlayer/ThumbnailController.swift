@@ -452,8 +452,56 @@ public class ThumbnailController {
     public weak var delegate: ThumbnailControllerDelegate?
     private let thumbnailCount: Int
     public var useCache = true
+    /// Configured media URL, set via `configure(url:options:duration:)`
+    public private(set) var mediaURL: URL?
+    /// Configured media duration in seconds
+    public private(set) var mediaDuration: TimeInterval = 0
+    /// Options snapshot from configuration
+    public private(set) var configuredOptions: KSOptions?
+    /// ThumbnailSession created during configuration for batch/realtime use
+    private var session: ThumbnailSession?
+    /// RealtimeThumbnailGenerator created during configuration
+    public private(set) var realtimeGenerator: RealtimeThumbnailGenerator?
+
     public init(thumbnailCount: Int = 100) {
         self.thumbnailCount = thumbnailCount
+    }
+
+    /// Bind the controller to a player instance by providing the media URL,
+    /// player options, and total duration. Creates or reconfigures the
+    /// underlying ThumbnailSession and RealtimeThumbnailGenerator.
+    /// RE: ThumbnailController.configure at 0x10133339c
+    public func configure(url: URL, options: KSOptions, duration: TimeInterval) {
+        // Tear down previous session if URL changed
+        if let existingURL = mediaURL, existingURL != url {
+            session?.cancel()
+            session?.shutdown()
+            session = nil
+            realtimeGenerator = nil
+        }
+
+        mediaURL = url
+        mediaDuration = duration
+        configuredOptions = options
+
+        // Determine thumbnail width from options or use default
+        let thumbWidth: Int32 = 240
+
+        // Create or reconfigure the ThumbnailSession
+        if session == nil {
+            session = ThumbnailSession(
+                url: url,
+                thumbnailWidth: thumbWidth,
+                requestedFrameCount: thumbnailCount
+            )
+        }
+
+        // Create the RealtimeThumbnailGenerator for scrubbing if not yet created
+        if realtimeGenerator == nil {
+            realtimeGenerator = RealtimeThumbnailGenerator(url: url, frameCount: thumbnailCount)
+        }
+
+        KSLog("[ThumbnailController] configured for \(url.lastPathComponent), duration=\(duration)s, count=\(thumbnailCount)")
     }
 
     public func generateThumbnail(for url: URL, thumbWidth: Int32 = 240) async throws -> [FFThumbnail] {
