@@ -373,8 +373,10 @@ public class MetalSubtitleView: MTKView, MTKViewDelegate {
 // MARK: - DynamicRange Color Space Extension
 
 extension DynamicRange {
-    /// RE: DynamicRange_toCGColorSpace at 0x1012B5060
+    /// RE: DynamicRange_toCGColorSpace at 0x1013c7150
     /// Maps dynamic range to the appropriate CGColorSpace for subtitle rendering.
+    /// Note: Three DynamicRange enum schemes exist (Forward compact / Upstream / Components).
+    /// This extension uses the upstream scheme (sdr=0, hdr10=2, hlg=3, dolbyVision=5).
     var cgColorSpace: CGColorSpace {
         switch self {
         case .sdr:

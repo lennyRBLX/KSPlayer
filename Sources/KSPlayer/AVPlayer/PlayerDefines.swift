@@ -136,6 +136,28 @@ extension DynamicRange {
     }
 }
 
+extension DynamicRange {
+    /// Forward v1.3.15 uses a compact 0–3 scheme internally.
+    /// Binary ref: Components_mapDynamicRange_KSPlayerToVideoMediaInfo @ 0x100947498
+    public init(forwardValue: Int) {
+        switch forwardValue {
+        case 1:  self = .hdr10
+        case 2:  self = .hlg
+        case 3:  self = .dolbyVision
+        default: self = .sdr
+        }
+    }
+
+    public var forwardValue: Int {
+        switch self {
+        case .sdr:          return 0
+        case .hdr10:        return 1
+        case .hlg:          return 2
+        case .dolbyVision:  return 3
+        }
+    }
+}
+
 @MainActor
 public enum DisplayEnum {
     case plane
