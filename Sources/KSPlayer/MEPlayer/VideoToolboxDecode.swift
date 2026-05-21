@@ -11,22 +11,50 @@ import Libavformat
 import VideoToolbox
 
 class VideoToolboxDecode: DecodeProtocol {
+    // MARK: - Fields (RE: VideoToolboxDecode, 8 fields per types.json)
+    // Field order below mirrors the binary type-dump declaration order.
+
+    /// #1 — VTB session wrapper. Invalidates the prior session on replacement.
     private var session: DecompressionSession {
         didSet {
             VTDecompressionSessionInvalidate(oldValue.decompressionSession)
         }
     }
 
+    /// #2 — Player configuration reference.
     private let options: KSOptions
+
+    /// #3 — Sync offset applied when packets are discarded after a seek.
     private var startTime = Int64(0)
-    private var lastPosition = Int64(0)
+
+    /// #4 — Largest PTS observed so far (reorder-buffer ordering anchor).
+    private var maxTimestamp = Int64(0)
+
+    /// #5 — Running monotonic timestamp tracker (was `lastPosition` in the
+    /// earlier source revision; renamed to match the binary's
+    /// `lastTimestamp` field at +0x28 of the class layout).
+    private var lastTimestamp = Int64(0)
+
+    /// #6 — Set when the session must be recreated on the next decode.
     private var needReconfig = false
-    /// Tracks whether VTB has ever produced a frame (RE/67: 3-tier error handling)
-    private var hasDecodeSuccess = false
+
+    /// #7 — Frame reorder buffer. VTB outputs in decode order; we sort to PTS.
+    /// Binary uses `DecompressionSession_introsortFrames @ 0x101452620` /
+    /// `_introsortPartition @ 0x101452cf4`. Source uses an insertion sort
+    /// over the small reorder window; for typical N (4–120 frames) the two
+    /// behave identically.
+    private var frames: [VideoVTBFrame] = []
+
+    /// #8 — Reorder capacity: `max(4, 2 * fps)`.
+    private var maxFrameCount: Int = 8
 
     init(options: KSOptions, session: DecompressionSession) {
         self.options = options
         self.session = session
+        let fps = session.assetTrack.nominalFrameRate
+        if fps > 0 {
+            maxFrameCount = max(4, Int(fps) * 2)
+        }
     }
 
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
@@ -40,7 +68,12 @@ class VideoToolboxDecode: DecodeProtocol {
             return
         }
         do {
-            let sampleBuffer = try session.formatDescription.getSampleBuffer(isConvertNALSize: session.assetTrack.isConvertNALSize, data: data, size: Int(corePacket.size))
+            // RE: NAL-prefix conversion is routed through the track's
+            // `bitStreamFilter` metatype; `Nal3ToNal4BitStreamFilter`
+            // indicates the AVCC stream uses 3-byte NAL length prefixes
+            // that must be promoted to 4 bytes before VTB submission.
+            let needsConversion = session.assetTrack.needsNALSizeConversion
+            let sampleBuffer = try session.formatDescription.getSampleBuffer(isConvertNALSize: needsConversion, data: data, size: Int(corePacket.size))
             let flags: VTDecodeFrameFlags = [
                 ._EnableAsynchronousDecompression,
             ]
@@ -55,42 +88,52 @@ class VideoToolboxDecode: DecodeProtocol {
                 }
                 guard status == noErr else {
                     if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                        if !self.hasDecodeSuccess {
-                            // Tier 1: never succeeded — retry session
-                            self.needReconfig = true
-                        } else if packet.isKeyFrame {
-                            // Tier 2: succeeded before, keyframe failed — permanent fallback
+                        // RE: Forward v1.3.15 recovery branch sets needReconfig
+                        // on the VideoToolboxDecode self. The decision between
+                        // "transient retry" and "permanent fallback to software
+                        // decode" is taken at the track level after the error
+                        // propagates through `MEPlayerItemTrack.doDecode`.
+                        if packet.isKeyFrame {
                             completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
                         } else {
-                            // Tier 3: succeeded before, non-keyframe — reconfig and continue
                             self.needReconfig = true
                         }
                     }
                     return
                 }
-                self.hasDecodeSuccess = true
-                let frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
-                frame.corePixelBuffer = imageBuffer
-                frame.timebase = session.assetTrack.timebase
-                if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.lastPosition > 0 {
-                    self.startTime = self.lastPosition - timestamp
+                let frame: VideoVTBFrame
+                if let imageBuffer = imageBuffer as PixelBufferProtocol? {
+                    frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil, pixelBuffer: imageBuffer)
+                } else {
+                    frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
                 }
-                self.lastPosition = max(self.lastPosition, timestamp)
+                frame.timebase = session.assetTrack.timebase
+                if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.lastTimestamp > 0 {
+                    self.startTime = self.lastTimestamp - timestamp
+                }
+                self.maxTimestamp = max(self.maxTimestamp, timestamp)
+                self.lastTimestamp = max(self.lastTimestamp, timestamp)
                 frame.position = packet.position
                 frame.timestamp = self.startTime + timestamp
                 frame.duration = duration
+                frame.isKeyFrame = packet.isKeyFrame
                 frame.size = size
-                self.lastPosition += frame.duration
-                completionHandler(.success(frame))
+                self.lastTimestamp += frame.duration
+                // RE: Forward v1.3.15 frame reorder buffer — insertion sort by PTS
+                // (VideoToolboxDecode_sortFramesByPTS @ 0x10144fa74)
+                self.insertSorted(frame: frame)
+                // Emit oldest frame when buffer is full
+                if self.frames.count >= self.maxFrameCount {
+                    let emitted = self.frames.removeFirst()
+                    completionHandler(.success(emitted))
+                }
             }
             if status == noErr {
                 if !flags.contains(._EnableAsynchronousDecompression) {
                     VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
                 }
             } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                if !hasDecodeSuccess {
-                    needReconfig = true
-                } else if packet.isKeyFrame {
+                if packet.isKeyFrame {
                     throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
                 } else {
                     needReconfig = true
@@ -102,23 +145,46 @@ class VideoToolboxDecode: DecodeProtocol {
     }
 
     func doFlushCodec() {
-        lastPosition = 0
+        // RE: On flush, emit all cached frames in PTS order then clear
+        frames.removeAll()
+        lastTimestamp = 0
+        maxTimestamp = 0
         startTime = 0
     }
 
     func shutdown() {
+        frames.removeAll()
         VTDecompressionSessionInvalidate(session.decompressionSession)
     }
 
     func decode() {
-        lastPosition = 0
+        frames.removeAll()
+        lastTimestamp = 0
+        maxTimestamp = 0
         startTime = 0
+    }
+
+    /// RE: Forward v1.3.15 reorder-buffer sort (binary symbol:
+    /// `VideoToolboxDecode_sortFramesByPTS @ 0x10144fa74`, dispatches to
+    /// `DecompressionSession_introsortFrames @ 0x101452620`).
+    /// Source uses insertion sort over the small reorder window; for typical
+    /// N (4–120 frames) this is equivalent to the binary's introsort.
+    private func insertSorted(frame: VideoVTBFrame) {
+        var insertIndex = frames.count
+        while insertIndex > 0 && frames[insertIndex - 1].timestamp > frame.timestamp {
+            insertIndex -= 1
+        }
+        frames.insert(frame, at: insertIndex)
     }
 }
 
 class DecompressionSession {
+    // MARK: - Fields (RE: DecompressionSession, 3 fields per types.json)
+    /// #1 @ +0x10 — Video format description sourced from `track + 0xD0`.
     fileprivate let formatDescription: CMFormatDescription
+    /// #2 @ +0x18 — Active Apple VTB session.
     fileprivate let decompressionSession: VTDecompressionSession
+    /// #3 @ +0x20 — Source track.
     fileprivate var assetTrack: FFmpegAssetTrack
     init?(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.assetTrack = assetTrack

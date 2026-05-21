@@ -17,21 +17,42 @@ import CryptoKit
 #endif
 
 public class Anime4K {
-    // MARK: - Properties (RE field offsets: 0x10 - 0x70)
+    // MARK: - Properties (RE field offsets: instance size 0x98 from
+    //         _swift_deallocPartialClassInstance(self, _, 0x98, 7) in Anime4K_compileOrLoadShaders)
 
-    public var qualityLevel: Int = 115
-    private let device: MTLDevice
-    private var shaderSource: String = ""
-    private var parsedShaders: [[String: Any]] = []
-    private var compiledPipelines: [MTLFunction] = []
-    private var metalLibrary: MTLLibrary?
+    // Refcounted fields +0x10 .. +0x70 — released by Anime4K_deinit (0x1003b4e74).
+    public var qualityLevel: Int = 115                  // +0x10  init 0x73 (115)
+    private let device: MTLDevice                       // +0x18
+    private var shaderSource: String = ""               // +0x20
+    private var parsedShaders: [[String: Any]] = []     // +0x28
+    private var compiledPipelines: [MTLFunction] = []   // +0x30
+    private var metalLibrary: MTLLibrary?               // +0x38
 
-    private var shaderNames: [String] = []
-    private var shaderPaths: [String] = []
-    private var cachedTextures: [String] = []
-    private var qualitySuffixes: [String] = []
-    private var filterResults: [String] = []
-    private var performanceStats: [String] = []
+    private var shaderNames: [String] = []              // +0x40
+    private var shaderPaths: [String] = []              // +0x48
+    private var cachedTextures: [String] = []           // +0x50
+    private var qualitySuffixes: [String] = []          // +0x58
+    private var filterResults: [String] = []            // +0x60
+    private var performanceStats: [String] = []         // +0x68
+    /// Frame-time ring buffer text history (the "additional array" slot at +0x70 in the
+    /// reversed binary). 30 samples of recent frame timings used by buildPerformanceStatsString.
+    private var frameTimeHistory: [String] = []         // +0x70
+
+    // POD perf-monitor scalars +0x78 .. +0x90 — NOT touched by Anime4K_deinit (no swift_release calls).
+    // Set by Anime4K_compileOrLoadShaders at init:
+    //   *(self+0x78) = 0xFFFFFFFFFFFFFFFF  (-1 sentinel)
+    //   *(self+0x80) = 0
+    //   *(self+0x88) = 0
+    //   *(self+0x90) = 0
+
+    /// "No last sample" sentinel; ring-buffer cursor for the 30-sample frame-time history.
+    private var lastSampleIndex: Int = -1               // +0x78  init -1
+    /// Most-recent frame time in ms (raw monotonic ns / Double seconds; layout is 8 bytes POD).
+    private var lastFrameTimeMs: Double = 0             // +0x80  init 0
+    /// Rolling-average frame time in ms over the history window.
+    private var averageFrameTimeMs: Double = 0          // +0x88  init 0
+    /// "Currently dropping" flag plus packed counters; stored as 64-bit POD per binary.
+    private var droppingState: Int64 = 0                // +0x90  init 0
 
     // MARK: - Init
 

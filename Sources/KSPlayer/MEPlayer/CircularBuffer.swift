@@ -185,6 +185,10 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     }
 
     private func _doubleCapacity() {
+        // RE: Forward v1.3.15 emits per-item-type logs on capacity grow
+        // ("Packet Buffer double Capacity to ...", "SubtitleFrame Buffer double Capacity to ...").
+        // Mirror that via Item type name. See .reversal/DisplayMetal.md §CircularBuffer.
+        KSLog("\(String(describing: Item.self)) Buffer double Capacity to \(maxCount << 1)")
         var newBacking: ContiguousArray<Item?> = []
         let newCapacity = maxCount << 1 // Double the storage.
         precondition(newCapacity > 0, "Can't double capacity of \(_buffer.count)")

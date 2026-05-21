@@ -536,26 +536,6 @@ extension KSPlayerLayer: KSPipSubtitleDelegate {
     }
 }
 
-// MARK: - Display layer selection
-
-extension KSPlayerLayer {
-    /// Whether the content should use AVSampleBufferDisplayLayer instead of Metal custom shaders.
-    /// RE source: DisplayMetal.md — content-based display path selection.
-    ///
-    /// When Dolby Vision content is present and `enhanceDolby` is disabled, we need
-    /// custom Metal shaders for RPU processing, so AVSBDL is not suitable (return false).
-    /// In all other cases (SDR, HDR10, HLG, or DV with enhanceDolby enabled),
-    /// AVSampleBufferDisplayLayer handles the output correctly (return true).
-    public func shouldUseAVSBDL() -> Bool {
-        let isDovi = options.dynamicRange == .dolbyVision
-        if isDovi && !KSOptions.enhanceDolby {
-            // Dolby Vision without enhanced decode path needs Metal for RPU/shader processing
-            return false
-        }
-        return true
-    }
-}
-
 // MARK: - private functions
 
 extension KSPlayerLayer {

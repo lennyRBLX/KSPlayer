@@ -12,20 +12,28 @@ import Foundation
 /// KSOptions subclass that bridges user preferences to player configuration.
 /// Provides audio track selection cascade and Dolby Vision display model routing.
 open class PlayerOptions: KSOptions {
-    /// Override to create DoviDisplayModel when DV content detected.
-    /// RE: PlayerOptions_onVideoTrackOpened at 0x1008E3CF8
+    /// Preferred audio track ID for explicit user selection.
+    /// RE: Forward v1.3.15 PlayerOptions field at preferAudioId getter vtable 0x10094debc.
+    /// When set, takes highest priority in the wantedAudioTrack cascade (tier 1).
+    public var preferAudioId: Int32?
+
+    /// Hook fired when the video track is opened (or refresh-rate / format-description changes).
     ///
-    /// When isDovi is true and enhanceDolby is false (Metal path),
-    /// the display model should be DoviDisplayModel instead of PlaneDisplayModel.
+    /// RE references (v1.3.15 Ghidra):
+    ///   PlayerOptions_onVideoTrackOpened_sync  @ 0x10094da8c
+    ///   PlayerOptions_onVideoTrackOpened_async @ 0x10094ec8c
+    /// (v1.3.14 IDA used 0x1008E3CF8 / 0x1008E4E5C; both are dead in v1.3.15.)
+    ///
+    /// `isDovi && !enhanceDolby` selects the in-process Metal `DoviDisplayModel` path; the
+    /// active swap is performed in `MetalPlayView.draw` via the `doviMetadata` parameter
+    /// (not via `KSOptions.display = .dovi` -- there is no `.dovi` case in `DisplayEnum`).
+    /// The inverted `enhanceDolby` semantics vs. the Forward binary are documented on
+    /// `KSOptions.enhanceDolby` and in `MetalPlayView.draw`.
     @MainActor
     open override func updateVideo(refreshRate: Float, isDovi: Bool, formatDescription: CMFormatDescription?) {
         super.updateVideo(refreshRate: refreshRate, isDovi: isDovi, formatDescription: formatDescription)
         if isDovi, !KSOptions.enhanceDolby {
-            // Metal DV path: DoviDisplayModel is used instead of PlaneDisplayModel.
-            // The display model switch is handled by MetalRender when it detects
-            // DOVI side data on the frame. This hook allows subclasses to perform
-            // additional configuration when DV content is first detected.
-            KSLog("[PlayerOptions] DV content detected, Metal path active")
+            KSLog("[PlayerOptions] DV content detected, Metal DoviDisplayModel path active")
         }
     }
 
@@ -49,8 +57,13 @@ open class PlayerOptions: KSOptions {
         guard !audioTracks.isEmpty else { return nil }
 
         // Tier 1: If a specific track ID is preferred (set externally), select it directly.
-        // This is used when the user explicitly picks a track from the UI.
-        // Subclasses can override to inject a preferAudioId check here.
+        // RE: Binary at 0x10094debc — preferAudioId getter feeds into wantedAudioTrack as param_3.
+        // The binary loops tracks comparing trackID description strings against preferAudioId.
+        if let preferAudioId {
+            if let match = audioTracks.first(where: { $0.trackID == preferAudioId }) {
+                return match
+            }
+        }
 
         // Tier 2: Match by user's preferred language (from AppStorage or parameter).
         if let preferredLanguage, !preferredLanguage.isEmpty {

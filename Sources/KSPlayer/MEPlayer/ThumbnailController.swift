@@ -1,11 +1,39 @@
 //
 //  ThumbnailController.swift
 //
-//  RE source: Forward v1.3.15 — RE/64_thumbnail_generation_system.md
-//  - RealtimeThumbnailGenerator (0x10091f6ec–0x100922d74, 10 functions)
-//  - ThumbnailSession (0x1012f5560–0x1012f9820, 4 functions)
-//  - ThumbnailController (0x10133339c–0x10133359c, 6 functions)
-//  - ThumbnailQueue (0x101300164–0x101300674, 3 functions)
+//  RE source: Forward v1.3.15 — .reversal/MediaServices.md § Thumbnail Generation
+//  Verified Ghidra named entries:
+//    ThumbnailController_initFields              @ 0x1001D558C
+//    ThumbnailController_configureThumbnails     @ 0x1001D55C4
+//    ThumbnailController_seekToPosition          @ 0x1001D5620
+//    ThumbnailController_loadNextBatch           @ 0x1001D56A0
+//    ThumbnailController_cancelPending           @ 0x10144F6AC
+//    ThumbnailController_deinit                  @ 0x10144F6F4
+//    ThumbnailController_resetState              @ 0x100772E10
+//    ThumbnailGenerator_updatePublishedProperties @ 0x1009957E0
+//    ThumbnailGenerator_switchToMainActor        @ 0x10058B9D4
+//    ThumbnailGenerator_resetSeeking_onMainActor @ 0x10099663C
+//    FFmpegDecode_allocThumbnailContext          @ 0x101417F3C
+//    PlayerCenter_renderSnapshotForThumbnail     @ 0x10103A030
+//    PreLoadIOContext_getThumbnailFetchResult    @ 0x1000EA5B8
+//    PreLoadIOContext_setThumbnailFetchResult    @ 0x101441440
+//
+//  KSPlayer FFThumbnail Swift type witness tables:
+//    destroy/copy/copy-assign/take-assign/store
+//    @ 0x10144F7B8 / 0x10144F7F0 / 0x10144F858 / 0x10144F914 / 0x10061A4D8
+//
+//  Components-side RealtimeThumbnailGenerator (Swift class
+//  _TtC10Components26RealtimeThumbnailGenerator @ 0x1033118A0; bare-name
+//  string @ 0x102E92940) has no named function symbols in current Ghidra —
+//  implementation lives in anonymous FUN_* bodies
+//  (FUN_10091F174, FUN_100921AB8, FUN_1009224F0, FUN_1012F5524, FUN_1012F5B20,
+//  FUN_1012F7988, FUN_1012F96BC). The earlier addresses 0x10091f6ec, 0x1012f5560,
+//  0x10133339c, 0x101300164 were mid-function offsets, not entries.
+//
+//  Components-side log strings the class emits:
+//    "[Thumb] RealtimeThumbnailGenerator init FAILED: "        @ 0x103311D10
+//    "[Thumb] RealtimeThumbnailGenerator session initialized"  @ 0x103311D50
+//    "[Thumb] RealtimeThumbnailGenerator started, duration="   @ 0x103311E20
 //
 
 import AVFoundation
@@ -172,7 +200,8 @@ public final class ThumbnailSession {
         KSLog("[Thumb] init done, duration=\(durationPTS), interval=\(intervalPTS), intervalSeconds=\(intervalSeconds), count=\(frameCount), isHDR=\(isHDR)")
     }
 
-    /// Single-frame extraction at a specific index (RE: seekAndExtract 0x1012f6264, 6296 bytes)
+    /// Single-frame extraction at a specific index
+    /// (RE: seekAndExtract body inside FUN_1012F5B20, 2,684 B)
     public func seekAndExtract(at index: Int) -> (image: UIImage, time: TimeInterval)? {
         guard let formatCtx, let codecContext, let reScale, !isCancelled else { return nil }
 
@@ -310,7 +339,14 @@ public final class ThumbState: ObservableObject {
     @Published public var isSeeking: Bool = false
 }
 
-// MARK: - RealtimeThumbnailGenerator (RE: 0x10091f6ec, 10 functions)
+// MARK: - RealtimeThumbnailGenerator
+// RE: implementation lives in anonymous FUN_10091F174 (init body, 1,120 B) plus
+//     FUN_100921AB8 (2,616 B; contains updatePublishedProperties, switchToMainActor,
+//     resetSeeking_onMainActor, addOrReplaceThumbnail) and
+//     FUN_1009224F0 (2,656 B; contains setupRealtimeThumbnailGenerator,
+//     dispatchAsyncGeneration, cancelAndRestart, clearCacheAndStorage).
+// The four-claimed-functions-collapse-into-one observation is a side-effect of
+// Swift @inlinable / generic specialization, not a separate symbol per method.
 
 public final class RealtimeThumbnailGenerator: @unchecked Sendable {
     private let session: ThumbnailSession
@@ -348,7 +384,8 @@ public final class RealtimeThumbnailGenerator: @unchecked Sendable {
         session.cancel()
     }
 
-    /// Cancel current work and restart extraction at new position (RE: cancelAndRestart 0x100922b00)
+    /// Cancel current work and restart extraction at new position
+    /// (RE: cancelAndRestart inside FUN_1009224F0)
     public func seekToFrame(at index: Int) {
         lock.lock()
         currentWorkItem?.cancel()
@@ -408,7 +445,7 @@ public final class RealtimeThumbnailGenerator: @unchecked Sendable {
         return max(0, min(count - 1, Int(fraction * Double(count))))
     }
 
-    // RE: addOrReplaceThumbnail 0x1009223bc — LRU with FIFO eviction at 50
+    // RE: addOrReplaceThumbnail (inside FUN_100921AB8) — LRU with FIFO eviction at 50
     private func addToCache(key: Int64, image: CGImage) {
         lock.lock()
         defer { lock.unlock() }
@@ -428,7 +465,7 @@ public final class RealtimeThumbnailGenerator: @unchecked Sendable {
         cacheDict[key] = image
     }
 
-    // RE: clearCacheAndStorage 0x100922d74 — memory pressure handler
+    // RE: clearCacheAndStorage (inside FUN_1009224F0) — memory pressure handler
     private func clearCache() {
         lock.lock()
         defer { lock.unlock() }
@@ -470,7 +507,8 @@ public class ThumbnailController {
     /// Bind the controller to a player instance by providing the media URL,
     /// player options, and total duration. Creates or reconfigures the
     /// underlying ThumbnailSession and RealtimeThumbnailGenerator.
-    /// RE: ThumbnailController.configure at 0x10133339c
+    /// RE: ThumbnailController_configureThumbnails @ 0x1001D55C4
+    ///     (companion to ThumbnailController_initFields @ 0x1001D558C)
     public func configure(url: URL, options: KSOptions, duration: TimeInterval) {
         // Tear down previous session if URL changed
         if let existingURL = mediaURL, existingURL != url {

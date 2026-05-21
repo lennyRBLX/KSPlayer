@@ -2,52 +2,111 @@
 //  CacheFileEntry.swift
 //  KSPlayer
 //
-//  Forward addition (RE/40, RE/68): File-level cache entry with handle
-//  management for on-disk segment storage. Used by the cache hierarchy
-//  to manage individual cached file segments.
+//  RE source: Forward v1.3.15 (TranscodeIO.md)
 //
-//  Binary: _TtC16PreLoadIOContext14CacheFileEntry (22 functions)
-//  Binary module: PreLoadIOContext (kept under KSPlayer in source)
-//  RE source: Forward v1.3.15
+//  Represents a single cached segment of downloaded data. Maps logical file
+//  positions to physical positions in the on-disk cache file.
+//
+//  Binary class metadata: _TtC16PreLoadIOContext14CacheFileEntry
+//  (Plain "CacheFileEntry" string @ 0x102ef6828, mangled @ 0x103343840.)
+//
+//  Binary fields (5) per TranscodeIO.md:
+//    1. logicalPos:  Int64    -- byte offset in the original media file
+//    2. physicalPos: UInt64   -- byte offset in the local cache file on disk
+//    3. size:        UInt32   -- number of cached bytes in this segment
+//    4. eof:         Bool     -- true if this entry extends to end of source
+//    5. maxSize:     UInt32?  -- optional size cap (set by LimitCacheIOContext)
+//
+//  Cache segments stored at NSTemporaryDirectory()/videoCaches/<md5>/<position>.
 //
 
 import Foundation
 
 public class CacheFileEntry {
-    // MARK: - Properties
+    // MARK: - RE-verified binary fields (5)
+
+    /// RE: Forward field 1 of 5 -- byte offset in the original media file.
+    public let logicalPos: Int64
+
+    /// RE: Forward field 2 of 5 -- byte offset in the local cache file on disk.
+    public let physicalPos: UInt64
+
+    /// RE: Forward field 3 of 5 -- number of cached bytes in this segment.
+    /// UInt32 caps individual segments at ~4 GB; the cache system splits large
+    /// files into multiple entries.
+    public private(set) var size: UInt32
+
+    /// RE: Forward field 4 of 5 -- true if this entry extends to the end of the
+    /// source file. Optimizes EOF detection without a separate size query.
+    public var eof: Bool
+
+    /// RE: Forward field 5 of 5 -- optional maximum size cap. When set (e.g. by
+    /// `LimitCacheIOContext` with 512 MiB cap), prevents unbounded growth.
+    public var maxSize: UInt32?
+
+    // MARK: - Implementation helpers (file-handle layer)
+    //
+    // The on-disk URL and FileHandle are implementation helpers used by
+    // CacheIOContext to read/write segment data. They are not part of the
+    // binary class layout; CacheFileEntry on the binary is a value-descriptor
+    // and the FileHandle equivalent lives on the parent CacheIOContext.
 
     public let url: URL
-    public private(set) var position: Int64 = 0
-    public private(set) var size: Int64 = 0
-    private var multipleRequests: Bool = false
     private var fileHandle: FileHandle?
 
-    // MARK: - Init (RE: CacheFileEntry_ensureFileHandle @ 0x10156603c)
+    // MARK: - Init
 
-    public init(url: URL, multipleRequests: Bool = false) {
+    public init(url: URL,
+                logicalPos: Int64 = 0,
+                physicalPos: UInt64 = 0,
+                size: UInt32 = 0,
+                eof: Bool = false,
+                maxSize: UInt32? = nil) {
         self.url = url
-        self.multipleRequests = multipleRequests
+        self.logicalPos = logicalPos
+        self.physicalPos = physicalPos
+        self.size = size
+        self.eof = eof
+        self.maxSize = maxSize
     }
 
-    // MARK: - Position/Size Accessors (RE: 0x101565fc4, 0x101565fd8, 0x101564e18, 0x101564e6c)
+    // MARK: - Range queries
 
-    public func getPosition() -> Int64 {
-        position
+    public func contains(position: Int64) -> Bool {
+        position >= logicalPos && position < logicalPos + Int64(size)
     }
 
+    public var endPosition: Int64 {
+        logicalPos + Int64(size)
+    }
+
+    public func grow(by count: UInt32) {
+        if let cap = maxSize {
+            size = min(size + count, cap)
+        } else {
+            size = size &+ count
+        }
+    }
+
+    // MARK: - Legacy accessor shims
+    //
+    // CacheIOContext.swift was written against an Int64 `getPosition` /
+    // `getSize` API. Keep those shims so the call sites still compile while the
+    // class header now matches the binary's UInt32/Int64 typing.
+
+    public func getPosition() -> Int64 { logicalPos }
     public func setPosition(_ pos: Int64) {
-        position = pos
+        // Position is immutable in the binary class layout (let-bound logicalPos).
+        // The setter here is a no-op kept for source compatibility with the
+        // earlier API; callers should construct a new entry instead.
+        precondition(pos == logicalPos, "CacheFileEntry.logicalPos is immutable; construct a new entry")
     }
-
-    public func getSize() -> Int64 {
-        size
-    }
-
+    public func getSize() -> Int64 { Int64(size) }
     public func setSize(_ newSize: Int64) {
-        size = newSize
+        size = UInt32(clamping: max(newSize, 0))
     }
 
-    // MARK: - File Handle Management (RE: 0x101565b1c, 0x10156603c, 0x100015204, 0x10010aac4)
+    // MARK: - File-handle management
 
     public func ensureFileHandle() throws {
         guard fileHandle == nil else { return }
@@ -67,7 +126,7 @@ public class CacheFileEntry {
         fileHandle = nil
     }
 
-    // MARK: - Read/Write (RE: CacheFileEntry_readData @ 0x101565cf8, CacheFileEntry_writeData @ 0x101571f0c)
+    // MARK: - Read/Write
 
     public func readData(at offset: Int64, length: Int) -> Data? {
         guard let handle = fileHandle else { return nil }
@@ -80,13 +139,11 @@ public class CacheFileEntry {
         guard let handle = fileHandle else { return }
         handle.seek(toFileOffset: UInt64(offset))
         handle.write(data)
-        let newEnd = offset + Int64(data.count)
+        let newEnd = UInt32(clamping: offset + Int64(data.count))
         if newEnd > size {
             size = newEnd
         }
     }
-
-    // MARK: - Load Resource (RE: CacheFileEntry_loadResource @ 0x1015658ec)
 
     public func loadResource() -> Data? {
         guard let handle = fileHandle else { return nil }
@@ -94,23 +151,17 @@ public class CacheFileEntry {
         return handle.readDataToEndOfFile()
     }
 
-    // MARK: - Update Size (RE: CacheFileEntry_updateSize @ 0x101565a78)
-
     public func updateSize() {
         guard let handle = fileHandle else { return }
         let currentOffset = handle.offsetInFile
         handle.seekToEndOfFile()
-        size = Int64(handle.offsetInFile)
+        size = UInt32(clamping: handle.offsetInFile)
         handle.seek(toFileOffset: currentOffset)
     }
 
-    // MARK: - Sum Sizes (RE: CacheFileEntry_sumSizes @ 0x100598c28)
-
     public static func sumSizes(_ entries: [CacheFileEntry]) -> Int64 {
-        entries.reduce(0) { $0 + $1.size }
+        entries.reduce(0) { $0 + Int64($1.size) }
     }
-
-    // MARK: - Deallocate (RE: CacheFileEntry_deallocate @ 0x101565de0)
 
     public func deallocate() {
         closeHandle()

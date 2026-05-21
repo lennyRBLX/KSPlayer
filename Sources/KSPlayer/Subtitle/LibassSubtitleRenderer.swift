@@ -137,52 +137,41 @@ public class LibassSubtitleRenderer {
     }
 
     private func compositeFrame(_ head: UnsafeMutablePointer<ASS_Image>) -> (image: UIImage, origin: CGPoint)? {
-        var minX = Int32.max, minY = Int32.max
-        var maxX = Int32.min, maxY = Int32.min
+        // RE: ASSImage_linkedListToArray @ 0x1014734bc — snapshot the
+        // libass linked list once, then iterate the value-typed array.
+        let layers = ASSImage.linkedListToArray(head)
+        guard let bounds = ASSImage.boundingBox(of: layers) else { return nil }
 
-        var img: UnsafeMutablePointer<ASS_Image>? = head
-        while let current = img {
-            let val = current.pointee
-            if val.w > 0, val.h > 0 {
-                minX = min(minX, val.dst_x)
-                minY = min(minY, val.dst_y)
-                maxX = max(maxX, val.dst_x + val.w)
-                maxY = max(maxY, val.dst_y + val.h)
-            }
-            img = val.next
-        }
-
-        guard minX < maxX, minY < maxY else { return nil }
-
-        let width = Int(maxX - minX)
-        let height = Int(maxY - minY)
+        let width = Int(bounds.width)
+        let height = Int(bounds.height)
         let bytesPerRow = width * 4
         var buffer = [UInt8](repeating: 0, count: height * bytesPerRow)
 
-        img = head
-        while let current = img {
-            let val = current.pointee
-            if val.w > 0, val.h > 0 {
-                blendImage(val, into: &buffer, bufferWidth: width, offsetX: Int(val.dst_x - minX), offsetY: Int(val.dst_y - minY))
-            }
-            img = val.next
+        for layer in layers where layer.width > 0 && layer.height > 0 {
+            blendImage(
+                layer,
+                into: &buffer,
+                bufferWidth: width,
+                offsetX: Int(layer.dstX - Int32(bounds.minX)),
+                offsetY: Int(layer.dstY - Int32(bounds.minY))
+            )
         }
 
         guard let cgImage = createCGImage(from: buffer, width: width, height: height) else { return nil }
-        return (UIImage(cgImage: cgImage), CGPoint(x: Int(minX), y: Int(minY)))
+        return (UIImage(cgImage: cgImage), bounds.origin)
     }
 
-    private func blendImage(_ img: ASS_Image, into buffer: inout [UInt8], bufferWidth: Int, offsetX: Int, offsetY: Int) {
-        let color = img.color
+    private func blendImage(_ layer: ASSImage.Layer, into buffer: inout [UInt8], bufferWidth: Int, offsetX: Int, offsetY: Int) {
+        let color = layer.color
         let r = UInt8((color >> 24) & 0xFF)
         let g = UInt8((color >> 16) & 0xFF)
         let b = UInt8((color >> 8) & 0xFF)
-        let a = 255 - UInt8(color & 0xFF)
+        let a = layer.opacity
 
-        guard let bitmap = img.bitmap else { return }
-        let stride = Int(img.stride)
-        let w = Int(img.w)
-        let h = Int(img.h)
+        guard let bitmap = layer.bitmap else { return }
+        let stride = Int(layer.stride)
+        let w = Int(layer.width)
+        let h = Int(layer.height)
 
         for y in 0 ..< h {
             for x in 0 ..< w {

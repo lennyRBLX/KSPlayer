@@ -10,14 +10,38 @@ import Libavfilter
 import Libavutil
 
 class MEFilter {
-    private var graph: UnsafeMutablePointer<AVFilterGraph>?
-    private var bufferSrcContext: UnsafeMutablePointer<AVFilterContext>?
-    private var bufferSinkContext: UnsafeMutablePointer<AVFilterContext>?
-    private var filters: String?
-    let timebase: Timebase
-    private let isAudio: Bool
-    private var params = AVBufferSrcParameters()
-    private let nominalFrameRate: Float
+    // MARK: - Fields (RE: MEFilter, 9 fields per types.json)
+    // Field order below mirrors the binary type-dump declaration order. The
+    // `isAudio: Bool` field claimed by earlier source revisions is not
+    // present in the binary — the audio/video dispatch is driven by
+    // `height == 0` (audio) instead.
+
+    private var graph: UnsafeMutablePointer<AVFilterGraph>?              // #1
+    private var bufferSrcContext: UnsafeMutablePointer<AVFilterContext>? // #2
+    private var bufferSinkContext: UnsafeMutablePointer<AVFilterContext>?// #3
+    private var filters: String?                                         // #4
+    let timebase: Timebase                                               // #5
+    /// Cached pixel/sample format. Replaces upstream's heap-allocated
+    /// `AVBufferSrcParameters` pointer; comparing three Int32s is cheaper
+    /// than a full struct comparison.
+    private var format: Int32 = 0                                        // #6
+    /// Cached frame height. `0` indicates an audio filter chain.
+    private var height: Int32 = 0                                        // #7
+    /// Cached frame width.
+    private var width: Int32 = 0                                         // #8
+    private let nominalFrameRate: Float                                  // #9
+
+    /// Computed audio/video discriminator. The binary does not store
+    /// `isAudio` as a field; it is recovered from `height == 0` on the
+    /// cached frame metrics. Initial value (before the first frame) reflects
+    /// the constructor parameter via the `initialIsAudio` shadow.
+    private var isAudio: Bool {
+        if height == 0 && width == 0 {
+            return initialIsAudio
+        }
+        return height == 0
+    }
+    private let initialIsAudio: Bool
     deinit {
         graph?.pointee.opaque = nil
         avfilter_graph_free(&graph)
@@ -27,11 +51,11 @@ class MEFilter {
         graph = avfilter_graph_alloc()
         graph?.pointee.opaque = Unmanaged.passUnretained(options).toOpaque()
         self.timebase = timebase
-        self.isAudio = isAudio
+        self.initialIsAudio = isAudio
         self.nominalFrameRate = nominalFrameRate
     }
 
-    private func setup(filters: String) -> Bool {
+    private func setup(filters: String, params: inout AVBufferSrcParameters) -> Bool {
         var inputs = avfilter_inout_alloc()
         var outputs = avfilter_inout_alloc()
         var ret = avfilter_graph_parse2(graph, filters, &inputs, &outputs)
@@ -56,16 +80,13 @@ class MEFilter {
         if let ctx = params.hw_frames_ctx {
             let framesCtxData = UnsafeMutableRawPointer(ctx.pointee.data).bindMemory(to: AVHWFramesContext.self, capacity: 1)
             inputs.pointee.filter_ctx.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-//                    outputs.pointee.filter_ctx.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-//                    bufferSrcContext?.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-//                    bufferSinkContext?.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
         }
         ret = avfilter_graph_config(graph, nil)
         guard ret >= 0 else { return false }
         return true
     }
 
-    private func setup2(filters: String) -> Bool {
+    private func setup2(filters: String, params: inout AVBufferSrcParameters) -> Bool {
         guard let graph else {
             return false
         }
@@ -116,22 +137,30 @@ class MEFilter {
             completionHandler(inputFrame)
             return
         }
-        var params = AVBufferSrcParameters()
-        params.format = inputFrame.pointee.format
-        params.time_base = timebase.rational
-        params.width = inputFrame.pointee.width
-        params.height = inputFrame.pointee.height
-        params.sample_aspect_ratio = inputFrame.pointee.sample_aspect_ratio
-        params.frame_rate = AVRational(num: 1, den: Int32(nominalFrameRate))
-        if let ctx = inputFrame.pointee.hw_frames_ctx {
-            params.hw_frames_ctx = av_buffer_ref(ctx)
-        }
-        params.sample_rate = inputFrame.pointee.sample_rate
-        params.ch_layout = inputFrame.pointee.ch_layout
-        if self.params != params || self.filters != filters {
-            self.params = params
+        // RE: Forward v1.3.15 optimization — compare only format/height/width (3 Int32s)
+        // instead of full AVBufferSrcParameters struct to decide if filter graph needs rebuild
+        let frameFormat = inputFrame.pointee.format
+        let frameHeight = inputFrame.pointee.height
+        let frameWidth = inputFrame.pointee.width
+        if self.format != frameFormat || self.height != frameHeight || self.width != frameWidth || self.filters != filters {
+            self.format = frameFormat
+            self.height = frameHeight
+            self.width = frameWidth
             self.filters = filters
-            if !setup(filters: filters) {
+            // Build full params for av_buffersrc_parameters_set (needed by setup)
+            var params = AVBufferSrcParameters()
+            params.format = frameFormat
+            params.time_base = timebase.rational
+            params.width = frameWidth
+            params.height = frameHeight
+            params.sample_aspect_ratio = inputFrame.pointee.sample_aspect_ratio
+            params.frame_rate = AVRational(num: 1, den: Int32(nominalFrameRate))
+            if let ctx = inputFrame.pointee.hw_frames_ctx {
+                params.hw_frames_ctx = av_buffer_ref(ctx)
+            }
+            params.sample_rate = inputFrame.pointee.sample_rate
+            params.ch_layout = inputFrame.pointee.ch_layout
+            if !setup(filters: filters, params: &params) {
                 completionHandler(inputFrame)
                 return
             }

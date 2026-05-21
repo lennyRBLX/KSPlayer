@@ -61,7 +61,11 @@ public struct DoviReshapeData {
     public var mmrSingle: Bool = false
 }
 
-/// Display management data. Matches MSL `dm_data` struct.
+/// Display-management slot. The shader's `process()` does **not** reference these
+/// fields, but the binary's `dovi_metadata` struct reserves 40 bytes here to land the
+/// per-component reshape blocks at the Ghidra-verified offset 176. Treat the field
+/// names as best-guess from libdovi DM nomenclature; only the 40-byte budget is
+/// authoritative.
 public struct DoviDMData {
     public var minPQ: Float = 0
     public var maxPQ: Float = 0
@@ -75,25 +79,52 @@ public struct DoviDMData {
     public var msWeight: Float = 0
 }
 
-/// Full GPU metadata buffer layout. Matches MSL `dovi_metadata` struct.
-/// Total size ~3008 bytes (0xBC0), uploaded as fragment buffer(0).
+/// Full GPU metadata buffer layout. Mirrors the binary's `dovi_metadata` struct that is
+/// uploaded as Metal fragment buffer(0).
+///
+/// **Layout (Ghidra-verified):** per `.reversal/DolbyVision.md §"dovi_metadata Struct"`
+/// the buffer is 3008 bytes (0xBC0) with a **176-byte header** and three 944-byte
+/// per-component reshape blocks at offsets 176 / 1120 / 2064. The `linear` matrix lives
+/// at header offsets 64..111 (3 × float4 columns) -- directly observable in the NEON
+/// SIMD `fmul`/`fmla` lanes of `DoviDisplayModel_draw` at `0x10146762c..101467664`
+/// where it is multiplied by the (currently-identity) `displayColorMatrix` global at
+/// `DAT_104458840`. The remaining header offsets are derived from the Metal alignment
+/// rules required to land `comp[0]` at exactly offset 176.
+///
+/// The byte at offset 0 is the **reshape-presence** flag: when zero the binary picks a
+/// static cached pipeline (`DAT_104458f78` / `DAT_104458f80`); when nonzero it generates
+/// a per-frame reshape shader. This is the **inverse polarity** of FFmpeg's
+/// `disable_residual_flag` (the field is exposed under that name through the
+/// AVDOVIRpuDataHeader Swift binding, but the binary populates this byte with the
+/// inverted "has reshape data" semantic).
 public struct DoviGPUMetadata {
-    public var disableResidualFlag: UInt8 = 0
-    // Padding for float3x3 alignment (Metal packs float3x3 as 3×float4 = 48 bytes)
+    /// Reshape-presence flag (binary semantics). When `0`, draw uses the static cached
+    /// pipeline; when nonzero, draw runs the dynamic reshape shader. See
+    /// `.reversal/DolbyVision.md §"Header sub-fields"`.
+    public var hasReshape: UInt8 = 0
+    // Padding to 16-byte alignment for the following float3x3 slot.
+    private var _pad0: UInt8 = 0
     private var _pad1: UInt8 = 0
     private var _pad2: UInt8 = 0
-    private var _pad3: UInt8 = 0
-    /// YCC-to-RGB matrix (applied before PQ EOTF, in PQ domain)
+    private var _pad3: UInt32 = 0
+    private var _pad4: UInt32 = 0
+    private var _pad5: UInt32 = 0
+    /// YCC-to-RGB matrix (applied before PQ EOTF, in PQ domain). Header offset 16..63.
     public var nonlinear: matrix_float3x3 = matrix_identity_float3x3
-    /// RGB-to-LMS matrix (applied after PQ EOTF, in linear domain)
+    /// RGB-to-LMS matrix (applied after PQ EOTF, in linear domain). Header offset 64..111.
+    /// **Ghidra-verified offset** -- the binary's NEON matrix multiply reads/writes here.
     public var linear: matrix_float3x3 = matrix_identity_float3x3
-    /// Input offset applied before nonlinear matrix
+    /// Input offset applied before nonlinear matrix. Header offset 112..127 (float3 in float4 slot).
     public var nonlinearOffset: SIMD3<Float> = .zero
+    /// Header offset 128.
     public var minLuminance: Float = 0
+    /// Header offset 132.
     public var maxLuminance: Float = 10000
-    /// Display management parameters
+    /// 40-byte slot at header offsets 136..175. Required to land `comp[0]` at the
+    /// Ghidra-verified offset 176. The in-tree shader does not reference these fields;
+    /// see `DoviDMData` for the libdovi-derived field-name guesses.
     public var dm: DoviDMData = DoviDMData()
-    /// Per-channel reshape data [3 components]
+    /// Per-channel reshape data [3 components]. Offsets 176 / 1120 / 2064.
     public var comp: (DoviReshapeData, DoviReshapeData, DoviReshapeData) =
         (DoviReshapeData(), DoviReshapeData(), DoviReshapeData())
 }
@@ -127,8 +158,21 @@ public final class DoviDisplayModel {
     /// Static shader library containing vertex/fragment functions for non-reshape path
     private var defaultLibrary: MTLLibrary?
 
-    /// Display-side color adaptation matrix (applied to linear matrix before GPU upload)
-    /// Identity in both Forward and SenPlayer — reserved for future display gamut mapping
+    /// Display-side color adaptation matrix; pre-multiplied into the `linear` matrix on
+    /// the CPU before the metadata buffer is uploaded to the GPU.
+    ///
+    /// In the binary this is the global at `DAT_104458840..10445886F` (48 bytes,
+    /// 3 × float4 columns; guarded by `_swift_beginAccess(&DAT_104458840, ...)`),
+    /// applied via NEON `fmul`/`fmla` lanes in `DoviDisplayModel_draw @ 0x1014673f4`
+    /// at instructions `0x10146762c..101467664`.
+    ///
+    /// **Initial value (Ghidra-verified): identity.** The lazy initializer
+    /// `FUN_1013a2d80` (via `_swift_once(&DAT_103d060f8, ...)`) copies 48 bytes from
+    /// the constant blob at `_DAT_102ee9340` which encodes
+    /// `{1,0,0,0, 0,1,0,0, 0,0,1,0}`. The binary does expose a public setter
+    /// (`FUN_1013a2e64`) so display-side code could replace the matrix, but as
+    /// shipped it stays identity for the entire process lifetime. This Swift port
+    /// matches the binary by defaulting to identity here.
     private var displayColorMatrix: matrix_float3x3 = matrix_identity_float3x3
 
     /// Linear texture sampler (matches MetalRender's sampler at index 0)
@@ -159,12 +203,15 @@ public final class DoviDisplayModel {
     // MARK: - Draw
 
     /// Main render entry point. Called once per frame.
-    /// Checks disable_residual_flag: if set, uses standard pipeline (no reshape).
-    /// Otherwise: generate reshape shader, compile/cache, apply dual-matrix color transform.
+    ///
+    /// Reads the reshape-presence flag at metadata header offset 0: when **zero** the
+    /// binary uses a static cached pipeline (`DAT_104458f78` / `DAT_104458f80`), when
+    /// nonzero it generates a per-frame reshape shader. The reshape-presence flag is
+    /// the inverse polarity of FFmpeg's `disable_residual_flag` — see `DoviGPUMetadata`.
     public func draw(encoder: MTLRenderCommandEncoder, metadata: DoviGPUMetadata,
                      pixelFormat: DoviPixelFormat, bitDepth: Int32, textures: [MTLTexture]) {
 
-        if metadata.disableResidualFlag != 0 {
+        if metadata.hasReshape == 0 {
             drawStandard(encoder: encoder, pixelFormat: pixelFormat, bitDepth: bitDepth, textures: textures)
             return
         }
@@ -216,8 +263,8 @@ public final class DoviDisplayModel {
         encoder.setVertexBuffer(uvBuffer, offset: 0, index: 1)
         if let ib = indexBuffer {
             encoder.drawIndexedPrimitives(
-                type: .triangle,
-                indexCount: 6,
+                type: .triangleStrip,
+                indexCount: 4,
                 indexType: .uint16,
                 indexBuffer: ib,
                 indexBufferOffset: 0
@@ -262,8 +309,8 @@ public final class DoviDisplayModel {
         encoder.setVertexBuffer(uvBuffer, offset: 0, index: 1)
         if let ib = indexBuffer {
             encoder.drawIndexedPrimitives(
-                type: .triangle,
-                indexCount: 6,
+                type: .triangleStrip,
+                indexCount: 4,
                 indexType: .uint16,
                 indexBuffer: ib,
                 indexBufferOffset: 0
@@ -461,7 +508,7 @@ public final class DoviDisplayModel {
             [1.0, 1.0],
             [1.0, 0.0],
         ]
-        let indices: [UInt16] = [0, 1, 2, 2, 1, 3]
+        let indices: [UInt16] = [0, 1, 2, 3]
 
         posBuffer = device.makeBuffer(bytes: positions, length: MemoryLayout<simd_float4>.stride * positions.count, options: .storageModeShared)
         uvBuffer = device.makeBuffer(bytes: uvs, length: MemoryLayout<simd_float2>.stride * uvs.count, options: .storageModeShared)
@@ -474,7 +521,10 @@ public final class DoviDisplayModel {
     // MARK: - Fragment Function Generation
 
     private func generateFragmentFunction(name: String) -> String {
-        // The fragment function simply samples textures, applies leftShift, calls process()
+        // Per .reversal/DolbyVision.md §"Shader Generation": the binary's MSL blob
+        // contains two fragment functions selected by pixel-format token —
+        // `displayICtCpBiPlanarTexture` for NV12 (Y + interleaved UV, 2 textures) and
+        // `displayICtCpTexture` for planar YUV (Y + U + V, 3 textures).
         if name == "displayICtCpBiPlanarTexture" {
             return """
             fragment float4 \(name)(VertexOut in [[ stage_in ]],
@@ -494,15 +544,17 @@ public final class DoviDisplayModel {
         } else {
             return """
             fragment float4 \(name)(VertexOut in [[ stage_in ]],
-                                    texture2d<half> lumaTexture [[ texture(0) ]],
-                                    texture2d<half> chromaTexture [[ texture(1) ]],
+                                    texture2d<half> yTexture [[ texture(0) ]],
+                                    texture2d<half> uTexture [[ texture(1) ]],
+                                    texture2d<half> vTexture [[ texture(2) ]],
                                     sampler textureSampler [[ sampler(0) ]],
                                     constant dovi_metadata& data [[ buffer(0) ]],
                                     constant uchar3& leftShift [[ buffer(1) ]])
             {
             float3 rgb;
-            rgb.x = lumaTexture.sample(textureSampler, in.textureCoordinate).r;
-            rgb.yz = float2(chromaTexture.sample(textureSampler, in.textureCoordinate).rg);
+            rgb.x = yTexture.sample(textureSampler, in.textureCoordinate).r;
+            rgb.y = uTexture.sample(textureSampler, in.textureCoordinate).r;
+            rgb.z = vTexture.sample(textureSampler, in.textureCoordinate).r;
             rgb = rgb*float3(leftShift);
             return float4(process(rgb, data), 1);
             }
@@ -558,13 +610,34 @@ outVertex.textureCoordinate = input.uv;
 return outVertex;
 }
 
+// Per `.reversal/DolbyVision.md §"dovi_metadata Struct"`: 3008 bytes total, 176-byte
+// header, three 944-byte per-component reshape blocks at offsets 176/1120/2064. The
+// `linear` matrix at offsets 64..111 is Ghidra-verified via the NEON SIMD matrix
+// multiply in `DoviDisplayModel_draw`. The 40-byte `dm` slot at offsets 136..175 is
+// required to land `comp[0]` at the verified offset 176; the in-tree shader does not
+// reference it but the slot must exist for offset alignment.
+//
+// Header byte 0 is "has_reshape" (the binary stores the inverse of FFmpeg's
+// `disable_residual_flag`): nonzero -> dynamic reshape, zero -> static pipeline.
 struct dovi_metadata {
-uint8_t disable_residual_flag;
+uint8_t has_reshape;
+uint8_t _pad0;
+uint8_t _pad1;
+uint8_t _pad2;
+uint32_t _pad3;
+uint32_t _pad4;
+uint32_t _pad5;
+// header offsets 16..63
 float3x3 nonlinear;
+// header offsets 64..111 (Ghidra-verified)
 float3x3 linear;
+// header offsets 112..127
 simd_float3 nonlinear_offset;
+// header offset 128
 float minLuminance;
+// header offset 132
 float maxLuminance;
+// header offsets 136..175 (DM slot - shader does not reference these, kept for layout)
 struct dm_data {
 float min_pq;
 float max_pq;
@@ -577,6 +650,7 @@ float chroma_weight;
 float saturation_gain;
 float ms_weight;
 } dm;
+// offset 176 / 1120 / 2064
 struct reshape_data {
 float4 coeffs[8];
 float4 mmr[8*6];
@@ -598,31 +672,11 @@ s = (coeffs.z * s + coeffs.y) * s + coeffs.x;
 return s;
 }
 
-inline float3 appledm(float3 rgb, dovi_metadata::dm_data data) {
-    float luma = dot(rgb, float3(0.2627, 0.6780, 0.0593));
-    float sceneMaxNits = pqEOTFScalar(data.max_pq);
-    float y = luma / sceneMaxNits;
-    y = y * data.slope + data.offset;
-    y = pow(clamp(y, 0.0, 1.0), data.power);
-    if (abs(data.ms_weight) > 1e-4) {
-        float midPoint = pqEOTFScalar(data.avg_pq) / sceneMaxNits;
-        float shift = data.ms_weight * (y - midPoint) * (1.0 - y) * y;
-        y += shift;
-    }
-    rgb *= y / luma;
-    if (abs(data.chroma_weight - 1.0) > 1e-4) {
-        float Yfinal = dot(rgb, float3(0.2627, 0.6780, 0.0593));
-        rgb = Yfinal + (rgb - Yfinal) * data.chroma_weight;
-    }
-    return rgb;
-}
-
 inline float3 process(float3 rgb, constant dovi_metadata& data) {
     rgb = reshape3(rgb, data);
     rgb = data.nonlinear*(rgb + data.nonlinear_offset);
     rgb = pqEOTF(rgb);
     rgb = data.linear*rgb;
-    // rgb = appledm(rgb, data.dm);
     rgb = pqOETF(rgb);
     return rgb;
 }
@@ -634,22 +688,26 @@ inline float3 process(float3 rgb, constant dovi_metadata& data) {
 import Libavutil
 
 extension DoviGPUMetadata {
-    /// Convert FFmpeg's DV metadata pointers to GPU-ready format.
+    /// Convert FFmpeg's DV metadata to GPU-ready format.
     /// This is the critical conversion function that populates the Metal buffer struct
     /// from FFmpeg's rational-number DV metadata.
+    /// RE: Forward v1.3.15 — accepts copied value types, not raw pointers.
     public static func from(
-        header: UnsafePointer<AVDOVIRpuDataHeader>?,
-        mapping: UnsafePointer<AVDOVIDataMapping>?,
-        color: UnsafePointer<AVDOVIColorMetadata>?
+        header: AVDOVIRpuDataHeader?,
+        mapping: AVDOVIDataMapping?,
+        color: AVDOVIColorMetadata?
     ) -> DoviGPUMetadata {
         var meta = DoviGPUMetadata()
 
         guard let header = header else { return meta }
 
-        meta.disableResidualFlag = header.pointee.disable_residual_flag
+        // Binary inverts FFmpeg's `disable_residual_flag` when storing into the GPU
+        // buffer: header byte 0 is "has reshape data" (1 = use dynamic shader, 0 = use
+        // static cached pipeline). See `.reversal/DolbyVision.md §"Header sub-fields"`.
+        meta.hasReshape = header.disable_residual_flag == 0 ? 1 : 0
 
         // Color metadata: matrices and offsets
-        if let color = color?.pointee {
+        if let color = color {
             // ycc_to_rgb matrix → nonlinear (3x3, AVRational[9] row-major)
             meta.nonlinear = matrix_float3x3(columns: (
                 SIMD3<Float>(
@@ -697,7 +755,7 @@ extension DoviGPUMetadata {
         }
 
         // Reshape/mapping data
-        if let mapping = mapping?.pointee {
+        if let mapping = mapping {
             for i in 0..<3 {
                 var comp = DoviReshapeData()
                 let curve = mapping.curves.withUnsafeBufferPointer { $0[i] } // AVDOVIReshapingCurve

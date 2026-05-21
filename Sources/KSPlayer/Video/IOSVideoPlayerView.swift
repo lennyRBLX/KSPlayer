@@ -9,16 +9,19 @@ import AVKit
 import Combine
 import CoreServices
 import MediaPlayer
+import Network
 import UIKit
 
 open class IOSVideoPlayerView: VideoPlayerView {
+    // MARK: - KSPlayer base ivars (13)
+
     private weak var originalSuperView: UIView?
-    private var originalframeConstraints: [NSLayoutConstraint]?
-    private var originalFrame = CGRect.zero
+    var originalframeConstraints: [NSLayoutConstraint]?
+    var originalFrame = CGRect.zero
     private var originalOrientations: UIInterfaceOrientationMask?
-    private weak var fullScreenDelegate: PlayerViewFullScreenDelegate?
-    private var isVolume = false
-    private let volumeView = BrightnessVolume()
+    weak var fullScreenDelegate: PlayerViewFullScreenDelegate?
+    var isVolume = false
+    let volumeView = BrightnessVolume()
     public var volumeViewSlider = UXSlider()
     public var backButton = UIButton()
     public var airplayStatusView: UIView = AirplayStatusView()
@@ -29,6 +32,125 @@ open class IOSVideoPlayerView: VideoPlayerView {
     /// Image view to show video cover
     public var maskImageView = UIImageView()
     public var landscapeButton: UIControl = UIButton()
+
+    // MARK: - Forward v1.3.15 ivars (52 fields per `.reversal/UIComponents.md §1.1`)
+    //
+    // All field names verified via Ghidra symbol namespace
+    // `_TtC8KSPlayer18IOSVideoPlayerView::*` and the decompile of
+    // `initFields_and_callSuper @ 0x1014EA3DC`.
+
+    // Buttons (11) ─────────────────────────────────────────────────────────────
+    public var aspectFillButton: UIButton = .init(type: .system)
+    public var screenShotButton: UIButton = .init(type: .system)
+    public var previousButton: UIButton = .init(type: .system)
+    public var toolBarPlayButton: UIButton = .init(type: .system)
+    public var nextButton: UIButton = .init(type: .system)
+    public var audioMenuButton: UIButton = .init(type: .system)
+    public var subtitleMenuButton: UIButton = .init(type: .system)
+    public var unifiedSettingsButton: UIButton = .init(type: .system)
+    public var jumpbackButton: UIButton = .init(type: .system)
+    public var playPauseButton: UIButton = .init(type: .system)
+    public var jumpForwardButton: UIButton = .init(type: .system)
+
+    // Background containers (4) ────────────────────────────────────────────────
+    public let topLeftBackground = UIView()
+    public let topRightBackground = UIView()
+    public let bottomBackground = UIView()
+    public let leftBackgroundView = UIView()
+
+    // Status / format labels (10) ──────────────────────────────────────────────
+    public var topStatusBar: UIStackView?
+    public var currentItemTitleLabel: UILabel?
+    public var codecLabel: UILabel?
+    public var resolutionLabel: UILabel?
+    public var fpsLabel: UILabel?
+    public var bitrateLabel: UILabel?
+    public var networkSpeedLabel: UILabel?
+    public var networkStatusImageView: UIImageView?
+    public var batteryImageView: UIImageView?
+    public var displayTitleLabel: UILabel?
+
+    // Video info container + metadata (5) ──────────────────────────────────────
+    public let videoInfoContainer: UIStackView = {
+        let v = UIStackView()
+        v.spacing = 8
+        v.alignment = .center
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    public var watchedProgress: Double = 0
+    public var itemId: String?
+    public var title: String?
+    public var selectedAudioTrack: MediaPlayerTrack?
+
+    // Network monitor + overlay views (4) ──────────────────────────────────────
+    public let monitor = NWPathMonitor()
+    public var screenshotPreviewView: UIView?
+    public var bottomSlimProgressView: UIView?
+    public var bottomSlimProgressSlider: KSSlider?
+
+    // Prompt/toast (2) ─────────────────────────────────────────────────────────
+    public let promptLabel: UILabel = {
+        let l = UILabel()
+        l.textAlignment = .center
+        l.font = .systemFont(ofSize: 14)
+        l.textColor = .white
+        l.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        l.layer.cornerRadius = 8
+        l.layer.masksToBounds = true
+        l.numberOfLines = 0
+        l.alpha = 0
+        l.translatesAutoresizingMaskIntoConstraints = false
+        return l
+    }()
+
+    public var customDelayItem: DispatchWorkItem?
+
+    // Symbol image configurations (3) ──────────────────────────────────────────
+    // Per `initFields_and_callSuper @ 0x1014EA3DC` decompile:
+    // - jumpButtonConfig: pointSize 32 (0x4040000000000000), weight 7 (.bold)
+    // - playButtonConfig: pointSize 32 (0x4040000000000000), weight 7 (.bold)
+    // - toolBarPlayButtonConfig: pointSize 15 (0x402E000000000000), weight 7 (.bold)
+    public let jumpButtonConfig = UIImage.SymbolConfiguration(pointSize: 32, weight: .bold)
+    public let playButtonConfig = UIImage.SymbolConfiguration(pointSize: 32, weight: .bold)
+    public let toolBarPlayButtonConfig = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+
+    // Layout constraint ivars (8) ──────────────────────────────────────────────
+    public var topStatusLeadingConstraint: NSLayoutConstraint?
+    public var topStatusTrailingConstraint: NSLayoutConstraint?
+    public var topLeftBackgroundLeadingConstraint: NSLayoutConstraint?
+    public var topRightBackgroundTrailingConstraint: NSLayoutConstraint?
+    public var leftBackgroundViewLeadingConstraint: NSLayoutConstraint?
+    public var bottomBackgroundLeadingConstraint: NSLayoutConstraint?
+    public var bottomBackgroundTrailingConstraint: NSLayoutConstraint?
+    public var bottomBackgroundHeightConstraint: NSLayoutConstraint?
+
+    // Speed tracker (2) ────────────────────────────────────────────────────────
+    public var speedUpdateTimer: Timer?
+    public var smoothedSpeed: Double = 0
+
+    // Lazy fullscreen overlays (2) ─────────────────────────────────────────────
+    private var _settingsView: SettingsView?
+    /// Lazy 400pt sliding settings panel.
+    /// RE: `IOSVideoPlayerView_settingsView_lazyGetter @ 0x1014D8530`.
+    public var settingsView: SettingsView {
+        if let v = _settingsView { return v }
+        let v = SettingsView()
+        v.playerView = self
+        v.onDismiss = { [weak self] in self?.settingsView_onDismiss() }
+        _settingsView = v
+        return v
+    }
+
+    private var _customProgressView: CustomProgressView?
+    /// Lazy fullscreen progress view (re-parents `toolBar.timeSlider` + labels).
+    public var customProgressView: CustomProgressView {
+        if let v = _customProgressView { return v }
+        let v = CustomProgressView(playView: self)
+        _customProgressView = v
+        return v
+    }
     override open var isMaskShow: Bool {
         didSet {
             fullScreenDelegate?.player(isMaskShow: isMaskShow, isFullScreen: landscapeButton.isSelected)

@@ -130,14 +130,26 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifia
     var subtitleID: String { get }
     var name: String { get }
     var delay: TimeInterval { get set }
-    //    var userInfo: NSMutableDictionary? { get set }
-    //    var subtitleDataSouce: SubtitleDataSouce? { get set }
-//    var comment: String? { get }
+    var comment: String? { get }
+    var userInfo: NSMutableDictionary? { get set }
     var isEnabled: Bool { get set }
+    /// Optional BCP-47 / ISO 639 language code (Forward addition;
+    /// matches the binary's EmptySubtitleInfo layout).
+    var languageCode: String? { get }
+    /// Preferred rendering strategy for this track. Defaults to `.text`
+    /// when the conformer does not provide one explicitly.
+    var renderMode: SubtitleRenderMode { get }
 }
 
 public extension SubtitleInfo {
     var id: String { subtitleID }
+    var comment: String? { nil }
+    var userInfo: NSMutableDictionary? {
+        get { nil }
+        set {}
+    }
+    var languageCode: String? { nil }
+    var renderMode: SubtitleRenderMode { .text }
     func hash(into hasher: inout Hasher) {
         hasher.combine(subtitleID)
     }
@@ -174,30 +186,21 @@ public extension KSSubtitle {
     }
 
     func parse(data: Data, encoding: String.Encoding? = nil) throws {
-        var string: String?
-        let encodes = [encoding ?? String.Encoding.utf8,
-                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.big5.rawValue))),
-                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))),
-                       String.Encoding.unicode]
-        for encode in encodes {
-            string = String(data: data, encoding: encode)
-            if string != nil {
-                break
-            }
-        }
-        guard let subtitle = string else {
+        // Forward v1.3.15 routes through SubtitleParse_loadAndParse_async
+        // (0x101482858); the synchronous path delegates to the same
+        // SubtitleParse.parse(data:) core. Translate the typed
+        // SubtitleParse.Failure values back into the legacy
+        // KSPlayerErrorCode NSErrors that existing callers expect.
+        let registry = SubtitleParseRegistry(parsers: KSOptions.subtitleParses)
+        let driver = SubtitleParse(registry: registry)
+        do {
+            parts = try driver.parse(data: data, preferredEncoding: encoding)
+        } catch SubtitleParse.Failure.undecodable {
             throw NSError(errorCode: .subtitleUnEncoding)
-        }
-        let scanner = Scanner(string: subtitle)
-        _ = scanner.scanCharacters(from: .controlCharacters)
-        let parse = KSOptions.subtitleParses.first { $0.canParse(scanner: scanner) }
-        if let parse {
-            parts = parse.parse(scanner: scanner)
-            if parts.count == 0 {
-                throw NSError(errorCode: .subtitleUnParse)
-            }
-        } else {
+        } catch SubtitleParse.Failure.noParserMatched {
             throw NSError(errorCode: .subtitleFormatUnSupport)
+        } catch SubtitleParse.Failure.emptyParts {
+            throw NSError(errorCode: .subtitleUnParse)
         }
     }
 
@@ -384,6 +387,18 @@ open class SubtitleModel: ObservableObject {
         }
     }
 
+    /// Per-tick subtitle scheduler.
+    ///
+    /// RE: `SubtitleModel_updateActiveSubtitles @ 0x1014956d4` (1532B).
+    /// The Forward binary's version absorbs what older IDA notes split
+    /// off as `removeNonMatchingSubtitleParts`: a Dutch-flag partition
+    /// of the parts buffer driven by the per-part "matched" bit, with
+    /// manual COW via `_swift_isUniquelyReferenced_nonNull_native`
+    /// before in-place mutation and a MainActor dispatch for the UI
+    /// refresh. The Swift reconstruction here relies on the standard
+    /// library's array semantics (which give us COW for free) and
+    /// `@Published`'s built-in main-thread dispatch, but is logically
+    /// the same operation.
     public func subtitle(currentTime: TimeInterval) -> Bool {
         var changed = false
         var newParts = [SubtitlePart]()

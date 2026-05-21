@@ -94,10 +94,10 @@ public final class AudioEngineDynamicsPlayer: AudioEnginePlayer, AudioDynamicsPr
         dynamicsProcessor.audioUnit
     }
 
+    /// Forward v1.3.15 chain: sourceNode → timePitch → nbandEQ → dynamicsProcessor → mainMixerNode.
+    /// Speed adjustment applies first, then EQ + dynamics shape the resampled output.
     override func audioNodes() -> [AVAudioNode] {
-        var nodes: [AVAudioNode] = [nbandEQ, dynamicsProcessor]
-        nodes.append(contentsOf: super.audioNodes())
-        return nodes
+        [timePitch, nbandEQ, dynamicsProcessor, engine.mainMixerNode]
     }
 
     public required init() {
@@ -121,7 +121,7 @@ public class AudioEnginePlayer: AudioOutput {
     private var sourceNode: AVAudioSourceNode?
     private var sourceNodeAudioFormat: AVAudioFormat?
 
-    private let timePitch = AVAudioUnitTimePitch()
+    fileprivate let timePitch = AVAudioUnitTimePitch()
     private var sampleSize = UInt32(MemoryLayout<Float>.size)
     private var currentRenderReadOffset = UInt32(0)
     private var outputLatency = TimeInterval(0)
@@ -150,6 +150,14 @@ public class AudioEnginePlayer: AudioOutput {
         }
     }
 
+    /// Playback rate. Backed by `timePitch.rate` (Forward field `+0x38`).
+    ///
+    /// The setter matches Forward `AudioEnginePlayer_setPlaybackRate_clamped`
+    /// at `0x1013f1138` (Ghidra mislabels this as
+    /// `AudioRendererPlayer_setRate_clamped`; vtable evidence in
+    /// `0x103d0b9e0` and `0x103d0bc70` confirms AudioEnginePlayer ownership).
+    /// Scalar lower clamp at `1/32 = 0.03125`, NEON `fminnm` upper clamp at
+    /// `32.0`, then `[timePitch setRate:]`.
     public var playbackRate: Float {
         get {
             timePitch.rate

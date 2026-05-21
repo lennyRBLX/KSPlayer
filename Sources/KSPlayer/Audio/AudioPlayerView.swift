@@ -23,7 +23,7 @@ open class AudioPlayerView: PlayerView {
         toolBar.timeSlider.setThumbImage(UIColor(rgb: 0x2980FF).createImage(size: CGSize(width: 2, height: 15)), for: .normal)
         toolBar.timeSlider.minimumTrackTintColor = UIColor(rgb: 0xC8C7CC)
         toolBar.timeSlider.maximumTrackTintColor = UIColor(rgb: 0xEDEDED)
-        toolBar.timeSlider.trackHeigt = 7
+        toolBar.timeSlider.trackHeight = 7
         addSubview(toolBar)
         toolBar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([

@@ -46,6 +46,8 @@ public enum DynamicRange: Int32 {
     case sdr = 0
     case hdr10 = 2
     case hlg = 3
+    /// HDR10 fallback when DV display not available (Forward compact value 4)
+    case hdr10Fallback = 4
     case dolbyVision = 5
 
     #if canImport(UIKit)
@@ -53,7 +55,7 @@ public enum DynamicRange: Int32 {
         switch self {
         case .sdr:
             return AVPlayer.HDRMode(rawValue: 0)
-        case .hdr10:
+        case .hdr10, .hdr10Fallback:
             return .hdr10 // 2
         case .hlg:
             return .hlg // 1
@@ -97,6 +99,8 @@ extension DynamicRange: CustomStringConvertible {
             return "SDR"
         case .hdr10:
             return "HDR10"
+        case .hdr10Fallback:
+            return "HDR10"
         case .hlg:
             return "HLG"
         case .dolbyVision:
@@ -110,7 +114,7 @@ extension DynamicRange {
         switch self {
         case .sdr:
             return kCVImageBufferColorPrimaries_ITU_R_709_2
-        case .hdr10, .hlg, .dolbyVision:
+        case .hdr10, .hdr10Fallback, .hlg, .dolbyVision:
             return kCVImageBufferColorPrimaries_ITU_R_2020
         }
     }
@@ -119,7 +123,7 @@ extension DynamicRange {
         switch self {
         case .sdr:
             return kCVImageBufferTransferFunction_ITU_R_709_2
-        case .hdr10:
+        case .hdr10, .hdr10Fallback:
             return kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
         case .hlg, .dolbyVision:
             return kCVImageBufferTransferFunction_ITU_R_2100_HLG
@@ -130,7 +134,7 @@ extension DynamicRange {
         switch self {
         case .sdr:
             return kCVImageBufferYCbCrMatrix_ITU_R_709_2
-        case .hdr10, .hlg, .dolbyVision:
+        case .hdr10, .hdr10Fallback, .hlg, .dolbyVision:
             return kCVImageBufferYCbCrMatrix_ITU_R_2020
         }
     }
@@ -144,16 +148,18 @@ extension DynamicRange {
         case 1:  self = .hdr10
         case 2:  self = .hlg
         case 3:  self = .dolbyVision
+        case 4:  self = .hdr10Fallback
         default: self = .sdr
         }
     }
 
     public var forwardValue: Int {
         switch self {
-        case .sdr:          return 0
-        case .hdr10:        return 1
-        case .hlg:          return 2
-        case .dolbyVision:  return 3
+        case .sdr:            return 0
+        case .hdr10:          return 1
+        case .hlg:            return 2
+        case .dolbyVision:    return 3
+        case .hdr10Fallback:  return 4
         }
     }
 }
@@ -373,11 +379,17 @@ public extension FixedWidthInteger {
 }
 
 open class AbstractAVIOContext {
+    /// RE: Forward v1.3.15 binary field 1 of 2 -- caps individual read sizes to
+    /// prevent blocking the I/O thread on slow connections. `0` = no limit.
+    public var readLimit: Int32
+    /// RE: Forward v1.3.15 binary field 2 of 2 -- passed to `avio_alloc_context`
+    /// as the internal buffer size (typically 32 KB--256 KB).
     let bufferSize: Int32
     let writable: Bool
-    public init(bufferSize: Int32 = 32 * 1024, writable: Bool = false) {
+    public init(bufferSize: Int32 = 32 * 1024, writable: Bool = false, readLimit: Int32 = 0) {
         self.bufferSize = bufferSize
         self.writable = writable
+        self.readLimit = readLimit
     }
 
     open func read(buffer _: UnsafePointer<UInt8>?, size: Int32) -> Int32 {

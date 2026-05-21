@@ -18,7 +18,7 @@ class SubtitleDecode: DecodeProtocol {
     private let scale = VideoSwresample(dstFormat: AV_PIX_FMT_ARGB, isDovi: false)
     private var subtitle = AVSubtitle()
     private var startTime = TimeInterval(0)
-    private let assParse = AssParse()
+    private var assParse: AssParse?
     private var libassRenderer: LibassSubtitleRenderer?
 
     /// ASS image renderer for complex subtitle styling (Forward v1.3.15).
@@ -34,7 +34,11 @@ class SubtitleDecode: DecodeProtocol {
             codecContext = try assetTrack.createContext(options: options)
             if let pointer = codecContext?.pointee.subtitle_header {
                 let subtitleHeader = String(cString: pointer)
-                _ = assParse.canParse(scanner: Scanner(string: subtitleHeader))
+                if isASS {
+                    let parse = AssParse()
+                    _ = parse.canParse(scanner: Scanner(string: subtitleHeader))
+                    assParse = parse
+                }
                 // RE: Forward uses libass for full ASS rendering with embedded font extraction
                 if KSOptions.useLibassForASS {
                     let renderer = LibassSubtitleRenderer(
@@ -126,7 +130,7 @@ class SubtitleDecode: DecodeProtocol {
                 attributedString?.append(NSAttributedString(string: String(cString: text)))
             } else if let ass = rect.ass {
                 let scanner = Scanner(string: String(cString: ass))
-                if let group = assParse.parsePart(scanner: scanner) {
+                if let group = assParse?.parsePart(scanner: scanner) {
                     parts.append(group)
                 }
             } else if rect.type == SUBTITLE_BITMAP {

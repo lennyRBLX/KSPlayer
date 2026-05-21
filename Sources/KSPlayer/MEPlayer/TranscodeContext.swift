@@ -2,25 +2,39 @@
 //  TranscodeContext.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 (verified via Ghidra decompilation)
-//  - FUN_1014010f4: Remux stream setup (avformat_new_stream + codec_tag resolution)
-//  - FUN_1013fd1dc: DV-aware codec_tag resolver (DOVIDecoderConfigurationRecord → dvh1/dvhe/dav1)
-//  - FUN_1013eaa1c: BSFTranscodeContext.init (av_bsf_get_by_name + alloc + init)
-//  - FUN_1013fd548: Remuxer.remux() main loop (calls FUN_1014010f4 then per-packet processing)
-//  - Remuxer_configureOutputStreams @ 0x1014291a4: Sets AV dictionary options on output
+//  RE source: Forward v1.3.15 (TranscodeIO.md, verified via Ghidra decompilation).
 //
-//  Key binary findings:
-//  - codec_tag is ALWAYS overwritten after avcodec_parameters_copy using DV-aware resolver
-//  - BSFs (hevc_mp4toannexb, aac_adtstoasc) are NOT manually applied — HLS/MOV muxers auto-insert
-//  - All streams use passthrough (CopyTranscodeContext equivalent)
+//  Class metadata (binary string addresses):
+//    - CopyTranscodeContext      @ 0x102eeef50  (mangled @ 0x1033368c0)
+//    - BSFTranscodeContext       @ 0x102eeef70  (mangled @ 0x1033368f0)
+//    - AudioTranscodeContext     @ 0x102eeefd0  (mangled @ 0x103336920, private nested)
+//    - SubtitleTranscodeContext  @ 0x102eef000  (mangled @ 0x1033369d0, private nested)
+//    - VideoTranscodeContext     @ 0x102eef040  (mangled @ 0x103336a50)
 //
-//  Pipeline: Remuxer → OutputStreamInfo → CopyTranscodeContext (passthrough) → muxer
+//  Most TranscodeContext logic in the read/setup loop is inlined into the
+//  megafunction `FUN_10129d8e0` (range 0x10129d8e0--0x1012eb12b, ~0x4E84
+//  bytes). Interior addresses called out below are anchors inside that
+//  parent -- they are NOT separate Ghidra entries.
+//
+//  Anchor offsets:
+//    - 0x1012E8BEC  TranscodeContext_createForStreamIndex (interior)
+//    - 0x1012E815C  Remuxer_readLoop_body (interior)
+//    - 0x1012E83E0  Remuxer_setupSubtitleTranscodeContexts (interior)
+//    - 0x1012E8F60  TranscodeContext_wrapPacketAndDeliver (interior)
+//    - 0x1012E9060  BSFContext_findAndInitFilter (interior)
+//    - 0x1012E9EE4  AudioTranscodeContext_init (interior)
+//    - 0x1012E95B0  TranscodeContext_flushAllContexts (interior)
+//    - 0x1012E9A0C  TranscodeContext_closeAndCleanup (interior)
+//    - 0x1014291a4  Remuxer_configureOutputStreams (discrete entry)
+//
+//  Pipeline: Remuxer → OutputStreamInfo → {Copy|BSF|Audio|Video|Subtitle}TranscodeContext → muxer
 //
 
 import Foundation
 import Libavcodec
 import Libavformat
 import Libavutil
+import Libswresample
 
 // MARK: - TranscodeProtocol
 
@@ -113,9 +127,17 @@ public final class BSFTranscodeContext: TranscodeProtocol {
 // MARK: - AudioTranscodeContext (decode → resample → encode)
 
 public final class AudioTranscodeContext: TranscodeProtocol {
+    // RE: Forward v1.3.15 binary fields (6) per TranscodeIO.md:
+    //   1. decodeContext   3. decodedFrame   5. pts
+    //   2. encodeContext   4. fifo           6. swrContext
     private var decodeContext: UnsafeMutablePointer<AVCodecContext>?
     private var encodeContext: UnsafeMutablePointer<AVCodecContext>?
     private var decodedFrame: UnsafeMutablePointer<AVFrame>?
+    /// RE: Forward field 4 of 6 -- `AVAudioFifo` accumulating decoded samples
+    /// and draining in encoder-sized chunks (e.g. AAC = 1024 samples).
+    /// Decoders emit variable-size frames; encoders often require fixed-size.
+    /// Allocated lazily on first encode.
+    private var fifo: OpaquePointer?
     private var swrContext: OpaquePointer?
     private var pts: Int64 = 0
 
@@ -178,7 +200,7 @@ public final class AudioTranscodeContext: TranscodeProtocol {
     }
 
     public func close() {
-        if let decodedFrame {
+        if decodedFrame != nil {
             av_frame_free(&self.decodedFrame)
         }
         if decodeContext != nil {
@@ -186,6 +208,13 @@ public final class AudioTranscodeContext: TranscodeProtocol {
         }
         if encodeContext != nil {
             avcodec_free_context(&encodeContext)
+        }
+        if let fifo {
+            av_audio_fifo_free(fifo)
+            self.fifo = nil
+        }
+        if swrContext != nil {
+            swr_free(&swrContext)
         }
     }
 
@@ -272,8 +301,23 @@ public final class VideoTranscodeContext: TranscodeProtocol {
 // MARK: - SubtitleTranscodeContext (text format conversion)
 
 public final class SubtitleTranscodeContext: TranscodeProtocol {
+    // RE: Forward v1.3.15 binary fields (4) per TranscodeIO.md:
+    //   1. decodeContext   2. encodeContext
+    //   3. subtitle (inline AVSubtitle struct, not pointer)
+    //   4. subtitlePacket  -- output AVPacket. The binary metadata for this
+    //      field is not pinned by string xref; an earlier draft of the
+    //      reversal doc claimed the binary spelled it `sutitlePacket`
+    //      (missing 'b'), but no `sutitle*` string exists in the binary
+    //      symbol/string table. Per project convention (CLAUDE.md auto-typo
+    //      rule), the field is spelled correctly here regardless.
     private var decodeContext: UnsafeMutablePointer<AVCodecContext>?
     private var encodeContext: UnsafeMutablePointer<AVCodecContext>?
+    /// RE: Forward field 3 of 4 -- inline `AVSubtitle`, reused across decode
+    /// cycles via `avsubtitle_free` + re-decode (not a pointer).
+    private var subtitle = AVSubtitle()
+    /// RE: Forward field 4 of 4 -- output `AVPacket`. Allocated lazily on
+    /// first encode and reused.
+    private var subtitlePacket: UnsafeMutablePointer<AVPacket>?
 
     public init?(inputCodecpar: UnsafeMutablePointer<AVCodecParameters>,
                  outputCodecID: AVCodecID = AV_CODEC_ID_WEBVTT) {
@@ -293,14 +337,17 @@ public final class SubtitleTranscodeContext: TranscodeProtocol {
                         timeBase: AVRational,
                         outputTimeBase: AVRational) -> [UnsafeMutablePointer<AVPacket>] {
         guard let decodeContext, let encodeContext else { return [] }
-        var subtitle = AVSubtitle()
         var gotSub: Int32 = 0
         avcodec_decode_subtitle2(decodeContext, &subtitle, &gotSub, packet)
         guard gotSub > 0 else { return [] }
         defer { avsubtitle_free(&subtitle) }
 
+        if subtitlePacket == nil {
+            subtitlePacket = av_packet_alloc()
+        }
+        guard let outPkt = subtitlePacket else { return [] }
+
         var results = [UnsafeMutablePointer<AVPacket>]()
-        let outPkt = av_packet_alloc()!
         let bufSize: Int32 = 1024 * 1024
         let buf = av_malloc(Int(bufSize))!
         let ret = avcodec_encode_subtitle(encodeContext, buf.assumingMemoryBound(to: UInt8.self), bufSize, &subtitle)
@@ -315,7 +362,6 @@ public final class SubtitleTranscodeContext: TranscodeProtocol {
             }
         }
         av_free(buf)
-        av_packet_free(&UnsafeMutablePointer(mutating: Optional(outPkt)))
         return results
     }
 
@@ -328,6 +374,10 @@ public final class SubtitleTranscodeContext: TranscodeProtocol {
         if encodeContext != nil {
             avcodec_free_context(&encodeContext)
         }
+        if subtitlePacket != nil {
+            av_packet_free(&subtitlePacket)
+        }
+        avsubtitle_free(&subtitle)
     }
 
     deinit { close() }
@@ -335,6 +385,22 @@ public final class SubtitleTranscodeContext: TranscodeProtocol {
 
 // MARK: - OutputStreamInfo
 
+/// Manages the output format context and all per-stream configuration for the
+/// remuxing pipeline.
+///
+/// RE: Forward v1.3.15 -- class metadata `_TtC8KSPlayer16OutputStreamInfo`
+/// (string @ 0x103336810). Factory `OutputStreamInfo_createForRemuxing` is an
+/// interior offset `0x1012ED66C` inside `FUN_1012ed5e4`
+/// (range 0x1012ed5e4--0x1012ed7f7, ~0x214 bytes) -- no discrete Ghidra
+/// entry exists; the bulk of the factory work is inlined into the calling
+/// chain.
+///
+/// Binary fields (10) per TranscodeIO.md:
+///   1. url             6. frameRate
+///   2. timeBases       7. outPacket
+///   3. formatCtx       8. formatName
+///   4. streamMapping   9. assetTrackMap
+///   5. transcodeMap   10. hasWriteTrailer
 public final class OutputStreamInfo {
     public let url: String
     public let formatName: String
@@ -465,6 +531,23 @@ public final class OutputStreamInfo {
 
 // MARK: - Remuxer
 
+/// Wraps FFmpeg muxing: reads packets from a source format context, remuxes to
+/// the output format, and delivers transformed packets downstream. Thread-safe
+/// via `os_unfair_lock` (chosen over `NSLock`/`NSRecursiveLock` for lower
+/// overhead in the hot packet path -- acquired per packet).
+///
+/// RE: Forward v1.3.15 -- class metadata `_TtC8KSPlayer7Remuxer`
+/// (string @ 0x103339040).
+///
+/// Binary fields (5) per TranscodeIO.md:
+///   1. formatCtx          4. startTime ([Int : Int64], per-stream PTS rebase)
+///   2. outputStreamInfo   5. lock (`os_unfair_lock_s`)
+///   3. mediaType (`AVMediaType?`, optional per-type filter)
+///
+/// Key discrete entries:
+///   - 0x1014291a4  Remuxer_configureOutputStreams (0x1014291a4--0x101429303)
+///   - 0x101419450  Remuxer_startOperationIfNeeded (0x101419450--0x10141957b)
+///   - 0x100fd0510  Remuxer_readLoop_taskDealloc   (0x100fd0510--0x100fd0587)
 public final class Remuxer: @unchecked Sendable {
     public let inputURL: URL
     public let outputURL: URL
@@ -475,6 +558,24 @@ public final class Remuxer: @unchecked Sendable {
     private var isCancelled = false
     public var progressHandler: ((Double) -> Void)?
 
+    /// RE: Forward v1.3.15 -- `Remuxer_startOperationIfNeeded` @ 0x101419450
+    /// (0x101419450--0x10141957b). The binary creates an `NSBlockOperation`
+    /// and adds it to an `NSOperationQueue` field stored at `self+0x88` on the
+    /// Remuxer class. The current `remux()` API is async/await for callers
+    /// that want a `Task` model; this queue is the parallel structural
+    /// reconstruction.
+    private let operationQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.name = "KSPlayer.Remuxer"
+        q.maxConcurrentOperationCount = 1
+        q.qualityOfService = .utility
+        return q
+    }()
+
+    /// Tracks the currently scheduled remux block so callers can cancel from
+    /// the queue side (mirrors the binary's stored `NSBlockOperation` slot).
+    private var blockOperation: BlockOperation?
+
     public init(inputURL: URL, outputURL: URL, outputFormat: String? = nil) {
         self.inputURL = inputURL
         self.outputURL = outputURL
@@ -484,6 +585,46 @@ public final class Remuxer: @unchecked Sendable {
 
     deinit {
         lock.deallocate()
+    }
+
+    /// RE: `Remuxer_startOperationIfNeeded` (0x101419450). Schedules the
+    /// remux work as an `NSBlockOperation` on the internal queue if one is
+    /// not already in flight. Idempotent: a second call while a block is
+    /// pending or running is a no-op (the binary uses an internal "already
+    /// scheduled" check before wrapping the block).
+    @discardableResult
+    public func startOperationIfNeeded(completion: ((Bool) -> Void)? = nil) -> Bool {
+        os_unfair_lock_lock(lock)
+        if let blockOperation, !blockOperation.isFinished {
+            os_unfair_lock_unlock(lock)
+            return false
+        }
+        os_unfair_lock_unlock(lock)
+
+        let op = BlockOperation()
+        op.addExecutionBlock { [weak self, weak op] in
+            guard let self, let op, !op.isCancelled else {
+                completion?(false)
+                return
+            }
+            // Bridge the async remux() body to the synchronous
+            // BlockOperation execution via a DispatchSemaphore -- this is
+            // the OperationQueue-side equivalent of the binary's
+            // task-driven remux loop.
+            let semaphore = DispatchSemaphore(value: 0)
+            var success = false
+            Task {
+                success = await self.remux()
+                semaphore.signal()
+            }
+            semaphore.wait()
+            completion?(success)
+        }
+        os_unfair_lock_lock(lock)
+        blockOperation = op
+        os_unfair_lock_unlock(lock)
+        operationQueue.addOperation(op)
+        return true
     }
 
     public func remux() async -> Bool {
@@ -600,7 +741,11 @@ public final class Remuxer: @unchecked Sendable {
     public func cancel() {
         os_unfair_lock_lock(lock)
         isCancelled = true
+        let op = blockOperation
         os_unfair_lock_unlock(lock)
+        // RE: cancelling the NSBlockOperation matches what the binary's
+        // teardown path does on the queue field at self+0x88.
+        op?.cancel()
     }
 
     private func cleanup() {

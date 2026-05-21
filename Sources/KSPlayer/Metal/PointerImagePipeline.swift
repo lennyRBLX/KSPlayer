@@ -2,7 +2,22 @@
 //  PointerImagePipeline.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 — binary address 0x101368f30
+//  RE source: Forward v1.3.15 — .reversal/MediaServices.md § PointerImagePipeline
+//  Verified Ghidra named entries:
+//    PointerImagePipeline_createTexturesFromBuffers (v1) @ 0x10146F32C
+//    PointerImagePipeline_createTexturesFromBuffers (v2) @ 0x10146FF40
+//    PointerImagePipeline_deinit                         @ 0x10146F9F8
+//    PointerImagePipeline_getBufferPointers_getter       @ 0x100122E70
+//    PointerImagePipeline_getHeights_getter              @ 0x10049975C
+//    PointerImagePipeline_getPixelFormats_setter         @ 0x100122EBC
+//    PointerImagePipeline_getSizeProperty                @ 0x100425388
+//    PointerImagePipeline_setSizeProperty                @ 0x10146FAE8
+//    VideoFrame_processWithPointerImagePipeline (v1)     @ 0x10146F56C
+//    VideoFrame_processWithPointerImagePipeline (v2)     @ 0x10146FF3C
+//
+//  ObjC class: _TtC8KSPlayer20PointerImagePipeline
+//  ImagePipelineType protocol descriptor @ 0x1033C3270 (data segment).
+//
 //  Raw pixel buffer for video frame processing and subtitle compositing.
 //  This is the pixel buffer abstraction that libass renders into.
 //

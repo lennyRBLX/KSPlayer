@@ -11,6 +11,13 @@ public class EmptySubtitleInfo: SubtitleInfo {
     public let subtitleID: String = ""
     public var delay: TimeInterval = 0
     public let name = NSLocalizedString("no show subtitle", comment: "")
+    public var languageCode: String?
+    public var comment: String?
+    public var userInfo: NSMutableDictionary?
+    /// RE: Forward v1.3.15 — EmptySubtitleInfo carries an explicit
+    /// renderMode field. `.text` is the default for the null-object
+    /// "no subtitle" state.
+    public var renderMode: SubtitleRenderMode = .text
     public func search(for _: TimeInterval) -> [SubtitlePart] {
         []
     }
@@ -193,11 +200,22 @@ public class ShooterSubtitleDataSouce: FileURLSubtitleDataSouce {
     }
 }
 
+/// RE: Forward v1.3.15 — AssrtSubtitleDataSouce.
+///
+/// Binary instance layout: 3 fields after the Swift object header —
+/// `token`, `infos`, `host`. `host` is stored as the API base URL and
+/// the `/sub/search` / `/sub/detail` paths are appended at call sites.
 public class AssrtSubtitleDataSouce: SearchSubtitleDataSouce {
     private let token: String
     public var infos = [any SubtitleInfo]()
-    public init(token: String) {
+    /// Assrt API base URL. Default: `"https://api.assrt.net/v1"`.
+    public let host: String
+
+    public static let defaultHost = "https://api.assrt.net/v1"
+
+    public init(token: String, host: String = AssrtSubtitleDataSouce.defaultHost) {
         self.token = token
+        self.host = host
     }
 
     public func searchSubtitle(query: String?, languages _: [String] = ["zh-cn"]) async throws {
@@ -205,7 +223,7 @@ public class AssrtSubtitleDataSouce: SearchSubtitleDataSouce {
         guard let query else {
             return
         }
-        guard let searchApi = URL(string: "https://api.assrt.net/v1/sub/search")?.add(queryItems: ["q": query]) else {
+        guard let searchApi = URL(string: "\(host)/sub/search")?.add(queryItems: ["q": query]) else {
             return
         }
         var request = URLRequest(url: searchApi)
@@ -232,7 +250,7 @@ public class AssrtSubtitleDataSouce: SearchSubtitleDataSouce {
 
     func loadDetails(assrtSubID: String) async throws -> [URLSubtitleInfo] {
         var infos = [URLSubtitleInfo]()
-        guard let detailApi = URL(string: "https://api.assrt.net/v1/sub/detail")?.add(queryItems: ["id": assrtSubID]) else {
+        guard let detailApi = URL(string: "\(host)/sub/detail")?.add(queryItems: ["id": assrtSubID]) else {
             return infos
         }
         var request = URLRequest(url: detailApi)
@@ -263,16 +281,37 @@ public class AssrtSubtitleDataSouce: SearchSubtitleDataSouce {
     }
 }
 
+/// RE: Forward v1.3.15 — OpenSubtitleDataSouce.
+///
+/// Binary instance layout (per `OpenSubtitleDataSource_sendSearchRequest @
+/// 0x10136d3ac`): 6 storage fields after the Swift object header —
+/// `token`, `username`, `password`, `apiKey`, `host`, `infos`. The host
+/// is stored as `"https://api.opensubtitles.com/api"` and the path
+/// `/v1/subtitles` (or `/v1/download`) is appended at call sites.
+/// Earlier source folded the path into the URL string literal, losing
+/// the `host` field; this revision restores the binary's 6-field
+/// layout so the storage matches `0x102D6C9D0` … `0x102D6C9F8`'s
+/// documented order.
 public class OpenSubtitleDataSouce: SearchSubtitleDataSouce {
     private var token: String? = nil
     private let username: String?
     private let password: String?
     private let apiKey: String
+    /// Base URL host (the `host` field of the binary layout).
+    /// Default: `"https://api.opensubtitles.com/api"`.
+    public let host: String
     public var infos = [any SubtitleInfo]()
-    public init(apiKey: String, username: String? = nil, password: String? = nil) {
+
+    /// Default OpenSubtitles.com host. Stored as a field rather than a
+    /// hard-coded URL literal so deployments behind a proxy or against
+    /// the staging API can override it.
+    public static let defaultHost = "https://api.opensubtitles.com/api"
+
+    public init(apiKey: String, username: String? = nil, password: String? = nil, host: String = OpenSubtitleDataSouce.defaultHost) {
         self.apiKey = apiKey
         self.username = username
         self.password = password
+        self.host = host
     }
 
     public func searchSubtitle(query: String?, languages: [String] = ["zh-cn"]) async throws {
@@ -286,7 +325,7 @@ public class OpenSubtitleDataSouce: SearchSubtitleDataSouce {
             queryItems["query"] = query
         }
         if imdbID != 0 {
-            queryItems["imbd_id"] = String(imdbID)
+            queryItems["imdb_id"] = String(imdbID)
         }
         if tmdbID != 0 {
             queryItems["tmdb_id"] = String(tmdbID)
@@ -304,7 +343,7 @@ public class OpenSubtitleDataSouce: SearchSubtitleDataSouce {
         if queryItems.isEmpty {
             return
         }
-        guard let searchApi = URL(string: "https://api.opensubtitles.com/api/v1/subtitles")?.add(queryItems: queryItems) else {
+        guard let searchApi = URL(string: "\(host)/v1/subtitles")?.add(queryItems: queryItems) else {
             return
         }
         var request = URLRequest(url: searchApi)
@@ -333,7 +372,7 @@ public class OpenSubtitleDataSouce: SearchSubtitleDataSouce {
     }
 
     func loadDetails(fileID: Int) async throws -> URLSubtitleInfo? {
-        guard let detailApi = URL(string: "https://api.opensubtitles.com/api/v1/download")?.add(queryItems: ["file_id": String(fileID)]) else {
+        guard let detailApi = URL(string: "\(host)/v1/download")?.add(queryItems: ["file_id": String(fileID)]) else {
             return nil
         }
         var request = URLRequest(url: detailApi)

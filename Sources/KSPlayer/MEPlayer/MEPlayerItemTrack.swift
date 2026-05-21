@@ -170,6 +170,9 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                 if decoder is VideoToolboxDecode {
                     decoder.shutdown()
                     self.decoderMap[packet.assetTrack.trackID] = FFmpegDecode(assetTrack: packet.assetTrack, options: self.options)
+                    // RE: Forward v1.3.15 MEPlayerItemTrack_dispatchFallbackBlock (0x1014412e4)
+                    // Permanently disable VTB so subsequent seeks don't re-create a decoder that will also fail
+                    self.options.asynchronousDecompression = false
                     KSLog("VideoCodec switch to software decompression")
                     self.doDecode(packet: packet)
                 } else {

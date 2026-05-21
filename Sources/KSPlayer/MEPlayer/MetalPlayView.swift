@@ -63,7 +63,18 @@ public final class MetalPlayView: UIView, VideoOutput {
     /// Subscription token when using SharedDisplayLink instead of per-view CADisplayLink.
     private var sharedDisplayLinkSubscription: SharedDisplayLink.Subscription?
     /// Tracks paused state for SharedDisplayLink mode (shared link doesn't support per-subscriber pause).
-    private var isRenderPaused = true
+    private var isPaused = true
+    /// Background gate (Forward addition).
+    /// Forward binary: read by `MetalPlayView_renderFrameIfActive @ 0x101443938`
+    /// (Swift class field offset `+0x79`, see .reversal/DisplayMetal.md §MetalPlayView).
+    /// Forward early-exits the render path when set, so `renderFrame()` mirrors that gate.
+    private var isBackground: Bool = false
+    /// Optional background-timer slot (Forward addition).
+    /// Forward binary: released by `_TtC8KSPlayer13MetalPlayView::.cxx_destruct @ 0x101444fe8`
+    /// at Swift class field offset `+0x98` (see .reversal/DisplayMetal.md §MetalPlayView).
+    /// Concrete consumer not yet identified -- declared here so the Swift class layout
+    /// keeps a slot for it. RE stub: not yet wired to consumers.
+    private var backgroundTimer: Timer?
     public var options: KSOptions
     public weak var renderSource: OutputRenderSourceDelegate?
     var displayView = AVSampleBufferDisplayView() {
@@ -93,7 +104,7 @@ public final class MetalPlayView: UIView, VideoOutput {
     }
 
     public func play() {
-        isRenderPaused = false
+        isPaused = false
         if options.isUseDisplayLayer() {
             if displayView.isHidden {
                 displayView.isHidden = false
@@ -104,17 +115,17 @@ public final class MetalPlayView: UIView, VideoOutput {
             displayView.play(renderSource: renderSource)
         } else {
             displayLink?.isPaused = false
-            // SharedDisplayLink stays running; renderFrame checks isRenderPaused
+            // SharedDisplayLink stays running; renderFrame checks isPaused
         }
     }
 
     public func pause() {
-        isRenderPaused = true
+        isPaused = true
         if options.isUseDisplayLayer() {
             displayView.pause()
         }
         displayLink?.isPaused = true
-        // SharedDisplayLink stays running; renderFrame checks isRenderPaused
+        // SharedDisplayLink stays running; renderFrame checks isPaused
     }
 
     @available(*, unavailable)
@@ -209,7 +220,12 @@ public final class MetalPlayView: UIView, VideoOutput {
 
 extension MetalPlayView {
     @objc private func renderFrame() {
-        if options.isUseDisplayLayer() || isRenderPaused {
+        // Mirrors `MetalPlayView_renderFrameIfActive @ 0x101443938`: bail early
+        // when backgrounded or paused before entering the heavy render path.
+        if isBackground || isPaused {
+            return
+        }
+        if options.isUseDisplayLayer() {
             return
         }
         draw(force: false)
@@ -266,13 +282,29 @@ extension MetalPlayView {
                 metalView.metalLayer.edrMetadata = frame.edrMetadata
             }
             #endif
-            // DV routing (RE: MEPlayerItem_processFrameSideData @ 0x101407908 + MetalPlayView_renderFrameImpl @ 0x10144529c)
-            // Binary detects side data type 0x18 (DOVI_METADATA), converts to GPU metadata, routes to DoviDisplayModel.draw()
+            // DV routing — gate matches the binary's three-condition activation guard in
+            // `MEPlayerItem_processFrameSideData @ 0x101407908` case `0x18`. Per
+            // `.reversal/DolbyVision.md §"DV activation gate (type 0x18)"`:
+            //
+            //   1. track flag bit at +0x13a — Swift analogue: `isDovi`
+            //      (set from `frame.isDovi`, which is driven by the FFmpeg DOVI side data).
+            //   2. AVFrame.format == 2 — Swift analogue: pixel format is a YUV biplanar
+            //      (NV12 / P010) layout. The DV Metal path is biplanar-only in the binary.
+            //   3. KSOptions.hardwareDecode == 1 — instance field on `options`.
+            //
+            // `enhanceDolby == true` enables the Metal `DoviDisplayModel` reshape path; this
+            // matches the binary's selection chain (see `isUseDisplayLayer()` and
+            // `.reversal/DolbyVision.md §"enhanceDolby Binding Chain"`).
+            //
+            // Binary cross-reference: `MetalPlayView_renderFrameImpl` reads the
+            // `DoviDisplayModel` singleton `DAT_104458878` at instruction `0x1014457f4`.
             var doviMetadata: DoviGPUMetadata?
-            if isDovi, KSOptions.enhanceDolby,
+            if isDovi,
+               KSOptions.enhanceDolby,
+               options.hardwareDecode,
                let doviData = frame.doviData,
-               let header = doviData.header, let mapping = doviData.mapping {
-                doviMetadata = DoviGPUMetadata.from(header: header, mapping: mapping, color: doviData.color)
+               doviData.header != nil, doviData.mapping != nil {
+                doviMetadata = DoviGPUMetadata.from(header: doviData.header, mapping: doviData.mapping, color: doviData.color)
             }
             metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, doviMetadata: doviMetadata, options: options)
             renderSource?.setVideo(time: cmtime, position: frame.position)
@@ -282,7 +314,7 @@ extension MetalPlayView {
     private func checkFormatDescription(pixelBuffer: PixelBufferProtocol) {
         if formatDescription == nil || !pixelBuffer.matche(formatDescription: formatDescription!) {
             if formatDescription != nil {
-                let wasPlaying = !(displayLink?.isPaused ?? isRenderPaused) || displayView.isPlaying
+                let wasPlaying = !(displayLink?.isPaused ?? isPaused) || displayView.isPlaying
                 displayView.stopRequestingData()
                 displayView.removeFromSuperview()
                 displayView = AVSampleBufferDisplayView()
@@ -342,8 +374,11 @@ class MetalView: UIView {
         metalLayer.drawableSize = size
         metalLayer.pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
 
-        // DV path: force ITU-R 2100 PQ color space (RE: MetalPlayView_renderFrameImpl @ 0x10144529c)
-        // Binary checks if display == doviSingleton → CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ)
+        // DV path: force ITU-R 2100 PQ color space. RE: `MetalPlayView_renderFrameImpl`
+        // reads the `DoviDisplayModel` singleton `DAT_104458878` at instruction
+        // `0x1014457f4` (see `.reversal/DolbyVision.md §"Singleton Storage"`). When the
+        // singleton matches `KSOptions.display`, the binary sets the layer colorspace to
+        // `CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ)`.
         if doviMetadata != nil {
             let pqColorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
             if metalLayer.colorspace != pqColorspace {

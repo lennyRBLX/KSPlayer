@@ -82,9 +82,12 @@ public extension KSOptions {
     static var enableSensor = true
     static var stackSize = 65536
     static var isClearVideoWhereReplace = true
-    static var audioPlayerType: AudioOutput.Type = AudioEngineDynamicsPlayer.self
+    /// Matches Forward v1.3.15 binary default. The Play app's
+    /// `PlayerPreferences.makeOptions()` overrides this per `audioEngineType` selection.
+    static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self
     static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
-    static var yadifMode = 0
+    /// RE: Binary default is 1 (send_field, doubling frame rate)
+    static var yadifMode = 1
     static var deInterlaceAddIdet = false
     static func colorSpace(ycbcrMatrix: CFString?, transferFunction: CFString?) -> CGColorSpace? {
         switch ycbcrMatrix {
@@ -157,8 +160,14 @@ public extension KSOptions {
     }
 
     static func colorPixelFormat(bitDepth: Int32) -> MTLPixelFormat {
+        // Per `.reversal/DolbyVision.md §"Three-Tier Pipeline State Selection / Tier 2
+        // lazy pipelines"`: the binary's DV pipeline states are built with the extended-
+        // range 10-bit format `bgra10_xr`. `bgr10a2Unorm` clamps to `[0,1]`, which clips
+        // PQ peak-brightness samples; `bgra10_xr` supports values outside `[0,1]` and is
+        // the format the shared pipeline initialiser `FUN_101469418` passes when wiring
+        // up `DAT_104458f78` (ICtCp) and `DAT_104458f80` (BiPlanar).
         if bitDepth == 10 {
-            return .bgr10a2Unorm
+            return .bgra10_xr
         } else {
             return .bgra8Unorm
         }
@@ -193,11 +202,17 @@ extension Timebase {
 }
 
 final class Packet: ObjectQueueItem {
+    // MARK: - Stored fields (RE: Packet, 7 fields per types.json)
     var duration: Int64 = 0
     var timestamp: Int64 = 0
     var position: Int64 = 0
     var size: Int32 = 0
     private(set) var corePacket = av_packet_alloc()
+    /// Forward field; flush-marker discriminator. When true, `corePacket == nil`
+    /// and the packet is injected by the seek path to signal decoders to flush.
+    var isFlush: Bool = false
+
+    // MARK: - Computed accessors (not stored on the binary's Packet)
     var timebase: Timebase {
         assetTrack.timebase
     }
@@ -242,18 +257,52 @@ final class SubtitleFrame: MEFrame {
 }
 
 public final class AudioFrame: MEFrame {
-    public let dataSize: Int
+    // MARK: - Stored fields (RE: AudioFrame, verified offsets from
+    // Forward v1.3.15 — see `.reversal/AudioPipeline.md`).
+    //
+    //   +0x10 (UInt32)  numberOfSamples / sampleCount
+    //   +0x18 (ptr)     audioFormat
+    //   +0x20 (4+4)     timebase (value + timescale)
+    //   +0x28 (Int64)   timestamp (presentation pts)
+    //   +0x30 (Int64)   duration
+    //   +0x38 (Int64)   position (stream byte position from MEFrame)
+    //   +0x40 (ptr)     data (buffer array)
+    //   +0x48 (UInt32)  linesize / dataSize per buffer
+    //   +0x4c (UInt32)  bytesPerFrame (the binary calls it `sampleSize`)
+    public let dataSize: UInt32
     public let audioFormat: AVAudioFormat
     public internal(set) var timebase = Timebase.defaultValue
     public var timestamp: Int64 = 0
     public var duration: Int64 = 0
     public var position: Int64 = 0
-    public var size: Int32 = 0
     public var data: [UnsafeMutablePointer<UInt8>?]
     public var numberOfSamples: UInt32 = 0
+    /// Per-sample byte size, stored at Forward `+0x4c`.
+    ///
+    /// Verified via `AudioFrame_initBuffers` (`0x10144834c`) which calls
+    /// `AudioFrame_bytesPerFrame` (`0x1014484b4`) once and caches the result
+    /// at `+0x4c`. The merge function at `0x101449c04` and
+    /// `AudioFrame_createCMSampleBuffer` (`0x10144726c`) read the cached slot
+    /// rather than recomputing.
+    public var sampleSize: UInt32 = 0
+
+    // MARK: - ObjectQueueItem.size (computed, not stored)
+    /// `size` is required by `ObjectQueueItem` but the binary does not store
+    /// it on `AudioFrame` — derive it from the sample size and sample count
+    /// instead so the protocol is satisfied without adding a 10th field.
+    public var size: Int32 {
+        get { Int32(clamping: UInt64(sampleSize) * UInt64(numberOfSamples)) }
+        set {
+            // Allow protocol-driven writes to be a no-op recompute hint;
+            // accumulators in `init(array:)` track raw bytes via sampleSize.
+            _ = newValue
+        }
+    }
+
     public init(dataSize: Int, audioFormat: AVAudioFormat) {
-        self.dataSize = dataSize
+        self.dataSize = UInt32(clamping: dataSize)
         self.audioFormat = audioFormat
+        sampleSize = UInt32(audioFormat.sampleSize)
         let count = audioFormat.isInterleaved ? 1 : audioFormat.channelCount
         data = (0 ..< count).map { _ in
             UnsafeMutablePointer<UInt8>.allocate(capacity: dataSize)
@@ -265,30 +314,30 @@ public final class AudioFrame: MEFrame {
         timebase = array[0].timebase
         timestamp = array[0].timestamp
         position = array[0].position
-        var dataSize = 0
+        sampleSize = array[0].sampleSize
+        var dataSize: UInt32 = 0
         for frame in array {
             duration += frame.duration
-            dataSize += frame.dataSize
-            size += frame.size
-            numberOfSamples += frame.numberOfSamples
+            dataSize &+= frame.dataSize
+            numberOfSamples &+= frame.numberOfSamples
         }
         self.dataSize = dataSize
         let count = audioFormat.isInterleaved ? 1 : audioFormat.channelCount
         data = (0 ..< count).map { _ in
-            UnsafeMutablePointer<UInt8>.allocate(capacity: dataSize)
+            UnsafeMutablePointer<UInt8>.allocate(capacity: Int(dataSize))
         }
         var offset = 0
         for frame in array {
             for i in 0 ..< data.count {
-                data[i]?.advanced(by: offset).initialize(from: frame.data[i]!, count: frame.dataSize)
+                data[i]?.advanced(by: offset).initialize(from: frame.data[i]!, count: Int(frame.dataSize))
             }
-            offset += frame.dataSize
+            offset += Int(frame.dataSize)
         }
     }
 
     deinit {
         for i in 0 ..< data.count {
-            data[i]?.deinitialize(count: dataSize)
+            data[i]?.deinitialize(count: Int(dataSize))
             data[i]?.deallocate()
         }
         data.removeAll()
@@ -296,10 +345,11 @@ public final class AudioFrame: MEFrame {
 
     public func toFloat() -> [ContiguousArray<Float>] {
         var array = [ContiguousArray<Float>]()
+        let dataSizeInt = Int(dataSize)
         for i in 0 ..< data.count {
             switch audioFormat.commonFormat {
             case .pcmFormatInt16:
-                let capacity = dataSize / MemoryLayout<Int16>.size
+                let capacity = dataSizeInt / MemoryLayout<Int16>.size
                 data[i]?.withMemoryRebound(to: Int16.self, capacity: capacity) { src in
                     var des = ContiguousArray<Float>(repeating: 0, count: Int(capacity))
                     for j in 0 ..< capacity {
@@ -308,7 +358,7 @@ public final class AudioFrame: MEFrame {
                     array.append(des)
                 }
             case .pcmFormatInt32:
-                let capacity = dataSize / MemoryLayout<Int32>.size
+                let capacity = dataSizeInt / MemoryLayout<Int32>.size
                 data[i]?.withMemoryRebound(to: Int32.self, capacity: capacity) { src in
                     var des = ContiguousArray<Float>(repeating: 0, count: Int(capacity))
                     for j in 0 ..< capacity {
@@ -317,7 +367,7 @@ public final class AudioFrame: MEFrame {
                     array.append(des)
                 }
             default:
-                let capacity = dataSize / MemoryLayout<Float>.size
+                let capacity = dataSizeInt / MemoryLayout<Float>.size
                 data[i]?.withMemoryRebound(to: Float.self, capacity: capacity) { src in
                     var des = ContiguousArray<Float>(repeating: 0, count: Int(capacity))
                     for j in 0 ..< capacity {
@@ -335,20 +385,21 @@ public final class AudioFrame: MEFrame {
             return nil
         }
         pcmBuffer.frameLength = pcmBuffer.frameCapacity
+        let dataSizeInt = Int(dataSize)
         for i in 0 ..< min(Int(pcmBuffer.format.channelCount), data.count) {
             switch audioFormat.commonFormat {
             case .pcmFormatInt16:
-                let capacity = dataSize / MemoryLayout<Int16>.size
+                let capacity = dataSizeInt / MemoryLayout<Int16>.size
                 data[i]?.withMemoryRebound(to: Int16.self, capacity: capacity) { src in
                     pcmBuffer.int16ChannelData?[i].update(from: src, count: capacity)
                 }
             case .pcmFormatInt32:
-                let capacity = dataSize / MemoryLayout<Int32>.size
+                let capacity = dataSizeInt / MemoryLayout<Int32>.size
                 data[i]?.withMemoryRebound(to: Int32.self, capacity: capacity) { src in
                     pcmBuffer.int32ChannelData?[i].update(from: src, count: capacity)
                 }
             default:
-                let capacity = dataSize / MemoryLayout<Float>.size
+                let capacity = dataSizeInt / MemoryLayout<Float>.size
                 data[i]?.withMemoryRebound(to: Float.self, capacity: capacity) { src in
                     pcmBuffer.floatChannelData?[i].update(from: src, count: capacity)
                 }
@@ -363,10 +414,10 @@ public final class AudioFrame: MEFrame {
         guard let outBlockListBuffer else {
             return nil
         }
-        let sampleSize = Int(audioFormat.sampleSize)
+        let sampleSizeInt = Int(audioFormat.sampleSize)
         let sampleCount = CMItemCount(numberOfSamples)
-        let dataByteSize = sampleCount * sampleSize
-        if dataByteSize > dataSize {
+        let dataByteSize = sampleCount * sampleSizeInt
+        if dataByteSize > Int(dataSize) {
             assertionFailure("dataByteSize: \(dataByteSize),render.dataSize: \(dataSize)")
         }
         for i in 0 ..< data.count {
@@ -407,7 +458,7 @@ public final class AudioFrame: MEFrame {
         let sampleSizeArray: [Int]?
         if audioFormat.isInterleaved {
             sampleSizeEntryCount = 1
-            sampleSizeArray = [sampleSize]
+            sampleSizeArray = [sampleSizeInt]
         } else {
             sampleSizeEntryCount = 0
             sampleSizeArray = nil
@@ -418,30 +469,108 @@ public final class AudioFrame: MEFrame {
 }
 
 /// Per-frame Dolby Vision metadata extracted from AVFrame side data (RE/67).
+/// RE: Forward v1.3.15 KSDOVIMetadata is a 176-byte copied/owned struct.
+/// Stores copied pointee values instead of raw pointers to avoid dangling
+/// references after AVFrame is freed.
 public struct DOVIFrameMetadata {
     public let rpuData: Data?
-    public let header: UnsafePointer<AVDOVIRpuDataHeader>?
-    public let mapping: UnsafePointer<AVDOVIDataMapping>?
-    public let color: UnsafePointer<AVDOVIColorMetadata>?
+    public let header: AVDOVIRpuDataHeader?
+    public let mapping: AVDOVIDataMapping?
+    public let color: AVDOVIColorMetadata?
+
+    /// Initialize by copying values from FFmpeg pointers (safe after AVFrame freed)
+    public init(rpuData: Data?,
+                header: UnsafePointer<AVDOVIRpuDataHeader>?,
+                mapping: UnsafePointer<AVDOVIDataMapping>?,
+                color: UnsafePointer<AVDOVIColorMetadata>?) {
+        self.rpuData = rpuData
+        self.header = header?.pointee
+        self.mapping = mapping?.pointee
+        self.color = color?.pointee
+    }
 }
 
 public final class VideoVTBFrame: MEFrame {
+    // MARK: - Stored fields (RE: VideoVTBFrame, 12 fields per types.json)
     public var timebase = Timebase.defaultValue
+    /// Decoded image data — non-Optional in the binary's `types.json` dump.
+    /// Provide a sentinel placeholder for callers that have not yet supplied
+    /// the buffer (e.g. transient construction in the FFmpeg decode path).
+    var pixelBuffer: PixelBufferProtocol
     // 交叉视频的duration会不准，直接减半了
     public var duration: Int64 = 0
     public var position: Int64 = 0
     public var timestamp: Int64 = 0
-    public var size: Int32 = 0
     public let fps: Float
-    public let isDovi: Bool
+    public var size: Int32 = 0
+    public var adjustBuffer: MTLBuffer?
     public var edrMetaData: EDRMetaData? = nil
-    /// Per-frame DV RPU + mapping data for Metal reshape shader (RE/67)
+    public var isKeyFrame: Bool = false
+    public let isDovi: Bool
+    /// Per-frame DV RPU + mapping data for Metal reshape shader.
     public var doviData: DOVIFrameMetadata?
-    var corePixelBuffer: PixelBufferProtocol?
-    init(fps: Float, isDovi: Bool) {
+
+    init(fps: Float, isDovi: Bool, pixelBuffer: PixelBufferProtocol = VideoVTBFrame.placeholderPixelBuffer) {
         self.fps = fps
         self.isDovi = isDovi
+        self.pixelBuffer = pixelBuffer
     }
+
+    /// Backwards-compatibility shim for sites that still expect an Optional.
+    /// Mirrors the previous `corePixelBuffer` accessor while the underlying
+    /// storage is non-Optional per the binary layout.
+    var corePixelBuffer: PixelBufferProtocol? {
+        get { pixelBuffer is PlaceholderPixelBuffer ? nil : pixelBuffer }
+        set {
+            if let newValue {
+                pixelBuffer = newValue
+            } else {
+                pixelBuffer = VideoVTBFrame.placeholderPixelBuffer
+            }
+        }
+    }
+
+    fileprivate static let placeholderPixelBuffer: PixelBufferProtocol = PlaceholderPixelBuffer()
+}
+
+/// Sentinel `PixelBufferProtocol` used when a `VideoVTBFrame` is constructed
+/// before its image data has been attached. The binary stores
+/// `pixelBuffer: PixelBufferProtocol` as non-Optional, so source paths that
+/// previously left it `nil` use this stand-in until the real buffer arrives.
+private final class PlaceholderPixelBuffer: PixelBufferProtocol {
+    var width: Int { 0 }
+    var height: Int { 0 }
+    var bitDepth: Int32 { 8 }
+    var leftShift: UInt8 { 0 }
+    var planeCount: Int { 0 }
+    var formatDescription: CMVideoFormatDescription? { nil }
+    var aspectRatio: CGSize {
+        get { CGSize(width: 1, height: 1) }
+        set { _ = newValue }
+    }
+    var yCbCrMatrix: CFString? {
+        get { nil }
+        set { _ = newValue }
+    }
+    var colorPrimaries: CFString? {
+        get { nil }
+        set { _ = newValue }
+    }
+    var transferFunction: CFString? {
+        get { nil }
+        set { _ = newValue }
+    }
+    var colorspace: CGColorSpace? {
+        get { nil }
+        set { _ = newValue }
+    }
+    var cvPixelBuffer: CVPixelBuffer? { nil }
+    var isFullRangeVideo: Bool { false }
+    func cgImage() -> CGImage? { nil }
+    func textures() -> [MTLTexture] { [] }
+    func widthOfPlane(at _: Int) -> Int { 0 }
+    func heightOfPlane(at _: Int) -> Int { 0 }
+    func matche(formatDescription _: CMVideoFormatDescription) -> Bool { false }
 }
 
 extension VideoVTBFrame {
@@ -475,6 +604,9 @@ public struct EDRMetaData {
     var displayData: MasteringDisplayMetadata?
     var contentData: ContentLightMetadata?
     var ambientViewingEnvironment: AmbientViewingEnvironment?
+    /// HDR Vivid presence flag — set when `AV_FRAME_DATA_DYNAMIC_HDR_VIVID`
+    /// (binary side-data type `0x19`) was observed on the source frame.
+    var isVIVID: Bool = false
 }
 
 public struct MasteringDisplayMetadata {

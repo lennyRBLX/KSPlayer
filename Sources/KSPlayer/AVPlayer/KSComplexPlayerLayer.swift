@@ -18,7 +18,10 @@ import UIKit
 
 open class KSComplexPlayerLayer: KSPlayerLayer {
     public var urls: [URL] = []
-    public var isPictureInPictureStoped: Bool = true
+    // Per CLAUDE.md typo-fix rule, binary `isPictureInPictureStoped` → `isPictureInPictureStopped`
+    // in Swift. Reversal doc `.reversal/UIComponents.md §6.6` notes the typo as preserved at
+    // the binary level (it's in upstream KSPlayer source too) — fixed here.
+    public var isPictureInPictureStopped: Bool = true
 
     private weak var pipController: AVPictureInPictureController?
 
@@ -27,7 +30,7 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     public convenience init(url: URL, options: KSOptions, delegate: KSPlayerLayerDelegate?) {
         self.init()
         self.urls = [url]
-        self.isPictureInPictureStoped = true
+        self.isPictureInPictureStopped = true
         set(url: url, options: options)
         self.delegate = delegate
         if options.registerRemoteControll {
@@ -69,11 +72,11 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     // MARK: - PiP Lifecycle (RE: 0x1013b6cc8, 0x1013b6d7c, 0x1013b6ab4)
 
     func pipWillStop() {
-        isPictureInPictureStoped = true
+        isPictureInPictureStopped = true
     }
 
     func pipDidStop() {
-        isPictureInPictureStoped = true
+        isPictureInPictureStopped = true
         postPiPStopCleanup()
         // RE: checkEnhanceDolbyPiP — notify PlayerCenter that PiP has stopped
         Task { @MainActor in
@@ -82,13 +85,13 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     }
 
     func pipFailedToStart() {
-        isPictureInPictureStoped = true
+        isPictureInPictureStopped = true
     }
 
     // MARK: - PiP Restore (RE: KSComplexPlayerLayer_restoreFromPiP @ 0x1013b6920)
 
     func restoreFromPiP() {
-        isPictureInPictureStoped = false
+        isPictureInPictureStopped = false
         // RE: checkEnhanceDolbyPiP — notify PlayerCenter that PiP is active
         Task { @MainActor in
             PlayerCenter.shared.handlePipStateChange(isActive: true)
@@ -105,7 +108,7 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     // MARK: - Auto PiP Restart (RE: KSComplexPlayerLayer_autoPiPRestart_block @ 0x1013b822c)
 
     func autoPiPRestart() {
-        guard !isPictureInPictureStoped else { return }
+        guard !isPictureInPictureStopped else { return }
         pipController?.startPictureInPicture()
     }
 
@@ -124,7 +127,7 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     // MARK: - Init Setup PiP Restore (RE: KSComplexPlayerLayer_init_setupPiPRestore @ 0x1013b64b0)
 
     func setupPiPRestore() {
-        isPictureInPictureStoped = true
+        isPictureInPictureStopped = true
     }
 
     // MARK: - Subtitle and PiP Delegate (RE: KSComplexPlayerLayer_setupSubtitleAndPipDelegate @ 0x1013b6f48)

@@ -8,6 +8,7 @@
 import AudioToolbox
 import AVFAudio
 import CoreAudio
+import QuartzCore
 
 public final class AudioUnitPlayer: AudioOutput {
     private var audioUnitForOutput: AudioUnit!
@@ -21,6 +22,24 @@ public final class AudioUnitPlayer: AudioOutput {
                 currentRenderReadOffset = 0
             }
         }
+    }
+
+    /// Timestamp of last prepare() call for debounce protection.
+    /// RE: Forward v1.3.15 AudioUnitPlayer field 6
+    private var lastPrepareTime: TimeInterval = 0
+
+    /// Minimum delay between prepare() calls (seconds).
+    /// RE: Forward v1.3.15 AudioUnitPlayer field 7
+    private let minDelayAfterPrepare: TimeInterval = 0.1
+
+    /// System-level audio output latency.
+    /// RE: Forward v1.3.15 AudioUnitPlayer field #12
+    public var outputLatencySystem: Double {
+        #if os(macOS)
+        return 0
+        #else
+        return AVAudioSession.sharedInstance().outputLatency
+        #endif
     }
 
     private var isPlaying = false
@@ -63,6 +82,9 @@ public final class AudioUnitPlayer: AudioOutput {
     }
 
     public func prepare(audioFormat: AVAudioFormat) {
+        let now = CACurrentMediaTime()
+        guard now - lastPrepareTime >= minDelayAfterPrepare else { return }
+        lastPrepareTime = now
         if sourceNodeAudioFormat == audioFormat {
             return
         }

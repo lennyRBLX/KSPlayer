@@ -179,72 +179,56 @@ public class AssIncrementImageRenderer {
 
     /// Composite all ASS_Image layers into a single ARGB buffer using vImage operations.
     /// RE: Uses vImageOverwriteChannelsWithPixel_ARGB8888 for channel operations.
+    /// Walks the libass linked list once via `ASSImage.linkedListToArray` (RE:
+    /// ASSImage_linkedListToArray at 0x1014734bc) and then iterates the
+    /// resulting value-typed array, matching the Forward binary's
+    /// linked-list-to-array decoupling.
     private func compositeFrame(_ head: UnsafeMutablePointer<ASS_Image>) -> (image: UIImage, origin: CGPoint)? {
-        // Calculate bounding box
-        var minX = Int32.max, minY = Int32.max
-        var maxX = Int32.min, maxY = Int32.min
+        let layers = ASSImage.linkedListToArray(head)
+        guard let bounds = ASSImage.boundingBox(of: layers) else { return nil }
 
-        var img: UnsafeMutablePointer<ASS_Image>? = head
-        while let current = img {
-            let val = current.pointee
-            if val.w > 0, val.h > 0 {
-                minX = min(minX, val.dst_x)
-                minY = min(minY, val.dst_y)
-                maxX = max(maxX, val.dst_x + val.w)
-                maxY = max(maxY, val.dst_y + val.h)
-            }
-            img = val.next
-        }
-
-        guard minX < maxX, minY < maxY else { return nil }
-
-        let width = Int(maxX - minX)
-        let height = Int(maxY - minY)
+        let width = Int(bounds.width)
+        let height = Int(bounds.height)
         let bytesPerRow = width * 4
         var buffer = [UInt8](repeating: 0, count: height * bytesPerRow)
 
         // Blend each ASS_Image layer using the ASS inverted alpha convention
-        img = head
-        while let current = img {
-            let val = current.pointee
-            if val.w > 0, val.h > 0 {
-                blitColoredPixels(
-                    val,
-                    into: &buffer,
-                    bufferWidth: width,
-                    offsetX: Int(val.dst_x - minX),
-                    offsetY: Int(val.dst_y - minY)
-                )
-            }
-            img = val.next
+        for layer in layers where layer.width > 0 && layer.height > 0 {
+            blitColoredPixels(
+                layer,
+                into: &buffer,
+                bufferWidth: width,
+                offsetX: Int(layer.dstX - Int32(bounds.minX)),
+                offsetY: Int(layer.dstY - Int32(bounds.minY))
+            )
         }
 
         // Cache for incremental comparison
         previousBuffer = buffer
-        previousBounds = CGRect(x: Int(minX), y: Int(minY), width: width, height: height)
+        previousBounds = bounds
 
         guard let cgImage = createCGImage(from: buffer, width: width, height: height) else { return nil }
-        return (UIImage(cgImage: cgImage), CGPoint(x: Int(minX), y: Int(minY)))
+        return (UIImage(cgImage: cgImage), bounds.origin)
     }
 
     /// Blit a single ASS_Image layer with per-pixel alpha blending.
     ///
     /// RE: AssIncrementImageRenderer_blitColoredPixels — inner blit loop with
     /// source alpha multiplication. ASS inverted alpha: ~(alpha & 0xFF) / 255.0
-    /// ARGB color unpacking: R at bits 8-15, G at 16-23, B at 24-31
-    private func blitColoredPixels(_ img: ASS_Image, into buffer: inout [UInt8], bufferWidth: Int, offsetX: Int, offsetY: Int) {
-        let color = img.color
+    /// ARGB color unpacking: R at bits 24-31, G at 16-23, B at 8-15, A at 0-7
+    private func blitColoredPixels(_ layer: ASSImage.Layer, into buffer: inout [UInt8], bufferWidth: Int, offsetX: Int, offsetY: Int) {
+        let color = layer.color
         // ARGB unpacking: R at bits 24-31, G at 16-23, B at 8-15, A at 0-7
         let r = UInt8((color >> 24) & 0xFF)
         let g = UInt8((color >> 16) & 0xFF)
         let b = UInt8((color >> 8) & 0xFF)
         // ASS inverted alpha: 0 = opaque, 0xFF = transparent
-        let a = UInt8(~(color & 0xFF) & 0xFF)
+        let a = layer.opacity
 
-        guard let bitmap = img.bitmap else { return }
-        let srcStride = Int(img.stride)
-        let w = Int(img.w)
-        let h = Int(img.h)
+        guard let bitmap = layer.bitmap else { return }
+        let srcStride = Int(layer.stride)
+        let w = Int(layer.width)
+        let h = Int(layer.height)
 
         for y in 0 ..< h {
             for x in 0 ..< w {

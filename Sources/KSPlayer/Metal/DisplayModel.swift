@@ -12,19 +12,28 @@ import simd
 import UIKit
 #endif
 
+// **DoviDisplayModel is intentionally absent from this switch.** Forward's binary swaps
+// `KSOptions.display` to a DoviDisplayModel singleton (`DAT_104458878`) when DV side data
+// arrives -- see .reversal/DolbyVision.md §DoviDisplayModel and §"Dynamic DoviDisplayModel
+// Activation". This port keeps `DisplayEnum` strictly about geometry (plane / VR / VR-box)
+// and routes the DV reshape path out-of-band via the `doviMetadata:` parameter on
+// `MetalView.draw`. Rationale: the DV path needs per-frame `DoviGPUMetadata`, which doesn't
+// fit a stateless enum case cleanly; and the inverted enhanceDolby semantics
+// (see `KSOptions.enhanceDolby`) mean most DV content is actually rendered by AVPlayer,
+// not by `DoviDisplayModel`.
 extension DisplayEnum {
     private static var planeDisplay = PlaneDisplayModel()
-    private static var vrDiaplay = VRDisplayModel()
-    private static var vrBoxDiaplay = VRBoxDisplayModel()
+    private static var vrDisplay = VRDisplayModel()
+    private static var vrBoxDisplay = VRBoxDisplayModel()
 
     func set(encoder: MTLRenderCommandEncoder) {
         switch self {
         case .plane, .auto, .metalPQ:
             DisplayEnum.planeDisplay.set(encoder: encoder)
         case .vr:
-            DisplayEnum.vrDiaplay.set(encoder: encoder)
+            DisplayEnum.vrDisplay.set(encoder: encoder)
         case .vrBox:
-            DisplayEnum.vrBoxDiaplay.set(encoder: encoder)
+            DisplayEnum.vrBoxDisplay.set(encoder: encoder)
         }
     }
 
@@ -33,18 +42,18 @@ extension DisplayEnum {
         case .plane, .auto, .metalPQ:
             return DisplayEnum.planeDisplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         case .vr:
-            return DisplayEnum.vrDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
+            return DisplayEnum.vrDisplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         case .vrBox:
-            return DisplayEnum.vrBoxDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
+            return DisplayEnum.vrBoxDisplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         }
     }
 
     func touchesMoved(touch: UITouch) {
         switch self {
         case .vr:
-            DisplayEnum.vrDiaplay.touchesMoved(touch: touch)
+            DisplayEnum.vrDisplay.touchesMoved(touch: touch)
         case .vrBox:
-            DisplayEnum.vrBoxDiaplay.touchesMoved(touch: touch)
+            DisplayEnum.vrBoxDisplay.touchesMoved(touch: touch)
         default:
             break
         }
@@ -65,7 +74,7 @@ private class PlaneDisplayModel {
     let uvBuffer: MTLBuffer?
 
     fileprivate init() {
-        let (indices, positions, uvs) = PlaneDisplayModel.genSphere()
+        let (indices, positions, uvs) = PlaneDisplayModel.genBaseVertexData()
         let device = MetalRender.device
         indexCount = indices.count
         indexBuffer = device.makeBuffer(bytes: indices, length: MemoryLayout<UInt16>.size * indexCount)!
@@ -73,7 +82,11 @@ private class PlaneDisplayModel {
         uvBuffer = device.makeBuffer(bytes: uvs, length: MemoryLayout<simd_float2>.size * uvs.count)
     }
 
-    private static func genSphere() -> ([UInt16], [simd_float4], [simd_float2]) {
+    // Renamed from upstream's `genSphere()` -- that name is misleading because this
+    // returns a 4-vertex flat quad, not a sphere. Binary uses
+    // `DisplayModel_initBaseVertexData @ 0x101466cd8` (see .reversal/DisplayMetal.md
+    // §PlaneDisplayModel). Reversal-doc rule: name by what it does in this codebase.
+    private static func genBaseVertexData() -> ([UInt16], [simd_float4], [simd_float2]) {
         let indices: [UInt16] = [0, 1, 2, 3]
         let positions: [simd_float4] = [
             [-1.0, -1.0, 0.0, 1.0],

@@ -7,11 +7,15 @@
 #if canImport(UIKit)
 import UIKit
 
+// `_TtC8KSPlayer8KSSlider` — 5 stored properties per `.reversal/types.json`:
+// `tapGesture`, `panGesture`, `delegate`, `trackHeigt`, `isPlayable`.
+// `trackHeigt` is a binary typo (correct: `trackHeight`); per CLAUDE.md
+// typo-fix rule the Swift port renames it.
 public class KSSlider: UXSlider {
     private var tapGesture: UITapGestureRecognizer!
     private var panGesture: UIPanGestureRecognizer!
     weak var delegate: KSSliderDelegate?
-    public var trackHeigt = CGFloat(2)
+    public var trackHeight = CGFloat(2)
     public var isPlayable = false
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -31,8 +35,8 @@ public class KSSlider: UXSlider {
 
     override open func trackRect(forBounds bounds: CGRect) -> CGRect {
         var customBounds = super.trackRect(forBounds: bounds)
-        customBounds.origin.y -= trackHeigt / 2
-        customBounds.size.height = trackHeigt
+        customBounds.origin.y -= trackHeight / 2
+        customBounds.size.height = trackHeight
         return customBounds
     }
 

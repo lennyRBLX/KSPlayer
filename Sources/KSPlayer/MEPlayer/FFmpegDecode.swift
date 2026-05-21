@@ -10,30 +10,44 @@ import Foundation
 import Libavcodec
 
 class FFmpegDecode: DecodeProtocol {
+    // MARK: - Fields (RE: FFmpegDecode, 9 fields per types.json)
+    // Field order below mirrors the binary type-dump declaration order. The
+    // binary additionally reserves a 3008-byte inline DV-metadata staging
+    // buffer at `self + 0x70` that is not represented as a named field in
+    // the type dump; it is allocated by the initializer and is the
+    // destination of the side-data type-`0x18` copy (see decode loop).
+
+    /// #1 — Player configuration reference.
     private let options: KSOptions
+    /// #2 — Reusable AVFrame for decode output.
     private var coreFrame: UnsafeMutablePointer<AVFrame>? = av_frame_alloc()
+    /// #3 — Active codec context.
     private var codecContext: UnsafeMutablePointer<AVCodecContext>?
+    /// #4 — Last best-effort PTS from the decoder.
     private var bestEffortTimestamp = Int64(0)
+    /// #5 — Existential-typed frame converter (24 B inline + 8 B type
+    /// metadata + 8 B witness table in the binary layout).
     private let frameChange: FrameChange
+    /// #6 — libavfilter post-processing graph.
     private let filter: MEFilter
-    private let seekByBytes: Bool
-    /// Actively configured color space parameters from the codec context.
-    /// Updated after codec init and when frame color params change.
-    private var configuredColorPrimaries: AVColorPrimaries = AVCOL_PRI_UNSPECIFIED
-    private var configuredColorTrc: AVColorTransferCharacteristic = AVCOL_TRC_UNSPECIFIED
-    private var configuredColorSpace: AVColorSpace = AVCOL_SPC_UNSPECIFIED
-    private var configuredColorRange: AVColorRange = AVCOL_RANGE_UNSPECIFIED
-
-    /// True after first successful frame decode. Used for two-tier VTB fallback.
-    /// RE: FFmpegDecode field #7 (Forward v1.3.15)
+    /// #7 — True after first successful frame decode. Gates the VTB fallback
+    /// distinguishing in the track's fallback dispatcher.
     public var hasDecodeSuccess: Bool = false
-
-    /// Cached media type check. Micro-optimization for high frame rate decode.
-    /// RE: FFmpegDecode field #8 (Forward v1.3.15)
+    /// #8 — Cached `mediaType == .video` for the hot decode loop.
     public let isVideo: Bool
+    /// #9 — Dolby Vision metadata extracted by the decode loop. Mirrors
+    /// the per-frame `VideoVTBFrame.doviData` that is emitted downstream
+    /// but is also held on the decoder itself per the binary layout.
+    public var doviData: DOVIFrameMetadata?
+
+    // MARK: - Inline buffers (not in the Swift type dump)
+    /// 3008-byte DV metadata staging area at the binary's `self + 0x70`.
+    /// Holds a copy of `AV_FRAME_DATA_DOVI_METADATA` (side-data type 0x18)
+    /// before it is wrapped into a `DOVIFrameMetadata` for the renderer.
+    private var dvMetadataStaging = Data(count: 3008)
+
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.options = options
-        seekByBytes = assetTrack.seekByBytes
         isVideo = assetTrack.mediaType == .video
         do {
             codecContext = try assetTrack.createContext(options: options)
@@ -44,10 +58,6 @@ class FFmpegDecode: DecodeProtocol {
         filter = MEFilter(timebase: assetTrack.timebase, isAudio: assetTrack.mediaType == .audio, nominalFrameRate: assetTrack.nominalFrameRate, options: options)
         if assetTrack.mediaType == .video {
             frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, isDovi: assetTrack.dovi != nil)
-            // RE: actively configure color space after codec initialization
-            if let codecContext {
-                configureVideoColorSpace(codecContext)
-            }
         } else {
             frameChange = AudioSwresample(audioDescriptor: assetTrack.audioDescriptor!)
         }
@@ -77,14 +87,36 @@ class FFmpegDecode: DecodeProtocol {
         while true {
             let result = avcodec_receive_frame(codecContext, coreFrame)
             if result == 0, let inputFrame = coreFrame {
-                // RE: check for mid-stream color space changes on each decoded frame
-                checkFrameColorSpaceChange(inputFrame)
                 var displayData: MasteringDisplayMetadata?
                 var contentData: ContentLightMetadata?
                 var ambientViewingEnvironment: AmbientViewingEnvironment?
+                var isVIVID = false
                 var doviRPU: Data?
                 var doviMetadataPtr: UnsafePointer<AVDOVIMetadata>?
-                // filter之后，side_data信息会丢失，所以放在这里
+                // Per-frame HDR / DV side-data dispatch. Mirrors the Forward
+                // binary's `MEPlayerItem_processFrameSideData @ 0x101407908`
+                // case table (per `.reversal/DolbyVision.md §"Side-data" table`):
+                //
+                //   0x01 / 1   AV_FRAME_DATA_A53_CC                      → CC packet → vtable+0x198
+                //   0x0B / 11  AV_FRAME_DATA_MASTERING_DISPLAY_METADATA  → DynamicInfo.masteringDisplay
+                //   0x0E / 14  AV_FRAME_DATA_CONTENT_LIGHT_LEVEL         → DynamicInfo.contentLightLevel
+                //   0x11 / 17  AV_FRAME_DATA_DISPLAYMATRIX               → recognised and skipped
+                //   0x14 / 20  AV_FRAME_DATA_SEI_UNREGISTERED            → C-string + CMTime → vtable+0xba8
+                //   0x18 / 24  AV_FRAME_DATA_DOVI_RPU_BUFFER             → 3008-byte memmove + 3-cond. DV activation
+                //                                                          (gate: track flag@+0x13a, AVFrame.format==2,
+                //                                                           KSOptions.hardwareDecode==1)
+                //                                                          The binary calls a `nullsub_2(stackBuf)`
+                //                                                          stub between the memmove and the memcpy
+                //                                                          to `self+0x70`.
+                //   0x19 / 25  AV_FRAME_DATA_DOVI_METADATA               → sets `local_d98 | (1 << 32)` (flag only)
+                //   0x1A / 26  AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT → DynamicInfo ambient viewing environment
+                //
+                // The Swift branches below stash the parsed `AVDOVIMetadata` pointer (header /
+                // mapping / color) from whichever FFmpeg side-data type carries it on this
+                // build of FFmpeg, then surface it via `DOVIFrameMetadata` on the
+                // `VideoVTBFrame`. The DV-singleton activation gate itself lives in
+                // `MetalPlayView`'s draw path (mirrors the binary's three-condition guard).
+                // 注释：filter之后，side_data信息会丢失，所以放在这里
                 if inputFrame.pointee.nb_side_data > 0 {
                     for i in 0 ..< inputFrame.pointee.nb_side_data {
                         if let sideData = inputFrame.pointee.side_data[Int(i)]?.pointee {
@@ -118,10 +150,20 @@ class FFmpegDecode: DecodeProtocol {
                                 doviRPU = Data(bytes: sideData.data, count: Int(sideData.size))
                             } else if sideData.type == AV_FRAME_DATA_DOVI_METADATA {
                                 doviMetadataPtr = sideData.data.withMemoryRebound(to: AVDOVIMetadata.self, capacity: 1) { $0 }
+                                // RE: Forward stages the 3008-byte DV metadata
+                                // buffer at `self + 0x70`. Copy bounded by the
+                                // smaller of side-data size and staging area.
+                                let copyCount = min(Int(sideData.size), dvMetadataStaging.count)
+                                dvMetadataStaging.withUnsafeMutableBytes { dest in
+                                    if let baseAddress = dest.baseAddress {
+                                        memcpy(baseAddress, sideData.data, copyCount)
+                                    }
+                                }
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_PLUS { // AVDynamicHDRPlus
-                                let data = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { $0 }.pointee
+                                _ = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { $0 }.pointee
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_VIVID { // AVDynamicHDRVivid
-                                let data = sideData.data.withMemoryRebound(to: AVDynamicHDRVivid.self, capacity: 1) { $0 }.pointee
+                                _ = sideData.data.withMemoryRebound(to: AVDynamicHDRVivid.self, capacity: 1) { $0 }.pointee
+                                isVIVID = true
                             } else if sideData.type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA {
                                 let data = sideData.data.withMemoryRebound(to: AVMasteringDisplayMetadata.self, capacity: 1) { $0 }.pointee
                                 displayData = MasteringDisplayMetadata(
@@ -153,6 +195,15 @@ class FFmpegDecode: DecodeProtocol {
                         }
                     }
                 }
+                if let doviMetadataPtr {
+                    doviData = DOVIFrameMetadata(
+                        rpuData: doviRPU,
+                        header: av_dovi_get_header(doviMetadataPtr),
+                        mapping: av_dovi_get_mapping(doviMetadataPtr),
+                        color: av_dovi_get_color(doviMetadataPtr)
+                    )
+                }
+                let stagedDovi = doviData
                 filter.filter(options: options, inputFrame: inputFrame) { avframe in
                     do {
                         var frame = try frameChange.change(avframe: avframe)
@@ -160,16 +211,11 @@ class FFmpegDecode: DecodeProtocol {
                             if let pixelBuffer = pixelBuffer as? PixelBuffer {
                                 pixelBuffer.formatDescription = packet.assetTrack.formatDescription
                             }
-                            if displayData != nil || contentData != nil || ambientViewingEnvironment != nil {
-                                videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment)
+                            if displayData != nil || contentData != nil || ambientViewingEnvironment != nil || isVIVID {
+                                videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment, isVIVID: isVIVID)
                             }
-                            if let doviMetadataPtr {
-                                videoFrame.doviData = DOVIFrameMetadata(
-                                    rpuData: doviRPU,
-                                    header: av_dovi_get_header(doviMetadataPtr),
-                                    mapping: av_dovi_get_mapping(doviMetadataPtr),
-                                    color: av_dovi_get_color(doviMetadataPtr)
-                                )
+                            if let stagedDovi {
+                                videoFrame.doviData = stagedDovi
                             }
                         }
                         frame.timebase = filter.timebase
@@ -229,67 +275,6 @@ class FFmpegDecode: DecodeProtocol {
         bestEffortTimestamp = Int64(0)
         if codecContext != nil {
             avcodec_flush_buffers(codecContext)
-        }
-    }
-
-    // MARK: - Video Color Space Configuration
-
-    /// Actively configure video color space parameters from AVCodecContext fields.
-    /// Called after codec initialization and after each decoded frame where color
-    /// parameters may have changed (e.g., mid-stream color space switches).
-    /// Follows the same pattern as AV_FRAME_DATA_DOVI_METADATA side-data reading
-    /// but reads from the codec context / frame fields directly.
-    /// RE: configureVideoColorSpace — maps to the binary's active color config path
-    private func configureVideoColorSpace(_ codecContext: UnsafeMutablePointer<AVCodecContext>) {
-        let colorRange = codecContext.pointee.color_range
-        let colorPrimaries = codecContext.pointee.color_primaries
-        let colorTrc = codecContext.pointee.color_trc
-        let colorSpace = codecContext.pointee.colorspace
-
-        // Only log and update when something actually changed
-        guard colorPrimaries != configuredColorPrimaries
-                || colorTrc != configuredColorTrc
-                || colorSpace != configuredColorSpace
-                || colorRange != configuredColorRange
-        else {
-            return
-        }
-
-        configuredColorPrimaries = colorPrimaries
-        configuredColorTrc = colorTrc
-        configuredColorSpace = colorSpace
-        configuredColorRange = colorRange
-
-        let isFullRange = colorRange == AVCOL_RANGE_JPEG
-        let primariesStr = colorPrimaries.colorPrimaries as String? ?? "unknown"
-        let transferStr = colorTrc.transferFunction as String? ?? "unknown"
-        let matrixStr = colorSpace.ycbcrMatrix as String? ?? "unknown"
-
-        KSLog("[ColorSpace] configured: primaries=\(primariesStr), transfer=\(transferStr), matrix=\(matrixStr), fullRange=\(isFullRange)")
-    }
-
-    /// Check if a decoded frame has different color parameters than the codec context
-    /// and reconfigure if needed. Called per-frame in the decode loop.
-    private func checkFrameColorSpaceChange(_ frame: UnsafeMutablePointer<AVFrame>) {
-        guard let codecContext else { return }
-        let framePrimaries = frame.pointee.color_primaries
-        let frameTrc = frame.pointee.color_trc
-        let frameColorSpace = frame.pointee.colorspace
-        let frameColorRange = frame.pointee.color_range
-
-        // Detect mid-stream color space change from frame fields
-        if framePrimaries != AVCOL_PRI_UNSPECIFIED, framePrimaries != configuredColorPrimaries {
-            codecContext.pointee.color_primaries = framePrimaries
-            configureVideoColorSpace(codecContext)
-        } else if frameTrc != AVCOL_TRC_UNSPECIFIED, frameTrc != configuredColorTrc {
-            codecContext.pointee.color_trc = frameTrc
-            configureVideoColorSpace(codecContext)
-        } else if frameColorSpace != AVCOL_SPC_UNSPECIFIED, frameColorSpace != configuredColorSpace {
-            codecContext.pointee.colorspace = frameColorSpace
-            configureVideoColorSpace(codecContext)
-        } else if frameColorRange != AVCOL_RANGE_UNSPECIFIED, frameColorRange != configuredColorRange {
-            codecContext.pointee.color_range = frameColorRange
-            configureVideoColorSpace(codecContext)
         }
     }
 }

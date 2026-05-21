@@ -2,56 +2,60 @@
 //  GestureView.swift
 //  KSPlayer
 //
-//  Forward addition (RE): SwiftUI view wrapping gesture recognizers
-//  for the video player overlay.
+//  Forward addition (RE): SwiftUI struct wrapping the tvOS swipe and press
+//  receiver. Two closure-typed properties form the entire API surface — one
+//  per gesture flavour, both passing a UIKit swipe direction.
 //
-//  Binary: $s8KSPlayer11GestureViewV (VWT entries only)
+//  Binary: $s8KSPlayer11GestureViewV (struct value witnesses + body)
+//  Fields per types.json:
+//    swipeAction: (__C.Direction) -> ()
+//    pressAction: (__C.Direction) -> ()
 //  RE source: Forward v1.3.15
 //
 
+#if canImport(UIKit)
 import SwiftUI
+import UIKit
 
 public struct GestureView: View {
-    public var onTap: (() -> Void)?
-    public var onDoubleTap: (() -> Void)?
-    public var onSwipe: ((SwipeDirection) -> Void)?
-    public var onPan: ((CGSize) -> Void)?
+    public var swipeAction: (UISwipeGestureRecognizer.Direction) -> Void
+    public var pressAction: (UISwipeGestureRecognizer.Direction) -> Void
 
-    public enum SwipeDirection {
-        case left, right, up, down
-    }
-
-    public init(onTap: (() -> Void)? = nil,
-                onDoubleTap: (() -> Void)? = nil,
-                onSwipe: ((SwipeDirection) -> Void)? = nil,
-                onPan: ((CGSize) -> Void)? = nil) {
-        self.onTap = onTap
-        self.onDoubleTap = onDoubleTap
-        self.onSwipe = onSwipe
-        self.onPan = onPan
+    public init(
+        swipeAction: @escaping (UISwipeGestureRecognizer.Direction) -> Void = { _ in },
+        pressAction: @escaping (UISwipeGestureRecognizer.Direction) -> Void = { _ in }
+    ) {
+        self.swipeAction = swipeAction
+        self.pressAction = pressAction
     }
 
     public var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                onDoubleTap?()
-            }
-            .onTapGesture {
-                onTap?()
-            }
-            .gesture(
-                DragGesture()
-                    .onEnded { value in
-                        let horizontal = value.translation.width
-                        let vertical = value.translation.height
-                        if abs(horizontal) > abs(vertical) {
-                            onSwipe?(horizontal > 0 ? .right : .left)
-                        } else {
-                            onSwipe?(vertical > 0 ? .down : .up)
-                        }
-                        onPan?(value.translation)
-                    }
-            )
+        TVGestureHelpViewRepresentable(
+            swipeAction: swipeAction,
+            pressAction: pressAction
+        )
     }
 }
+
+#if os(tvOS)
+private struct TVGestureHelpViewRepresentable: UIViewRepresentable {
+    let swipeAction: (UISwipeGestureRecognizer.Direction) -> Void
+    let pressAction: (UISwipeGestureRecognizer.Direction) -> Void
+
+    func makeUIView(context: Context) -> TVGestureHelpView {
+        TVGestureHelpView(swipeAction: swipeAction, pressAction: pressAction)
+    }
+
+    func updateUIView(_ uiView: TVGestureHelpView, context: Context) {
+        uiView.swipeAction = swipeAction
+        uiView.pressAction = pressAction
+    }
+}
+#else
+private struct TVGestureHelpViewRepresentable: View {
+    let swipeAction: (UISwipeGestureRecognizer.Direction) -> Void
+    let pressAction: (UISwipeGestureRecognizer.Direction) -> Void
+    var body: some View { Color.clear }
+}
+#endif
+#endif

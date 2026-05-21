@@ -2,7 +2,7 @@
 //  MetalSubtitleView.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 — MetalSubtitleView at 0x101382A50
+//  RE source: Forward v1.3.15 — MetalSubtitleView_drawImpl at 0x10149ee10
 //  Metal-rendered HDR-aware subtitle compositing view using CIContext + CIRenderDestination.
 //  Supports SDR, HDR10/PQ, HLG, and Dolby Vision color spaces with exposure/brightness
 //  adjustment for subtitle legibility in HDR content.
@@ -28,7 +28,7 @@ import AppKit
 /// subtitle images and rendered text onto a CAMetalLayer drawable. Supports SDR and HDR
 /// output with per-subtitle exposure adjustment.
 ///
-/// RE: MTKView subclass, drawImpl at 0x101382A50 (0x53C bytes)
+/// RE: MTKView subclass, drawImpl at 0x10149ee10 (1340 bytes).
 public class MetalSubtitleView: MTKView, MTKViewDelegate {
 
     // MARK: - Properties
@@ -58,7 +58,12 @@ public class MetalSubtitleView: MTKView, MTKViewDelegate {
     }
 
     /// HDR subtitle exposure value (EV). 0 = no adjustment.
-    /// RE: g_subtitleImageEV at 0x1041F766C
+    /// RE: Forward v1.3.15 reads this from `DAT_10445876c` (Float) — the
+    /// only HDR-EV global in the binary with live xrefs from
+    /// `MetalSubtitleView_drawImpl @ 0x10149ee10` and `FUN_10149f590`.
+    /// (Earlier RE notes named `0x1041F766C` `g_subtitleImageEV`; that
+    /// address has zero xrefs in the Ghidra database and has been
+    /// retired — see `.reversal/SubtitleSystem.md`.)
     public var subtitleImageEV: Float = 0.0
 
     // MARK: - Initialization
@@ -169,6 +174,14 @@ public class MetalSubtitleView: MTKView, MTKViewDelegate {
     // MARK: - Layout
 
     /// Convert subtitle parts into renderable CIImage + position pairs.
+    ///
+    /// RE: The Forward binary has no standalone Ghidra entry for
+    /// "MetalSubtitleView_layoutAndUpdateImageInfos" — the symbol at
+    /// `0x101382710` that Ghidra labelled with that name is a misnamed
+    /// 36-byte `AVRoutePickerView` allocation thunk unrelated to
+    /// subtitle layout. The layout pipeline this method implements
+    /// lives inline inside `MetalSubtitleView_drawImpl @ 0x10149ee10`
+    /// and `MetalSubtitleView_layoutSubtitleParts @ 0x101498248`.
     private func updateImageInfos() {
         var newInfos: [(image: CIImage, position: CGPoint)] = []
         let scale = contentScaleFactor
@@ -202,7 +215,16 @@ public class MetalSubtitleView: MTKView, MTKViewDelegate {
 
     // MARK: - Text Rendering
 
-    /// RE: renderAttributedStringToCIImage at 0x101383568 (0x664 bytes)
+    /// RE: The Forward binary has no standalone Ghidra entry for
+    /// "MetalSubtitleView_renderAttributedStringToCIImage" — the
+    /// symbol at `0x101383568` that Ghidra labelled with that name is
+    /// a misnamed 11-byte `Hashable.hash(into:)` witness for an
+    /// unrelated `_CFObject`-bridged type (tail-calls `FUN_1002dd9d8`
+    /// = `Swift.Hasher` init + `_CFObject.hash(into:)` + finalize).
+    /// The real attributed-string → `CIImage` work lives inline inside
+    /// `drawImpl @ 0x10149ee10` and feeds `imageInfos` via
+    /// `compositeSubtitleWithBackground`. This Swift helper is the
+    /// reconstruction's standalone version of that inline body.
     private func renderAttributedStringToCIImage(_ attributedString: NSAttributedString, scale: CGFloat) -> CIImage? {
         let maxWidth = drawableSize.width / scale - 40 // margin
         let framesetter = CTFramesetterCreateWithAttributedString(attributedString)
@@ -381,7 +403,7 @@ extension DynamicRange {
         switch self {
         case .sdr:
             return CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-        case .hdr10:
+        case .hdr10, .hdr10Fallback:
             if #available(macOS 11.0, iOS 14.0, tvOS 14.0, *) {
                 return CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
             } else {

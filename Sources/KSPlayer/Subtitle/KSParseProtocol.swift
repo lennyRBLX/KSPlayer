@@ -17,7 +17,7 @@ public protocol KSParseProtocol {
 }
 
 public extension KSOptions {
-    static var subtitleParses: [KSParseProtocol] = [AssParse(), VTTParse(), SrtParse()]
+    static var subtitleParses: [KSParseProtocol] = [AssImageParse(), AssParse(), VTTParse(), SrtParse(), FFmpegSubtitleParse()]
 }
 
 public extension String {}
@@ -39,8 +39,8 @@ public extension KSParseProtocol {
 public class AssParse: KSParseProtocol {
     private var styleMap = [String: ASSStyle]()
     private var eventKeys = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"]
-    private var playResX = Float(1280.0)
-    private var playResY = Float(720.0)
+    private var playResX = Float(384.0)
+    private var playResY = Float(288.0)
     public func canParse(scanner: Scanner) -> Bool {
         guard scanner.scanString("[Script Info]") != nil else {
             return false

@@ -2,7 +2,16 @@
 //  ThumbnailQueue.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 — binary address 0x101300208
+//  RE source: Forward v1.3.15 — .reversal/MediaServices.md § Thumbnail Generation
+//  Verified Ghidra named entries:
+//    ThumbnailQueue_processQueue @ 0x10141C6DC
+//    ThumbnailQueue_submitJob    @ 0x1007900A0
+//
+//  The earlier addresses 0x101300164 / 0x101300280 / 0x101300674 were three
+//  separate mid-function offsets that all collapse into a single Ghidra
+//  function FUN_101300130 (1,396 B). The real named entries above live at
+//  unrelated addresses.
+//
 //  Thumbnail generation queue with batch index tracking.
 //  Sits between ThumbnailController (UI-facing) and ThumbnailSession (FFmpeg extraction).
 //

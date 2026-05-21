@@ -12,6 +12,13 @@ protocol PlayerViewFullScreenDelegate: AnyObject {
     func player(isMaskShow: Bool, isFullScreen: Bool)
 }
 
+// `_TtC8KSPlayer30PlayerFullScreenViewController` — 2 stored properties
+// per `.reversal/types.json`: `isHorizonal :: Swift.Bool`,
+// `statusHiden :: Swift.Bool`. Both names are typos in the binary
+// (correct spellings would be `isHorizontal` / `statusHidden`); per
+// CLAUDE.md typo-fix rule the Swift port can rename them, but the
+// upstream KSPlayer source preserves the typos here for parity with
+// the binary's symbol namespace.
 class PlayerFullScreenViewController: UIViewController {
     private let isHorizonal: Bool
     private var statusHiden = false

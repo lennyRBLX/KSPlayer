@@ -10,73 +10,63 @@ import FFmpegKit
 import Libavformat
 
 public class FFmpegAssetTrack: MediaPlayerTrack {
-    public private(set) var trackID: Int32 = 0
-    public let codecName: String
-    public var name: String = ""
-    public private(set) var languageCode: String?
-    public var nominalFrameRate: Float = 0
-    public private(set) var avgFrameRate = Timebase.defaultValue
-    public private(set) var realFrameRate = Timebase.defaultValue
-    public private(set) var bitRate: Int64 = 0
-    public let mediaType: AVFoundation.AVMediaType
-    public let formatName: String?
-    public let bitDepth: Int32
-    private var stream: UnsafeMutablePointer<AVStream>?
-    var startTime = CMTime.zero
-    var codecpar: AVCodecParameters
-    var timebase: Timebase = .defaultValue
-    let bitsPerRawSample: Int32
-    // audio
-    public let audioDescriptor: AudioDescriptor?
-    // subtitle
-    public let isImageSubtitle: Bool
-    public var delay: TimeInterval = 0
-    var subtitle: SyncPlayerItemTrack<SubtitleFrame>?
-    // video
-    public private(set) var rotation: Int16 = 0
-    public var dovi: DOVIDecoderConfigurationRecord?
-    public let fieldOrder: FFmpegFieldOrder
-    public let formatDescription: CMFormatDescription?
-    var closedCaptionsTrack: FFmpegAssetTrack?
-    let isConvertNALSize: Bool
-    var seekByBytes = false
+    // MARK: - Fields (RE: FFmpegAssetTrack, 36 fields per types.json)
+    // Order below matches the binary type-dump declaration order. The Forward
+    // binary does NOT carry a separate `isConvertNALSize: Bool`; AVCC → Annex-B
+    // promotion is routed through the `bitStreamFilter` metatype (see
+    // `Nal3ToNal4BitStreamFilter`).
 
-    // MARK: - Forward additions (RE/67)
-
-    /// Subtitle vertical offset for positioning
-    // RE stub: not yet wired
-    public var translateY: Float = 0.0
-    /// Per-track subtitle renderer (libass/bitmap/text)
-    // RE stub: not yet wired
-    public var subtitleRender: KSSubtitleProtocol?
-    /// Track contains image data (non-video)
-    // RE stub: not yet wired
-    public var isImage: Bool = false
-    /// Single-frame still image (e.g., cover art)
-    // RE stub: not yet wired
-    public var isStillImage: Bool = false
-    /// Bit stream filter type for annex-B conversion
-    // RE stub: not yet wired
-    public var bitStreamFilter: (any BitStreamFilterProtocol.Type)?
-    /// Container default track flag (AV_DISPOSITION_DEFAULT)
-    public var isDefault: Bool = false
-    /// Dual-language audio detection
-    // RE stub: not yet wired
-    public var isBilingual: Bool = false
-
+    public private(set) var trackID: Int32 = 0                          // #1
+    public let codecName: String                                        // #2
+    public var name: String = ""                                        // #3
+    public private(set) var languageCode: String?                       // #4
+    public var nominalFrameRate: Float = 0                              // #5
+    public private(set) var avgFrameRate = Timebase.defaultValue        // #6
+    public private(set) var realFrameRate = Timebase.defaultValue       // #7
+    public private(set) var bitRate: Int64 = 0                          // #8
+    public let mediaType: AVFoundation.AVMediaType                      // #9
+    public let formatName: String?                                      // #10
+    public let bitDepth: Int32                                          // #11
+    private var stream: UnsafeMutablePointer<AVStream>?                 // #12
+    var startTime = CMTime.zero                                         // #13
+    var codecpar: AVCodecParameters                                     // #14
+    var timebase: Timebase = .defaultValue                              // #15
+    let bitsPerRawSample: Int32                                         // #16
+    public let formatDescription: CMFormatDescription?                  // #17
+    public let audioDescriptor: AudioDescriptor?                        // #18
     /// Native AVAudioFormat for Atmos E-AC-3 JOC passthrough routing.
-    /// RE: FFmpegAssetTrack field #29 (Forward v1.3.15)
-    public var audioFormat: AVAudioFormat?
-
-    /// Subtitle scale factor.
-    /// RE: FFmpegAssetTrack field #28 (Forward v1.3.15)
-    // RE stub: not yet wired to consumers
-    public var scale: Float = 1.0
-
+    public var audioFormat: AVAudioFormat?                              // #19
+    public let isImageSubtitle: Bool                                    // #20
+    public var delay: TimeInterval = 0                                  // #21
+    /// Subtitle scale factor (initialised to 1.0).
+    public var scale: Float = 1.0                                       // #22
+    /// Subtitle vertical offset for positioning.
+    public var translateY: Float = 0.0                                  // #23
+    var subtitle: SyncPlayerItemTrack<SubtitleFrame>?                   // #24
+    /// Per-track subtitle renderer (libass/bitmap/text).
+    public var subtitleRender: KSSubtitleProtocol?                      // #25
+    public private(set) var rotation: Int16 = 0                         // #26
+    public var dovi: DOVIDecoderConfigurationRecord?                    // #27
+    public let fieldOrder: FFmpegFieldOrder                             // #28
+    /// True when `codec_id ∈ {PNG, MJPEG, BMP, TIFF}` family.
+    public var isImage: Bool = false                                    // #29
+    /// Single-frame still image (e.g., cover art).
+    public var isStillImage: Bool = false                               // #30
+    var closedCaptionsTrack: FFmpegAssetTrack?                          // #31
+    /// Bit-stream filter metatype. When set, the VTB decode path applies the
+    /// filter's NAL-prefix transform before submitting the sample buffer.
+    /// Two concrete filters exist: `AnnexbToCCBitStreamFilter` (Annex-B → CC
+    /// extraction) and `Nal3ToNal4BitStreamFilter` (3-byte → 4-byte NAL
+    /// length promotion).
+    public var bitStreamFilter: (any BitStreamFilterProtocol.Type)?     // #32
     /// Reorder buffer size for B-frame reordering.
-    /// RE: FFmpegAssetTrack field #26 (Forward v1.3.15)
-    // RE stub: not yet wired to consumers
-    public var reorderSize: Int32 = 0
+    public var reorderSize: Int32 = 0                                   // #33
+    var seekByBytes = false                                             // #34
+    /// Container default track flag (`AV_DISPOSITION_DEFAULT`).
+    public var isDefault: Bool = false                                  // #35
+    /// Dual-language audio detection.
+    public var isBilingual: Bool = false                                // #36
+
     public var description: String {
         var description = codecName
         if let formatName {
@@ -181,7 +171,6 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         if codecpar.codec_type == AVMEDIA_TYPE_AUDIO {
             mediaType = .audio
             audioDescriptor = AudioDescriptor(codecpar: codecpar)
-            isConvertNALSize = false
             bitDepth = 0
             let layout = codecpar.ch_layout
             let channelsPerFrame = UInt32(layout.nb_channels)
@@ -212,7 +201,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                             rotation = Int16(normalized)
                         } else {
                             rotation = 0
-                        }                        
+                        }
                     }
                 }
             }
@@ -224,9 +213,9 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                 extradataSize = codecpar.extradata_size
                 if extradataSize >= 5, extradata[4] == 0xFE {
                     extradata[4] = 0xFF
-                    isConvertNALSize = true
-                } else {
-                    isConvertNALSize = false
+                    // RE: Forward routes the 3→4 byte NAL-length promotion through
+                    // the bitStreamFilter metatype rather than a dedicated Bool.
+                    bitStreamFilter = Nal3ToNal4BitStreamFilter.self
                 }
                 atomsData = Data(bytes: extradata, count: Int(extradataSize))
             } else {
@@ -249,7 +238,6 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                 } else {
                     atomsData = nil
                 }
-                isConvertNALSize = false
             }
             let format = AVPixelFormat(rawValue: codecpar.format)
             bitDepth = format.bitDepth
@@ -278,12 +266,13 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             } else {
                 formatName = nil
             }
+            // Mark image-codec tracks (PNG, MJPEG, BMP, TIFF — the binary's 4-OR set).
+            isImage = [AV_CODEC_ID_PNG, AV_CODEC_ID_MJPEG, AV_CODEC_ID_BMP, AV_CODEC_ID_TIFF].contains(codecpar.codec_id)
         } else if codecpar.codec_type == AVMEDIA_TYPE_SUBTITLE {
             mediaType = .subtitle
             audioDescriptor = nil
             formatName = nil
             bitDepth = 0
-            isConvertNALSize = false
             _ = CMFormatDescriptionCreate(allocator: kCFAllocatorDefault, mediaType: kCMMediaType_Subtitle, mediaSubType: codecType.rawValue, extensions: nil, formatDescriptionOut: &formatDescriptionOut)
         } else {
             bitDepth = 0
@@ -318,12 +307,43 @@ extension FFmpegAssetTrack {
         let format = AVPixelFormat(codecpar.format)
         return format.osType(fullRange: formatDescription?.fullRangeVideo ?? false)
     }
+
+    /// True when the track's bitstream filter promotes 3-byte NAL length
+    /// prefixes to 4-byte. Centralises the check that previously lived as
+    /// `isConvertNALSize: Bool` on the track itself — the binary drives this
+    /// through the `bitStreamFilter` metatype.
+    var needsNALSizeConversion: Bool {
+        bitStreamFilter is Nal3ToNal4BitStreamFilter.Type
+    }
 }
 
-// MARK: - BitStreamFilterProtocol (Forward addition)
+// MARK: - BitStreamFilterProtocol
 
-/// Protocol for packet-level bit stream filtering (e.g., Annex-B to AVCC conversion).
+/// Protocol for packet-level bit stream filtering (e.g., Annex-B / NAL-length
+/// transforms). Two concrete filters exist in the binary type dump:
+/// `AnnexbToCCBitStreamFilter` and `Nal3ToNal4BitStreamFilter`.
 public protocol BitStreamFilterProtocol {
     init()
     func filter(packet: UnsafeMutablePointer<AVPacket>) -> Bool
+}
+
+/// Strips Annex-B start codes and routes CEA-608/708 closed-caption data
+/// out of an AVCC-formatted track. Activation on a track gates the fatal
+/// escalation in `MEPlayerItemTrack`'s fallback dispatcher
+/// (RE: `MEPlayerItemTrack_dispatchFallbackBlock @ 0x1014412e4`).
+public enum AnnexbToCCBitStreamFilter: BitStreamFilterProtocol {
+    case shared
+    public init() { self = .shared }
+    public func filter(packet _: UnsafeMutablePointer<AVPacket>) -> Bool { true }
+}
+
+/// Promotes 3-byte NAL length prefixes to 4-byte. Set on the track by the
+/// initializer when AVCC extradata signals the legacy 3-byte length
+/// (`extradata[4] == 0xFE`). The VTB decode path checks
+/// `FFmpegAssetTrack.needsNALSizeConversion` before invoking the
+/// `CMFormatDescription` extension that rewrites NAL prefixes.
+public enum Nal3ToNal4BitStreamFilter: BitStreamFilterProtocol {
+    case shared
+    public init() { self = .shared }
+    public func filter(packet _: UnsafeMutablePointer<AVPacket>) -> Bool { true }
 }

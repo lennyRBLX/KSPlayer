@@ -243,6 +243,9 @@ private extension KSMEPlayer {
             (track as? FFmpegAssetTrack)?.audioDescriptor?.updateAudioFormat()
         }
         audioOutput.flush()
+        // RE: Binary 0x1013039e4 — audioRouteDidChange calls spatial audio reconfiguration
+        // to update multichannel output when audio route changes (e.g. headphone connect/disconnect)
+        checkSpatialAudioAndSetMultichannel()
     }
     #endif
 }

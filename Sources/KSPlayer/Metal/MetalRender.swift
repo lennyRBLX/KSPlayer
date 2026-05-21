@@ -64,14 +64,14 @@ class MetalRender {
     private lazy var leftShiftMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<UInt8>(1, 1, 1)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<UInt8>>.size)
-        buffer?.label = "leftShit"
+        buffer?.label = "leftShift"
         return buffer
     }()
 
     private lazy var leftShiftSixMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<UInt8>(64, 64, 64)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<UInt8>>.size)
-        buffer?.label = "leftShit"
+        buffer?.label = "leftShift"
         return buffer
     }()
 
@@ -99,11 +99,13 @@ class MetalRender {
         return bcs.x != 0.0 || bcs.y != 1.0 || bcs.z != 1.0
     }
 
-    // MARK: - Dolby Vision display model (RE: MetalPlayView_renderFrameImpl @ 0x10144529c)
+    // MARK: - Dolby Vision display model (RE: MetalPlayView_renderFrameImpl @ 0x1014457f4)
 
-    /// Singleton DoviDisplayModel, created on first DV frame.
-    /// Binary uses swift_once(&DAT_103d06108, KSOptions_createDoviDisplayModel) → DAT_104458878
-    private lazy var doviDisplayModel: DoviDisplayModel? = DoviDisplayModel(device: MetalRender.device)
+    /// Process-wide DoviDisplayModel singleton, created on first DV frame.
+    /// Binary uses swift_once(&DAT_103d06280, KSOptions_createDoviDisplayModel) → DAT_104458878.
+    /// All callers share the same instance; this property is a thin actor-isolated accessor.
+    @MainActor
+    private var doviDisplayModel: DoviDisplayModel? { KSOptions.createDoviDisplayModel() }
 
     func clear(drawable: MTLDrawable) {
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)

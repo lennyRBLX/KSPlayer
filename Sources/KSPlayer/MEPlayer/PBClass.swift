@@ -2,28 +2,50 @@
 //  PBClass.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 — binary address 0x101321cac
-//  FFmpeg AVIO context wrapper with bandwidth tracking.
-//  The name "pb" comes from FFmpeg's AVFormatContext.pb field.
+//  RE source: Forward v1.3.15 (TranscodeIO.md).
+//
+//  Binary class metadata: `_TtC8KSPlayerP33_92A0AD70DC642356038FCA3F4FD833927PBClass`
+//  -- private nested class in module `KSPlayer`. The `MEPlayerItem.pbArray`
+//  field stores an array of `PBClass` instances. The name "pb" comes from
+//  FFmpeg's `AVFormatContext.pb` field convention.
+//
+//  Binary fields (3) per TranscodeIO.md:
+//    1. pb:         UnsafeMutablePointer<AVIOContext>?  -- wrapped FFmpeg I/O context
+//    2. _bytesRead: Int64                               -- cumulative bytes read
+//    3. add:        Int64                               -- delta since last speed calc
 //
 
 import Foundation
 import Libavformat
 
 public final class PBClass {
+    /// RE: Forward field 1 of 3.
     public private(set) var pb: UnsafeMutablePointer<AVIOContext>?
-    public private(set) var bytesRead: Int64 = 0
-    private var lastBytesRead: Int64 = 0
+
+    /// RE: Forward field 2 of 3 -- cumulative bytes read through this I/O
+    /// context. Consumed by `DynamicInfo.bytesReadBlock` for network speed
+    /// calculation. Underscored to match the binary field name `_bytesRead`.
+    public private(set) var _bytesRead: Int64 = 0
+
+    /// RE: Forward field 3 of 3 -- incremental byte count since the last speed
+    /// calculation. The bandwidth formula is
+    /// `networkSpeed = add / elapsed`, after which `add` is zeroed and
+    /// `_bytesRead` continues accumulating.
+    public private(set) var add: Int64 = 0
+
+    /// Source-compat alias for the previous `bytesRead` accessor.
+    public var bytesRead: Int64 { _bytesRead }
+
     private var lastSpeedCheck: CFTimeInterval = 0
     private let buffer: UnsafeMutablePointer<UInt8>
 
-    /// Computed network speed in bytes/second based on delta since last check.
+    /// Computed network speed in bytes/second based on the `add` delta since
+    /// the last speed check. Non-destructive (does not zero `add`).
     public var networkSpeed: Double {
         let now = CACurrentMediaTime()
         let elapsed = now - lastSpeedCheck
         guard elapsed > 0 else { return 0 }
-        let delta = Double(bytesRead - lastBytesRead)
-        return delta / elapsed
+        return Double(add) / elapsed
     }
 
     /// Creates an AVIOContext via avio_alloc_context.
@@ -52,21 +74,23 @@ public final class PBClass {
         self.lastSpeedCheck = CACurrentMediaTime()
     }
 
-    /// Updates bytesRead from the underlying AVIOContext.
+    /// Refreshes `_bytesRead` from the underlying `AVIOContext` and updates
+    /// the `add` delta against the prior cumulative reading.
     public func updateBytesRead() {
         guard let pb else { return }
-        bytesRead = pb.pointee.bytes_read
+        let newTotal = pb.pointee.bytes_read
+        add &+= max(0, newTotal - _bytesRead)
+        _bytesRead = newTotal
     }
 
     /// Calculates current speed and resets the measurement window.
-    /// - Returns: Bytes per second since the last call to calculateSpeed().
+    /// - Returns: Bytes per second since the last call to `calculateSpeed()`.
     public func calculateSpeed() -> Double {
         let now = CACurrentMediaTime()
         let elapsed = now - lastSpeedCheck
         guard elapsed > 0 else { return 0 }
-        let delta = Double(bytesRead - lastBytesRead)
-        let speed = delta / elapsed
-        lastBytesRead = bytesRead
+        let speed = Double(add) / elapsed
+        add = 0
         lastSpeedCheck = now
         return speed
     }

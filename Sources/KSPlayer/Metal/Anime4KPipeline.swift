@@ -27,6 +27,11 @@ public enum GPUTier: Int {
     case high = 2
     case ultra = 3
 
+    /// Binary (Forward v1.3.15) tier mapping:
+    ///   iPhone16/17 → 4 (clamped to .ultra since enum max is 3)
+    ///   iPhone14/15 → 1 (.mid)
+    ///   all others  → 3 (.ultra as default)
+    /// Raw values are NOT used as shader indices — only relative ordering matters.
     public static func detect() -> GPUTier {
         #if os(iOS) || os(tvOS)
         var systemInfo = utsname()
@@ -41,10 +46,10 @@ public enum GPUTier: Int {
         } else if machine.contains("iPhone14") || machine.contains("iPhone15") {
             return .mid
         } else {
-            return .high
+            return .ultra
         }
         #else
-        return .high
+        return .ultra
         #endif
     }
 }
