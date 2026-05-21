@@ -44,7 +44,6 @@ To experience the powerful features of the LGPL version, you can download the ap
 |AV1 hardware decoding|✅|❌|
 |Word-by-word subtitles|✅|❌|
 |All demuxers, All decoders|✅|❌|
-|Word-by-word subtitles|✅|❌|
 |Text subtitle translation|✅|❌|
 |Use System Caption Appearance|✅|❌|
 |Record video clips at any time|✅|❌|
