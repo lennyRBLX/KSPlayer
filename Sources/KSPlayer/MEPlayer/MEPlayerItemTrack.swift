@@ -21,6 +21,10 @@ protocol PlayerItemTrackProtocol: CapacityProtocol, AnyObject {
     func shutdown()
 }
 
+/// RE: 0x101441348 (SyncPlayerItemTrack deinit/field layout, 1.3.15)
+/// Field offsets verified via deinit: options(+0x18), description(+0x20/+0x38),
+/// decoderMap(+0x40), delegate(+0x50), mediaType(+0x58).
+/// Generic-metadata bootstrap at 0x1014413b8 (SyncPlayerItemTrack_setOutputBufferCapacity).
 class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomStringConvertible {
     var seekTime = 0.0
     fileprivate let options: KSOptions
@@ -49,6 +53,9 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         outputRenderQueue.fps
     }
 
+    /// RE: 0x1014413b8 (SyncPlayerItemTrack_setOutputBufferCapacity, 1.3.15)
+    /// Buffer capacity logic: audio=non-sorted/non-expanding, video=sorted/non-expanding,
+    /// subtitle=sorted/expanding. Matches binary's CircularBuffer initialisation per media type.
     required init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt8, options: KSOptions) {
         self.options = options
         self.mediaType = mediaType
@@ -69,6 +76,8 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         state = .decoding
     }
 
+    /// RE: Codec state machine flush transition (raw value 2) + PacketRingBuffer_flush (0x101429b38)
+    /// Seek sets state to .flush, clears the output render queue, and resets loop model.
     func seek(time: TimeInterval) {
         if options.isAccurateSeek {
             seekTime = time
@@ -91,9 +100,11 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         }
     }
 
+    /// RE: 0x101441f28 (SyncPlayerItemTrack_getNextOutputFrame, 1.3.15)
+    /// RE: 0x101441ec0 (SyncPlayerItemTrack_getOutputFrame, 1.3.15)
+    /// Output-frame dequeue: when a seek target exists, uses CircularBuffer.search(for:)
+    /// to find the frame at the target timestamp directly, skipping earlier frames.
     func getOutputRender(where predicate: ((Frame, Int) -> Bool)?) -> Frame? {
-        // RE: When a seek target exists, use CircularBuffer.search(for:) to find
-        // the frame at the target timestamp directly, skipping earlier frames.
         // Converts seekTime (seconds) to the stream timebase for comparison.
         if seekTime > 0, let firstFrame = outputRenderQueue.peek() {
             let seekTs = firstFrame.timebase.cmtime(for: seekTime).value
@@ -111,6 +122,8 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         return outputFecthRender
     }
 
+    /// RE: Codec state machine transition to .closed (raw value 3).
+    /// Guards against double-shutdown when already idle.
     func shutdown() {
         if state == .idle {
             return
@@ -170,8 +183,12 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                 if decoder is VideoToolboxDecode {
                     decoder.shutdown()
                     self.decoderMap[packet.assetTrack.trackID] = FFmpegDecode(assetTrack: packet.assetTrack, options: self.options)
-                    // RE: Forward v1.3.15 MEPlayerItemTrack_dispatchFallbackBlock (0x1014412e4)
-                    // Permanently disable VTB so subsequent seeks don't re-create a decoder that will also fail
+                    // RE: 0x1014412e4 (MEPlayerItemTrack_dispatchFallbackBlock, 1.3.15)
+                    // Permanently disable VTB so subsequent seeks don't re-create a decoder that will also fail.
+                    // Only asynchronousDecompression is toggled (not hardwareDecode) — this is sufficient
+                    // because createDecoder requires BOTH asynchronousDecompression==true AND
+                    // hardwareDecode==true to take the VideoToolboxDecode branch. Setting either to
+                    // false forces the FFmpegDecode path. Matches binary behavior.
                     self.options.asynchronousDecompression = false
                     KSLog("VideoCodec switch to software decompression")
                     self.doDecode(packet: packet)
@@ -189,6 +206,10 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     }
 }
 
+/// RE: AsyncPlayerItemTrack — async decode subclass of SyncPlayerItemTrack.
+/// Named functions: putOutputPacket (0x1014421ac), getOutputPacket (0x101442270),
+/// appendToOutputBuffer (0x1014423b8), getIsDecoding (0x1000d28ac).
+/// Async decode threading: serial OperationQueue, .userInteractive QoS.
 final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     private let operationQueue = OperationQueue()
     private var decodeOperation: BlockOperation!
@@ -221,6 +242,8 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
         operationQueue.qualityOfService = .userInteractive
     }
 
+    /// RE: 0x1014421ac (AsyncPlayerItemTrack_putOutputPacket, 1.3.15)
+    /// Routes packets to loopPacketQueue (seamless loop) or packetQueue (normal decode).
     override func putPacket(packet: Packet) {
         if isLoopModel {
             loopPacketQueue?.push(packet)
@@ -229,6 +252,9 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
         }
     }
 
+    /// RE: Async decode threading (TrackDecode.md lines 1076-1082)
+    /// Queue name: "KSPlayer_" + mediaType.rawValue, max concurrent = 1 (serial),
+    /// QoS = .userInteractive. Cancellation checked inside decodeThread() loop.
     override func decode() {
         isEndOfFile = false
         guard operationQueue.operationCount == 0 else { return }
@@ -243,6 +269,8 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
         operationQueue.addOperation(decodeOperation)
     }
 
+    /// RE: Async decode loop — state machine drives decoding until cancelled/closed/finished.
+    /// Packet dequeue uses PacketRingBuffer_dequeue (0x1014298a0) semantics via CircularBuffer.pop(wait:).
     private func decodeThread() {
         state = .decoding
         isEndOfFile = false
@@ -311,6 +339,9 @@ protocol DecodeProtocol {
 }
 
 extension SyncPlayerItemTrack {
+    /// RE: 0x10139d818 (MEPlayerItemTrack_createDecoder, 1.3.15)
+    /// Decision tree: subtitle -> SubtitleDecode, video+asyncDecomp+hwDecode -> VideoToolboxDecode,
+    /// else -> FFmpegDecode. Wrapped in autoreleasepool per binary's FUN_10139d7c4.
     func makeDecode(assetTrack: FFmpegAssetTrack) -> DecodeProtocol {
         autoreleasepool {
             if mediaType == .subtitle {

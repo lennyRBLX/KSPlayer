@@ -27,15 +27,29 @@ public protocol ThumbnailGenerator: AnyObject {
     func generateThumbnail(at index: Int, session: ThumbnailSession) -> FFThumbnail?
 }
 
+/// RE: ThumbnailQueue class (TrackDecode.md, 7 fields per types.json)
+/// Work queue that schedules which timeline indices still need thumbnails,
+/// tracking generated vs. skipped sets under a lock.
+///
+/// Field offsets visible in processQueue: pendingIndices at +0x10,
+/// Set backing stores reached via +0x18/+0x20, id String at +0x30.
 public final class ThumbnailQueue {
+    // Field 1: Timeline indices still awaiting generation (+0x10)
     public private(set) var pendingIndices: [Int]
+    // Field 2: Indices already generated (+0x18)
     public private(set) var generatedSet: Set<Int> = []
+    // Field 3: Indices deliberately skipped (e.g. too close to a cached one) (+0x20)
     public private(set) var skippedSet: Set<Int> = []
+    // Field 4: Guards the three collections for concurrent access
     private let lock = NSLock()
+    // Field 5: Queue/source identifier (+0x30)
     public let id: String
+    // Field 6: Total thumbnail count for the source
     public let count: Int
+    // Field 7: Source duration in seconds
     public let duration: Double
 
+    /// Active ThumbnailSession (observed at offset +48 in components-side layout)
     public weak var session: ThumbnailSession?
 
     public init(id: String, count: Int, duration: Double) {
@@ -67,17 +81,52 @@ public final class ThumbnailQueue {
         skippedSet.insert(index)
     }
 
-    /// Iterates pending indices, calls session.seekAndExtract for each, marks result.
-    public func processQueue(using session: ThumbnailSession, generator: ThumbnailGenerator) {
+    /// RE: 0x10141c6dc (ThumbnailQueue_processQueue, 1.3.15)
+    /// Drains the queue: clears the counter on the first pending object (+0x10 -> +0x28 = 0),
+    /// releases the generatedSet/skippedSet Set backing stores, runs the locked mutation
+    /// under a _swift_beginAccess exclusive guard, then _swift_bridgeObjectRelease the
+    /// id String at +0x30.
+    ///
+    /// The binary describes a cleanup/reset/drain operation, not a generation loop.
+    /// This resets the queue state after a generation pass is complete or cancelled.
+    public func processQueue() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        // Clear the pending indices counter (binary: +0x10 -> +0x28 = 0)
+        pendingIndices.removeAll()
+
+        // Release the generatedSet/skippedSet backing stores
+        // (binary: FUN_102a16d38 releases Set backing)
+        generatedSet.removeAll()
+        skippedSet.removeAll()
+
+        // The binary also _swift_bridgeObjectRelease the id String at +0x30,
+        // but since id is a let-bound String in Swift, the release happens
+        // naturally when the ThumbnailQueue is deallocated. The drain operation
+        // resets mutable state only.
+
+        KSLog("[ThumbnailQueue] \(id) processQueue: queue drained and reset")
+    }
+
+    /// RE: 0x1007900a0 (ThumbnailQueue_submitJob, 1.3.15)
+    /// Enqueues a generation job. This is the async job-submission entry point
+    /// that the doc describes as a trampoline into FUN_10078ff50 + FUN_10076d2f4.
+    /// Dispatches generation work onto a background queue, iterating pending indices
+    /// and driving extraction through the provided generator and session.
+    public func submitJob(session: ThumbnailSession, generator: ThumbnailGenerator) {
         self.session = session
-        while let index = nextPendingIndex() {
-            if let _ = generator.generateThumbnail(at: index, session: session) {
-                markGenerated(index)
-            } else {
-                markSkipped(index)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            while let index = self.nextPendingIndex() {
+                if let _ = generator.generateThumbnail(at: index, session: session) {
+                    self.markGenerated(index)
+                } else {
+                    self.markSkipped(index)
+                }
             }
+            KSLog("[ThumbnailQueue] \(self.id) submitJob complete: generated=\(self.generatedSet.count), skipped=\(self.skippedSet.count)")
         }
-        KSLog("[ThumbnailQueue] \(id) complete: generated=\(generatedSet.count), skipped=\(skippedSet.count)")
     }
 
     /// Progress as a fraction (0.0 ... 1.0).

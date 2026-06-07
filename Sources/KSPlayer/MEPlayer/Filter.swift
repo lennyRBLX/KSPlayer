@@ -47,6 +47,7 @@ class MEFilter {
         avfilter_graph_free(&graph)
     }
 
+    /// RE: 0x10141ca38 (MEFilter_init, 1.3.15)
     public init(timebase: Timebase, isAudio: Bool, nominalFrameRate: Float, options: KSOptions) {
         graph = avfilter_graph_alloc()
         graph?.pointee.opaque = Unmanaged.passUnretained(options).toOpaque()
@@ -55,6 +56,7 @@ class MEFilter {
         self.nominalFrameRate = nominalFrameRate
     }
 
+    /// RE: 0x10141c7a8 (MEFilter_setupFilterGraph, 1.3.15)
     private func setup(filters: String, params: inout AVBufferSrcParameters) -> Bool {
         var inputs = avfilter_inout_alloc()
         var outputs = avfilter_inout_alloc()
@@ -137,7 +139,7 @@ class MEFilter {
             completionHandler(inputFrame)
             return
         }
-        // RE: Forward v1.3.15 optimization — compare only format/height/width (3 Int32s)
+        // RE: v1.3.15 binary optimization — compare only format/height/width (3 Int32s)
         // instead of full AVBufferSrcParameters struct to decide if filter graph needs rebuild
         let frameFormat = inputFrame.pointee.format
         let frameHeight = inputFrame.pointee.height

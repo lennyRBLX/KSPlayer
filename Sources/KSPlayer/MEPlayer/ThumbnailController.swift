@@ -1,15 +1,15 @@
 //
 //  ThumbnailController.swift
 //
-//  RE source: Forward v1.3.15 — .reversal/MediaServices.md § Thumbnail Generation
+//  RE source: Forward v1.3.15 — .reversal/TrackDecode.md § ThumbnailController / GIFCreator
 //  Verified Ghidra named entries:
 //    ThumbnailController_initFields              @ 0x1001D558C
 //    ThumbnailController_configureThumbnails     @ 0x1001D55C4
-//    ThumbnailController_seekToPosition          @ 0x1001D5620
-//    ThumbnailController_loadNextBatch           @ 0x1001D56A0
-//    ThumbnailController_cancelPending           @ 0x10144F6AC
-//    ThumbnailController_deinit                  @ 0x10144F6F4
-//    ThumbnailController_resetState              @ 0x100772E10
+//    ThumbnailController_seekToPosition          @ 0x1001D5620  (coroutine read accessor)
+//    ThumbnailController_loadNextBatch           @ 0x1001D56A0  (coroutine modify accessor)
+//    ~~ThumbnailController_cancelPending~~       @ 0x10144F6AC  STRUCK (v5.3 R3) — async-context allocator, not ThumbnailController
+//    ~~ThumbnailController_deinit~~              @ 0x10144F6F4  STRUCK (v5.3 R3) — async-context field init, not a class deinitializer
+//    ~~ThumbnailController_resetState~~          @ 0x100772E10  STRUCK (v5.3 R3) — weak-ref accessor for a different class (offset +0x10 mismatch)
 //    ThumbnailGenerator_updatePublishedProperties @ 0x1009957E0
 //    ThumbnailGenerator_switchToMainActor        @ 0x10058B9D4
 //    ThumbnailGenerator_resetSeeking_onMainActor @ 0x10099663C
@@ -38,18 +38,76 @@
 
 import AVFoundation
 import Combine
+import CoreGraphics
 import Foundation
+import ImageIO
 import Libavcodec
 import Libavformat
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(MobileCoreServices)
+import MobileCoreServices.UTType
+#endif
 
 // MARK: - FFThumbnail
 
+/// Output unit of a single frame grab. 3 fields per types.json (declaration order):
+///   1. jpegData  (Data?)    — JPEG-encoded frame bytes (nil until encoded)
+///   2. _image    (UIImage?) — Lazily-decoded image (private backing for `image` computed property)
+///   3. time      (Double)   — Presentation timestamp of the grabbed frame, in seconds
+///
+/// The binary stores JPEG bytes and lazily decodes to UIImage on first access,
+/// saving memory when thumbnails are cached but not yet displayed.
+/// RE: value-witness table $s8KSPlayer11FFThumbnailVwst @ 0x10061a4d8
 public struct FFThumbnail {
-    public let image: UIImage
-    public let time: TimeInterval
+    /// JPEG-encoded frame bytes. Stored for memory-efficient caching;
+    /// the image is decoded lazily on first access via the `image` property.
+    public var jpegData: Data?
+
+    /// Private backing store for the lazily-decoded image.
+    /// Uses underscore-prefix matching the binary's private-stored-property-behind-computed-property pattern.
+    private var _image: UIImage?
+
+    /// Presentation timestamp of the grabbed frame, in seconds.
+    public let time: Double
+
+    /// Lazily-decoded image: returns `_image` if already decoded, otherwise
+    /// decodes from `jpegData` on first access, caches the result in `_image`,
+    /// and returns it. Falls back to nil if neither source is available.
+    public var image: UIImage? {
+        mutating get {
+            if let _image { return _image }
+            guard let jpegData, let decoded = UIImage(data: jpegData) else { return _image }
+            _image = decoded
+            return decoded
+        }
+    }
+
+    /// Initialize with a pre-decoded image (used during extraction when the image
+    /// is already in memory). Encodes to JPEG for the lazy-decode cache path.
+    public init(image: UIImage, time: Double) {
+        self._image = image
+        #if canImport(UIKit)
+        self.jpegData = image.jpegData(compressionQuality: 0.85)
+        #else
+        // macOS: NSImage -> NSBitmapImageRep -> JPEG data
+        if let tiff = image.tiffRepresentation,
+           let bitmapRep = NSBitmapImageRep(data: tiff) {
+            self.jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+        } else {
+            self.jpegData = nil
+        }
+        #endif
+        self.time = time
+    }
+
+    /// Initialize with raw JPEG data for deferred decoding (memory-efficient path).
+    public init(jpegData: Data, time: Double) {
+        self.jpegData = jpegData
+        self._image = nil
+        self.time = time
+    }
 }
 
 // MARK: - ThumbnailControllerDelegate
@@ -108,20 +166,46 @@ public class ThumbnailCache {
 
 // MARK: - ThumbnailSession (FFmpeg extraction engine)
 
+/// RE: companion allocator FFmpegDecode_allocThumbnailContext @ 0x101417F3C (1.3.15)
+/// Per-source FFmpeg decode session that owns the C decode state for frame grabbing.
+/// 17 fields per types.json (declaration order documented in TrackDecode.md § ThumbnailSession).
 public final class ThumbnailSession {
+    // Field 1: Demuxer context for the thumbnail source
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
+    // Field 2: Video decoder context
     private var codecContext: UnsafeMutablePointer<AVCodecContext>?
+    // Field 3: Reusable decode-output frame (doc: persistent field, paralleling FFmpegDecode)
+    private var frame: UnsafeMutablePointer<AVFrame>?
+    // Field 4: swscale rescaler -> downscaled thumbnail pixel buffer
     private var reScale: VideoSwresample?
-    private var videoStreamIndex: Int32 = -1
+    // Field 5: Index of the video stream being grabbed (doc type: Swift.Int)
+    private var videoStreamIndex: Int = -1
+    // Field 6: Stream timebase for PTS<->seconds conversion
     private var timeBase: Timebase = .defaultValue
+    // Field 7: Target thumbnail width (height derived from aspect)
     private let thumbWidth: Int32
+    // Field 8: Grab interval in timebase units
     private var intervalPTS: Int64 = 0
-    private var intervalSeconds: Double = 0
+    // Field 9: Stream start PTS offset
     private var startTime: Int64 = 0
+    // Field 10: Total thumbnails to generate across the timeline
     public private(set) var frameCount: Int = 0
+    // Field 11: Grab interval in seconds
+    private var intervalSeconds: Double = 0
+    // Field 12: True if source is HDR (affects rescale/tone-map)
     public private(set) var isHDR: Bool = false
+    // Field 13: True if source carries Dolby Vision
+    public private(set) var hasDovi: Bool = false
+    // Field 14: Optional precomputed seek-position table (element type erased in reflection)
+    private var indexedSeekPositions: [Int64]?
+    // Field 15: Closure probing whether the current position is already cached
+    private var isCachedAtCurrentPosition: (() -> Bool)?
+    // Field 16: Cooperative-cancellation flag for the FFmpeg interrupt callback
+    private var isInterrupted = false
+    // Field 17: Set once the session's contexts are freed
+    private var isClosed = false
+
     public private(set) var duration: Double = 0
-    private var isCancelled = false
     private let maxPacketRetries = 99
 
     public init?(url: URL, thumbnailWidth: Int32 = 400, requestedFrameCount: Int = 100) {
@@ -136,14 +220,14 @@ public final class ThumbnailSession {
         }
         self.formatCtx = fmtCtx
 
-        for i in 0 ..< Int32(fmtCtx.pointee.nb_streams) {
-            if fmtCtx.pointee.streams[Int(i)]?.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO {
+        for i in 0 ..< Int(fmtCtx.pointee.nb_streams) {
+            if fmtCtx.pointee.streams[i]?.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO {
                 videoStreamIndex = i
                 break
             }
         }
         guard videoStreamIndex >= 0,
-              let videoStream = fmtCtx.pointee.streams[Int(videoStreamIndex)] else {
+              let videoStream = fmtCtx.pointee.streams[videoStreamIndex] else {
             avformat_close_input(&self.formatCtx)
             return nil
         }
@@ -172,11 +256,15 @@ public final class ThumbnailSession {
         }
         self.codecContext = ctx
 
+        // Allocate persistent reusable frame (doc field 3)
+        self.frame = av_frame_alloc()
+
         // HDR detection: scan side data for DV (type 29) or PQ transfer (18)
         let nbSideData = videoStream.pointee.codecpar.pointee.nb_coded_side_data
         for i in 0 ..< Int(nbSideData) {
             let sideData = videoStream.pointee.codecpar.pointee.coded_side_data[i]
             if sideData.type.rawValue == 29 { // AV_PKT_DATA_DOVI_CONF
+                hasDovi = true
                 isHDR = true
                 break
             }
@@ -195,15 +283,21 @@ public final class ThumbnailSession {
         self.intervalSeconds = duration / Double(frameCount)
 
         let thumbHeight = thumbWidth * ctx.pointee.height / ctx.pointee.width
-        self.reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, isDovi: isHDR)
+        self.reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, isDovi: hasDovi || isHDR)
 
-        KSLog("[Thumb] init done, duration=\(durationPTS), interval=\(intervalPTS), intervalSeconds=\(intervalSeconds), count=\(frameCount), isHDR=\(isHDR)")
+        KSLog("[Thumb] init done, duration=\(durationPTS), interval=\(intervalPTS), intervalSeconds=\(intervalSeconds), count=\(frameCount), isHDR=\(isHDR), hasDovi=\(hasDovi)")
     }
 
     /// Single-frame extraction at a specific index
     /// (RE: seekAndExtract body inside FUN_1012F5B20, 2,684 B)
     public func seekAndExtract(at index: Int) -> (image: UIImage, time: TimeInterval)? {
-        guard let formatCtx, let codecContext, let reScale, !isCancelled else { return nil }
+        guard !isClosed, !isInterrupted,
+              let formatCtx, let codecContext, let reScale else { return nil }
+
+        // Check cached-position closure if provided (doc field 15)
+        if let isCachedAtCurrentPosition, isCachedAtCurrentPosition() {
+            return nil
+        }
 
         let targetPTS = Int64(index) * intervalPTS + startTime
         let targetSeconds = intervalSeconds * Double(index)
@@ -216,14 +310,13 @@ public final class ThumbnailSession {
     }
 
     private func extractFrame(targetPTS: Int64, targetSeconds: Double, index: Int, flags: Int32) -> (image: UIImage, time: TimeInterval)? {
-        guard let formatCtx, let codecContext, let reScale, !isCancelled else { return nil }
+        guard !isClosed, !isInterrupted,
+              let formatCtx, let codecContext, let reScale, let frame else { return nil }
 
         let seekStart = CACurrentMediaTime()
-        av_seek_frame(formatCtx, videoStreamIndex, targetPTS, flags)
+        av_seek_frame(formatCtx, Int32(videoStreamIndex), targetPTS, flags)
         avcodec_flush_buffers(codecContext)
 
-        var frame = av_frame_alloc()!
-        defer { av_frame_free(&frame) }
         var packet = AVPacket()
         var packetsRead = 0
         var result: (UIImage, TimeInterval)?
@@ -231,9 +324,9 @@ public final class ThumbnailSession {
         let readStart = CACurrentMediaTime()
         while av_read_frame(formatCtx, &packet) >= 0, packetsRead < maxPacketRetries {
             defer { av_packet_unref(&packet) }
-            guard !isCancelled else { break }
+            guard !isInterrupted else { break }
 
-            if packet.stream_index != videoStreamIndex { continue }
+            if packet.stream_index != Int32(videoStreamIndex) { continue }
             packetsRead += 1
 
             if avcodec_send_packet(codecContext, &packet) < 0 { continue }
@@ -260,6 +353,7 @@ public final class ThumbnailSession {
                 let totalTime = CACurrentMediaTime() - seekStart
                 KSLog("[Thumb] \(index) seek=\(Int((CACurrentMediaTime() - seekStart) * 1000))ms, decode=\(Int(decodeTime * 1000))ms, total=\(Int(totalTime * 1000))ms, packets=\(packetsRead)")
             }
+            av_frame_unref(frame)
             break
         }
         av_packet_unref(&packet)
@@ -268,20 +362,19 @@ public final class ThumbnailSession {
 
     /// Batch sequential extraction (RE: seekAndExtract2 0x1012f7b14, 7436 bytes)
     public func batchExtract(startIndex: Int, maxIndex: Int, progress: @escaping (UIImage, Int, Double) -> Bool) {
-        guard let formatCtx, !isCancelled else { return }
+        guard !isClosed, !isInterrupted,
+              let formatCtx, let codecContext, let frame else { return }
 
         let seekPos = Int64(startIndex) * intervalPTS + startTime
-        av_seek_frame(formatCtx, videoStreamIndex, seekPos, AVSEEK_FLAG_BACKWARD)
-        avcodec_flush_buffers(codecContext!)
+        av_seek_frame(formatCtx, Int32(videoStreamIndex), seekPos, AVSEEK_FLAG_BACKWARD)
+        avcodec_flush_buffers(codecContext)
 
-        var frame = av_frame_alloc()!
-        defer { av_frame_free(&frame) }
         var packet = AVPacket()
         var savedCount = 0
 
-        while av_read_frame(formatCtx, &packet) >= 0, !isCancelled {
+        while av_read_frame(formatCtx, &packet) >= 0, !isInterrupted {
             defer { av_packet_unref(&packet) }
-            guard packet.stream_index == videoStreamIndex else { continue }
+            guard packet.stream_index == Int32(videoStreamIndex) else { continue }
             guard avcodec_send_packet(codecContext, &packet) >= 0 else { continue }
 
             while avcodec_receive_frame(codecContext, frame) >= 0 {
@@ -316,16 +409,35 @@ public final class ThumbnailSession {
         return ctx.makeImage() ?? cgImage
     }
 
-    public func cancel() { isCancelled = true }
+    /// Set the cooperative-cancellation flag (doc field 16: isInterrupted).
+    /// Named for the FFmpeg avformat interrupt callback pattern.
+    public func cancel() { isInterrupted = true }
 
+    /// Free all FFmpeg contexts and mark the session as closed (doc field 17: isClosed).
+    /// Idempotent: subsequent calls after isClosed is set are no-ops.
     public func shutdown() {
+        guard !isClosed else { return }
+        isClosed = true
         reScale?.shutdown()
+        if frame != nil {
+            av_frame_free(&frame)
+        }
         if codecContext != nil {
             avcodec_free_context(&codecContext)
         }
         if formatCtx != nil {
             avformat_close_input(&formatCtx)
         }
+    }
+
+    /// Set indexed seek positions table for optimized seeking in sparse-keyframe sources (doc field 14).
+    public func setIndexedSeekPositions(_ positions: [Int64]) {
+        indexedSeekPositions = positions
+    }
+
+    /// Set the cache-probe closure (doc field 15).
+    public func setCacheProbe(_ probe: (() -> Bool)?) {
+        isCachedAtCurrentPosition = probe
     }
 
     deinit { shutdown() }
@@ -480,34 +592,83 @@ public final class RealtimeThumbnailGenerator: @unchecked Sendable {
     }
 
     public var isHDR: Bool { session.isHDR }
+    public var hasDovi: Bool { session.hasDovi }
     public var videoDuration: Double { session.duration }
 }
 
 // MARK: - ThumbnailController (batch generation)
 
+/// Thumbnail-extraction driver coordinating batched generation against a delegate.
+///
+/// Binary layout: **2 stored fields** per `types.json`:
+///   1. delegate       (weak ThumbnailControllerDelegate?)  offset +0x40
+///   2. thumbnailCount (Int)                                offset +0x48
+///
+/// The 6 additional properties below (`useCache`, `mediaURL`, `mediaDuration`,
+/// `configuredOptions`, `session`, `realtimeGenerator`) are **reconstruction
+/// extensions** — they do not appear in the binary's type metadata dump but are
+/// needed to wire the controller into the player's configuration and session
+/// lifecycle in our Swift reconstruction. The binary likely managed these
+/// relationships through its Components-layer coordinator rather than storing
+/// them directly on the controller.
 public class ThumbnailController {
+    // ── Binary fields (2, per types.json) ──────────────────────────────
+
+    /// RE: 0x1001D558C (ThumbnailController_initFields, 1.3.15)
+    /// Weakly-held delegate notified as batches complete (offset +0x40 in binary).
     public weak var delegate: ThumbnailControllerDelegate?
+    /// RE: ThumbnailController_configureThumbnails stores count at +0x48
     private let thumbnailCount: Int
+
+    // ── Reconstruction extensions (not in binary type metadata) ────────
+
+    /// Whether to use the URL-level ThumbnailCache for generated results.
     public var useCache = true
-    /// Configured media URL, set via `configure(url:options:duration:)`
+    /// Configured media URL, set via `configure(url:options:duration:)`.
     public private(set) var mediaURL: URL?
-    /// Configured media duration in seconds
+    /// Configured media duration in seconds.
     public private(set) var mediaDuration: TimeInterval = 0
-    /// Options snapshot from configuration
+    /// Options snapshot from configuration.
     public private(set) var configuredOptions: KSOptions?
-    /// ThumbnailSession created during configuration for batch/realtime use
+    /// ThumbnailSession created during configuration for batch/realtime use.
     private var session: ThumbnailSession?
-    /// RealtimeThumbnailGenerator created during configuration
+    /// RealtimeThumbnailGenerator created during configuration.
     public private(set) var realtimeGenerator: RealtimeThumbnailGenerator?
 
     public init(thumbnailCount: Int = 100) {
         self.thumbnailCount = thumbnailCount
     }
 
+    /// The current (delegate, count) batch target, expressed as a computed property
+    /// whose get/set map to the binary's coroutine accessor pair.
+    ///
+    /// RE: 0x1001D5620 (seekToPosition / coroutine read accessor, 1.3.15)
+    ///     Allocates a 0x30 coro frame, weak-loads the delegate from +0x40,
+    ///     captures count from +0x48, and yields into loadNextBatch.
+    ///
+    /// RE: 0x1001D56A0 (loadNextBatch / coroutine modify accessor, 1.3.15)
+    ///     Pushes the current (delegate, count) pair onto the next batch target,
+    ///     writes count to +0x48, weak-assigns delegate to +0x40, then releases
+    ///     and frees the coro frame.
+    public var batchTarget: (delegate: ThumbnailControllerDelegate?, count: Int) {
+        get {
+            (delegate, thumbnailCount)
+        }
+        set {
+            delegate = newValue.delegate
+            // thumbnailCount is let-bound; the binary's modify accessor writes
+            // to +0x48 which is the same offset. In our reconstruction the count
+            // is immutable after init, so the setter only updates the delegate.
+            // If a mutable count is needed, change thumbnailCount to var.
+        }
+    }
+
     /// Bind the controller to a player instance by providing the media URL,
     /// player options, and total duration. Creates or reconfigures the
     /// underlying ThumbnailSession and RealtimeThumbnailGenerator.
-    /// RE: ThumbnailController_configureThumbnails @ 0x1001D55C4
+    /// RE: 0x1001D55C4 (ThumbnailController_configureThumbnails, 1.3.15)
+    ///     `_swift_unknownObjectWeakAssign(self+0x40, delegate)` and stores
+    ///     `count` at `self+0x48`.
     ///     (companion to ThumbnailController_initFields @ 0x1001D558C)
     public func configure(url: URL, options: KSOptions, duration: TimeInterval) {
         // Tear down previous session if URL changed
@@ -647,5 +808,237 @@ public class ThumbnailController {
         av_packet_unref(&packet)
         reScale.shutdown()
         return thumbnails
+    }
+}
+
+// MARK: - GIFCreator (RE: TrackDecode.md § GIFCreator)
+
+/// Frame-to-animated-GIF export engine. Builds a `CGImageDestination`,
+/// drives an `AVAssetImageGenerator` over a computed array of `CMTime`
+/// sample points, and writes each decoded frame into the GIF.
+///
+/// Binary layout (3 fields per types.json):
+///   +0x10  destination      : CGImageDestination
+///   +0x18  frameProperties  : CFDictionary
+///   --     firstImage       : UIImage?
+public class ThumbnailGIFCreator {
+    /// RE: 0x1013e608c (GIFCreator_createImageDestination, 1.3.15)
+    /// GIF output destination, created in `createImageDestination`.
+    private var destination: CGImageDestination?
+
+    /// RE: 0x1013e608c (GIFCreator_createImageDestination, 1.3.15)
+    /// Per-frame GIF properties dictionary containing kCGImagePropertyGIFDelayTime.
+    private var frameProperties: CFDictionary?
+
+    /// First decoded frame, used as cover/preview image.
+    public private(set) var firstImage: UIImage?
+
+    /// Collected (image, time) pairs for merge-sort before finalization.
+    /// The AVAssetImageGenerator completion callback does not guarantee
+    /// chronological order, so we accumulate frames and sort before writing.
+    private var collectedFrames: [(image: CGImage, time: CMTime)] = []
+
+    /// Output URL for the GIF file.
+    private let savePath: URL
+
+    public init(savePath: URL) {
+        self.savePath = savePath
+    }
+
+    /// Main entry point: compute sample times, configure the generator,
+    /// and asynchronously extract frames from the asset.
+    ///
+    /// RE: 0x1013cb3ac (GIFCreator_createFromAsset, 1.3.15)
+    /// Computes frame count n = (end-start)/interval, builds [NSValue] of n
+    /// CMTime sample points with timescale 1000000, allocates AVAssetImageGenerator,
+    /// sets requestedTimeToleranceBefore/After = kCMTimeZero (exact-frame grabbing),
+    /// calls createImageDestination, then generateCGImagesAsynchronouslyForTimes
+    /// with the boxed callback.
+    public func createFromAsset(
+        _ asset: AVAsset,
+        startTime: TimeInterval,
+        endTime: TimeInterval,
+        interval: TimeInterval,
+        completion: @escaping (Bool, UIImage?) -> Void
+    ) {
+        guard interval > 0, endTime > startTime else {
+            completion(false, nil)
+            return
+        }
+
+        let frameCount = Int((endTime - startTime) / interval)
+        guard frameCount > 0 else {
+            completion(false, nil)
+            return
+        }
+
+        // Build [NSValue] array of n CMTime sample points (timescale 1000000)
+        // RE: binary uses valueWithCMTime: with timescale 1000000
+        let timescale: CMTimeScale = 1_000_000
+        let sampleTimes: [NSValue] = (0 ..< frameCount).map { i in
+            let seconds = startTime + Double(i) * interval
+            let cmTime = CMTime(value: CMTimeValue(seconds * Double(timescale)), timescale: timescale)
+            return NSValue(time: cmTime)
+        }
+
+        // Create image destination for output
+        createImageDestination(imagesCount: frameCount)
+        guard destination != nil else {
+            completion(false, nil)
+            return
+        }
+
+        // Allocate AVAssetImageGenerator with exact-frame tolerance (kCMTimeZero)
+        // RE: binary sets requestedTimeToleranceBefore/After = kCMTimeZero
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
+
+        // Reset collection buffer
+        collectedFrames.removeAll()
+        collectedFrames.reserveCapacity(frameCount)
+
+        var receivedCount = 0
+
+        // RE: 0x1013cb2f0 (imageGeneratorCallback_wrapper, 1.3.15)
+        // ObjC-block thunk bridging AVAssetImageGenerator's completion block
+        // to the Swift callback. In Swift reconstruction, this is the closure
+        // passed to generateCGImagesAsynchronously.
+        //
+        // RE: 0x1013cba90 (blockInvoke, 1.3.15)
+        // Block invoke body for the async generation closure — captures
+        // destination, image-list, and the [NSValue] times array.
+        imageGenerator.generateCGImagesAsynchronously(forTimes: sampleTimes) { [weak self] requestedTime, imageRef, _, result, _ in
+            guard let self else { return }
+            receivedCount += 1
+
+            // RE: 0x1013cb758 (imageGeneratorCallback, 1.3.15)
+            // Per-frame completion callback: appends each generated CGImage
+            // to the collected frames list for later merge-sort and writing.
+            if result == .succeeded, let imageRef {
+                self.imageGeneratorCallback(image: imageRef, time: requestedTime)
+            }
+
+            // All frames received — merge-sort and finalize
+            if receivedCount == frameCount {
+                let success = self.finalizeWithMergeSort()
+                completion(success, self.firstImage)
+            }
+        }
+    }
+
+    /// Per-frame completion callback: records each generated CGImage with its
+    /// time for later merge-sort ordering.
+    ///
+    /// RE: 0x1013cb758 (GIFCreator_imageGeneratorCallback, 1.3.15)
+    /// Appends each generated CGImage to the destination with frameProperties.
+    private func imageGeneratorCallback(image: CGImage, time: CMTime) {
+        if firstImage == nil {
+            firstImage = UIImage(cgImage: image)
+        }
+        collectedFrames.append((image: image, time: time))
+    }
+
+    /// Create the GIF image destination and configure loop properties.
+    ///
+    /// RE: 0x1013e608c (GIFCreator_createImageDestination, 1.3.15)
+    /// Deletes any existing output file (NSFileManager removeItemAtURL:),
+    /// builds the GIF dictionaries — kCGImagePropertyGIFDictionary containing
+    /// kCGImagePropertyGIFDelayTime = 0.25 (0x3FD0000000000000) and
+    /// kCGImagePropertyGIFLoopCount = 0 (infinite) — then
+    /// CGImageDestinationCreateWithURL + CGImageDestinationSetProperties;
+    /// stores the destination at self+0x10 and the per-frame property dict
+    /// at self+0x18.
+    private func createImageDestination(imagesCount: Int) {
+        // Delete existing file if present
+        try? FileManager.default.removeItem(at: savePath)
+
+        // Per-frame properties: delay time 0.25s
+        // RE: binary encodes 0x3FD0000000000000 = 0.25 IEEE 754 double
+        frameProperties = [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.25]
+        ] as CFDictionary
+
+        // Create destination
+        guard let dest = CGImageDestinationCreateWithURL(
+            savePath as CFURL,
+            kUTTypeGIF,
+            imagesCount,
+            nil
+        ) else {
+            destination = nil
+            return
+        }
+
+        // File-level properties: infinite loop (loopCount = 0)
+        let fileProperties = [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
+        ] as CFDictionary
+        CGImageDestinationSetProperties(dest, fileProperties)
+
+        destination = dest
+    }
+
+    /// Merge-sort the collected frames by time, write them to the GIF
+    /// destination in chronological order, and finalize.
+    ///
+    /// RE: 0x1013cbbc0 (GIFCreator_mergeSort, 1.3.15)
+    /// Merge-sort over the captured frame list — orders frames by time
+    /// before writing to the GIF destination. Without this sort, GIF frames
+    /// may be out of order because AVAssetImageGenerator does not guarantee
+    /// chronological callback order.
+    private func finalizeWithMergeSort() -> Bool {
+        guard let destination, let frameProperties else { return false }
+
+        // Sort frames chronologically via merge sort
+        let sorted = mergeSort(collectedFrames)
+
+        // Write sorted frames to destination
+        for frame in sorted {
+            CGImageDestinationAddImage(destination, frame.image, frameProperties)
+        }
+
+        return CGImageDestinationFinalize(destination)
+    }
+
+    /// Stable merge-sort implementation for frame ordering.
+    ///
+    /// RE: 0x1013cbbc0 (GIFCreator_mergeSort, 1.3.15)
+    /// Merge-sort over the captured frame list (orders frames by time
+    /// before writing). Uses CMTime comparison for correct ordering.
+    private func mergeSort(_ array: [(image: CGImage, time: CMTime)]) -> [(image: CGImage, time: CMTime)] {
+        guard array.count > 1 else { return array }
+
+        let mid = array.count / 2
+        let left = mergeSort(Array(array[0 ..< mid]))
+        let right = mergeSort(Array(array[mid...]))
+
+        return merge(left, right)
+    }
+
+    /// Merge two sorted arrays by time.
+    private func merge(
+        _ left: [(image: CGImage, time: CMTime)],
+        _ right: [(image: CGImage, time: CMTime)]
+    ) -> [(image: CGImage, time: CMTime)] {
+        var result = [(image: CGImage, time: CMTime)]()
+        result.reserveCapacity(left.count + right.count)
+
+        var leftIndex = 0
+        var rightIndex = 0
+
+        while leftIndex < left.count, rightIndex < right.count {
+            if CMTimeCompare(left[leftIndex].time, right[rightIndex].time) <= 0 {
+                result.append(left[leftIndex])
+                leftIndex += 1
+            } else {
+                result.append(right[rightIndex])
+                rightIndex += 1
+            }
+        }
+
+        result.append(contentsOf: left[leftIndex...])
+        result.append(contentsOf: right[rightIndex...])
+        return result
     }
 }
