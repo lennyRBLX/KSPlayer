@@ -27,9 +27,10 @@ open class KSOptions {
     /// Start position as percentage (0.0–1.0)
     // RE stub: not yet wired to consumers
     public var startPlayTimePercentage: Double = 0
-    /// Resume from last saved position on re-enter
+    /// Resume from last saved playback position on re-enter.
+    /// RE: KSOptions field-map #9 (binary token "Forge"/"Forward"-style name renamed by role).
     // RE stub: not yet wired to consumers
-    public var enterForgeResumePlay: Bool = false
+    public var resumeFromSavedPosition: Bool = false
     /// DLNA/UPnP casting active
     // RE stub: not yet wired to consumers
     public var isDLNARunning: Bool = false
@@ -59,8 +60,10 @@ open class KSOptions {
     public var seekUsePacketCache: Bool = false
     /// Custom fonts directory for ASS/SSA subtitle rendering
     public var fontsDir: URL?
-    /// Speech recognition engines for subtitle generation
-    public var audioRecognizes: [Any] = []
+    /// Speech recognition engines for subtitle generation.
+    /// RE: KSOptions field-map #40 — concrete element type is the `AudioRecognize`
+    /// protocol (Subtitle/AudioRecognize.swift), matching `SubtitleModel.audioRecognizes`.
+    public var audioRecognizes: [any AudioRecognize] = []
     /// Current content dynamic range
     public var dynamicRange: DynamicRange = .sdr
     /// Specific video pipeline selection
@@ -69,9 +72,9 @@ open class KSOptions {
     /// Rotate video via FFmpeg filter (vs. display transform)
     // RE stub: not yet wired to consumers
     public var isRotateByFilter: Bool = false
-    /// Decode type selection (auto/hardware/software)
+    /// Decode-path selection (asynchronousHardware/avplayer/hardware/soft/vulkan)
     // RE stub: not yet wired to consumers
-    public var decodeType: DecodeType = .auto
+    public var decodeType: DecodeType = .asynchronousHardware
     /// Software decode thread count (0 = auto)
     // RE stub: not yet wired to consumers
     public var videoSoftDecodeThreadCount: Int = 0
@@ -99,15 +102,23 @@ open class KSOptions {
     /// Audio engine type selection (0=AudioEngine, 1=AudioGraph, 2=AudioRenderer, 3=AudioUnit).
     /// Matches `AudioEngineType` enum below (defined at KSOptions.swift:607).
     public var audioEngineType: Int = 0
-    /// Dolby Vision profile index (0 = none/auto)
+    /// Dolby Vision profile index. `nil` = none/auto; `0` is an explicit profile 0
+    /// (the binary keeps these distinct, hence `Int?` not `Int`).
     /// RE: Field descriptor at 0x103780768, index 48
-    public var doviProfile: Int = 0
-    /// Codec name of the active audio track (e.g. "aac", "eac3", "truehd")
+    public var doviProfile: Int?
+    /// Codec name of the active audio track (e.g. "aac", "eac3", "truehd").
+    /// `nil` = no active audio track / unknown (distinct from "" in the binary).
     /// RE: Field descriptor at 0x103780768, index 49
-    public var audioCodecName: String = ""
-    /// Channel count of the active audio track
+    public var audioCodecName: String?
+    /// Channel count of the active audio track. Stored as `UInt32` to match the
+    /// binary field width and the spatial-audio path (`AVAudioChannelCount` = `UInt32`).
     /// RE: Field descriptor at 0x103780768, index 50
-    public var audioChannelCount: Int = 0
+    public var audioChannelCount: UInt32 = 0
+    /// Optional stored override AVIO context. When set, `process(url:)` consults this
+    /// instead of constructing a `PreLoadIOContext`.
+    /// RE: Field descriptor at 0x103780768, index 27 (between nobuffer #25 and decoderOptions #26).
+    // RE stub: not yet wired to consumers
+    public var ioContext: AbstractAVIOContext?
     /// Allow background audio playback for this session (instance-level override of static)
     /// RE: KSOptions instance field — binary has per-session canBackgroundPlay
     public var canBackgroundPlay: Bool = false
@@ -124,6 +135,10 @@ open class KSOptions {
     public var maxBufferDuration = KSOptions.maxBufferDuration
     /// 是否开启秒开
     public var isSecondOpen = KSOptions.isSecondOpen
+    /// Auto-start playback on load (per-instance override of the static default).
+    /// RE: KSOptions field-map #8 (default true). Instance=static pattern, matching
+    /// `hardwareDecode`/`isSecondOpen`/`yadifMode`. Written by init body 0x10139a074.
+    public var isAutoPlay = KSOptions.isAutoPlay
     /// 开启精确seek
     public var isAccurateSeek = KSOptions.isAccurateSeek
     /// Applies to short videos only
@@ -258,6 +273,17 @@ open class KSOptions {
         ]()
         oldValue.merge(header) { _, new in new }
         avOptions["AVURLAssetHTTPHeaderFieldsKey"] = oldValue
+        applyHTTPHeadersToFormatContext(header)
+    }
+
+    /// Merge an HTTP-header dictionary into the FFmpeg format-context `headers` option.
+    /// RE: 0x10139e4a4 (KSOptions.applyHTTPHeadersToFormatContext, 1.3.15; 6 callers).
+    ///
+    /// Reads the existing `formatContextOptions["headers"]` string, appends each
+    /// `"key:value\r\n"` entry (CRLF-separated, per RFC 7230 field syntax), and writes
+    /// the joined result back. Kept as a discrete step (not fused into `appendHeader`)
+    /// so the cookie path and other header sources can reuse it directly.
+    public func applyHTTPHeadersToFormatContext(_ header: [String: String]) {
         var str = formatContextOptions["headers"] as? String ?? ""
         for (key, value) in header {
             str.append("\(key):\(value)\r\n")
@@ -433,10 +459,16 @@ open class KSOptions {
                 let classified: DynamicRange
                 let codecTag = ffmpegTrack.codecpar.codec_tag
                 if codecTag != 0 {
-                    classified = KSOptions.classifyDynamicRange(
+                    // Two-path classifier returns the compact 0..4 code. Collapse it to a
+                    // storable DynamicRange at the store boundary, exactly as the binary's
+                    // onVideoTrackOpened (FUN_10138d62c) does: code 4 (hdr10Fallback, the
+                    // null-CMFormatDescription outcome) maps to .hdr10; codes 0..3 map to the
+                    // same-rawValue DynamicRange. The store therefore only ever holds 0..3.
+                    let code = KSOptions.classifyDynamicRange(
                         codecTag: codecTag,
                         formatDescription: ffmpegTrack.formatDescription
                     )
+                    classified = DynamicRange(rawValue: Int32(code)) ?? .hdr10
                 } else {
                     classified = KSOptions.classifyDynamicRange(
                         colorTrc: ffmpegTrack.codecpar.color_trc,
@@ -445,7 +477,7 @@ open class KSOptions {
                 }
                 dynamicRange = classified
                 if classified == .dolbyVision || classified == .hdr10
-                    || classified == .hdr10Fallback || classified == .hlg {
+                    || classified == .hlg {
                     // HDR content: disable async decompression and force hardware decode
                     // for correct HDR metadata passthrough (RE: onVideoTrackOpened behavior)
                     asynchronousDecompression = false
@@ -453,27 +485,7 @@ open class KSOptions {
                 }
             }
             if [FFmpegFieldOrder.bb, .bt, .tt, .tb].contains(assetTrack.fieldOrder) {
-                // todo 先不要用yadif_videotoolbox，不然会crash。这个后续在看下要怎么解决
-                hardwareDecode = false
-                asynchronousDecompression = false
-                let yadif = hardwareDecode ? "yadif_videotoolbox" : "yadif"
-                var yadifMode = self.yadifMode
-//                if let assetTrack = assetTrack as? FFmpegAssetTrack {
-//                    if assetTrack.realFrameRate.num == 2 * assetTrack.avgFrameRate.num, assetTrack.realFrameRate.den == assetTrack.avgFrameRate.den {
-//                        if yadifMode == 1 {
-//                            yadifMode = 0
-//                        } else if yadifMode == 3 {
-//                            yadifMode = 2
-//                        }
-//                    }
-//                }
-                if self.deInterlaceAddIdet {
-                    videoFilters.append("idet")
-                }
-                videoFilters.append("\(yadif)=mode=\(yadifMode):parity=-1:deint=1")
-                if yadifMode == 1 || yadifMode == 3 {
-                    assetTrack.nominalFrameRate = assetTrack.nominalFrameRate * 2
-                }
+                configureDeinterlace(assetTrack: assetTrack)
             }
             // HDR→SDR tone mapping via libplacebo FFmpeg filter (RE/19: pl_shader_detect_peak_hdr)
             if KSOptions.enableHDRToSDRToneMapping, dynamicRange != .sdr {
@@ -481,6 +493,30 @@ open class KSOptions {
                 videoFilters.append("libplacebo=tonemapping=\(algo):apply_dolbyvision=1:colorspace=bt709:color_primaries=bt709:color_trc=bt709")
                 destinationDynamicRange = .sdr
             }
+        }
+    }
+
+    /// Configure the deinterlace filter chain for an interlaced video track.
+    /// RE: 0x10139d350 (KSOptions.configureDeinterlace, 1.3.15; 2 callers).
+    ///
+    /// Forces `hardwareDecode = false` and `asynchronousDecompression = false`
+    /// (yadif_videotoolbox currently crashes — see binary's inline comment), then
+    /// conditionally appends "idet" (when `deInterlaceAddIdet` is set) and the
+    /// `yadif=mode=N:parity=-1:deint=1` filter to `videoFilters`. When the yadif
+    /// mode doubles the frame rate (mode 1 or 3, i.e. `send_field`), the track's
+    /// nominal frame rate is doubled to match.
+    open func configureDeinterlace(assetTrack: some MediaPlayerTrack) {
+        // todo 先不要用yadif_videotoolbox，不然会crash。这个后续在看下要怎么解决
+        hardwareDecode = false
+        asynchronousDecompression = false
+        let yadif = hardwareDecode ? "yadif_videotoolbox" : "yadif"
+        let yadifMode = self.yadifMode
+        if deInterlaceAddIdet {
+            videoFilters.append("idet")
+        }
+        videoFilters.append("\(yadif)=mode=\(yadifMode):parity=-1:deint=1")
+        if yadifMode == 1 || yadifMode == 3 {
+            assetTrack.nominalFrameRate = assetTrack.nominalFrameRate * 2
         }
     }
 
@@ -521,7 +557,7 @@ open class KSOptions {
                         return (diff, .dropGOPPacket)
                     } else if videoClockDelayCount % 5 == 0 {
                         KSLog("\(log) drop next frame")
-                        return (diff, .dropNextFrame)
+                        return (diff, .dropFrame(count: 1))
                     } else {
                         return (diff, .next)
                     }
@@ -536,7 +572,7 @@ open class KSOptions {
                     }
                     if videoClockDelayCount % 2 == 0 {
                         KSLog("\(log) drop next frame")
-                        return (diff, .dropNextFrame)
+                        return (diff, .dropFrame(count: 1))
                     } else {
                         return (diff, .next)
                     }
@@ -594,6 +630,10 @@ open class KSOptions {
     }
 
     open func process(url: URL) -> AbstractAVIOContext? {
+        // A stored override (field #27) takes precedence over the default packet-cache context.
+        if let ioContext {
+            return ioContext
+        }
         if seekUsePacketCache, !url.isFileURL {
             return PreLoadIOContext(url: url)
         }
@@ -610,10 +650,27 @@ public enum VideoInterlacingType: String {
 
 // MARK: - Forward enums (RE/76)
 
+/// Decode-path selection enum backing `KSOptions.decodeType`.
+///
+/// RE: Forward v1.3.15 reflection table at `0x103745090`
+/// (`asynchronousHardware\0avplayer\0hardware\0soft\0vulka…`) and
+/// `audit/ENUM_CASES_1.3.15.md` (`DecodeType (5)`). Raw values are the Swift
+/// declaration indices. The binary's truncated `vulka` is reconstructed as
+/// `vulkan` per the project's source-reconstruction typo rule.
 public enum DecodeType: Int, Sendable {
-    case auto = 0
-    case hardware = 1
-    case software = 2
+    /// VideoToolbox async path
+    /// (`asynchronousDecompression == true && hardwareDecode == true`
+    /// → `DecompressionSession` / `VideoToolboxDecode`).
+    case asynchronousHardware = 0
+    /// Native AVPlayer decode (ProAVPlayer HLS-remux passthrough; bypasses the
+    /// MEPlayer decoders).
+    case avplayer = 1
+    /// Synchronous VideoToolbox hardware decode.
+    case hardware = 2
+    /// Software `FFmpegDecode` (libavcodec).
+    case soft = 3
+    /// Vulkan / MoltenVK decode path.
+    case vulkan = 4
 }
 
 public enum VideoPipeline: Int, Sendable {
@@ -655,13 +712,27 @@ public extension KSOptions {
     /// `MetalPlayView`'s DV-metadata gate. There is no inversion: `enhanceDolby == true`
     /// selects Metal DV, `enhanceDolby == false` selects HDR10 fallback / AVSBDL.
     ///
-    /// **Related static.** `DAT_103d097d8` is a *separate* KSOptions-related Bool with its
+    /// **Related static.** `isDolbyVision` (`DAT_103d097d8`) is a *separate* Bool with its
     /// own accessor triple at `0x1013a3658 / 0x1013a3698 / 0x1013a36dc` (witness at
-    /// `0x104820ecf/d0`) and 14+ readers across decode/render. It is **not** a copy of
-    /// `enhanceDolby` -- semantic identity unresolved. `classifyDynamicRange` reads it
-    /// inlined to gate Profile-7 DV-vs-HDR10. See `.reversal/DolbyVision.md §"Statics that
-    /// look related to enhanceDolby"`.
-    static var enhanceDolby: Bool = true
+    /// `0x104820ecf/d0`) and 12+ readers across decode/render. It is **not** a copy of
+    /// `enhanceDolby`: `enhanceDolby` gates the Metal DV *render path*, whereas
+    /// `isDolbyVision` gates whether Profile-7 content is *classified as DV* in the first
+    /// place. See `isDolbyVision` below and `.reversal/DolbyVision.md §isDolbyVision`.
+    public static var enhanceDolby: Bool = true
+
+    /// "Honor Dolby Vision Profile 7" master toggle.
+    ///
+    /// Forwards to the module-level global `isDolbyVision` in PlayerDefines.swift, which
+    /// is the single canonical backing storage (mirrors binary `DAT_103d097d8`).
+    /// This computed property preserves the `KSOptions.isDolbyVision` call-site API
+    /// so that `classifyDynamicRange` and other callers continue to resolve without change.
+    ///
+    /// See PlayerDefines.swift for full RE provenance (accessor triple, reflection field
+    /// name, reader list, relationship to `enhanceDolby`).
+    public static var isDolbyVision: Bool {
+        get { KSPlayer.isDolbyVision }
+        set { KSPlayer.isDolbyVision = newValue }
+    }
 
     /// Classify dynamic range from FFmpeg transfer characteristics and Dolby Vision side data.
     /// RE binary address: `KSOptions_classifyDynamicRange @ 0x1013c38fc`
@@ -675,17 +746,34 @@ public extension KSOptions {
     ///     `4` (`hdr10Fallback`); else delegate to `_fromFormatDescription` which checks
     ///     `dvhe`/`dvh1` (return 3), then PQ transfer (return 1), HLG (return 2), else SDR.
     ///
-    /// This thin convenience overload pushes Profile-7 detection upstream into the
-    /// `hasDovi` boolean (set by the caller from `AVCodecParameters` /
-    /// `DOVIDecoderConfigurationRecord`). For call sites that have a codec tag and an
-    /// optional `CMFormatDescription` the richer two-path variant below should be preferred.
+    /// This thin convenience overload infers Profile-7 from a PQ base layer combined
+    /// with DV side data (Profile-7 is cross-compatible HEVC whose base layer carries a
+    /// PQ transfer function). When the base layer is PQ *and* DV side data is present,
+    /// the `isDolbyVision` gate (`DAT_103d097d8`) determines whether we classify as DV
+    /// or fall back to HDR10 — matching the binary's Profile-7 branch at `0x1013c38fc`.
+    /// For call sites that have a codec tag and an optional `CMFormatDescription` the
+    /// richer two-path variant below should be preferred.
     ///
     /// - Parameters:
     ///   - colorTrc: The track's color transfer characteristic (color_trc from AVCodecParameters).
     ///   - hasDovi: Whether Dolby Vision side data / configuration record is present.
+    ///   - profileSevenPrefersDV: Mirror of binary's `DAT_103d097d8` (`isDolbyVision`) read;
+    ///     when `false` and the content appears to be Profile-7 (PQ base + DV side data),
+    ///     returns `.hdr10` instead of `.dolbyVision`. Default: `KSOptions.isDolbyVision`.
     /// - Returns: The classified `DynamicRange` value.
-    static func classifyDynamicRange(colorTrc: AVColorTransferCharacteristic, hasDovi: Bool) -> DynamicRange {
+    static func classifyDynamicRange(
+        colorTrc: AVColorTransferCharacteristic,
+        hasDovi: Bool,
+        profileSevenPrefersDV: Bool = KSOptions.isDolbyVision
+    ) -> DynamicRange {
         if hasDovi {
+            // Profile-7 heuristic: DV side data present with a PQ base layer.
+            // The binary gates Profile-7 on isDolbyVision (DAT_103d097d8) to decide
+            // DV vs HDR10. Non-PQ base layers (e.g. HLG, SDR) are not Profile-7 and
+            // return .dolbyVision unconditionally (matching the binary's default path).
+            if colorTrc == AVCOL_TRC_SMPTE2084, !profileSevenPrefersDV {
+                return .hdr10
+            }
             return .dolbyVision
         }
         switch colorTrc {
@@ -706,71 +794,78 @@ public extension KSOptions {
     ///   - codecTag: 32-bit FourCC code from `AVCodecParameters.codec_tag`.
     ///   - formatDescription: Optional `CMFormatDescription`. When `nil` the binary's
     ///     `vtable+0x90` probe returns `0`, which selects Path 1 (codec-tag dispatch).
-    ///   - profileSevenPrefersDV: Mirror of binary's `DAT_103d097d8` read; when `true`,
-    ///     Profile-7 content returns `.dolbyVision`, when `false` it returns `.hdr10`.
-    ///     Default: `KSOptions.enhanceDolby` (the closest Swift-side analogue; the actual
-    ///     binary static has an unresolved identity -- see `enhanceDolby` doc comment).
-    /// - Returns: A `DynamicRange` value matching the binary's compact 0/1/2/3/4 scheme
-    ///   (mapped through `DynamicRange.init(forwardValue:)`).
+    ///   - profileSevenPrefersDV: Mirror of binary's `DAT_103d097d8` (`isDolbyVision`) read;
+    ///     when `true`, Profile-7 content returns code `3` (DV), when `false` it returns
+    ///     code `1` (HDR10). Default: `KSOptions.isDolbyVision`.
+    /// - Returns: The **compact classify code** as an `Int`, matching the binary's integer
+    ///   return: `0` = sdr, `1` = hdr10, `2` = hlg, `3` = dolbyVision, `4` = hdr10Fallback.
+    ///   This is deliberately *not* `DynamicRange`: code `4` (the null-CMFormatDescription
+    ///   outcome of `0x1013c38fc`) has no storable `DynamicRange` counterpart, so a 4-case
+    ///   `DynamicRange` return would lose it. The store into `KSOptions.dynamicRange`
+    ///   collapses `4 -> .hdr10` (mirroring `FUN_10138d62c`, which only ever writes 0..3);
+    ///   codes 0..3 map to the same-rawValue `DynamicRange`. (KSPlayer is the lower library
+    ///   in the dependency chain and cannot reference `ProAVPlayer.DynamicRangeType` — which
+    ///   models this same 0..4 code space upstream — so the engine-local return is `Int`.)
     static func classifyDynamicRange(
         codecTag: UInt32,
         formatDescription: CMFormatDescription?,
-        profileSevenPrefersDV: Bool = KSOptions.enhanceDolby
-    ) -> DynamicRange {
+        profileSevenPrefersDV: Bool = KSOptions.isDolbyVision
+    ) -> Int {
         // Binary probe: vtable+0x90 returns a bool in the low bit. Swift analogue:
         // "is a CMFormatDescription actually available?"
         guard let fd = formatDescription else {
             // Path 1: codec-tag dispatch.
             if (codecTag & 0xFF_0000) == 0x07_0000 {
                 // DV Profile 7: gate DV-vs-HDR10 on the second static.
-                return profileSevenPrefersDV ? .dolbyVision : .hdr10
+                return profileSevenPrefersDV ? 3 /* dolbyVision */ : 1 /* hdr10 */
             }
             // No CMFormatDescription, no Profile-7 hint -> assume DV.
-            return .dolbyVision
+            return 3 // dolbyVision
         }
         // Path 2 vtable+0x98 probe: in the binary the inner virtual call returns 0 when
         // the format descriptor cannot resolve a media sub-type. CoreMedia's
         // `formatDescription.mediaSubType` is the Swift equivalent; an unrecognised
-        // sub-type maps to the `.hdr10Fallback` rail (Forward compact value 4).
+        // sub-type maps to the hdr10Fallback rail (compact code 4).
         let subType = CMFormatDescriptionGetMediaSubType(fd)
         if subType == 0 {
-            return .hdr10Fallback
+            return 4 // hdr10Fallback
         }
         // dvhe / dvh1 fourcc -> DV (matches the post-bswap compares at 0x1013ee0cc).
         // CMVideoCodecType is a big-endian FourCC: 'd','v','h','1' -> 0x64766831.
         if subType == CMVideoCodecType(0x6476_6831)        // 'dvh1'
             || subType == CMVideoCodecType(0x6476_6865) {  // 'dvhe'
-            return .dolbyVision
+            return 3 // dolbyVision
         }
         // Transfer-function fallback when sub-type is recognised but not DV.
         if let ext = CMFormatDescriptionGetExtension(
             fd, extensionKey: kCMFormatDescriptionExtension_TransferFunction
         ) as? String {
             if ext == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String {
-                return .hdr10
+                return 1 // hdr10
             }
             if ext == kCVImageBufferTransferFunction_ITU_R_2100_HLG as String {
-                return .hlg
+                return 2 // hlg
             }
         }
-        return .sdr
+        return 0 // sdr
     }
 
     /// Lazy-initialized global `DoviDisplayModel` singleton.
     ///
-    /// RE source: Forward v1.3.15 `KSOptions_createDoviDisplayModel` @ `0x1013a30cc` (376B).
-    /// The binary stores the instance at `QWORD_104458878` (read by `MEPlayerItem_processFrameSideData
-    /// @ 0x101407cc4`, `MetalPlayView_renderFrameImpl @ 0x1014457f4`, and `FUN_1014508b4 @ 0x101450f00`).
-    /// Allocation size is `0x88` (136B) per `_swift_allocObject(..., 0x88, 7)`. The accessor uses
-    /// `swift_once(&DAT_103d06280, ...)` so the instance is created exactly once per process.
+    /// RE: 0x1013a30cc (KSOptions_createDoviDisplayModel, 1.3.15)
+    /// Binary allocates via `_swift_allocObject(..., 0x88, 7)` and stores at `QWORD_104458878`.
+    /// Read by: `MEPlayerItem_processFrameSideData @ 0x101407cc4`,
+    ///          `MetalPlayView_renderFrameImpl @ 0x1014457f4`,
+    ///          `FUN_1014508b4 @ 0x101450f00`.
+    /// Uses `swift_once(&DAT_103d06280, ...)` so the instance is created exactly once.
     ///
     /// See .reversal/DisplayMetal.md §DoviDisplayModel.
     @MainActor
-    static func createDoviDisplayModel() -> DoviDisplayModel? {
+    static func createDoviDisplayModel() -> DoviDisplayModel {
         if let existing = doviDisplayModelStorage {
             return existing
         }
-        let model = DoviDisplayModel(device: MetalRender.device)
+        let model = DoviDisplayModel()
         doviDisplayModelStorage = model
         return model
     }
@@ -778,30 +873,42 @@ public extension KSOptions {
 
 /// Backing storage for the `DoviDisplayModel` singleton (binary: `QWORD_104458878`).
 ///
-/// Kept module-private and `@MainActor`-isolated so writes happen on a single actor — mirrors the
+/// Kept module-private and `@MainActor`-isolated so writes happen on a single actor -- mirrors the
 /// `swift_once` gate around the binary's `KSOptions_createDoviDisplayModel`. Read via the
 /// `KSOptions.createDoviDisplayModel()` accessor; never assign directly.
+/// RE: DAT_103d06108 (once-token), QWORD_104458878 (singleton storage)
 @MainActor
 private var doviDisplayModelStorage: DoviDisplayModel?
 
 public extension KSOptions {
 
+    /// Insert a single key-value pair into a timing-metric dictionary.
+    /// RE: 0x1009755ec (KSOptions.insertTimingMetricEntry, 1.3.15; 2 callers).
+    ///
+    /// Thin wrapper over the `Dictionary` subscript assignment. Kept as a discrete
+    /// member (matching the binary) so the waterfall builder and any direct
+    /// timing write-sites route through one inserter.
+    func insertTimingMetricEntry(_ metrics: inout [String: TimeInterval], key: String, value: TimeInterval) {
+        metrics[key] = value
+    }
+
     /// Build a dictionary of playback timing metrics from the instance's recorded timestamps.
     /// Useful for analytics / debugging first-frame latency breakdown.
+    /// RE: 0x1013a71e0 (KSOptions.buildPlaybackTimingMetrics, 1.3.15; 3 callers).
     func buildPlaybackTimingMetrics() -> [String: TimeInterval] {
         var metrics = [String: TimeInterval]()
-        metrics["prepareTime"] = prepareTime
-        metrics["dnsStartTime"] = dnsStartTime
-        metrics["tcpStartTime"] = tcpStartTime
-        metrics["tcpConnectedTime"] = tcpConnectedTime
-        metrics["openTime"] = openTime
-        metrics["findTime"] = findTime
-        metrics["readyTime"] = readyTime
-        metrics["readAudioTime"] = readAudioTime
-        metrics["readVideoTime"] = readVideoTime
-        metrics["decodeAudioTime"] = decodeAudioTime
-        metrics["decodeVideoTime"] = decodeVideoTime
-        metrics["firstPlayableTime"] = firstPlayableTime
+        insertTimingMetricEntry(&metrics, key: "prepareTime", value: prepareTime)
+        insertTimingMetricEntry(&metrics, key: "dnsStartTime", value: dnsStartTime)
+        insertTimingMetricEntry(&metrics, key: "tcpStartTime", value: tcpStartTime)
+        insertTimingMetricEntry(&metrics, key: "tcpConnectedTime", value: tcpConnectedTime)
+        insertTimingMetricEntry(&metrics, key: "openTime", value: openTime)
+        insertTimingMetricEntry(&metrics, key: "findTime", value: findTime)
+        insertTimingMetricEntry(&metrics, key: "readyTime", value: readyTime)
+        insertTimingMetricEntry(&metrics, key: "readAudioTime", value: readAudioTime)
+        insertTimingMetricEntry(&metrics, key: "readVideoTime", value: readVideoTime)
+        insertTimingMetricEntry(&metrics, key: "decodeAudioTime", value: decodeAudioTime)
+        insertTimingMetricEntry(&metrics, key: "decodeVideoTime", value: decodeVideoTime)
+        insertTimingMetricEntry(&metrics, key: "firstPlayableTime", value: firstPlayableTime)
         return metrics
     }
 
@@ -1053,6 +1160,10 @@ public extension Array {
 public struct KSClock {
     public private(set) var lastMediaTime = CACurrentMediaTime()
     public internal(set) var position = Int64(0)
+    /// RE: Forward v1.3.15 -- playback rate at the last clock update.
+    /// `types.json KSPlayer.KSClock` field #3 (layout order: lastMediaTime,
+    /// position, rate, time). See .reversal/PlayerCore.md §KSClock.
+    public internal(set) var rate = Double(1)
     public internal(set) var time = CMTime.zero {
         didSet {
             lastMediaTime = CACurrentMediaTime()

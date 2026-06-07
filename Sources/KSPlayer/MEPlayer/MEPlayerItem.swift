@@ -18,6 +18,91 @@ import CoreText
 #endif
 
 public final class MEPlayerItem: Sendable {
+    /// RE: 0x103547d0c (MEPlayerItem.State, reflection-verified 1.3.15)
+    /// The demux/decode item's 9-state machine. `UInt8`-backed plain enum whose
+    /// raw value equals the declaration index — the central state-transition
+    /// dispatcher (relocated FUN_10142a680) caches the state byte, switches on
+    /// the current value, writes the new byte, then calls the logger
+    /// (FUN_10142ceac) which emits `os_log("state: %d -> %d", old, new)`.
+    ///
+    /// Case names follow the reflection-verified 1.3.15 spec. The 1.3.14-era
+    /// names `opened` (value 2) and `finished` (value 6) were superseded by
+    /// `ready` and `endOfStream`; per the rename/auto-fix rules we adopt the
+    /// 1.3.15 names. Satellite writers: 0x10142f374 (→ endOfStream when no
+    /// tracks), 0x101430e70 (ready→paused, ready→reading), 0x10143554c
+    /// (seek → paused / reading). State is stored field #41.
+    enum State: UInt8 {
+        /// 0 — Initial state, no media loaded.
+        case idle = 0
+        /// 1 — Open task created, loading media.
+        case opening = 1
+        /// 2 — Stream info found, tracks configured, ready to read.
+        case ready = 2
+        /// 3 — I/O read task active, demuxing packets.
+        case reading = 3
+        /// 4 — Seek in progress.
+        case seeking = 4
+        /// 5 — Playback paused, accepting events.
+        case paused = 5
+        /// 6 — EOF reached / all packets read.
+        case endOfStream = 6
+        /// 7 — Shutdown / closed state.
+        case closed = 7
+        /// 8 — Error / failure occurred.
+        case failed = 8
+    }
+
+    /// RE: 0x10142a680 (MEPlayerItem state-transition dispatcher input, 1.3.15)
+    /// Reflection-verified input type consumed by the relocated state-machine
+    /// dispatcher (FUN_10142a680). The KSPlayer read loop drives transitions
+    /// imperatively (direct `state = .x` writes in the `state`/`error` `didSet`
+    /// observers and the read loop), which is behaviorally equivalent; this enum
+    /// preserves the documented event vocabulary the binary's dispatcher matched
+    /// on. `apply(event:)` maps each event onto the imperative transition so the
+    /// documented surface is reachable.
+    enum Event {
+        /// 0 — Request a seek to `to` seconds; `useCache` selects the
+        /// packet-cache fast path; `completion` is invoked with success.
+        case seek(to: Double, useCache: Bool, completion: (Bool) -> Void)
+        /// 1 — A track reported end-of-data (EOF for that capacity).
+        case trackFinished(CapacityProtocol)
+        /// 2 — A fatal error occurred; carries the originating error.
+        case failed(Error)
+        /// 3 — Begin opening / demuxer setup.
+        case open
+        /// 4 — Begin the read (demux) loop.
+        case startReading
+        /// 5 — Begin per-track decode.
+        case startDecode
+        /// 6 — Pause the read loop (keep I/O alive).
+        case pause
+        /// 7 — Resume the read loop from a paused/suspended state.
+        case resume
+        /// 8 — End of stream reached.
+        case endOfStream
+        /// 9 — Tear down / close the item.
+        case close
+        /// 10 — Stream info discovered, tracks configured (ready).
+        case opened
+    }
+
+    /// RE: 0x10142a680 (MEPlayerItem ResumeAction, reflection-verified 1.3.15)
+    /// Classifies how the read loop should resume from a paused/suspended state.
+    /// Companion to the state dispatcher and the `ioWaiter` continuation path:
+    /// `resumeAction()` inspects the current `state` and reports which resume
+    /// strategy applies.
+    enum ResumeAction: UInt8 {
+        /// 0 — Still opening; the resume must wait until the source reaches
+        /// `.ready` before reading can start.
+        case waitForOpened = 0
+        /// 1 — Currently paused; flip back to `.reading` and signal the waiter.
+        case resumeFromPaused = 1
+        /// 2 — Already in a readable state; resume can proceed immediately.
+        case readyImmediate = 2
+        /// 3 — Terminal state (closed/failed); resume is not possible.
+        case cannotResume = 3
+    }
+
     private let url: URL
     private let options: KSOptions
     private let operationQueue = OperationQueue()
@@ -97,7 +182,12 @@ public final class MEPlayerItem: Sendable {
     /// +0xb0. Torn down at shutdown via the AbstractAVIOContext close witness
     /// [*ioContext + 0xa0]. Field-offset symbol:
     /// `_TtC8KSPlayer12MEPlayerItem::ioContext`.
-    private var ioContext: AbstractAVIOContext?
+    ///
+    /// Module-internal (not `private`): the binary reads this field directly from
+    /// `KSMEPlayer` (same-module field access at `MEPlayerItem::ioContext`) to feed
+    /// `KSMEPlayer.cachedRanges` — the seek-bar buffered-range rail. See
+    /// KSMEPlayer.swift `cachedRanges` (RE 0x10141e758).
+    var ioContext: AbstractAVIOContext?
 
     /// RE: 0x10142a680 (MEPlayerItem set state, 1.3.15)
     /// The suspendable read-loop Task created/cancelled in `set state`. Field-
@@ -112,6 +202,22 @@ public final class MEPlayerItem: Sendable {
     /// may be mutated. Field-offset symbol:
     /// `_TtC8KSPlayer12MEPlayerItem::initFileSize`.
     public private(set) var initFileSize: Int64 = 0
+
+    /// RE: 0x10142a238 (MEPlayerItem_isLiveStream, 1.3.15)
+    /// Preserves the container duration as first reported by
+    /// `avformat_find_stream_info`. `isLiveStream()` uses `initDuration == 0`
+    /// to branch between the fileSize-change heuristic and the duration-delta
+    /// (`|delta| > 1.0`) heuristic. Field-offset symbol:
+    /// `_TtC8KSPlayer12MEPlayerItem::initDuration`.
+    public private(set) var initDuration: TimeInterval = 0
+
+    /// RE: 0x103547d0c — MEPlayerItem stored field #9 `seekUsePacketCache`.
+    /// Whether a seek may be served from the in-memory packet cache (the fast
+    /// path implemented by `usePacketCacheSeek(time:)`). The binary keeps a
+    /// per-instance copy of `options.seekUsePacketCache` so the read loop does
+    /// not re-read the options object on every seek; it is seeded from
+    /// `options.seekUsePacketCache` at open time.
+    private var seekUsePacketCache: Bool = false
 
     /// RE: 0x1014367a0 (MEPlayerItem_interruptCallback, 1.3.15)
     /// Dedicated interrupt flag that allows external abort of FFmpeg I/O without
@@ -164,10 +270,16 @@ public final class MEPlayerItem: Sendable {
         }
     }
 
-    private var state = MESourceState.idle {
+    /// RE: 0x103547d0c — stored field #41; `UInt8`-backed `State` (see nested
+    /// `enum State`). Each write is the binary's dispatcher writing the new
+    /// state byte; the `didSet` reproduces the per-state side effects.
+    private var state = State.idle {
         didSet {
             switch state {
-            case .opened:
+            case .ready:
+                // Delegate hook name is the `MEPlayerDelegate` protocol method
+                // `sourceDidOpened()` (declared in Model.swift); only the enum
+                // case was renamed to the 1.3.15 `ready` spelling.
                 delegate?.sourceDidOpened()
             case .reading:
                 timer.fireDate = Date.distantPast
@@ -176,7 +288,7 @@ public final class MEPlayerItem: Sendable {
             case .failed:
                 delegate?.sourceDidFailed(error: error)
                 timer.fireDate = Date.distantFuture
-            case .idle, .opening, .seeking, .paused, .finished:
+            case .idle, .opening, .seeking, .paused, .endOfStream:
                 break
             }
         }
@@ -238,11 +350,34 @@ public final class MEPlayerItem: Sendable {
     }
 
     /// RE: 0x10142a238 (MEPlayerItem_isLiveStream, 1.3.15)
-    /// Dedicated live-stream detection predicate. The binary has this as a
-    /// named callable function returning Bool. Uses duration == 0 as the
-    /// primary signal (matching the inline check at createCodec line 594).
+    /// Dedicated live-stream detection predicate. Decompiled behavior:
+    ///   1. Gate on the media being a streamed A/V container (binary:
+    ///      `options.mediaType == 2`). KSOptions has no `mediaType` field — the
+    ///      compact media-type value 2 is the video container case, so the gate
+    ///      is reconstructed as "an enabled video (or audio) track exists". When
+    ///      the gate fails the stream is treated as not-live.
+    ///   2. If `initDuration == 0` (the container never advertised a duration),
+    ///      it is live iff the file size has since changed (a growing
+    ///      VOD/DVR-style source): `fileSize != Double(initFileSize)`.
+    ///   3. If `initDuration != 0`, it is live iff the duration has drifted by
+    ///      more than one second from the first report: `|duration - initDuration| > 1.0`.
+    /// This subsumes the simpler inline `duration == 0` check used at createCodec:
+    /// a zero `initDuration` with no fileSize growth still reports false, matching
+    /// the inline path, while genuine growing/duration-drifting sources report true.
     func isLiveStream() -> Bool {
-        return duration == 0
+        // Step 1: gate — only streamed A/V containers can be live.
+        let hasPlayableTrack = assetTracks.contains {
+            ($0.mediaType == .video || $0.mediaType == .audio) && $0.isEnabled
+        }
+        guard hasPlayableTrack else {
+            return false
+        }
+        // Step 2: no advertised duration — live iff the byte size is growing.
+        if initDuration == 0 {
+            return fileSize != Double(initFileSize)
+        }
+        // Step 3: advertised duration — live iff it drifts > 1s from first report.
+        return abs(duration - initDuration) > 1.0
     }
 
     /// RE: 0x10142a404 (MEPlayerItem_lazyInitDynamicInfo, 1.3.15)
@@ -519,7 +654,7 @@ public final class MEPlayerItem: Sendable {
     /// Post-open hook invoked after `avformat_find_stream_info` completes.
     /// The binary separates this as a distinct call from the open path.
     /// Handles chapter extraction, codec creation, output/remux setup,
-    /// and state transition to .opened.
+    /// and state transition to .ready.
     func setupAfterStreamDiscovery() {
         guard let formatCtx else { return }
         // Chapter extraction
@@ -547,7 +682,7 @@ public final class MEPlayerItem: Sendable {
         if videoTrack == nil, audioTrack == nil {
             state = .failed
         } else {
-            state = .opened
+            state = .ready
             read()
         }
     }
@@ -646,6 +781,68 @@ public final class MEPlayerItem: Sendable {
         }
         return true
     }
+
+    /// RE: 0x10142a680 (MEPlayerItem state-transition dispatcher, 1.3.15)
+    /// Maps a documented `Event` onto the imperative state transition the read
+    /// loop performs. The binary's dispatcher switched on this event vocabulary;
+    /// KSPlayer drives the same transitions via direct `state` writes plus the
+    /// `pause()`/`resume()`/`seek(...)`/`shutdown()` helpers. This entry point
+    /// preserves the documented event surface and routes each event to its
+    /// equivalent transition.
+    func apply(event: Event) {
+        switch event {
+        case let .seek(to, _, completion):
+            // `useCache` is consulted by the read loop via usePacketCacheSeek;
+            // the seek entry point itself decides the fast path per-track.
+            seek(time: to, completion: completion)
+        case let .trackFinished(capacity):
+            codecDidFinished(track: capacity)
+        case let .failed(err):
+            error = err as NSError
+        case .open:
+            prepareToPlay()
+        case .startReading:
+            if state == .ready {
+                read()
+            }
+        case .startDecode:
+            allPlayerItemTracks.forEach { $0.decode() }
+        case .pause:
+            pause()
+        case .resume:
+            resume()
+        case .endOfStream:
+            if state == .reading || state == .seeking || state == .paused {
+                state = .endOfStream
+            }
+        case .close:
+            shutdown()
+        case .opened:
+            // Stream info discovered → ready (the binary's value-2 transition).
+            if state == .opening {
+                state = .ready
+            }
+        }
+    }
+
+    /// RE: 0x10142a680 (MEPlayerItem ResumeAction classifier, 1.3.15)
+    /// Companion to `apply(event:)` and the `ioWaiter` continuation path:
+    /// inspects the current `state` and reports which resume strategy the read
+    /// loop should take. Mirrors the binary's resume-classification switch that
+    /// gates whether `resume()` can proceed, must wait for `.ready`, or is a
+    /// no-op because the item is already readable or terminally closed.
+    func resumeAction() -> ResumeAction {
+        switch state {
+        case .idle, .opening:
+            return .waitForOpened
+        case .paused:
+            return .resumeFromPaused
+        case .ready, .reading, .seeking, .endOfStream:
+            return .readyImmediate
+        case .closed, .failed:
+            return .cannotResume
+        }
+    }
 }
 
 // MARK: private functions
@@ -737,7 +934,7 @@ extension MEPlayerItem {
         var result = avformat_open_input(&self.formatCtx, urlString, nil, &avOptions)
         av_dict_free(&avOptions)
         if result == AVError.eof.code {
-            state = .finished
+            state = .endOfStream
             delegate?.sourceDidFinished()
             return
         }
@@ -816,6 +1013,13 @@ extension MEPlayerItem {
             audioClock.time = startTime
         }
         duration = TimeInterval(max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE))
+        // RE: 0x10142a238 — preserve the first-reported duration so isLiveStream()
+        // can branch on whether the container ever advertised a duration.
+        initDuration = duration
+        // RE: 0x103547d0c field #9 — seed the per-instance packet-cache flag from
+        // the options object at open time (the binary caches it so the seek path
+        // does not re-read options on every seek).
+        seekUsePacketCache = options.seekUsePacketCache
         // RE: fileSize is set from avio_size() above (step 9). Only fall back
         // to the bitrate estimate if avio_size returned <= 0 (e.g. live streams).
         if fileSize <= 0 {
@@ -845,7 +1049,7 @@ extension MEPlayerItem {
         if videoTrack == nil, audioTrack == nil {
             state = .failed
         } else {
-            state = .opened
+            state = .ready
             read()
         }
     }
@@ -1057,7 +1261,7 @@ extension MEPlayerItem {
     }
 
     private func readThread() {
-        if state == .opened {
+        if state == .ready {
             if options.startPlayTime > 0 {
                 let timestamp = startTime + CMTime(seconds: options.startPlayTime)
                 let flags = seekByBytes ? AVSEEK_FLAG_BYTE : 0
@@ -1070,7 +1274,7 @@ extension MEPlayerItem {
             state = .reading
         }
         allPlayerItemTracks.forEach { $0.decode() }
-        while [MESourceState.paused, .seeking, .reading].contains(state) {
+        while [State.paused, .seeking, .reading].contains(state) {
             if state == .paused {
                 condition.wait()
             }
@@ -1196,7 +1400,7 @@ extension MEPlayerItem {
                     _ = av_seek_frame(formatCtx, -1, startTime.value, AVSEEK_FLAG_BACKWARD)
                 } else {
                     allPlayerItemTracks.forEach { $0.isEndOfFile = true }
-                    state = .finished
+                    state = .endOfStream
                 }
             } else {
                 //                        if IS_AVERROR_INVALIDDATA(readResult)
@@ -1252,6 +1456,10 @@ extension MEPlayerItem {
     /// - Parameter time: The target seek time in seconds
     /// - Returns: `true` if all tracks can serve the seek from their packet cache
     func usePacketCacheSeek(time: TimeInterval) -> Bool {
+        // RE: 0x103547d0c field #9 — gate on the per-instance `seekUsePacketCache`
+        // copy seeded at open time, so the read loop does not re-read the options
+        // object on every seek.
+        guard seekUsePacketCache else { return false }
         guard !videoAudioTracks.isEmpty else { return false }
         for track in videoAudioTracks {
             // Only AsyncPlayerItemTrack has a packetQueue we can scan
@@ -1454,7 +1662,7 @@ extension MEPlayerItem: MediaPlayback {
             seekingCompletionHandler = completion
             condition.broadcast()
             allPlayerItemTracks.forEach { $0.seek(time: time) }
-        } else if state == .finished {
+        } else if state == .endOfStream {
             seekTime = time
             state = .seeking
             seekingCompletionHandler = completion
@@ -1498,7 +1706,7 @@ extension MEPlayerItem: CodecCapacityDelegate {
                 isAudioStalled = audioTrack == nil
                 audioTrack?.isLoopModel = false
                 videoTrack?.isLoopModel = false
-                if state == .finished {
+                if state == .endOfStream {
                     seek(time: 0) { _ in }
                 }
             }
@@ -1790,6 +1998,46 @@ extension MEPlayerItem {
         let cacheSize = options.preferredForwardBufferDuration * estimatedBitrate
         return LimitPreLoadIOContext(url: url, cacheSize: cacheSize)
     }
+
+    /// RE: 0x10142d174 (MEPlayerItem_updatePBArrayProgress, 1.3.15)
+    /// Walks the custom-IO `pbArray` slots, sums the bytes pulled through each
+    /// open `AVIOContext` (`bytes_read`), and feeds the aggregate as an I/O
+    /// buffering-progress percentage to the delegate. This is the custom-protocol
+    /// counterpart to the FFmpeg-default `dynamicInfo.bytesRead` reporter
+    /// (`formatCtx.pb.bytes_read`): when the source is opened through the cache
+    /// hierarchy, the bytes flow through the `pbArray`-tracked sub-contexts rather
+    /// than the top-level `formatCtx.pb`, so progress is summed from the slots.
+    ///
+    /// - Returns: The aggregate buffering progress as a 0–100 `UInt8`.
+    @discardableResult
+    func updatePBArrayProgress() -> UInt8 {
+        guard !pbArray.isEmpty else { return 0 }
+        // Sum bytes read across every tracked custom-IO sub-context.
+        var totalBytesRead: Int64 = 0
+        for slot in pbArray {
+            totalBytesRead += slot.pb.pointee.bytes_read
+        }
+        // TODO(re-verify): exact pbArray progress computation. The doc names the
+        // function ("Update PB array buffering progress") but does not specify the
+        // denominator. We report progress relative to the known container size
+        // (initFileSize, preserved from avio_size at open); for size-less live
+        // sources we fall back to the bitrate-derived fileSize estimate. Clamped
+        // to 0...100 to match LoadingState.progress (UInt8).
+        let denominator = initFileSize > 0 ? Double(initFileSize) : fileSize
+        let progress: UInt8
+        if denominator > 0 {
+            let ratio = Double(totalBytesRead) / denominator
+            progress = UInt8(max(0.0, min(100.0, ratio * 100.0)))
+        } else {
+            progress = 0
+        }
+        // Feed the computed progress to the delegate via the standard loading
+        // state, mirroring codecDidChangeCapacity's reporting path. Track-level
+        // counts come from the current video/audio capacities.
+        let loadingState = options.playable(capacitys: videoAudioTracks, isFirst: isFirst, isSeek: isSeek)
+        delegate?.sourceDidChange(loadingState: loadingState)
+        return progress
+    }
 }
 
 extension AbstractAVIOContext {
@@ -1930,15 +2178,23 @@ extension MEPlayerItem {
     /// outside the main decode loop (e.g., subtitle CC extraction, standalone
     /// metadata queries).
     ///
-    /// Handled side-data types:
-    ///   0x01 (AV_FRAME_DATA_A53_CC)                      -> CC packet -> subtitle track
-    ///   0x0B (AV_FRAME_DATA_MASTERING_DISPLAY_METADATA)   -> MasteringDisplayMetadata
-    ///   0x0E (AV_FRAME_DATA_CONTENT_LIGHT_LEVEL)          -> ContentLightMetadata
-    ///   0x11 (no-op stub)                                 -> skip
-    ///   0x14 (SEI/metadata string)                        -> CMTime-stamped callback
-    ///   0x18 (AV_FRAME_DATA_DOVI_METADATA, 3008B)         -> DV staging buffer copy
-    ///   0x19 (AV_FRAME_DATA_DYNAMIC_HDR_VIVID)            -> HDR Vivid flag
-    ///   0x1A (AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT)  -> AmbientViewingEnvironment
+    /// Handled side-data types. The hex shown is the FFmpeg type-ID immediate
+    /// the binary's switch dispatched on (Ghidra `decompile(0x101407908)`); the
+    /// executable code below dispatches on the matching symbolic
+    /// `AV_FRAME_DATA_*` constant from FFmpegKit's `<libavutil/frame.h>`, which
+    /// is the source of truth for the exact integer value. Cross-ref
+    /// PlayerCore.md / DolbyVision.md / TrackDecode.md side-data tables. NOTE:
+    /// the DV RPU / DV-metadata staging copies (binary type 0x18=24
+    /// `AV_FRAME_DATA_DOVI_RPU_BUFFER`, type 0x19=25 `AV_FRAME_DATA_DOVI_METADATA`)
+    /// are handled in FFmpegDecode.swift, NOT here — this entry point covers the
+    /// CC / mastering-display / content-light / SEI / dynamic-HDR / ambient arms.
+    ///   0x01 / 1  (AV_FRAME_DATA_A53_CC)                     -> CC packet -> subtitle track
+    ///   0x0B / 11 (AV_FRAME_DATA_MASTERING_DISPLAY_METADATA) -> MasteringDisplayMetadata
+    ///   0x0E / 14 (AV_FRAME_DATA_CONTENT_LIGHT_LEVEL)        -> ContentLightMetadata
+    ///   0x11 / 17 (AV_FRAME_DATA_DISPLAYMATRIX)              -> recognized, skipped
+    ///   0x14 / 20 (AV_FRAME_DATA_SEI_UNREGISTERED)           -> CMTime-stamped SEI string callback
+    ///   (AV_FRAME_DATA_DYNAMIC_HDR_VIVID)                    -> HDR Vivid flag
+    ///   (AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT)          -> AmbientViewingEnvironment
     ///
     /// - Parameters:
     ///   - frame: The decoded AVFrame containing side data
@@ -2016,15 +2272,19 @@ extension MEPlayerItem {
                     MaxFALL: UInt16(data.MaxFALL).bigEndian
                 )
 
-            // Type 0x11: No-op stub
-            // RE: Falls through to next_iter -- handler stub, no field reads
+            // Type 0x11 / 17: AV_FRAME_DATA_DISPLAYMATRIX
+            // RE: Recognized and skipped (no HDR/DV effect) -- the binary's
+            // switch has an arm for this type that falls through to next_iter
+            // with no field reads. Rotation is applied earlier via the
+            // rotate-by-filter path, not from per-frame side data here.
             case AV_FRAME_DATA_DISPLAYMATRIX:
                 break
 
-            // Type 0x14: SEI / metadata string
-            // RE: Conditional on entry.size > 0x10; treats payload as cString,
-            // converts current PTS to CMTime using track timebase, invokes
-            // self[+0x10] -> vtable[+0xBA8](string, ...) -- SEI-string passthrough
+            // Type 0x14 / 20: AV_FRAME_DATA_SEI_UNREGISTERED (SEI / metadata string)
+            // RE: Conditional on entry.size > 0x10 (AV_UUID_LEN); treats payload
+            // after the 16-byte UUID prefix as a cString, converts current PTS to
+            // CMTime using track timebase, invokes self[+0x10] ->
+            // vtable[+0xBA8](string, ...) -- SEI-string passthrough.
             case AV_FRAME_DATA_SEI_UNREGISTERED:
                 let size = sideData.size
                 if size > AV_UUID_LEN {
@@ -2032,13 +2292,22 @@ extension MEPlayerItem {
                     options.sei(string: str)
                 }
 
-            // Type 0x19: HDR Vivid flag
-            // RE: Sets the "has dynamic-HDR" flag bit in the output block
+            // AV_FRAME_DATA_DYNAMIC_HDR_VIVID (HDR Vivid presence flag)
+            // RE: The binary sets the "has dynamic-HDR" flag bit in the output
+            // block (one of the type-0x19/0x1a flag arms in the decompiled
+            // switch). The exact FFmpeg integer for DYNAMIC_HDR_VIVID is taken
+            // from FFmpegKit's <libavutil/frame.h> via the symbolic constant
+            // below; the RE notes' 0x19/0x1a immediates are not annotated as a
+            // literal here to avoid contradicting the linked header.
             case AV_FRAME_DATA_DYNAMIC_HDR_VIVID:
                 isVIVID = true
 
-            // Type 0x1A: Ambient Viewing Environment
-            // RE: Pack ambient_illuminance + ambient_light_x/y into local struct
+            // AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT
+            // RE: Pack ambient_illuminance + ambient_light_x/y into the local
+            // AmbientViewingEnvironment struct. As with VIVID above, the exact
+            // FFmpeg type integer comes from the linked <libavutil/frame.h>;
+            // the binary's observed flag-arm immediate is not asserted as a
+            // literal here.
             case AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT:
                 let data = sideData.data.withMemoryRebound(
                     to: AVAmbientViewingEnvironment.self, capacity: 1

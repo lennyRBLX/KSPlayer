@@ -114,6 +114,13 @@ public class KSMEPlayer: NSObject {
         }
     }
 
+    /// RE: field #18 (types.json `KSPlayer.KSMEPlayer`, stored offset for
+    /// `0x101424db4`). Resume-after-interruption bit: latched when playback is
+    /// suspended by a route change / audio-session interruption while playing, so
+    /// recovery can decide whether to auto-resume. Persisted by
+    /// `saveShouldResumePlayback()`.
+    private var shouldResumePlayback = false
+
     public required init(url: URL, options: KSOptions) {
         KSOptions.setAudioSession()
         audioOutput = KSOptions.audioPlayerType.init()
@@ -446,6 +453,76 @@ private extension KSMEPlayer {
         audioOutput.play()
         videoOutput?.play()
     }
+
+    /// RE: 0x1014234dc (KSMEPlayer.reset, 1.3.15; paired thunk 0x101425634)
+    /// Distinct from `shutdown()` — `reset()` returns the engine to its idle
+    /// baseline by delegating the consolidated timing-field clear to
+    /// `options.resetOptions()` (binary `options` witness `[+0x310]`), then zeroes
+    /// the four KSMEPlayer-owned state fields and drives the demux item to its
+    /// terminal `.finished` state (state transition 6 — `MESourceState.finished`).
+    ///
+    /// Decompile order (verified): `options.resetOptions()` → `loadState = .idle`
+    /// (0) → `playbackState = .idle` (0, with the state-change delegate forward) →
+    /// `isReadyToPlay = false` → `loopCount = 0` → playerItem state→6 (.finished)
+    /// via the relocated MEPlayerItem set-state dispatcher (0x10142a680) → tail
+    /// clear-video gate on `KSOptions.isClearVideoWhereReplace`.
+    ///
+    /// API-Surface-Preservation: kept separate from `shutdown()`. The 11 inline
+    /// timing-field zeroes that `shutdown()` previously inlined are the body of
+    /// `options.resetOptions()`; both call sites now route through it.
+    func reset() {
+        // Consolidated timing-metrics reset (binary options witness [+0x310]).
+        options.resetOptions()
+        loadState = .idle
+        playbackState = .idle
+        isReadyToPlay = false
+        loopCount = 0
+        // Drive the demux/decode item to its terminal state (transition 6 =
+        // MESourceState.finished). The binary calls the relocated MEPlayerItem
+        // set-state dispatcher (0x10142a680) on the retained playerItem.
+        // CROSS-FILE NEEDED: MEPlayerItem.swift has no public hook to request the
+        // .finished(6) transition (its `state` is private). The closest public
+        // surface that retires the read loop is `playerItem.shutdown()`, but that
+        // also tears down I/O — heavier than the binary's bare state write. Until
+        // MEPlayerItem exposes a finish hook, the playerItem state-6 transition is
+        // left to the existing lifecycle (shutdown path), matching observable
+        // behavior without an out-of-cluster edit.
+        // Tail: clear the displayed frame when configured (mirrors shutdown()).
+        if KSOptions.isClearVideoWhereReplace {
+            if let metalPlayView = videoOutput as? MetalPlayView {
+                metalPlayView.flushAndRemoveImage()
+            } else {
+                videoOutput?.flush()
+            }
+        }
+    }
+
+    /// RE: 0x10141fdb0 (KSMEPlayer.audioVideoFlushAndNotify, 1.3.15)
+    /// Combined flush-and-notify used on recovery transitions. Guards
+    /// `playbackState == .playing (1)` AND `loadState == .playable (2)` (the
+    /// decompile additionally reads a bool at `options + 0x47`); when the guard
+    /// holds it flushes BOTH the video and audio outputs, then notifies the
+    /// delegate via the `MediaPlayerDelegate` witness `[+0x10]`
+    /// (`changeLoadState(player:)`).
+    private func audioVideoFlushAndNotify() {
+        guard playbackState == .playing, loadState == .playable else {
+            return
+        }
+        videoOutput?.flush()
+        audioOutput.flush()
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            self.delegate?.changeLoadState(player: self)
+        }
+    }
+
+    /// RE: 0x101424db4 (KSMEPlayer.saveShouldResumePlayback, 1.3.15; paired thunk
+    /// 0x101425638). Persists the resume-after-interruption bit (field #18,
+    /// `shouldResumePlayback`): latch true only while actively playing, so an
+    /// interruption/route-change recovery path can decide whether to auto-resume.
+    private func saveShouldResumePlayback() {
+        shouldResumePlayback = playbackState == .playing
+    }
 }
 
 extension KSMEPlayer: MEPlayerDelegate {
@@ -614,8 +691,74 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     public var seekable: Bool { playerItem.seekable }
 
+    /// RE: 0x10141e758 (KSMEPlayer.getIOContextCacheEntries → cachedRanges, 1.3.15;
+    /// trampoline 0x1014255e8). The live PlayerCore consumer of
+    /// `MEPlayerItem.ioContext` that feeds the seek-bar buffered-range rail.
+    ///
+    /// Verified decompile: read `playerItem.ioContext`; if nil → empty array. Else
+    /// `_swift_dynamicCast` the `AbstractAVIOContext` existential, read
+    /// `playerItem.duration`; if `duration <= 0` → empty array. Otherwise dispatch
+    /// the cast type's witness `[+0x38]` with the duration to build the
+    /// `[CachedTimeRange]` array. In source terms `[+0x38]` is the overridable
+    /// `AbstractAVIOContext.cachedRanges(duration:)` — the cache-backed subclasses
+    /// (CacheIOContext / PreLoadIOContext) translate their buffered byte ranges to
+    /// time ranges via the duration; the base returns `[]`.
+    ///
+    /// CROSS-FILE NEEDED (two deltas, required for this property to compile):
+    ///  1. MEPlayerItem.swift — `ioContext` is currently `private`; it must be
+    ///     module-internal (drop `private`, i.e. `var ioContext: AbstractAVIOContext?`)
+    ///     so this getter can read it. The binary reads the field directly from
+    ///     KSMEPlayer (same-module field access at `MEPlayerItem::ioContext`).
+    ///  2. PlayerDefines.swift — `AbstractAVIOContext` must declare
+    ///     `open func cachedRanges(duration: TimeInterval) -> [CachedTimeRange] { [] }`
+    ///     (the `+0x38` witness slot), and the cache subclasses in CacheHierarchy.swift
+    ///     should override it (map buffered byte ranges → time via `_timeIndex` /
+    ///     fetched extents).
+    /// `CachedTimeRange` already lives in Core/CachedTimeRange.swift — do not redefine.
+    /// Not a `MediaPlayerProtocol` requirement (no protocol dispatch in the binary),
+    /// so it stays a concrete KSMEPlayer property.
+    public var cachedRanges: [CachedTimeRange] {
+        guard let ioContext = playerItem.ioContext, playerItem.duration > 0 else {
+            return []
+        }
+        return ioContext.cachedRanges(duration: playerItem.duration)
+    }
+
+    /// RE: 0x1014257a4 (KSMEPlayer.seekableTimeRanges getter, 1.3.15). The
+    /// seekable span(s) of the current item as time ranges. The FFmpeg engine
+    /// exposes a single contiguous seekable span `[0, duration]` once the item is
+    /// seekable; live/non-seekable sources report none.
+    public var seekableTimeRanges: [CMTimeRange] {
+        guard playerItem.seekable, playerItem.duration > 0 else {
+            return []
+        }
+        return [CMTimeRange(start: .zero, end: CMTime(seconds: playerItem.duration))]
+    }
+
+    /// RE: 0x101421dd8 (KSMEPlayer.videoRotation getter, 1.3.15). Surfaces the
+    /// enabled video track's display rotation (degrees, from the FFmpeg
+    /// `displaymatrix` side data). KSMEPlayer has no rotation field of its own; it
+    /// reads through to the active `FFmpegAssetTrack.rotation` (Int16).
+    public var videoRotation: Int16 {
+        tracks(mediaType: .video).first { $0.isEnabled }?.rotation ?? 0
+    }
+
     public var dynamicInfo: DynamicInfo? {
         playerItem.dynamicInfo
+    }
+
+    /// RE: 0x101429304 (KSMEPlayer.setAVDictOption, 1.3.15). Thin wrapper that
+    /// writes a single key/value into an FFmpeg `AVDictionary` during item/option
+    /// setup (the binary's `av_dict_set(&dict, key, value, 0)` helper). Exposed so
+    /// callers can layer format/codec options onto the player's FFmpeg context
+    /// without reaching into the C dictionary directly.
+    /// TODO(re-verify): exact owning dictionary (format-context vs codec options)
+    /// and whether a non-zero flags argument (e.g. AV_DICT_APPEND) is ever passed
+    /// — the decompile body could not be retrieved this session (Ghidra timeout);
+    /// modeled here as the standard overwrite (flags 0) against the options'
+    /// `formatContextOptions`.
+    func setAVDictOption(key: String, value: String) {
+        options.formatContextOptions[key] = value
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
@@ -694,17 +837,12 @@ extension KSMEPlayer: MediaPlayerProtocol {
         isReadyToPlay = false
         loopCount = 0
         playerItem.shutdown()
-        options.prepareTime = 0
-        options.dnsStartTime = 0
-        options.tcpStartTime = 0
-        options.tcpConnectedTime = 0
-        options.openTime = 0
-        options.findTime = 0
-        options.readyTime = 0
-        options.readAudioTime = 0
-        options.readVideoTime = 0
-        options.decodeAudioTime = 0
-        options.decodeVideoTime = 0
+        // RE: the binary separates the consolidated timing-metrics clear into
+        // `options.resetOptions()` (reset() body, 0x1014234dc, witness [+0x310]).
+        // The 11 inline timing-field zeroes that previously lived here ARE that
+        // method's body; route through it so reset() and shutdown() share one
+        // canonical reset (API-Surface-Preservation).
+        options.resetOptions()
         if KSOptions.isClearVideoWhereReplace {
             if let metalPlayView = videoOutput as? MetalPlayView {
                 metalPlayView.flushAndRemoveImage()

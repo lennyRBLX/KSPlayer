@@ -81,7 +81,7 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     var playbackRate: Float { get set }
     var playbackVolume: Float { get set }
     var contentMode: UIViewContentMode { get set }
-    var subtitleDataSouce: SubtitleDataSouce? { get }
+    var subtitleDataSource: SubtitleDataSource? { get }
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
     var playbackCoordinator: AVPlaybackCoordinator { get }
     @available(tvOS 14.0, *)
