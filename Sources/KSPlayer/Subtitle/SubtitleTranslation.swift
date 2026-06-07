@@ -2,8 +2,12 @@
 //  SubtitleTranslation.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 SubtitleModel_translateAndLayoutSecondarySubtitle (0x1013764A4)
-//  Uses Apple TranslationSession (iOS 17.4+) for on-device subtitle translation.
+//  RE: 0x10149299c (SubtitleModel.translateAndLayoutSecondarySubtitle, 1.3.15)
+//  This cluster reconstructs ONLY branch B of that dual-purpose continuation: the
+//  on-device translation path (no secondarySubtitleActor), using Apple's
+//  TranslationSession (iOS 17.4+). Branch A — aspect-ratio + subtitleDelay
+//  positioning at VerticalAlignment.top — lives in VideoSubtitleView.swift /
+//  KSSubtitle.swift and must not be duplicated here.
 //  Integrates with existing secondarySubtitleActor / secondParts infrastructure.
 //
 
@@ -28,6 +32,14 @@ public struct SubtitleTranslationConfig {
 
 // MARK: - TranslationSubtitleInfo
 
+/// RE: 0x10149299c (SubtitleModel.translateAndLayoutSecondarySubtitle, 1.3.15).
+/// That continuation is DUAL-PURPOSE: branch A computes secondary-subtitle
+/// vertical positioning (16:9 = 1.77778 aspect threshold + `subtitleDelay`,
+/// anchored at `VerticalAlignment.top`, with `secondarySubtitleActor`), and
+/// branch B performs `TranslationSession` on-device translation (without
+/// `secondarySubtitleActor`). This type reconstructs ONLY branch B. The
+/// positioning half (branch A) already lives in VideoSubtitleView.swift and
+/// KSSubtitle.swift — do not duplicate it here.
 public class TranslationSubtitleInfo: KSSubtitle, SubtitleInfo {
     public var isEnabled: Bool = false
     public var delay: TimeInterval = 0
@@ -82,12 +94,12 @@ public class TranslationSubtitleInfo: KSSubtitle, SubtitleInfo {
             lock.unlock()
 
             if let cached {
-                let translatedPart = SubtitlePart(part.start, part.end, cached)
+                var translatedPart = SubtitlePart(part.start, part.end, cached)
                 translatedPart.textPosition = TextPosition(verticalAlign: .top, horizontalAlign: .center)
                 result.append(translatedPart)
             } else {
                 Task { await translateText(text) }
-                let pendingPart = SubtitlePart(part.start, part.end, text)
+                var pendingPart = SubtitlePart(part.start, part.end, text)
                 pendingPart.textPosition = TextPosition(verticalAlign: .top, horizontalAlign: .center)
                 result.append(pendingPart)
             }

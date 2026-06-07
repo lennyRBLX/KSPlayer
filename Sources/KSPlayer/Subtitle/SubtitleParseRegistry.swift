@@ -2,18 +2,20 @@
 //  SubtitleParseRegistry.swift
 //  KSPlayer
 //
-//  RE source: Forward v1.3.15 — SubtitleParseRegistry_init at 0x101480b90,
-//  6 call sites (FUN_101480df8, FUN_101480cd8, FUN_101480d18, FUN_101480d84,
+//  RE: SubtitleParseRegistry_init at 0x101480b90 (v1.3.15), 6 call sites
+//  (FUN_101480df8, FUN_101480cd8, FUN_101480d18, FUN_101480d84,
 //  SubtitleParse_loadAndParse_async, plus one more catalog entry).
-//  Holds the fixed 5-parser registry consumed by SubtitleParse.
+//  Holds the fixed 5-parser registry (global DAT_104458fd8) consumed by
+//  SubtitleParse.
 //
 
 import Foundation
 
 /// Registry of `KSParseProtocol` parsers tried in priority order.
 ///
-/// The Forward binary contains a dedicated `SubtitleParseRegistry` type
-/// whose initializer installs the canonical five parsers
+/// The reverse-engineered binary contains a dedicated
+/// `SubtitleParseRegistry` type whose initializer installs the canonical
+/// five parsers
 /// `[AssImageParse, AssParse, VTTParse, SrtParse, FFmpegSubtitleParse]`.
 /// In upstream KSPlayer the same set was carried on
 /// `KSOptions.subtitleParses`; this reconstruction preserves both APIs:
@@ -22,6 +24,19 @@ import Foundation
 /// `SubtitleParseRegistry` provides the typed-class wrapper that the
 /// binary uses internally and that the dispatch path in
 /// `SubtitleParse.loadAndParse_async` reads from.
+///
+/// RE: `SubtitleParseRegistry_init @ 0x101480b90` allocates the five
+/// parser objects in this exact order and stores the assembled array into
+/// the global registry `DAT_104458fd8` as its FINAL write. Each parser is
+/// paired with its protocol-conformance descriptor:
+///   - slot +0x40 → `0x103a27860` (AssImageParse)
+///   - slot +0x68 → `0x103a278c0` (AssParse)
+///   - slot +0x90 → `0x103a279c8` (VTTParse)
+///   - slot +0xb8 → `0x103a279c8` (SrtParse — SAME descriptor as VTTParse
+///                  because `VTTParse` is a subclass of `SrtParse`, so the
+///                  two share one `KSParseProtocol` conformance witness)
+///   - slot +0xe0 → `0x103a27968` (FFmpegSubtitleParse)
+/// `SubtitleParse_loadAndParse_async @ 0x101482858` reads `DAT_104458fd8`.
 public final class SubtitleParseRegistry {
     /// The shared registry instance read by `SubtitleParse`. Lazy so the
     /// parsers are not constructed at process start when subtitles may
@@ -35,13 +50,22 @@ public final class SubtitleParseRegistry {
     public private(set) var parsers: [KSParseProtocol]
 
     /// Initialise the registry with the canonical 5-parser set from the
-    /// Forward binary. Equivalent to `SubtitleParseRegistry_init @
-    /// 0x101480b90`.
+    /// reverse-engineered binary. Equivalent to `SubtitleParseRegistry_init
+    /// @ 0x101480b90`, whose final instruction stores the assembled array
+    /// into the global `DAT_104458fd8`. Here `static let shared` plays the
+    /// role of that swift-lazy global install.
     public init(parsers: [KSParseProtocol]? = nil) {
         self.parsers = parsers ?? SubtitleParseRegistry.defaultParsers()
     }
 
-    /// The default parser set, in the binary's documented priority order.
+    /// The default parser set, in the binary's documented priority order
+    /// `[AssImageParse, AssParse, VTTParse, SrtParse, FFmpegSubtitleParse]`.
+    ///
+    /// RE: this fixed five-entry order is load-bearing. `0x101480b90`
+    /// allocates the objects in exactly this sequence (AssImageParse before
+    /// AssParse; FFmpegSubtitleParse last as the catch-all) and pairs each
+    /// with its conformance descriptor at `0x103a27860` / `0x103a278c0` /
+    /// `0x103a279c8` (×2, shared by VTTParse/SrtParse) / `0x103a27968`.
     public static func defaultParsers() -> [KSParseProtocol] {
         [
             AssImageParse(),
