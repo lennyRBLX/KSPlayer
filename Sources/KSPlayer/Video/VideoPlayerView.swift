@@ -14,11 +14,11 @@ import AppKit
 import Combine
 import MediaPlayer
 
-/// internal enum to check the pan direction
-public enum KSPanDirection {
-    case horizontal
-    case vertical
-}
+// KSPanDirection is declared canonically in Core/KSPanDirection.swift
+// (public enum KSPanDirection: Int { case horizontal = 0; case vertical = 1 }).
+// The earlier raw-type-less duplicate that lived here was a redeclaration
+// conflict and contradicted ENUM_CASES_1.3.15 (definitive: horizontal=0,
+// vertical=1) — removed so the Core declaration is the single source.
 
 public protocol LoadingIndector {
     func startAnimating()
@@ -57,8 +57,8 @@ open class VideoPlayerView: PlayerView {
     public private(set) var resource: KSPlayerResource? {
         didSet {
             if let resource, oldValue != resource {
-                if let subtitleDataSouce = resource.subtitleDataSouce {
-                    srtControl.addSubtitle(dataSouce: subtitleDataSouce)
+                if let subtitleDataSource = resource.subtitleDataSource {
+                    srtControl.addSubtitle(dataSource: subtitleDataSource)
                 }
                 subtitleBackView.isHidden = true
                 subtitleBackView.image = nil
@@ -284,11 +284,11 @@ open class VideoPlayerView: PlayerView {
             if #available(iOS 14.0, tvOS 15.0, *) {
                 buildMenusForButtons()
             }
-            if let subtitleDataSouce = layer.player.subtitleDataSouce {
+            if let subtitleDataSource = layer.player.subtitleDataSource {
                 // 要延后增加内嵌字幕。因为有些内嵌字幕是放在视频流的。所以会比readyToPlay回调晚。
                 DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 1) { [weak self] in
                     guard let self else { return }
-                    self.srtControl.addSubtitle(dataSouce: subtitleDataSouce)
+                    self.srtControl.addSubtitle(dataSource: subtitleDataSource)
                     if self.srtControl.selectedSubtitleInfo == nil, layer.options.autoSelectEmbedSubtitle {
                         self.srtControl.selectedSubtitleInfo = self.srtControl.subtitleInfos.first { $0.isEnabled }
                     }
@@ -388,6 +388,10 @@ open class VideoPlayerView: PlayerView {
         isMaskShow.toggle()
     }
 
+    /// RE: base-class virtual, dispatched via vtable +0x350 from
+    /// panGestureDirection_impl@0x10150a2c4 on .began; mangled sig 0x10473ed99.
+    /// IOSVideoPlayerView overrides this slot at 0x1014e0d84 (out of cluster).
+    /// (VideoPlayerView.panGestureBegan(location:direction:), 1.3.15)
     open func panGestureBegan(location _: CGPoint, direction: KSPanDirection) {
         if direction == .horizontal {
             // 给tmpPanValue初值
@@ -397,6 +401,10 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
+    /// RE: base-class virtual, dispatched via vtable +0x358 from
+    /// panGestureDirection_impl@0x10150a2c4 on .changed; mangled sig 0x10473f817.
+    /// IOSVideoPlayerView overrides this slot at 0x1014e0e80 (out of cluster).
+    /// (VideoPlayerView.panGestureChanged(velocity:direction:), 1.3.15)
     open func panGestureChanged(velocity point: CGPoint, direction: KSPanDirection) {
         if direction == .horizontal {
             if !KSOptions.enablePlaytimeGestures {
@@ -412,6 +420,10 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
+    /// RE: base-class virtual (KSSliderDelegate-style delta), dispatched via
+    /// vtable +0x360 from panGestureChanged; mangled sig 0x1047385af.
+    /// IOSVideoPlayerView overrides this slot at vtable +0x360 (out of cluster).
+    /// (VideoPlayerView.panValue(velocity:direction:currentTime:totalTime:), 1.3.15)
     open func panValue(velocity point: CGPoint, direction: KSPanDirection, currentTime _: Float, totalTime: Float) -> Float {
         if direction == .horizontal {
             return max(min(Float(point.x) / 0x40000, 0.01), -0.01) * totalTime
@@ -420,6 +432,9 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
+    /// RE: base-class virtual, dispatched via vtable +0x368 from
+    /// panGestureDirection_impl@0x10150a2c4 on state==3 (.ended).
+    /// (VideoPlayerView.panGestureEnded(), 1.3.15)
     open func panGestureEnded() {
         // 移动结束也需要判断垂直或者平移
         // 比如水平移动结束时，要快进到指定位置，如果这里没有判断，当我们调节音量完之后，会出现屏幕跳动的bug
@@ -657,6 +672,7 @@ public extension VideoPlayerView {
 // MARK: - private functions
 
 extension VideoPlayerView {
+    /// RE: 0x10150a444 -> 0x10150a2c4 (VideoPlayerView.panGestureAction:/panGestureDirection_impl, 1.3.15)
     @objc private func panGestureAction(_ pan: UIPanGestureRecognizer) {
         // 播放结束时，忽略手势,锁屏状态忽略手势
         guard !replayButton.isSelected, !isLock else { return }
