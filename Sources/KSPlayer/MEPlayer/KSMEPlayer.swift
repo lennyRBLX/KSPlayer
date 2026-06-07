@@ -165,32 +165,106 @@ private extension KSMEPlayer {
         }
     }
 
+    // MARK: Spatial-audio routing
+    //
+    // Negative finding (RE constraint d, _isAtmos string 0x103314eb6 / dup
+    // 0x103736956, descriptor 0x103c307e8): `_isAtmos` is NOT a KSPlayer routing
+    // flag — its only xref is the reflection field descriptor, i.e. an app-layer
+    // SwiftUI status-bar badge `@Published` ivar set from track metadata (play
+    // repo / UIComponents.md). It participates in NEITHER renderer selection (the
+    // existential bit-test + the outputNumberOfChannels channel-negotiation swap)
+    // NOR spatial routing. Likewise the "Dolby … + Dolby Atmos" display strings
+    // (E-AC-3 JOC 0x103494358, TrueHD 0x103494379) are __const codec display-name
+    // LABELS, not runtime routing constants. KSMEPlayer therefore intentionally
+    // contains NO `_isAtmos` field and NO codec-display-string routing — do not
+    // add them in a later pass.
+
+    /// RE: 0x10141ff94 (KSMEPlayer.handleSpatialCapabilityChange(notification:), 1.3.15)
+    /// Reached via shim 0x1014205cc → shared bridge 0x101420efc.
+    ///
+    /// Structural mirror of `audioRouteChange` MINUS the userInfo/ReasonKey parse
+    /// (a spatial-capability change carries no reason key). Runs the identical
+    /// per-FFmpegAssetTrack channel-renegotiation loop, then a tail gate that —
+    /// unlike the route handler — only re-sets-up the engine when the active
+    /// renderer is the AVAudioEngine path: if `playbackState == .playing` and
+    /// `audioOutput` is exactly AudioEnginePlayer (binary `_swift_dynamicCastClass`
+    /// to 0x1013f3d50), schedule the MainActor async output-format rebuild. It does
+    /// NOT check `loadState` or any reason. AudioRendererPlayer / AVPlayer renderers
+    /// handle spatial natively, so they are intentionally skipped here.
     @objc private func spatialCapabilityChange(notification _: Notification) {
         KSLog("[audio] spatialCapabilityChange")
         #if !os(macOS)
-        checkSpatialAudioAndSetMultichannel()
-        #endif
-        for track in tracks(mediaType: .audio) {
-            (track as? FFmpegAssetTrack)?.audioDescriptor?.updateAudioFormat()
+        renegotiateAudioTrackChannels()
+        // Tail gate: spatial re-setup is only meaningful for the AVAudioEngine
+        // (pull/PCM) path. AudioRendererPlayer pushes CMSampleBuffers to
+        // AVSampleBufferAudioRenderer and lets the OS spatialize the bitstream —
+        // it needs no manual rebuild. So cast to AudioEnginePlayer specifically.
+        if playbackState == .playing, let enginePlayer = audioOutput as? AudioEnginePlayer {
+            scheduleAudioEngineReconfigure(enginePlayer)
         }
+        #endif
     }
 
-    /// RE: Forward v1.3.15 (0x101296B88)
-    /// Checks if any audio output port supports spatial audio and configures
-    /// multichannel output accordingly.
+    /// RE: 0x1013aa640 (KSMEPlayer.checkSpatialAudioAndSetMultichannel, 1.3.15)
+    /// Thunk at 0x1013a78d0 trampolines to this body.
+    ///
+    /// Scans `AVAudioSession.currentRoute.outputs` for any port with
+    /// `isSpatialAudioEnabled` set, pushes that result to the session via
+    /// `setSupportsMultichannelContent(_:)` (selref 0x103c53250) — passed
+    /// unconditionally, matching the `KSOptions.isSpatialAudioEnabled` sibling —
+    /// and returns whether any port supports spatial audio.
+    ///
+    /// The scan is gated on the spatial-audio-enabled flag (binary global
+    /// DAT_104458748, written when `enhanceDolby` is on; mapped here to the
+    /// per-instance `options.isSpatialAudioEnabled`, distinct from the
+    /// active-player-type global DAT_104458738 → `KSOptions.audioPlayerType`).
+    /// enhanceDolby → DAT_104458748 → this scan → channel negotiation
+    /// (outputNumberOfChannels) → AudioRendererPlayer selection is the Atmos
+    /// activation chain; enhanceDolby itself is owned by DolbyVision.md.
     #if !os(macOS)
-    private func checkSpatialAudioAndSetMultichannel() {
-        guard #available(iOS 15.0, tvOS 15.0, *) else { return }
+    @discardableResult
+    private func checkSpatialAudioAndSetMultichannel() -> Bool {
+        guard #available(iOS 15.0, tvOS 15.0, *) else { return false }
+        // Gate on the spatial-enabled flag (DAT_104458748). When spatial output
+        // has not been requested, do not negotiate multichannel — report stereo.
+        guard options.isSpatialAudioEnabled else { return false }
         let route = AVAudioSession.sharedInstance().currentRoute
         let hasSpatial = route.outputs.contains { $0.isSpatialAudioEnabled }
         KSLog("[audio] checkSpatialAudio: hasSpatial=\(hasSpatial)")
-        if hasSpatial {
-            // Let the system decide channel count for multichannel spatial output
-            try? AVAudioSession.sharedInstance().setSupportsMultichannelContent(true)
-            options.isSpatialAudioEnabled = true
-        } else {
-            options.isSpatialAudioEnabled = false
-        }
+        try? AVAudioSession.sharedInstance().setSupportsMultichannelContent(hasSpatial)
+        return hasSpatial
+    }
+
+    /// RE: 0x1013aa894 (KSMEPlayer.outputNumberOfChannels(channelCount:), 1.3.15)
+    /// Channel-count negotiation — the ONLY runtime path that swaps the active
+    /// audio renderer toward AudioRendererPlayer for spatial/Atmos content.
+    ///
+    /// Decision matrix (verified decompile `uint FUN_1013aa894(uint param_1)`):
+    ///  - `swift_once` the AudioEnginePlayer singleton (establishes
+    ///    DAT_104458738, the active `audioPlayerType` class metadata).
+    ///  - call `checkSpatialAudioAndSetMultichannel()` to refresh the live
+    ///    spatial-capability reading.
+    ///  - accumulate the MAX channel count across
+    ///    `currentRoute.outputs[].channels`.
+    ///  - if `channelCount < 3` → force stereo (return 2).
+    ///  - else clamp to the port max and compare the active renderer
+    ///    (DAT_104458738 ≡ `KSOptions.audioPlayerType`) against AudioUnitPlayer /
+    ///    AudioEnginePlayer metadata plus the spatial flag: AudioRendererPlayer
+    ///    (and AudioUnitPlayer) keep the full count, AudioEnginePlayer is clamped
+    ///    to stereo in the non-spatial branch.
+    ///
+    /// The active-renderer identity comparison is expressed in the shared helper
+    /// as `KSOptions.audioPlayerType == AudioRendererPlayer.self`.
+    private func outputNumberOfChannels(channelCount: AVAudioChannelCount) -> AVAudioChannelCount {
+        // Refresh spatial capability from the live route (matches the binary's
+        // step-3 call into checkSpatialAudioAndSetMultichannel before negotiating).
+        checkSpatialAudioAndSetMultichannel()
+        // The full decision matrix (swift_once singleton, port-max accumulation,
+        // active-player-type comparison vs AUP/AEP/ARP metadata) lives in the
+        // shared static helper KSOptions.outputNumberOfChannels(channelCount:),
+        // which performs the identical DAT_104458738 identity compare via
+        // `KSOptions.audioPlayerType == AudioRendererPlayer.self`.
+        return KSOptions.outputNumberOfChannels(channelCount: channelCount)
     }
     #endif
 
@@ -229,25 +303,149 @@ private extension KSMEPlayer {
         }
     }
 
+    /// RE: 0x1014205dc (KSMEPlayer.handleAudioRouteChange(notification:), 1.3.15)
+    /// Reached via shim 0x101420eec → shared bridge 0x101420efc.
+    ///
+    /// 1. `userInfo` nil → fast-path return.
+    /// 2. Extract `AVAudioSessionRouteChangeReasonKey` and cast to UInt; cast
+    ///    failure → return.
+    /// 3. Verbose-log gate when `KSOptions.logLevel` > 2; the renegotiation runs
+    ///    regardless of log level.
+    /// 4. Per-FFmpegAssetTrack channel renegotiation loop (see
+    ///    `renegotiateAudioTrackChannels`).
+    /// 5. Kick the renderer (binary invokes the MediaPlayerProtocol witness at
+    ///    +0x18 → `flush()` here).
+    /// 6. Gates: if `reason == .oldDeviceUnavailable` (2) → return without async
+    ///    re-setup. Else if `playbackState == .playing` AND `loadState ==
+    ///    .playable`, schedule the MainActor async output-format rebuild.
     #if !os(macOS)
     @objc private func audioRouteChange(notification: Notification) {
         KSLog("[audio] audioRouteChange")
-        guard let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else {
+        // (1) No userInfo → nothing to renegotiate.
+        guard let userInfo = notification.userInfo else { return }
+        // (2) Reason is required; a failed cast aborts the handler.
+        guard let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt else {
             return
         }
-//        let routeChangeReason = AVAudioSession.RouteChangeReason(rawValue: reason)
-//        guard [AVAudioSession.RouteChangeReason.newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange].contains(routeChangeReason) else {
-//            return
-//        }
-        for track in tracks(mediaType: .audio) {
-            (track as? FFmpegAssetTrack)?.audioDescriptor?.updateAudioFormat()
+        let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue)
+        // (3) Verbose diagnostics only above warning level.
+        if KSOptions.logLevel.rawValue > LogLevel.warning.rawValue {
+            KSLog("[audio] audioRouteChange reason: \(String(describing: reason))")
         }
+        // (4) Recompute per-track channel layouts against the new route.
+        renegotiateAudioTrackChannels()
+        // (5) Kick the active renderer so it picks up the new output format
+        //     (binary calls MediaPlayerProtocol witness +0x18).
         audioOutput.flush()
-        // RE: Binary 0x1013039e4 — audioRouteDidChange calls spatial audio reconfiguration
-        // to update multichannel output when audio route changes (e.g. headphone connect/disconnect)
-        checkSpatialAudioAndSetMultichannel()
+        // (6) .oldDeviceUnavailable (e.g. headphones unplugged) must not trigger
+        //     an async engine rebuild — playback is being paused/handled elsewhere.
+        if reason == .oldDeviceUnavailable {
+            return
+        }
+        // Only re-set-up when actively playing and ready, and only for the
+        // AVAudioEngine path (ARP/AVPlayer spatialize natively).
+        if playbackState == .playing, loadState == .playable,
+           let enginePlayer = audioOutput as? AudioEnginePlayer
+        {
+            scheduleAudioEngineReconfigure(enginePlayer)
+        }
+    }
+
+    /// RE: per-track renegotiation loop at 0x101420964 (shared by the route and
+    /// spatial-capability handlers, 1.3.15).
+    ///
+    /// For each audio track that is exactly an `FFmpegAssetTrack` carrying an
+    /// `AudioDescriptor`, recompute the renderer-facing channel count and rebuild
+    /// the output `AVAudioFormat`. The binary performs this as three explicit
+    /// steps the API-Surface-Preservation rule keeps separate:
+    ///   1. read requested channelCount = AudioDescriptor+0x24 (`channel.nb_channels`)
+    ///      → `outputNumberOfChannels(channelCount:)` (0x1013aa894), which itself
+    ///      re-reads the live route + spatial capability;
+    ///   2. read sampleRate = AudioDescriptor+0x10 → `audioSwrInit(sampleRate,
+    ///      &outChannel(+0x40), adjustedCount)` (0x10144c8ac) to rebuild the
+    ///      swresample context + output format/channel layout;
+    ///   3. store the rebuilt `AVAudioFormat` back at AudioDescriptor+0x18.
+    /// `AudioDescriptor.updateAudioFormat()` (Resample.swift) wraps exactly this
+    /// `outputNumberOfChannels → audioFormat rebuild → store-back` sequence, so it
+    /// is the in-cluster call site here. The explicit `audioSwrInit` /
+    /// AudioDescriptor field semantics live in Resample.swift (AudioResample
+    /// cluster); see the CROSS-FILE note for verification of that wrapping.
+    private func renegotiateAudioTrackChannels() {
+        for track in tracks(mediaType: .audio) {
+            guard let assetTrack = track as? FFmpegAssetTrack,
+                  let audioDescriptor = assetTrack.audioDescriptor
+            else {
+                continue
+            }
+            // Step 1 (binary AudioDescriptor+0x24 → outputNumberOfChannels): recompute
+            // the renderer-facing count against the live route + spatial capability.
+            // Kept as a discrete call per API-Surface-Preservation; the value also
+            // drives the ARP-swap decision inside the shared helper.
+            let adjustedCount = outputNumberOfChannels(channelCount: AVAudioChannelCount(audioDescriptor.channel.nb_channels))
+            KSLog("[audio] renegotiated channelCount: \(adjustedCount) for track \(assetTrack.trackID)")
+            // Steps 2+3 (audioSwrInit at AudioDescriptor+0x40 → store AVAudioFormat at
+            // +0x18): AudioDescriptor.updateAudioFormat() wraps the swresample-context
+            // rebuild and the store-back. See CROSS-FILE note re: Resample.swift.
+            audioDescriptor.updateAudioFormat()
+        }
+    }
+
+    /// RE: schedules the AudioEnginePlayer async output-format rebuild closure
+    /// (0x1013f8b5c, dispatched via the generic MainActor task wrapper 0x1013ad160
+    /// with asyncFn DAT_102eef760 [route] / DAT_102eef770 [spatial], 1.3.15).
+    ///
+    /// The binary's generic `swift_task_create` wrapper (9 call sites, not
+    /// audio-specific) collapses to `Task { @MainActor in … }` in idiomatic Swift.
+    /// The concrete reconfigure body (early-out if format unchanged, else
+    /// stop/uninitialize the I/O unit, set preferred channels/sample-rate, rebuild
+    /// the ASBD + channel layout + render callbacks, reinitialize, and re-dispatch
+    /// start if it was running) is AudioEnginePlayer's, reached here through
+    /// `prepare(audioFormat:)`. See CROSS-FILE note: the format-diff early-out and
+    /// the I/O-unit teardown/rebuild belong in AudioEnginePlayer.swift
+    /// (AudioEnginePlayerFamily cluster); KSMEPlayer only schedules it.
+    private func scheduleAudioEngineReconfigure(_ enginePlayer: AudioEnginePlayer) {
+        // The renegotiated format lives on the enabled audio track's descriptor
+        // (mirrors sourceDidOpened's prepare path).
+        guard let audioFormat = tracks(mediaType: .audio)
+            .first(where: { $0.isEnabled })
+            .flatMap({ $0 as? FFmpegAssetTrack })?
+            .audioDescriptor?.audioFormat
+        else {
+            return
+        }
+        let wasPlaying = playbackState == .playing
+        Task { @MainActor in
+            enginePlayer.prepare(audioFormat: audioFormat)
+            if wasPlaying {
+                enginePlayer.play()
+            }
+        }
     }
     #endif
+
+    /// RE: 0x101420bbc (KSMEPlayer.checkAudioRendererReady, 1.3.15)
+    /// MainActor readiness gate (invoker chain: async descriptor → bootstrap
+    /// 0x1014285dc → MainActor hop 0x101420b2c → here).
+    ///
+    /// Hard-gates playback start on the audio output being an
+    /// `AudioRendererPlayer` (the Atmos CMSampleBuffer push path). If the active
+    /// output has not yet resolved to AudioRendererPlayer (e.g. the spatial
+    /// channel-negotiation swap is still settling), it `Task.sleep`s 1 s and
+    /// retries; once the cast succeeds it starts the audio + video outputs.
+    @MainActor
+    private func checkAudioRendererReady() async {
+        // Gate target type = _objc_opt_self(AudioRendererPlayer) (0x1013f7f80).
+        while !(audioOutput is AudioRendererPlayer) {
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                // Cancellation → abandon the gate (binary teardown path 0x101420eac).
+                return
+            }
+        }
+        audioOutput.play()
+        videoOutput?.play()
+    }
 }
 
 extension KSMEPlayer: MEPlayerDelegate {
@@ -361,7 +559,7 @@ extension KSMEPlayer: MediaPlayerProtocol {
         playerItem.chapters
     }
 
-    public var subtitleDataSouce: SubtitleDataSouce? { self }
+    public var subtitleDataSource: SubtitleDataSource? { self }
     public var playbackVolume: Float {
         get {
             audioOutput.volume
@@ -468,6 +666,16 @@ extension KSMEPlayer: MediaPlayerProtocol {
         playbackState = .playing
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
             pipController?.invalidatePlaybackState()
+        }
+        // Atmos path only: when AudioRendererPlayer is the selected renderer, hard-gate
+        // the start of the audio/video outputs on the renderer actually resolving to
+        // AudioRendererPlayer (the spatial channel-negotiation swap may still be
+        // settling). The binary dispatches this as a standalone MainActor task; the
+        // default AVAudioEngine path is unaffected and starts via playOrPause() as usual.
+        if KSOptions.audioPlayerType == AudioRendererPlayer.self, !(audioOutput is AudioRendererPlayer) {
+            Task { @MainActor [weak self] in
+                await self?.checkAudioRendererReady()
+            }
         }
     }
 

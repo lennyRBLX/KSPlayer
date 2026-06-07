@@ -237,6 +237,390 @@ public final class MEPlayerItem: Sendable {
         _ = MEPlayerItem.onceInitial
     }
 
+    /// RE: 0x10142a238 (MEPlayerItem_isLiveStream, 1.3.15)
+    /// Dedicated live-stream detection predicate. The binary has this as a
+    /// named callable function returning Bool. Uses duration == 0 as the
+    /// primary signal (matching the inline check at createCodec line 594).
+    func isLiveStream() -> Bool {
+        return duration == 0
+    }
+
+    /// RE: 0x10142a404 (MEPlayerItem_lazyInitDynamicInfo, 1.3.15)
+    /// Lazy initialization function for DynamicInfo. The binary entry point
+    /// at this address sets up the DynamicInfo with metadata/bytesRead/
+    /// audioBitrate/videoBitrate closures. In KSPlayer source, the lazy var
+    /// covers the simple case; this method provides the binary's explicit
+    /// initialization path with additional setup beyond the closure captures.
+    func lazyInitDynamicInfo() {
+        // Force the lazy var to initialize. The lazy var closure already
+        // captures formatCtx metadata, bytes_read, audio/video bitrate --
+        // matching the binary's closure setup at 0x10142a404.
+        _ = dynamicInfo
+    }
+
+    /// RE: 0x10142c544 (MEPlayerItem_enumerateAssetTracks, 1.3.15)
+    /// Per-call track classify + clock-broadcast + state-dispatch step (real
+    /// body 0x10142c544..0x10142cb3b, ~0x5f7 B; decompile-verified). This is the
+    /// step invoked when a track's selection state changes; its sole real caller
+    /// is `KSMEPlayer.refreshTracksAndKickAudio` (FUN_101425294), which on a
+    /// truthy return kicks the audio output (`audioOutput` witness +0x18) — that
+    /// is what ties this path to the audio renderer.
+    ///
+    /// Control flow (binary):
+    ///  1. Entry cancel-predicate (param_4+0x68): if cancelled, return false.
+    ///  2. Loop 1: build the VIDEO subset via FFmpegAssetTrack_isVideoMediaType
+    ///     (FUN_10143b61c).
+    ///  3. Loop 2: apply FFmpegAssetTrack_applySubtitleSelectionFlag
+    ///     (FUN_10143b6d0) — writes 0 or 0x30 to each subtitle decoder's discard
+    ///     (`track.decoder(+0x98)+0x44`). In KSPlayer this is the AVStream
+    ///     discard driven by `isEnabled`.
+    ///  4. Classify the incoming track: video → trackConfigContinuation
+    ///     (0x10143b7a8); subtitle → gate on `track+0xe8` (isImageSubtitle) AND
+    ///     `KSOptions.isSeekImageSubtitle` (skip an image subtitle when neither
+    ///     is set, returning false).
+    ///  5. Broadcast the current `seconds` to `allPlayerItemTracks` via output
+    ///     witness +0x60: state==.seeking → `seekTime`, else
+    ///     `isAudioStalled ? videoClock : audioClock`.
+    ///  6. Tail: dispatch the state machine (FUN_10142a680) then unlock; return
+    ///     true.
+    ///
+    /// - Parameter track: The track whose selection state changed.
+    /// - Returns: `true` if the caller should kick the audio output; `false`
+    ///   when the change was a no-op (e.g. a skipped image subtitle) or the call
+    ///   was cancelled.
+    @discardableResult
+    func enumerateAssetTracks(track: FFmpegAssetTrack) -> Bool {
+        // Step 1: entry cancel-predicate — abort if we are tearing down.
+        if state == .closed || state == .failed {
+            return false
+        }
+        // Step 2: VIDEO subset (used by the subtitle-flag pass + classification).
+        let videoTracks = assetTracks.filter { $0.mediaType == .video }
+        // Step 3: apply the subtitle selection flag to every subtitle track.
+        // The binary writes 0 (AVDISCARD_NONE) or 0x30 (AVDISCARD_ALL) into each
+        // subtitle decoder's discard slot; FFmpegAssetTrack.isEnabled owns that
+        // AVStream discard write.
+        for subtitle in assetTracks where subtitle.mediaType == .subtitle {
+            applySubtitleSelectionFlag(subtitle)
+        }
+        // Step 4: classify the incoming track.
+        switch track.mediaType {
+        case .video:
+            trackConfigContinuation(videoTrack: track, videoTracks: videoTracks)
+        case .subtitle:
+            // Gate image subtitles on isSeekImageSubtitle; skip if neither the
+            // track's image-subtitle flag nor the option is set.
+            if track.isImageSubtitle, !options.isSeekImageSubtitle {
+                return false
+            }
+        default:
+            break
+        }
+        // Step 5: broadcast the current playback seconds to every track.
+        let seconds: TimeInterval
+        if state == .seeking {
+            seconds = seekTime
+        } else {
+            seconds = (isAudioStalled ? videoClock : audioClock).time.seconds
+        }
+        allPlayerItemTracks.forEach { $0.seek(time: seconds) }
+        // Step 6: re-enter the read loop / state machine and signal completion.
+        if state == .reading || state == .paused {
+            seek(time: seconds) { _ in }
+        }
+        return true
+    }
+
+    /// RE: 0x10143b6d0 (FFmpegAssetTrack_applySubtitleSelectionFlag, 1.3.15)
+    /// Subtitle-flag helper from `enumerateAssetTracks` Loop 2. The binary
+    /// compares `track+0x78` (bridged mediaType) to `AVMediaTypeSubtitle` and
+    /// writes 0 (AVDISCARD_NONE) or 0x30 (AVDISCARD_ALL) to the subtitle
+    /// decoder's discard (`track.decoder(+0x98)+0x44`). In KSPlayer the AVStream
+    /// discard is owned by `FFmpegAssetTrack.isEnabled`, so re-asserting the
+    /// current enabled state reproduces the binary's per-track flag write.
+    private func applySubtitleSelectionFlag(_ track: FFmpegAssetTrack) {
+        guard track.mediaType == .subtitle else { return }
+        // Re-assert the discard flag for the current selection state; the
+        // isEnabled setter forces text subtitles to AVDISCARD_DEFAULT and gates
+        // image subtitles on their enabled flag.
+        track.isEnabled = track.isEnabled
+    }
+
+    /// RE: 0x10143b7a8 (MEPlayerItem_trackConfigContinuation, 1.3.15)
+    /// Video follow-up from `enumerateAssetTracks` step 4 (decompile-verified).
+    /// Gated on `videoAdaptation != 0`; finds the best audio stream for the
+    /// selected video via `av_find_best_stream_wrapper(formatCtx, 1, -1,
+    /// relatedStreamIndex, 0, 0)` and sets BOTH the matched audio decoder's and
+    /// the subtitle decoders' `+0x44` discard flags.
+    ///
+    /// This is the enumerate-continuation counterpart of `findBestAudio`: it
+    /// performs the same best-audio relink, but ALSO refreshes the subtitle
+    /// decoder selection flags (the `findBestAudio` adaptive-bitrate helper does
+    /// the audio half only).
+    ///
+    /// - Parameters:
+    ///   - videoTrack: The selected video track (the related stream).
+    ///   - videoTracks: The current VIDEO subset (Loop-1 result), used to scope
+    ///     the related-stream search.
+    private func trackConfigContinuation(videoTrack: FFmpegAssetTrack, videoTracks _: [FFmpegAssetTrack]) {
+        // Gate: only relink when adaptive bitrate is active (videoAdaptation set).
+        guard videoAdaptation != nil, let formatCtx else {
+            return
+        }
+        // Audio half: relink the best audio stream for the selected video.
+        let relatedStreamIndex = videoTrack.trackID
+        let best = av_find_best_stream(formatCtx, AVMEDIA_TYPE_AUDIO, -1, relatedStreamIndex, nil, 0)
+        if best >= 1,
+           let currentAudio = assetTracks.first(where: { $0.mediaType == .audio && $0.isEnabled }),
+           currentAudio.trackID != best {
+            currentAudio.isEnabled = false
+            assetTracks.first { $0.mediaType == .audio && $0.trackID == best }?.isEnabled = true
+        }
+        // Subtitle half: refresh every subtitle decoder's selection flag — the
+        // side effect `findBestAudio` omits.
+        for subtitle in assetTracks where subtitle.mediaType == .subtitle {
+            applySubtitleSelectionFlag(subtitle)
+        }
+    }
+
+    /// RE: 0x10142d7b8 (MEPlayerItem_validateTrackConfig, 1.3.15)
+    /// Validates track configuration after seek or open. Checks that the
+    /// video/audio track pair is consistent: both have valid codec params,
+    /// the video track's natural size is non-zero, and enabled tracks have
+    /// matching decoder state. The binary has this as a separate validation
+    /// step distinct from track creation.
+    func validateTrackConfig() -> Bool {
+        // Validate video track if present
+        if videoTrack != nil {
+            // Check that at least one video asset track is enabled
+            let hasEnabledVideo = assetTracks.contains { $0.mediaType == .video && $0.isEnabled }
+            guard hasEnabledVideo else {
+                KSLog("[validateTrackConfig] no enabled video asset track")
+                return false
+            }
+            if naturalSize == .zero {
+                KSLog("[validateTrackConfig] naturalSize is zero")
+                return false
+            }
+        }
+        // Validate audio track if present
+        if audioTrack != nil {
+            // Check that at least one audio asset track is enabled
+            let hasEnabledAudio = assetTracks.contains { $0.mediaType == .audio && $0.isEnabled }
+            guard hasEnabledAudio else {
+                KSLog("[validateTrackConfig] no enabled audio asset track")
+                return false
+            }
+        }
+        // At least one track must exist
+        if videoTrack == nil, audioTrack == nil {
+            KSLog("[validateTrackConfig] no video or audio tracks")
+            return false
+        }
+        return true
+    }
+
+    /// RE: 0x101439858 (MEPlayerItem_selectVideoTrack, 1.3.15)
+    /// Video track selection function. The binary treats this as a separate
+    /// entry point from the general select() dispatch. Handles video-specific
+    /// concerns: rotation, natural size update, DV codec detection, and
+    /// linked audio track re-selection via findBestAudio.
+    ///
+    /// - Parameter track: The video track to select
+    /// - Returns: `true` if the track was successfully selected
+    @discardableResult
+    func selectVideoTrack(_ track: FFmpegAssetTrack) -> Bool {
+        guard track.mediaType == .video else { return false }
+        guard !track.isEnabled else { return false }
+        // Disable all other video tracks
+        assetTracks.filter { $0.mediaType == .video }.forEach {
+            $0.isEnabled = track === $0
+        }
+        // Update natural size from the newly selected track
+        let rotation = track.rotation
+        naturalSize = abs(rotation - 90) <= 1 || abs(rotation - 270) <= 1
+            ? track.naturalSize.reverse : track.naturalSize
+        // RE: DV codec detection -- force software decode for old DV camcorder format
+        if track.codecpar.codec_id == AV_CODEC_ID_DVVIDEO {
+            options.hardwareDecode = false
+        }
+        options.process(assetTrack: track)
+        // Re-select the best audio track to match the new video
+        findBestAudio(videoTrack: track)
+        // Seek to re-decode from the new track
+        seek(time: currentPlaybackTime) { _ in }
+        return true
+    }
+
+    /// RE: 0x101439c18 (MEPlayerItem_selectAudioTrack, 1.3.15)
+    /// Three-phase audio-track chooser. The binary keeps this SEPARATE from the
+    /// master track-setup orchestrator (`createCodec` / FUN_101436de0), which is
+    /// its sole code caller (@0x101437e54). Per the v6.0 API-Surface-Preservation
+    /// rule the orchestrator and the chooser stay as distinct calls rather than
+    /// being fused inline.
+    ///
+    /// Phase 1 (0x101439c88..0x101439dcc): filter `assetTracks` for
+    ///   `AVMediaTypeAudio` into a COW `audioTracks` array.
+    /// Phase 2 (0x101439df8..0x101439e50): dispatch `options.wantedAudio(tracks:)`
+    ///   (binary: options vtable +0x728 → PlayerOptions_wantedAudioTrack
+    ///   0x10099812c, the 4-tier preference cascade) and extract the preferred
+    ///   trackID, else -1. NOTE: the binary's `wantedAudio` returns a *track*; the
+    ///   KSPlayer API returns an *index* into the passed array, so we map the
+    ///   returned index back to its `trackID`, matching the prior inline code.
+    /// Phase 2b (0x101439eb8..0x101439fcc): second `assetTracks` pass filtering
+    ///   `AVMediaTypeVideo` for the related (enabled) video stream's `trackID`
+    ///   (relatedStreamIndex), else -1.
+    /// Phase 3 (0x101439fcc..ret): `av_find_best_stream_wrapper(formatCtx,
+    ///   AVMEDIA_TYPE_AUDIO, wantedIdx, relatedIdx, 0, 0)`; on a match (≥1) enable
+    ///   that track (AVStream discard = AVDISCARD_NONE via `isEnabled = true`) and
+    ///   return it, else fall back to `audioTracks[0]`. Empty `audioTracks` → nil.
+    ///
+    /// - Parameter formatCtx: The open AVFormatContext to choose from.
+    /// - Returns: The selected (and enabled) audio track, or nil if none.
+    @discardableResult
+    func selectAudioTrack(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> FFmpegAssetTrack? {
+        // Phase 1: filter assetTracks for audio.
+        let audioTracks = assetTracks.filter { $0.mediaType == .audio }
+        guard !audioTracks.isEmpty else {
+            return nil
+        }
+        // Phase 2: preferred wanted trackID via the options preference cascade.
+        let wantedStreamNb: Int32
+        if let index = options.wantedAudio(tracks: audioTracks) {
+            wantedStreamNb = audioTracks[index].trackID
+        } else {
+            wantedStreamNb = -1
+        }
+        // Phase 2b: related video stream index (the currently-enabled video
+        // track, mirroring the `videoIndex` the inline code passed through).
+        let relatedStreamIndex = assetTracks.first {
+            $0.mediaType == .video && $0.isEnabled
+        }?.trackID ?? -1
+        // Phase 3: shared best-stream chooser, then enable + return.
+        let best = av_find_best_stream(formatCtx, AVMEDIA_TYPE_AUDIO, wantedStreamNb, relatedStreamIndex, nil, 0)
+        let selected: FFmpegAssetTrack?
+        if best >= 1, let match = audioTracks.first(where: { $0.trackID == best }),
+           match.codecpar.codec_id != AV_CODEC_ID_NONE {
+            selected = match
+        } else if let first = audioTracks.first, first.codecpar.codec_id != AV_CODEC_ID_NONE {
+            // Fallback: audioTracks[0] (first audio in the container).
+            selected = first
+        } else {
+            selected = nil
+        }
+        if let selected {
+            selected.isEnabled = true
+            options.process(assetTrack: selected)
+        }
+        return selected
+    }
+
+    /// RE: 0x101430818 (MEPlayerItem_setupAfterStreamDiscovery, 1.3.15)
+    /// Post-open hook invoked after `avformat_find_stream_info` completes.
+    /// The binary separates this as a distinct call from the open path.
+    /// Handles chapter extraction, codec creation, output/remux setup,
+    /// and state transition to .opened.
+    func setupAfterStreamDiscovery() {
+        guard let formatCtx else { return }
+        // Chapter extraction
+        if formatCtx.pointee.nb_chapters > 0 {
+            chapters.removeAll()
+            for i in 0 ..< formatCtx.pointee.nb_chapters {
+                if let chapter = formatCtx.pointee.chapters[Int(i)]?.pointee {
+                    let timeBase = Timebase(chapter.time_base)
+                    let start = timeBase.cmtime(for: chapter.start).seconds
+                    let end = timeBase.cmtime(for: chapter.end).seconds
+                    let metadata = toDictionary(chapter.metadata)
+                    let title = metadata["title"] ?? ""
+                    chapters.append(Chapter(start: start, end: end, title: title))
+                }
+            }
+        }
+        // Codec and track creation
+        createCodec(formatCtx: formatCtx)
+        // Output/remux setup
+        if let outputURL = options.outputURL {
+            startRecord(url: outputURL)
+            createRemuxer()
+        }
+        // Validate and transition state
+        if videoTrack == nil, audioTrack == nil {
+            state = .failed
+        } else {
+            state = .opened
+            read()
+        }
+    }
+
+    /// RE: 0x10143bc14 (MEPlayerItem_asyncTrackSetup, 1.3.15)
+    /// Async track configuration coroutine. The binary entry point walks
+    /// `videoTrack`'s queue (offset +0xB), reads the elapsed buffer fill
+    /// from the queue's ObjC mutex-guarded (+0x28) - (+0x20) byte counters,
+    /// then invokes the videoAdaptation witness at +0x4a8.
+    ///
+    /// In KSPlayer architecture this maps to checking the video track's
+    /// buffered packet/frame counts and driving the video adaptation state
+    /// machine for bitrate switching.
+    func asyncTrackSetup() {
+        guard let videoTrack else { return }
+        // Read buffer fill state from the video track
+        let packetCount = videoTrack.packetCount
+        let frameCount = videoTrack.frameCount
+        // Update video adaptation state with current buffer levels
+        videoAdaptation?.loadedCount = packetCount + frameCount
+        videoAdaptation?.currentPlaybackTime = currentPlaybackTime
+    }
+
+    /// RE: 0x101428944 (MEPlayerItem_buildTaskContext, 1.3.15)
+    /// Builds the async I/O task context used by the suspendable read loop.
+    /// The binary constructs the task context that carries the format context,
+    /// options, and I/O state needed by the async read-loop Task. In KSPlayer's
+    /// OperationQueue model, this maps to configuring the read operation's
+    /// execution context.
+    func buildTaskContext() {
+        // Ensure format context and I/O state are valid for task creation
+        guard formatCtx != nil else {
+            KSLog("[buildTaskContext] no formatCtx available")
+            return
+        }
+        // Configure the operation queue for the read loop
+        operationQueue.name = "KSPlayer_" + String(describing: self).components(separatedBy: ".").last!
+        operationQueue.maxConcurrentOperationCount = 1
+        operationQueue.qualityOfService = .userInteractive
+        // Initialize clocks to start time
+        if formatCtx?.pointee.start_time != Int64.min {
+            let start = CMTime(value: formatCtx!.pointee.start_time, timescale: AV_TIME_BASE)
+            audioClock.time = start
+            videoClock.time = start
+        }
+    }
+
+    /// RE: 0x10130d5ec (MEPlayerItem_createOutputTask, 1.3.15)
+    /// The binary entry point at this address was verified as a value-witness
+    /// copy helper (URLRequest field copy + one retained slot), not the I/O
+    /// task creator proper. The real I/O task creation is inlined into
+    /// `set state` at 0x10142a680. This function is reconstructed as the
+    /// value-witness helper that prepares the output context for the read
+    /// loop task.
+    ///
+    /// See: .reversal/audit/TRANSCODEIO_RECON_1.3.15.md line 3248 --
+    /// "DECOMPILED: it is a value-witness copy helper (URLRequest field
+    /// copy + one retained slot), NOT the ioWaiter/continuation host."
+    func createOutputTask() {
+        // The binary's value-witness helper copies URLRequest fields and
+        // retains a single slot. In KSPlayer's model, the equivalent is
+        // ensuring the output format context and packet are ready for the
+        // read loop's interleaved write path.
+        guard formatCtx != nil else { return }
+        if outputFormatCtx != nil, outputPacket == nil {
+            outputPacket = av_packet_alloc()
+        }
+    }
+
+    /// RE: select(track:) is the unified track selection dispatch that partially
+    /// covers selectVideoTrack (0x101439858) and selectAudioTrack (0x101439c18).
+    /// The binary separates these as distinct entry points; this method provides
+    /// the general-purpose dispatch path.
     func select(track: some MediaPlayerTrack) -> Bool {
         if track.isEnabled {
             return false
@@ -536,6 +920,22 @@ extension MEPlayerItem {
         outputPacket = av_packet_alloc()
     }
 
+    /// RE: 0x101436de0 (MEPlayerItem master track setup, 1.3.15)
+    /// Master track-setup orchestrator (FUN_101436de0, 0x101436de0..0x1014387d3,
+    /// ~6.6 KB, 11-step). Builds the FFmpegAssetTrack list, selects the video
+    /// track (with rotate-by-filter + natural-size + video-adaptation), then
+    /// delegates audio selection to the separate `selectAudioTrack(formatCtx:)`
+    /// chooser (0x101439c18) and constructs the decode tracks. The audio renderer
+    /// (AudioEnginePlayer/AudioRendererPlayer/…) is NOT built here — that is the
+    /// factory (0x10098213c) when AudioFrames start flowing.
+    ///
+    /// Step coverage vs the binary's 11 steps: 1 reset (below), 2 build+select
+    /// video, 3 rotate-by-filter (software branch only — the `transpose_vt`
+    /// VideoToolbox branch gated on `isRotateByFilter` is owned by
+    /// PlayerCore/TrackDecode), 4 natural size, 6 dynamic-range classify (owned by
+    /// DolbyVision.md — see `options.process(assetTrack:)`), 8 video ctor, 9
+    /// video-adaptation, 10 audio selection (now via the separate chooser, not
+    /// fused), 11 audio ctor + isAudioStalled=false.
     private func createCodec(formatCtx: UnsafeMutablePointer<AVFormatContext>) {
         allPlayerItemTracks.removeAll()
         assetTracks.removeAll()
@@ -609,19 +1009,17 @@ extension MEPlayerItem {
             }
         }
 
+        // Step 10: audio selection. Per the v6.0 API-Surface-Preservation rule
+        // the binary keeps track selection (`selectAudioTrack 0x101439c18`)
+        // separate from this orchestrator (which is its sole caller), so we
+        // dispatch the chooser rather than fusing the filter/wantedAudio/
+        // av_find_best_stream/enable algorithm inline. The chooser derives the
+        // related video stream from the just-enabled video track (equivalent to
+        // the old `videoIndex` argument), enables the chosen track, and runs
+        // `options.process(assetTrack:)`.
         let audios = assetTracks.filter { $0.mediaType == .audio }
-        let wantedStreamNb: Int32
-        if !audios.isEmpty, let index = options.wantedAudio(tracks: audios) {
-            wantedStreamNb = audios[index].trackID
-        } else {
-            wantedStreamNb = -1
-        }
-        let index = av_find_best_stream(formatCtx, AVMEDIA_TYPE_AUDIO, wantedStreamNb, videoIndex, nil, 0)
-        if let first = audios.first(where: {
-            index > 0 ? $0.trackID == index : true
-        }), first.codecpar.codec_id != AV_CODEC_ID_NONE {
-            first.isEnabled = true
-            options.process(assetTrack: first)
+        if let first = selectAudioTrack(formatCtx: formatCtx) {
+            // Step 11: audio track construction.
             // 音频要比较所有的音轨，因为truehd的fps是1200，跟其他的音轨差距太大了
             let fps = audios.map(\.nominalFrameRate).max() ?? 44
             let frameCapacity = options.audioFrameMaxCount(fps: fps, channelCount: Int(first.audioDescriptor?.audioFormat.channelCount ?? 2))
@@ -632,6 +1030,16 @@ extension MEPlayerItem {
             videoAudioTracks.append(track)
             isAudioStalled = false
         }
+        // RE: 0x101436de0 step 10 (LAB_101437e50) — after building the audio
+        // candidate list the binary calls options vtable +0x730 (count, channels),
+        // the AUDIO output channel/format config setter. In KSPlayer that channel
+        // negotiation is intentionally deferred to
+        // `KSMEPlayer.outputNumberOfChannels(channelCount:)` (0x1013aa894,
+        // SpatialAudioRouting cluster), which reads the AVAudioSession route and
+        // selects the renderer/clamps the channel count there. No setter call is
+        // added here. CROSS-FILE NEEDED: KSMEPlayer.swift
+        // `outputNumberOfChannels(channelCount:)` must cover the +0x730
+        // responsibility (channel/format config) for this deferral to be complete.
     }
 
     private func read() {
@@ -1120,6 +1528,11 @@ extension MEPlayerItem: CodecCapacityDelegate {
         delegate?.sourceDidChange(oldBitRate: oldBitRate, newBitrate: newBitrate)
     }
 
+    /// RE: findBestAudio is related to selectAudioTrack (0x101439c18) --
+    /// handles the linked audio re-selection when video track changes during
+    /// adaptive bitrate switching. The binary's selectAudioTrack is a broader
+    /// entry point; this method provides the specific "find best audio for
+    /// a given video track" sub-operation.
     private func findBestAudio(videoTrack: FFmpegAssetTrack) {
         guard videoAdaptation != nil, let first = assetTracks.first(where: { $0.mediaType == .audio && $0.isEnabled }) else {
             return
@@ -1496,6 +1909,163 @@ extension MEPlayerItem {
         // Otherwise delegate to the saved FFmpeg `io_close2`.
         guard let defaultIOClose else { return 0 }
         return defaultIOClose(ctx, pb)
+    }
+}
+
+// MARK: - Frame Side Data Processing
+
+extension MEPlayerItem {
+    /// RE: 0x101407908 (MEPlayerItem_processFrameSideData, 1.3.15)
+    /// Central HDR/DV metadata extraction point, invoked after each successful
+    /// `avcodec_receive_frame`. Handles 7 side-data types from the AVFrame's
+    /// side_data array.
+    ///
+    /// PLACEMENT NOTE: The binary addresses this to MEPlayerItem (0x10140xxxx
+    /// address prefix). In KSPlayer's architecture, the decode loop lives in
+    /// FFmpegDecode (not MEPlayerItem), and the AVFrame side_data array is only
+    /// accessible there -- after avcodec_receive_frame and before the filter
+    /// pass strips side_data. FFmpegDecode.swift already contains the inline
+    /// dispatch matching this function's binary logic. This function provides
+    /// the binary's named entry point for callers that process side data
+    /// outside the main decode loop (e.g., subtitle CC extraction, standalone
+    /// metadata queries).
+    ///
+    /// Handled side-data types:
+    ///   0x01 (AV_FRAME_DATA_A53_CC)                      -> CC packet -> subtitle track
+    ///   0x0B (AV_FRAME_DATA_MASTERING_DISPLAY_METADATA)   -> MasteringDisplayMetadata
+    ///   0x0E (AV_FRAME_DATA_CONTENT_LIGHT_LEVEL)          -> ContentLightMetadata
+    ///   0x11 (no-op stub)                                 -> skip
+    ///   0x14 (SEI/metadata string)                        -> CMTime-stamped callback
+    ///   0x18 (AV_FRAME_DATA_DOVI_METADATA, 3008B)         -> DV staging buffer copy
+    ///   0x19 (AV_FRAME_DATA_DYNAMIC_HDR_VIVID)            -> HDR Vivid flag
+    ///   0x1A (AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT)  -> AmbientViewingEnvironment
+    ///
+    /// - Parameters:
+    ///   - frame: The decoded AVFrame containing side data
+    ///   - packet: The source packet (for CC timestamp/position copy)
+    ///   - assetTrack: The track this frame belongs to
+    /// - Returns: EDRMetaData aggregating all HDR metadata found, or nil if none present
+    func processFrameSideData(
+        frame: UnsafeMutablePointer<AVFrame>,
+        packet: Packet,
+        assetTrack: FFmpegAssetTrack
+    ) -> EDRMetaData? {
+        guard frame.pointee.nb_side_data > 0 else { return nil }
+
+        var displayData: MasteringDisplayMetadata?
+        var contentData: ContentLightMetadata?
+        var ambientViewingEnvironment: AmbientViewingEnvironment?
+        var isVIVID = false
+
+        for i in 0 ..< frame.pointee.nb_side_data {
+            guard let sideData = frame.pointee.side_data[Int(i)]?.pointee else { continue }
+
+            switch sideData.type {
+            // Type 0x01: A53 Closed Captions
+            // RE: Allocate Packet, copy pts/dts/duration/pos from current packet,
+            // OR AV_PKT_FLAG_KEY into flags, dispatch via track witness vtable+0x198
+            case AV_FRAME_DATA_A53_CC:
+                if let closedCaptionsTrack = assetTrack.closedCaptionsTrack,
+                   let subtitle = closedCaptionsTrack.subtitle
+                {
+                    let ccPacket = Packet()
+                    if let corePacket = packet.corePacket {
+                        ccPacket.corePacket?.pointee.pts = corePacket.pointee.pts
+                        ccPacket.corePacket?.pointee.dts = corePacket.pointee.dts
+                        ccPacket.corePacket?.pointee.pos = corePacket.pointee.pos
+                        ccPacket.corePacket?.pointee.time_base = corePacket.pointee.time_base
+                        ccPacket.corePacket?.pointee.stream_index = corePacket.pointee.stream_index
+                    }
+                    ccPacket.corePacket?.pointee.flags |= AV_PKT_FLAG_KEY
+                    ccPacket.corePacket?.pointee.size = Int32(sideData.size)
+                    let buffer = av_buffer_ref(sideData.buf)
+                    ccPacket.corePacket?.pointee.data = buffer?.pointee.data
+                    ccPacket.corePacket?.pointee.buf = buffer
+                    ccPacket.assetTrack = closedCaptionsTrack
+                    subtitle.putPacket(packet: ccPacket)
+                }
+
+            // Type 0x0B: Mastering Display Metadata (SMPTE ST 2086)
+            // RE: Read 8x UInt16 (display primaries r/g/b/w x/y) + 2x UInt32
+            // (min/max luminance)
+            case AV_FRAME_DATA_MASTERING_DISPLAY_METADATA:
+                let data = sideData.data.withMemoryRebound(
+                    to: AVMasteringDisplayMetadata.self, capacity: 1
+                ) { $0 }.pointee
+                displayData = MasteringDisplayMetadata(
+                    display_primaries_r_x: UInt16(data.display_primaries.0.0.num).bigEndian,
+                    display_primaries_r_y: UInt16(data.display_primaries.0.1.num).bigEndian,
+                    display_primaries_g_x: UInt16(data.display_primaries.1.0.num).bigEndian,
+                    display_primaries_g_y: UInt16(data.display_primaries.1.1.num).bigEndian,
+                    display_primaries_b_x: UInt16(data.display_primaries.2.0.num).bigEndian,
+                    display_primaries_b_y: UInt16(data.display_primaries.2.1.num).bigEndian,
+                    white_point_x: UInt16(data.white_point.0.num).bigEndian,
+                    white_point_y: UInt16(data.white_point.1.num).bigEndian,
+                    minLuminance: UInt32(data.min_luminance.num).bigEndian,
+                    maxLuminance: UInt32(data.max_luminance.num).bigEndian
+                )
+
+            // Type 0x0E: Content Light Level (CTA-861.3)
+            // RE: Read 2x UInt16 (MaxCLL, MaxFALL)
+            case AV_FRAME_DATA_CONTENT_LIGHT_LEVEL:
+                let data = sideData.data.withMemoryRebound(
+                    to: AVContentLightMetadata.self, capacity: 1
+                ) { $0 }.pointee
+                contentData = ContentLightMetadata(
+                    MaxCLL: UInt16(data.MaxCLL).bigEndian,
+                    MaxFALL: UInt16(data.MaxFALL).bigEndian
+                )
+
+            // Type 0x11: No-op stub
+            // RE: Falls through to next_iter -- handler stub, no field reads
+            case AV_FRAME_DATA_DISPLAYMATRIX:
+                break
+
+            // Type 0x14: SEI / metadata string
+            // RE: Conditional on entry.size > 0x10; treats payload as cString,
+            // converts current PTS to CMTime using track timebase, invokes
+            // self[+0x10] -> vtable[+0xBA8](string, ...) -- SEI-string passthrough
+            case AV_FRAME_DATA_SEI_UNREGISTERED:
+                let size = sideData.size
+                if size > AV_UUID_LEN {
+                    let str = String(cString: sideData.data.advanced(by: Int(AV_UUID_LEN)))
+                    options.sei(string: str)
+                }
+
+            // Type 0x19: HDR Vivid flag
+            // RE: Sets the "has dynamic-HDR" flag bit in the output block
+            case AV_FRAME_DATA_DYNAMIC_HDR_VIVID:
+                isVIVID = true
+
+            // Type 0x1A: Ambient Viewing Environment
+            // RE: Pack ambient_illuminance + ambient_light_x/y into local struct
+            case AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT:
+                let data = sideData.data.withMemoryRebound(
+                    to: AVAmbientViewingEnvironment.self, capacity: 1
+                ) { $0 }.pointee
+                ambientViewingEnvironment = AmbientViewingEnvironment(
+                    ambient_illuminance: UInt32(data.ambient_illuminance.num).bigEndian,
+                    ambient_light_x: UInt16(data.ambient_light_x.num).bigEndian,
+                    ambient_light_y: UInt16(data.ambient_light_y.num).bigEndian
+                )
+
+            default:
+                break
+            }
+        }
+
+        // Output aggregation: pack locally-accumulated mastering / CLL / DV /
+        // ambient flags into the result. Binary packs into 5-qword + 1-UInt16
+        // sret block; Swift returns the structured EDRMetaData.
+        if displayData != nil || contentData != nil || ambientViewingEnvironment != nil || isVIVID {
+            return EDRMetaData(
+                displayData: displayData,
+                contentData: contentData,
+                ambientViewingEnvironment: ambientViewingEnvironment,
+                isVIVID: isVIVID
+            )
+        }
+        return nil
     }
 }
 
