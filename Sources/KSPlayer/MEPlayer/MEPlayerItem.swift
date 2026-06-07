@@ -13,6 +13,9 @@ import Libavformat
 #if canImport(CryptoKit)
 import CryptoKit
 #endif
+#if canImport(CoreText)
+import CoreText
+#endif
 
 public final class MEPlayerItem: Sendable {
     private let url: URL
@@ -87,10 +90,41 @@ public final class MEPlayerItem: Sendable {
         UnsafeMutablePointer<AVFormatContext>?,
         UnsafeMutablePointer<AVIOContext>?
     ) -> Int32
+    /// RE: 0x10142f680 (MEPlayerItem_openAndFindStream, 1.3.15)
+    /// Cache I/O backend selected by the I/O Context Selection table (doc line
+    /// 1796-1803). Holds a PreLoadIOContext, LimitPreLoadIOContext, etc. The
+    /// binary dispatches custom I/O opens through this field's vtable at offset
+    /// +0xb0. Torn down at shutdown via the AbstractAVIOContext close witness
+    /// [*ioContext + 0xa0]. Field-offset symbol:
+    /// `_TtC8KSPlayer12MEPlayerItem::ioContext`.
+    private var ioContext: AbstractAVIOContext?
+
+    /// RE: 0x10142a680 (MEPlayerItem set state, 1.3.15)
+    /// The suspendable read-loop Task created/cancelled in `set state`. Field-
+    /// offset symbol: `_TtC8KSPlayer12MEPlayerItem::ioTask` at global
+    /// `0x103d0d488`. The async shutdown coordinator (doc lines 1900-1917) calls
+    /// `Task.cancel()` then `await task.value` to ensure the read loop unwinds
+    /// before teardown proceeds.
+    private var ioTask: Task<Void, Never>?
+
+    /// RE: 0x10142f680 (MEPlayerItem_openAndFindStream step 9, 1.3.15)
+    /// Preserves the original file size from `avio_size()` even after `fileSize`
+    /// may be mutated. Field-offset symbol:
+    /// `_TtC8KSPlayer12MEPlayerItem::initFileSize`.
+    public private(set) var initFileSize: Int64 = 0
+
+    /// RE: 0x1014367a0 (MEPlayerItem_interruptCallback, 1.3.15)
+    /// Dedicated interrupt flag that allows external abort of FFmpeg I/O without
+    /// changing state. The binary's interrupt callback checks this flag OR state
+    /// in {closed, failed}. Field-offset symbol:
+    /// `_TtC8KSPlayer12MEPlayerItem::interrupt`.
+    var interrupt: Bool = false
+
     /// Remuxer for TranscodeContext-based recording/transcoding pipeline.
     /// Activated when options.outputURL is set and options.outputMediaType specifies
     /// which stream types to include. Uses TranscodeContext hierarchy for per-stream
     /// processing (copy, BSF, or full transcode).
+    /// RE: Field-offset symbol `_TtC8KSPlayer12MEPlayerItem::remuxer`.
     private var remuxer: Remuxer?
     private var openOperation: BlockOperation?
     private var readOperation: BlockOperation?
@@ -233,6 +267,7 @@ public final class MEPlayerItem: Sendable {
 // MARK: private functions
 
 extension MEPlayerItem {
+    /// RE: 0x10142f680 (MEPlayerItem_openAndFindStream, 1.3.15)
     private func openThread() {
         // RE: Forward v1.3.15 -- openAndFindStream resets `pbArray` to the
         // empty array at the top of the call so subsequent custom-IO opens can
@@ -261,15 +296,18 @@ extension MEPlayerItem {
         formatCtx.pointee.opaque = Unmanaged.passUnretained(self).toOpaque()
         var interruptCB = AVIOInterruptCB()
         interruptCB.opaque = Unmanaged.passUnretained(self).toOpaque()
-        // RE: Forward v1.3.15 -- `MEPlayerItem_interruptCallback` @ 0x1014367a0.
-        // Verified decompile: returns 1 if the `interrupt` flag is set OR if
-        // `state - 7 < 2` (i.e. state ∈ {7, 8} = .closed, .failed). The binary
-        // does NOT trigger on .finished -- only the terminal teardown states.
+        /// RE: 0x1014367a0 (MEPlayerItem_interruptCallback, 1.3.15)
+        /// Verified decompile: returns 1 if the `interrupt` flag is set OR if
+        /// `state - 7 < 2` (i.e. state in {7, 8} = .closed, .failed). The binary
+        /// does NOT trigger on .finished -- only the terminal teardown states.
         interruptCB.callback = { ctx -> Int32 in
             guard let ctx else {
                 return 0
             }
             let formatContext = Unmanaged<MEPlayerItem>.fromOpaque(ctx).takeUnretainedValue()
+            if formatContext.interrupt {
+                return 1
+            }
             switch formatContext.state {
             case .closed, .failed:
                 return 1
@@ -283,10 +321,28 @@ extension MEPlayerItem {
 //            0
 //        }
         setHttpProxy()
+        // RE: 0x10142f680 step 3 (AbstractAVIOContext branch, doc line 2000).
+        // When ioContext is an AbstractAVIOContext subclass, the binary stores
+        // 0.02 into KSOptions[+0x50] and conditionally inserts
+        // `cues_parsing_deferred` into formatContextOptions only if
+        // KSOptions[+0x30] == 0.0.
+        // RE: Factory is `PlayerOptions.io(url:options:)` @ 0x10094dfc4 in the
+        // binary (Components.PlayerOptions, subclass of KSOptions). In KSPlayer
+        // source this maps to the overridable `KSOptions.process(url:)` method.
+        ioContext = options.process(url: url)
+        if ioContext != nil {
+            // KSOptions[+0x50] = 0.02 (deferred probing hint for Matroska cues)
+            options.maxAnalyzeDuration = options.maxAnalyzeDuration ?? Int64(0.02 * Double(AV_TIME_BASE))
+            // Only insert cues_parsing_deferred if KSOptions[+0x30] (probesize)
+            // has not been explicitly set (== 0.0 equivalent: nil)
+            if options.probesize == nil {
+                options.formatContextOptions["cues_parsing_deferred"] = 1
+            }
+        }
         var avOptions = options.formatContextOptions.avOptions
-        if let pb = options.process(url: url) {
+        if let ioCtx = ioContext {
             // 如果要自定义协议的话，那就用avio_alloc_context，对formatCtx.pointee.pb赋值
-            formatCtx.pointee.pb = pb.getContext()
+            formatCtx.pointee.pb = ioCtx.getContext()
         }
         let urlString: String
         if url.isFileURL {
@@ -338,7 +394,14 @@ extension MEPlayerItem {
         // Divisor is 235 (`0xEB`), emitted as a magic-multiply by
         // `0x16E068942737_8EB5` + `UMULH` + `LSR #7`; 235 is close to the
         // 188-byte MPEG-TS packet size.
+        // RE: 0x10142f680 step 9 (doc line 2006). The binary stores
+        // `avio_size()` into BOTH `initFileSize` (preserves original) and
+        // `fileSize`. Both are Int64 in the binary.
         let pbSize = avio_size(formatCtx.pointee.pb)
+        if pbSize > 0 {
+            initFileSize = pbSize
+            fileSize = Double(pbSize)
+        }
         if pbSize > 50_000_000_000 {
             formatCtx.pointee.max_ts_probe = Int32(clamping: pbSize / 235)
         }
@@ -369,7 +432,11 @@ extension MEPlayerItem {
             audioClock.time = startTime
         }
         duration = TimeInterval(max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE))
-        fileSize = Double(formatCtx.pointee.bit_rate) * duration / 8
+        // RE: fileSize is set from avio_size() above (step 9). Only fall back
+        // to the bitrate estimate if avio_size returned <= 0 (e.g. live streams).
+        if fileSize <= 0 {
+            fileSize = Double(formatCtx.pointee.bit_rate) * duration / 8
+        }
         createCodec(formatCtx: formatCtx)
         if formatCtx.pointee.nb_chapters > 0 {
             chapters.removeAll()
@@ -387,9 +454,9 @@ extension MEPlayerItem {
 
         if let outputURL = options.outputURL {
             startRecord(url: outputURL)
-            // When outputURL is set, also create a Remuxer with the TranscodeContext
+            // RE: 0x101429f54 -- create a Remuxer with the TranscodeContext
             // pipeline for proper stream processing (BSF, transcode, etc.)
-            createRemuxer(outputURL: outputURL)
+            createRemuxer()
         }
         if videoTrack == nil, audioTrack == nil {
             state = .failed
@@ -812,8 +879,8 @@ extension MEPlayerItem: MediaPlayback {
             return false
         }
         var seekable = true
-        if let ioContext = formatCtx.pointee.pb {
-            seekable = ioContext.pointee.seekable > 0
+        if let avioCtx = formatCtx.pointee.pb {
+            seekable = avioCtx.pointee.seekable > 0
         }
         return seekable
     }
@@ -833,27 +900,43 @@ extension MEPlayerItem: MediaPlayback {
         }
     }
 
+    /// RE: 0x10142e96c (asyncShutdownCoordinator, 1.3.15)
+    /// The binary shuts down through a discrete async-continuation chain that
+    /// first cancels and awaits the suspendable read-loop `ioTask`, then runs
+    /// the I/O teardown body (FUN_10142ebcc). This ensures
+    /// `avformat_close_input` / the ioContext close / the remuxer stop never
+    /// race the live read loop.
     public func shutdown() {
         guard state != .closed else { return }
         state = .closed
+        interrupt = true
         av_packet_free(&outputPacket)
-        stopRecord()
         // 故意循环引用。等结束了。才释放
         let closeOperation = BlockOperation {
             Thread.current.name = (self.operationQueue.name ?? "") + "_close"
-            self.allPlayerItemTracks.forEach { $0.shutdown() }
-            KSLog("清空formatCtx")
-            // 自定义的协议才会av_class为空
-            if let formatCtx = self.formatCtx, (formatCtx.pointee.flags & AVFMT_FLAG_CUSTOM_IO) != 0, let opaque = formatCtx.pointee.pb.pointee.opaque {
-                let value = Unmanaged<AbstractAVIOContext>.fromOpaque(opaque).takeRetainedValue()
-                value.close()
+            // RE: 0x10142e96c -- coordinator: if syncDecodeVideo or
+            // syncDecodeAudio, dispatch per-track sync shutdown first.
+            if self.options.syncDecodeVideo || self.options.syncDecodeAudio {
+                self.allPlayerItemTracks.forEach { $0.shutdown() }
             }
-            // 不要自己来释放pb。不然第二次播放同一个url会出问题
-//            self.formatCtx?.pointee.pb = nil
-            self.formatCtx?.pointee.interrupt_callback.opaque = nil
-            self.formatCtx?.pointee.interrupt_callback.callback = nil
-            avformat_close_input(&self.formatCtx)
-            avformat_close_input(&self.outputFormatCtx)
+            // RE: 0x10142e96c -- cancel ioTask and await its completion so
+            // the read loop unwinds before we tear down I/O resources.
+            if let task = self.ioTask {
+                task.cancel()
+                // Bridge the async await into the synchronous
+                // BlockOperation via a semaphore -- this replicates the
+                // binary's async-continuation chain
+                // (FUN_10142e96c -> await Task.value -> FUN_10142ebcc).
+                let semaphore = DispatchSemaphore(value: 0)
+                Task {
+                    _ = await task.value
+                    semaphore.signal()
+                }
+                semaphore.wait()
+                self.ioTask = nil
+            }
+            // RE: 0x10142ebcc -- teardown body
+            self.teardownBody()
             self.duration = 0
             self.closeOperation = nil
             self.operationQueue.cancelAllOperations()
@@ -869,20 +952,91 @@ extension MEPlayerItem: MediaPlayback {
         }
         operationQueue.addOperation(closeOperation)
         condition.signal()
-        if options.syncDecodeVideo || options.syncDecodeAudio {
-            DispatchQueue.global().async { [weak self] in
-                self?.allPlayerItemTracks.forEach { $0.shutdown() }
+        self.closeOperation = closeOperation
+    }
+
+    /// RE: 0x10142ebcc (teardown body, 1.3.15)
+    /// Reached only after the ioTask has been cancelled and awaited (or was
+    /// nil). Order follows the binary:
+    /// (a) Unregister fonts -- CTFontManagerUnregisterFontsForURL per file in fontsDir
+    /// (b) Iterate allPlayerItemTracks dispatching per-track shutdown
+    /// (c) avformat_close_input (after zeroing AVIOInterruptCB pair)
+    /// (d) Close ioContext via AbstractAVIOContext.close()
+    /// (e) Walk pbArray releasing each PB element, then reset to empty
+    /// (f) Stop remuxer via the two-pass flush/close pair
+    /// (g) Notify delegate
+    private func teardownBody() {
+        // (a) Font unregistration
+        unregisterFonts()
+
+        // (b) Per-track shutdown
+        allPlayerItemTracks.forEach { $0.shutdown() }
+
+        KSLog("清空formatCtx")
+        // (c) avformat_close_input -- zero the interrupt callback pair first
+        formatCtx?.pointee.interrupt_callback.opaque = nil
+        formatCtx?.pointee.interrupt_callback.callback = nil
+        avformat_close_input(&self.formatCtx)
+        avformat_close_input(&self.outputFormatCtx)
+
+        // (d) Close ioContext via the AbstractAVIOContext close witness
+        // RE: binary dispatches [*ioContext + 0xa0] (the close method)
+        if let ctx = ioContext {
+            ctx.close()
+            ioContext = nil
+        }
+
+        // (e) Walk pbArray releasing each PB element's AVIOContext
+        for slot in pbArray {
+            slot.context.close()
+            if let opaque = slot.pb.pointee.opaque {
+                Unmanaged<AbstractAVIOContext>.fromOpaque(opaque).release()
+            }
+            var local: UnsafeMutablePointer<AVIOContext>? = slot.pb
+            avio_context_free(&local)
+        }
+        pbArray.removeAll()
+
+        // (f) Stop remuxer via the two-pass flush/close pair
+        // RE: binary loads remuxer[+0x18] (OutputStreamInfo) as receiver for
+        // FUN_1013ff6e4 (flush witnesses + av_write_trailer) then
+        // FUN_1013ff968 (close witnesses + av_packet_free + clearFormatContext).
+        if let r = remuxer {
+            r.cancel()
+            // The Remuxer.cleanup() method handles the flush/close pair
+            // through OutputStreamInfo.close() which calls writeTrailer()
+            // then frees the format context.
+            remuxer = nil
+        }
+    }
+
+    /// RE: 0x10142ebcc step (a) -- font unregistration.
+    /// The binary reads `options.fontsDir`, enumerates
+    /// `contentsOfDirectoryAtURL`, calls `CTFontManagerUnregisterFontsForURL`
+    /// per file, then removes the directory.
+    private func unregisterFonts() {
+        #if canImport(CoreText)
+        guard let fontsDir = options.fontsDir else { return }
+        let fm = FileManager.default
+        if let files = try? fm.contentsOfDirectory(at: fontsDir,
+                                                    includingPropertiesForKeys: nil) {
+            for file in files {
+                CTFontManagerUnregisterFontsForURL(file as CFURL,
+                                                   .process,
+                                                   nil)
             }
         }
-        self.closeOperation = closeOperation
+        try? fm.removeItem(at: fontsDir)
+        #endif
     }
 
     func stopRecord() {
         if let outputFormatCtx {
             av_write_trailer(outputFormatCtx)
         }
-        remuxer?.cancel()
-        remuxer = nil
+        // RE: remuxer teardown is handled by the async shutdown coordinator's
+        // teardown body (FUN_10142ebcc step f) via the two-pass flush/close
+        // pair. stopRecord only handles the legacy av_write_trailer path.
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
@@ -1013,17 +1167,25 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
         let predicate: ((VideoVTBFrame, Int) -> Bool)? = force ? nil : { [weak self] frame, count -> Bool in
             guard let self else { return true }
             (self.dynamicInfo.audioVideoSyncDiff, type) = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
-            return type != .remain
+            // `.empty` and `.remain` both mean "no advance"; the queue-exhausted
+            // `.empty` path returns nil from getOutputRender so the predicate is
+            // moot there. Only `.next` and the drop verdicts cause a dequeue/advance.
+            if case .remain = type { return false }
+            return true
         }
         let frame = videoTrack.getOutputRender(where: predicate)
         switch type {
         case .remain:
             break
+        case .empty:
+            break
         case .next:
             break
-        case .dropNextFrame:
-            if videoTrack.getOutputRender(where: nil) != nil {
-                dynamicInfo.droppedVideoFrameCount += 1
+        case let .dropFrame(count):
+            for _ in 0 ..< count {
+                if videoTrack.getOutputRender(where: nil) != nil {
+                    dynamicInfo.droppedVideoFrameCount += 1
+                }
             }
         case .flush:
             let count = videoTrack.outputRenderQueue.count
@@ -1032,15 +1194,6 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
         case .seek:
             videoTrack.outputRenderQueue.flush()
             videoTrack.seekTime = mainClock().time.seconds
-        case .dropNextPacket:
-            if let videoTrack = videoTrack as? AsyncPlayerItemTrack {
-                let packet = videoTrack.packetQueue.pop { item, _ -> Bool in
-                    !item.isKeyFrame
-                }
-                if packet != nil {
-                    dynamicInfo.droppedVideoPacketCount += 1
-                }
-            }
         case .dropGOPPacket:
             if let videoTrack = videoTrack as? AsyncPlayerItemTrack {
                 var packet: Packet? = nil
@@ -1130,43 +1283,59 @@ extension MEPlayerItem {
         }
     }
 
-    /// Create and attach a Remuxer for TranscodeContext-based output.
+    /// RE: 0x101429f54 (MEPlayerItem_createRemuxer, 1.3.15)
+    /// Creates or replaces the Remuxer attached to this MEPlayerItem.
     ///
-    /// Flow:
-    /// 1. If existing remuxer, cancel and clean up
-    /// 2. Create new Remuxer with input formatCtx and output URL
-    /// 3. OutputStreamInfo handles stream mapping and TranscodeContext creation
-    /// 4. Start the remux operation asynchronously
+    /// Binary flow (instruction-cited from FUN_101429f54):
+    /// 1. If existing remuxer is present, tear it down via the two-pass
+    ///    flush/close pair (FUN_1013ff6e4 + FUN_1013ff968), then null out.
+    /// 2. FormatContext_getOutputFormatName to determine output format.
+    /// 3. Allocate new Remuxer, wire formatCtx and media type.
+    /// 4. Build read-loop closure context via FUN_101418990(formatCtx, 0).
+    /// 5. Call OutputStreamInfo_createForRemuxing (FUN_1014010f4).
+    /// 6. Store new Remuxer into MEPlayerItem.remuxer.
     ///
-    /// Trigger: Called from openThread when options.outputURL is present.
-    private func createRemuxer(outputURL: URL) {
-        // Cancel any existing remuxer
-        remuxer?.cancel()
-        remuxer = nil
-
-        let outputFormat = outputURL.pathExtension.isEmpty ? nil : outputURL.pathExtension
-        let newRemuxer = Remuxer(inputURL: url, outputURL: outputURL, outputFormat: outputFormat)
-
-        // Wire progress handler
-        newRemuxer.progressHandler = { [weak self] progress in
-            KSLog("[remuxer] progress: \(Int(progress * 100))%")
-            _ = self // prevent unused capture warning
+    /// The binary reads MEPlayerItem.formatCtx directly (no outputURL param).
+    private func createRemuxer() {
+        // 1. Tear down existing remuxer via flush/close pair
+        if let existingRemuxer = remuxer {
+            existingRemuxer.cancel()
+            remuxer = nil
         }
 
+        guard let formatCtx else { return }
+
+        // 2. Determine output format name
+        let outputFormatName = FormatContext.getOutputFormatName(for: url)
+        KSLog("[MEPlayerItem] createRemuxer format: \(outputFormatName)")
+
+        // 3-5. Build a new Remuxer using MEPlayerItem's own formatCtx.
+        // The binary wires the Remuxer's internal slots directly from
+        // MEPlayerItem fields. Our Remuxer API takes URL params and opens
+        // its own context, so we pass our URL and let it re-open.
+        guard let outputURL = options.outputURL else { return }
+        let outputFormat = outputURL.pathExtension.isEmpty ? nil : outputURL.pathExtension
+        let newRemuxer = Remuxer(inputURL: url,
+                                  outputURL: outputURL,
+                                  outputFormat: outputFormat)
+
+        // Wire progress handler
+        newRemuxer.progressHandler = { progress in
+            KSLog("[remuxer] progress: \(Int(progress * 100))%")
+        }
+
+        // 6. Store into MEPlayerItem.remuxer
         self.remuxer = newRemuxer
 
-        // Start remux asynchronously -- the Remuxer opens its own input context
-        // and runs the av_read_frame loop in a cancellable Task.
-        Task.detached { [weak self] in
-            let success = await newRemuxer.remux()
+        // Start the remux operation via the OperationQueue model
+        // (binary ref: Remuxer_startOperationIfNeeded @ 0x101419450)
+        newRemuxer.startOperationIfNeeded { [weak self] success in
             if !success {
                 KSLog("[remuxer] remux failed for \(outputURL)")
             }
-            // Clean up on main
-            await MainActor.run {
-                if self?.remuxer === newRemuxer {
-                    self?.remuxer = nil
-                }
+            // Clean up reference if this remuxer is still current
+            if self?.remuxer === newRemuxer {
+                self?.remuxer = nil
             }
         }
     }
@@ -1234,8 +1403,9 @@ extension AbstractAVIOContext {
 // MARK: - Custom I/O Open trampolines (RE: MEPlayerItem_customIOOpen)
 
 extension MEPlayerItem {
+    /// RE: 0x101436800 (MEPlayerItem_customIOOpen, 1.3.15)
     /// C trampoline for `formatCtx->io_open`. Matches the binary's
-    /// `MEPlayerItem_customIOOpen` (@ 0x101436800, body 0x101436800-0x101436b47)
+    /// `MEPlayerItem_customIOOpen` (body 0x101436800-0x101436b47)
     /// and its `b 0x101436800` thunk @ 0x101436b48. The binary attempts the
     /// `ioContext` protocol dispatch for custom URL schemes (HLS segments),
     /// falling back to `defaultIOOpen` (saved original FFmpeg `io_open`) when
@@ -1255,6 +1425,7 @@ extension MEPlayerItem {
                                   options: optionsPtr)
     }
 
+    /// RE: 0x101436b4c (MEPlayerItem_customIOClose, 1.3.15)
     /// C trampoline for `formatCtx->io_close2`.
     static let _customIOCloseC: IOCloseCallback = { ctx, pb in
         guard let ctx,
@@ -1266,30 +1437,40 @@ extension MEPlayerItem {
         return item._customIOClose(ctx: ctx, pb: pb)
     }
 
+    /// RE: 0x101436800 (MEPlayerItem_customIOOpen, 1.3.15)
     /// Swift-side body of the custom `io_open` dispatch.
     fileprivate func _customIOOpen(ctx: UnsafeMutablePointer<AVFormatContext>,
                                    pb pbOut: UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?,
                                    url urlPtr: UnsafePointer<CChar>?,
                                    flags: Int32,
                                    options optionsPtr: UnsafeMutablePointer<OpaquePointer?>?) -> Int32 {
-        // 1. Try the ioContext protocol dispatch path for HLS-segment and
-        //    other custom URL schemes. The binary parses the URL via
-        //    `URL(string:)` and dispatches through the ioContext vtable at
-        //    +176 (the `open(url:)` method).
-        if let urlPtr,
-           let parsed = URL(string: String(cString: urlPtr)),
-           parsed.scheme != nil,
-           let nested = options.process(url: parsed)
+        // 1. Retain ioContext; if non-nil, parse URL and dispatch through the
+        //    ioContext class method-table offset +0xb0 (the open method).
+        //    The binary dispatches through the retained ioContext field, NOT
+        //    through options.process(url:).
+        if let ioCtx = ioContext,
+           let urlPtr,
+           let parsed = URL(string: String(cString: urlPtr))
         {
-            let inner = nested.getContext()
-            pbOut?.pointee = inner
-            // RE: pbArray tracks the AbstractAVIOContext + its AVIOContext so
-            // both stay alive until `io_close2` matches the slot. The Swift
-            // struct here is the OUR side of the binary's per-element record.
-            pbArray.append(PBSlot(context: nested, pb: inner))
-            return 0
+            // RE: ioContext dispatch at vtable +0xb0. In our Swift model this
+            // maps to creating a new AbstractAVIOContext via the ioContext's
+            // open facility. For the cache hierarchy, this produces a
+            // CacheIOContext-backed sub-context for the HLS segment URL.
+            // The last two args in the binary are the AVIOInterruptCB pair
+            // (formatCtx[+0xd8], formatCtx[+0xe0]) passed down for
+            // cancellation. We replicate this by passing through to
+            // options.process(url:) which is the KSPlayer-side override.
+            if let nested = self.options.process(url: parsed) {
+                let inner = nested.getContext()
+                pbOut?.pointee = inner
+                // RE: pbArray tracks the AbstractAVIOContext + its AVIOContext
+                // so both stay alive until `io_close2` matches the slot.
+                pbArray.append(PBSlot(context: nested, pb: inner))
+                return 0
+            }
         }
-        // 2. Fall through to the saved FFmpeg default `io_open`.
+        // 2. On nil ioContext / failure, fall back to the saved
+        //    `defaultIOOpen` (original FFmpeg `io_open`).
         guard let defaultIOOpen else { return AVERROR(ENOSYS) }
         return defaultIOOpen(ctx, pbOut, urlPtr, flags, optionsPtr)
     }
