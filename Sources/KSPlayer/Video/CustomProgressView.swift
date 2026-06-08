@@ -2,24 +2,28 @@
 //  CustomProgressView.swift
 //  KSPlayer
 //
-//  Forward addition (RE): Custom progress display view that mirrors
-//  the toolbar's time slider and labels for alternate layout.
+//  RE reconstruction from the v1.3.15 binary. Custom progress display
+//  view that mirrors PlayerToolBar's time slider and labels into a
+//  minimal fullscreen layout (re-parents the shared toolbar controls
+//  rather than creating its own).
 //
 //  Binary: _TtC8KSPlayer18CustomProgressView (2 functions)
-//  RE source: Forward v1.3.15
 //
 
 #if canImport(UIKit)
 import UIKit
 
 public class CustomProgressView: UIView {
-    weak var playView: PlayerView?
+    // RE: types.json field 1 = playView: KSPlayer.IOSVideoPlayerView (CMa 0x1014ED8F0).
+    // weak back-reference idiom retained; concrete type is the IOSVideoPlayerView the
+    // init stores from param_5 (toolBar accessed via the PlayerView base class).
+    weak var playView: IOSVideoPlayerView?
     private var progressSlider: KSSlider?
     private var currentTimeLabel: UILabel?
     private var totalTimeLabel: UILabel?
 
     // RE: CustomProgressView_init_withPlayView @ 0x1014eabfc (0x120 = 288 bytes)
-    public init(playView: PlayerView) {
+    public init(playView: IOSVideoPlayerView) {
         self.playView = playView
         self.progressSlider = playView.toolBar.timeSlider
         self.currentTimeLabel = playView.toolBar.currentTimeLabel

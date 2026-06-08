@@ -2,18 +2,57 @@
 //  SettingsView.swift
 //  KSPlayer
 //
-//  Forward addition (RE): Tabbed settings panel for video, audio,
-//  and subtitle configuration during playback.
+//  RE-reconstructed tabbed settings panel for video, audio, and
+//  subtitle configuration during playback.
 //
-//  Binary: _TtC8KSPlayer12SettingsView (27 functions)
-//  RE source: Forward v1.3.15, entry @ 0x1014f21d4
+//  Binary: _TtC8KSPlayer12SettingsView (CMa 0x1014FFF98)
+//  RE source: v1.3.15 binary, init entry @ 0x1014F21D4
+//
+//  Function surface: 24 named functions are documented in UIComponents.md —
+//  9 in the address table (configureSubviews, buildTabBar, buildVideoSection,
+//  buildVideoOptionsSection, buildAudioSection, buildSubtitleSection,
+//  initFields_and_callSuper, mainActorDispatch_withSender, switchToTab) plus
+//  15 named action *Impl handlers (lines 1490-1505). The header previously read
+//  "27 functions"; the +3 over the documented 24 are the @objc tap trampolines
+//  (tabButtonTapped, closeButtonTapped) and compiler-synthesized / non-RE Swift
+//  row-builder helpers, not additional RE-named entries.
+//
+//  Field surface: types.json confirms 25 stored fields — 4 UInt8 action-key
+//  anchors (indices 0-3, modeled here as 4 stored action closures), then the 4
+//  buttons at contiguous indices 4-7 (3 tab buttons video/audio/subtitle + close;
+//  the Tab enum has exactly 3 cases, so there is NO phantom 4th tab — the doc
+//  prose "4 tab buttons + close" is a doc-side arithmetic slip), 4 content
+//  containers, currentTab, onDismiss, weak playerView, 2 optional track buttons,
+//  and 8 label fields = 25.
 //
 
 #if canImport(UIKit)
 import UIKit
 
 public class SettingsView: UIView {
-    // MARK: - Action Closures
+    // MARK: - Tabs
+
+    /// The three settings tabs. Raw values match the binary roster (`ENUM_CASES_1.3.15`):
+    /// video=0, audio=1, subtitle=2 — these are also the tag values assigned to the
+    /// tab buttons, so `Tab(rawValue: sender.tag)` round-trips the tap target.
+    /// RE: KSPlayer.SettingsView.Tab (nested enum, CMa 0x1014FFF98)
+    public enum Tab: Int {
+        case video = 0
+        case audio = 1
+        case subtitle = 2
+    }
+
+    // MARK: - Action Slots
+    //
+    // The binary's 25-field roster names these four as `switchValueChangedKey`,
+    // `textFieldValueChangedKey`, `sliderValueChangedKey`, `buttonActionKey`,
+    // each typed Swift.UInt8. Those UInt8 bytes are `objc_setAssociatedObject`
+    // key anchors; the real closures live as associated objects keyed by them.
+    // We model the action slots directly as stored closures — a behaviorally
+    // equivalent Swift idiom that drops the associated-object indirection while
+    // preserving the per-control action wiring. The roster names are noted here
+    // for traceability against types.json field indices 0-3.
+    // RE: switchValueChangedKey/textFieldValueChangedKey/sliderValueChangedKey/buttonActionKey (0x1014FFF98)
 
     public var switchValueChanged: ((UISwitch) -> Void)?
     public var textFieldValueChanged: ((UITextField) -> Void)?
@@ -36,9 +75,13 @@ public class SettingsView: UIView {
 
     // MARK: - State
 
-    private var currentTab: Int = 0
+    // RE: currentTab :: KSPlayer.SettingsView.Tab (field index 12, 0x1014FFF98)
+    private var currentTab: Tab = .video
     public var onDismiss: (() -> Void)?
-    weak var playerView: PlayerView?
+    // RE: weak playerView :: KSPlayer.IOSVideoPlayerView? (field index 14, 0x1014FFF98).
+    // Concrete IOSVideoPlayerView (not the PlayerView base) so aspect-fill cycling and
+    // other IOSVideoPlayerView-specific behavior is reachable from this panel.
+    weak var playerView: IOSVideoPlayerView?
 
     // MARK: - Track Buttons
 
@@ -141,24 +184,76 @@ public class SettingsView: UIView {
             tabBar.heightAnchor.constraint(equalToConstant: 32),
         ])
 
-        switchToTab(0)
+        switchToTab(.video)
     }
 
     @objc private func tabButtonTapped(_ sender: UIButton) {
-        switchToTab(sender.tag)
+        // Button tags are assigned to match Tab raw values (0/1/2) in buildTabBar().
+        guard let tab = Tab(rawValue: sender.tag) else { return }
+        switchToTab(tab)
     }
 
     @objc private func closeButtonTapped() {
         onDismiss?()
     }
 
-    // MARK: - Tab Switching (RE: SettingsView_switchToTab @ 0x1014ff1d8)
+    // MARK: - Tab Switching (RE: SettingsView_switchToTab @ 0x1014FF1D8)
 
-    func switchToTab(_ tab: Int) {
+    /// Selects a tab: records it, highlights the matching tab button (rounded white
+    /// pill background with a dark title) while clearing the others (clear background,
+    /// white title), and hides every content view except the selected one.
+    /// RE: 0x1014FF1D8 — writes `currentTab`, loops the 3 tab buttons comparing each
+    /// button's index against the selected raw value, then hides the 3 content views.
+    ///
+    /// The doc RE note (UIComponents.md, switchToTab entry) described the active
+    /// button as "rounded white background, white title", which is self-inconsistent
+    /// for legibility (invisible white-on-white). The binary's title-color constants
+    /// resolve to a dark/contrasting label over the white pill for the active tab and
+    /// a white label over the clear bar for inactive tabs; reconstructed accordingly.
+    func switchToTab(_ tab: Tab) {
         currentTab = tab
-        videoContentView.isHidden = tab != 0
-        audioContentView.isHidden = tab != 1
-        subtitleContentView.isHidden = tab != 2
+
+        // Highlight the active tab button; clear the rest.
+        let tabButtons = [videoTabButton, audioTabButton, subtitleTabButton]
+        for (index, button) in tabButtons.enumerated() {
+            if index == tab.rawValue {
+                button.backgroundColor = .white
+                button.layer.cornerRadius = 8
+                button.layer.masksToBounds = true
+                // Dark title over the white pill so the active tab label is legible.
+                button.setTitleColor(.black, for: .normal)
+            } else {
+                button.backgroundColor = .clear
+                button.layer.cornerRadius = 0
+                button.setTitleColor(.white, for: .normal)
+            }
+        }
+
+        videoContentView.isHidden = tab != .video
+        audioContentView.isHidden = tab != .audio
+        subtitleContentView.isHidden = tab != .subtitle
+    }
+
+    // MARK: - Main-Actor Sender Dispatch (RE: SettingsView_mainActorDispatch_withSender @ 0x1014F8D98)
+
+    /// Forwards a UI control sender (`UISwitch` / `UISlider` / `UIButton` /
+    /// `UITextField`) onto the main actor before invoking the supplied action
+    /// closure. The binary emits this as a discrete `@MainActor`-isolated
+    /// trampoline: it asserts the current executor is the main actor
+    /// (`_swift_task_isCurrentExecutor`; reports an unexpected-executor fault
+    /// tagged `"KSPlayer/SettingsView.swift"` if not), retains the sender and the
+    /// closure context, then calls the stored action with the sender. Kept
+    /// separate from the per-control `*Impl` handlers per the API-surface
+    /// preservation rule.
+    /// RE: 0x1014F8D98
+    @MainActor
+    func mainActorDispatch<Sender: AnyObject>(_ sender: Sender, action: @MainActor (Sender) -> Void) {
+        // On the main actor the executor assertion in the binary is satisfied by
+        // this method's isolation; the call below mirrors `(*in_x4)(sender, ...)`.
+        // TODO(re-verify): the decompile retains two refs (x23=sender, x21=context)
+        // before the indirect call — exact ARC shape of the forwarded closure
+        // context is inferred, not byte-verified.
+        action(sender)
     }
 
     // MARK: - Build Sections (RE: 0x1014F3124, 0x1014F3B6C, 0x1014F536C, 0x1014F5910)
@@ -279,18 +374,34 @@ public class SettingsView: UIView {
         let strokeColorBtn = makeColorPickerRow(title: "Text Stroke Color")
         let shadowColorBtn = makeColorPickerRow(title: "Text Shadow Color")
 
-        // Delay + size steppers.
+        // Delay + size + stroke + margin steppers.
+        //
+        // Each +/- pair drives the SAME parameter. The 1.3.15 decompile of
+        // buildSubtitleSection (0x1014F5910, 5944 bytes) wires four matched
+        // increment/decrement selector pairs onto these rows. The prior
+        // reconstruction mis-wired the +increase action of Subtitle Size and
+        // Stroke Width to increaseSubtitleDelayImpl (which bumps DELAY, not
+        // size/stroke) and the -decrease of Vertical Margin to
+        // decreaseSubtitleSizeImpl (which shrinks SIZE, not margin). Corrected
+        // here so each stepper bumps its own parameter.
+        //
+        // Note: the binary's named-impl roster (UIComponents.md lines 1490-1505)
+        // symbolizes only one direction for size (decrease), stroke (decrease),
+        // and vertical margin (increase). The opposite directions lived inline
+        // in the 5944-byte body without a standalone symbol; they are
+        // reconstructed below as increaseSubtitleSizeImpl / increaseStrokeWidthImpl
+        // / decreaseVerticalMarginImpl, mirroring their documented siblings.
         let delayRow = makeStepperRow(title: "Subtitle Delay",
                                       decreaseAction: #selector(decreaseSubtitleDelayImpl),
                                       increaseAction: #selector(increaseSubtitleDelayImpl))
         let sizeRow = makeStepperRow(title: "Subtitle Size",
                                      decreaseAction: #selector(decreaseSubtitleSizeImpl),
-                                     increaseAction: #selector(increaseSubtitleDelayImpl))
+                                     increaseAction: #selector(increaseSubtitleSizeImpl))
         let strokeRow = makeStepperRow(title: "Stroke Width",
                                        decreaseAction: #selector(decreaseStrokeWidthImpl),
-                                       increaseAction: #selector(increaseSubtitleDelayImpl))
+                                       increaseAction: #selector(increaseStrokeWidthImpl))
         let marginRow = makeStepperRow(title: "Vertical Margin",
-                                       decreaseAction: #selector(decreaseSubtitleSizeImpl),
+                                       decreaseAction: #selector(decreaseVerticalMarginImpl),
                                        increaseAction: #selector(increaseVerticalMarginImpl))
 
         [hdrSwitch, resizeSwitch, assImageSwitch, srtImageSwitch, stripStyleSwitch,
@@ -421,9 +532,28 @@ public class SettingsView: UIView {
         subtitleSizeLabel.text = "\(Int(KSOptions.textFontSize))"
     }
 
+    // Increment counterpart of decreaseSubtitleSizeImpl. No standalone symbol in
+    // the 1.3.15 roster — the +path lived inline in buildSubtitleSection
+    // (0x1014F5910); reconstructed here as the exact mirror of the documented
+    // decrement so the Subtitle Size +stepper bumps font size, not delay.
+    @objc func increaseSubtitleSizeImpl() {
+        KSOptions.textFontSize = min(64, KSOptions.textFontSize + 1)
+        subtitleSizeLabel.text = "\(Int(KSOptions.textFontSize))"
+    }
+
     // RE: SettingsView_decreaseStrokeWidthImpl @ 0x1014FCCE8
     @objc func decreaseStrokeWidthImpl() {
         KSOptions.textStrokeWidth = max(0, KSOptions.textStrokeWidth - 0.5)
+        strokeWidthLabel.text = String(format: "%.1f", KSOptions.textStrokeWidth)
+    }
+
+    // Increment counterpart of decreaseStrokeWidthImpl. No standalone symbol in
+    // the 1.3.15 roster — the +path lived inline in buildSubtitleSection
+    // (0x1014F5910); reconstructed as the exact mirror of the documented
+    // decrement (slider max for Text Stroke Width is 5, line 346) so the Stroke
+    // Width +stepper bumps stroke width, not delay.
+    @objc func increaseStrokeWidthImpl() {
+        KSOptions.textStrokeWidth = min(5, KSOptions.textStrokeWidth + 0.5)
         strokeWidthLabel.text = String(format: "%.1f", KSOptions.textStrokeWidth)
     }
 
@@ -431,6 +561,16 @@ public class SettingsView: UIView {
     @objc func increaseVerticalMarginImpl() {
         KSOptions.textYAlign = .bottom
         verticalMarginLabel.text = "Bottom"
+    }
+
+    // Decrement counterpart of increaseVerticalMarginImpl. No standalone symbol
+    // in the 1.3.15 roster — the -path lived inline in buildSubtitleSection
+    // (0x1014F5910); reconstructed as the mirror of the documented increment
+    // (which pins the subtitle to .bottom) so the Vertical Margin -stepper moves
+    // the subtitle up rather than shrinking font size.
+    @objc func decreaseVerticalMarginImpl() {
+        KSOptions.textYAlign = .top
+        verticalMarginLabel.text = "Top"
     }
 
     // MARK: - Thread Count (RE: 0x1014FD42C, 0x1014FD510)

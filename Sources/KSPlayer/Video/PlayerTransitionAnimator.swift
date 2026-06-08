@@ -8,11 +8,14 @@
 #if canImport(UIKit)
 import UIKit
 
+/// RE: 0x1014F0F24 (_objc_opt_self(PlayerTransitionAnimator), 1.3.15)
+/// AVKit-style zoom transition (0.3s, scale + translate, identity-transform reset).
 class PlayerTransitionAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let isDismiss: Bool
     private let containerView: UIView
     private let animationView: UIView
     private let fromCenter: CGPoint
+    /// RE: 0x1014F0FE4 (PlayerTransitionAnimator.init(containerView:animationView:isDismiss:), 1.3.15)
     init(containerView: UIView, animationView: UIView, isDismiss: Bool = false) {
         self.containerView = containerView
         self.animationView = animationView
@@ -25,6 +28,7 @@ class PlayerTransitionAnimator: NSObject, UIViewControllerAnimatedTransitioning 
         0.3
     }
 
+    /// RE: 0x1014F0508 (PlayerTransitionAnimator.animateTransition(using:), 1.3.15)
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
         let animationSuperView = animationView.superview
         let animationViewIndex = animationSuperView?.subviews.firstIndex(of: animationView) ?? 0
@@ -53,9 +57,11 @@ class PlayerTransitionAnimator: NSObject, UIViewControllerAnimatedTransitioning 
         let fromCenter = transform == .identity ? fromCenter : fromCenter.reverse
         animationView.center = isDismiss ? toCenter : fromCenter
         UIView.animate(withDuration: transitionDuration(using: transitionContext), delay: 0, options: .curveEaseInOut) {
+            // RE: 0x1014F0AB0 (animationBlock_impl, 1.3.15) — identity transform + setCenter.
             self.animationView.transform = .identity
             self.animationView.center = self.isDismiss ? fromCenter : toCenter
         } completion: { _ in
+            // RE: 0x1014F0BB4 (completionBlock_impl, 1.3.15) — reinsert subview, reactivate constraints, completeTransition(true).
             animationSuperView?.insertSubview(self.animationView, at: animationViewIndex)
             if !animationFrameConstraints.isEmpty {
                 self.animationView.translatesAutoresizingMaskIntoConstraints = false

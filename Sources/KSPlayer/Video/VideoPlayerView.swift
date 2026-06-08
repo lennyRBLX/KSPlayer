@@ -20,17 +20,29 @@ import MediaPlayer
 // conflict and contradicted ENUM_CASES_1.3.15 (definitive: horizontal=0,
 // vertical=1) — removed so the Core declaration is the single source.
 
-public protocol LoadingIndector {
+// Typo fix (SOURCE RECONSTRUCTION mandate): binary/upstream spelled this
+// `LoadingIndector`. The canonical type is now `LoadingIndicator`; a deprecated
+// `LoadingIndector` alias is kept so upstream KSPlayer consumers still compile.
+public protocol LoadingIndicator {
     func startAnimating()
     func stopAnimating()
 }
 
+@available(*, deprecated, renamed: "LoadingIndicator", message: "Typo fixed: use LoadingIndicator.")
+public typealias LoadingIndector = LoadingIndicator
+
 #if canImport(UIKit)
-extension UIActivityIndicatorView: LoadingIndector {}
+extension UIActivityIndicatorView: LoadingIndicator {}
 #endif
 // swiftlint:disable type_body_length file_length
 open class VideoPlayerView: PlayerView {
-    private var delayItem: DispatchWorkItem?
+    /// RE: 0x10150B5F4 field #1 (VideoPlayerView.delayItem, 1.3.15) —
+    /// types.json-verified as `Swift.Task<(), Error>?`. The binary scheduled the
+    /// auto-fade-out / speed-tip dismissal as a cancelable structured-concurrency
+    /// Task (delay via Task.sleep, cancel on each interaction), not the older
+    /// upstream DispatchWorkItem + asyncAfter pattern. `Task.cancel()` provides the
+    /// same cancelable-delayed-fade-out behavior the DispatchWorkItem reconstruction had.
+    private var delayItem: Task<Void, Error>?
     /// Gesture used to show / hide control view
     public let tapGesture = UITapGestureRecognizer()
     public let doubleTapGesture = UITapGestureRecognizer()
@@ -44,7 +56,11 @@ open class VideoPlayerView: PlayerView {
     public let topMaskView = LayerContainerView()
     // 是否播放过
     private(set) var isPlayed = false
-    private var cancellable: AnyCancellable?
+    /// RE: 0x10150B5F4 field #11 (VideoPlayerView.cancellables, 1.3.15) —
+    /// types.json-verified as `[Combine.AnyCancellable]`. The binary collected an
+    /// array of Combine subscriptions; only the pip-button binding is wired today,
+    /// but the array type is preserved so additional subscriptions can be appended.
+    private var cancellables = [AnyCancellable]()
 
     public private(set) var currentDefinition = 0 {
         didSet {
@@ -78,8 +94,18 @@ open class VideoPlayerView: PlayerView {
     public var titleLabel = UILabel()
     public var subtitleLabel = UILabel()
     public var subtitleBackView = UIImageView()
-    /// Activty Indector for loading
-    public var loadingIndector: UIView & LoadingIndector = UIActivityIndicatorView(frame: CGRect(x: 0, y: 0, width: 30, height: 30))
+    /// Activity indicator for loading.
+    /// RE: 0x10150B5F4 field #16 (VideoPlayerView.loadingIndicator, 1.3.15) —
+    /// binary preserved the typo "Indector"; corrected here per the typo-auto-fix
+    /// mandate. A deprecated `loadingIndector` alias below keeps upstream parity.
+    public var loadingIndicator: UIView & LoadingIndicator = UIActivityIndicatorView(frame: CGRect(x: 0, y: 0, width: 30, height: 30))
+
+    /// Deprecated misspelling kept for upstream KSPlayer source compatibility.
+    @available(*, deprecated, renamed: "loadingIndicator", message: "Typo fixed: use loadingIndicator.")
+    public var loadingIndector: UIView & LoadingIndicator {
+        get { loadingIndicator }
+        set { loadingIndicator = newValue }
+    }
     public var seekToView: UIView & SeekViewProtocol = SeekView()
     public var replayButton = UIButton()
     public var lockButton = UIButton()
@@ -141,7 +167,9 @@ open class VideoPlayerView: PlayerView {
     override public init(frame: CGRect) {
         super.init(frame: frame)
         setupUIComponents()
-        cancellable = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton)
+        if let pipCancellable = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton) {
+            cancellables.append(pipCancellable)
+        }
         toolBar.onFocusUpdate = { [weak self] _ in
             self?.autoFadeOutViewWithAnimation()
         }
@@ -191,8 +219,8 @@ open class VideoPlayerView: PlayerView {
         bottomMaskView.gradientLayer.startPoint = CGPoint(x: 0, y: 1)
         bottomMaskView.gradientLayer.endPoint = .zero
 
-        loadingIndector.isHidden = true
-        controllerView.addSubview(loadingIndector)
+        loadingIndicator.isHidden = true
+        controllerView.addSubview(loadingIndicator)
         // Top views
         topMaskView.addSubview(navigationBar)
         navigationBar.addArrangedSubview(titleLabel)
@@ -424,6 +452,19 @@ open class VideoPlayerView: PlayerView {
     /// vtable +0x360 from panGestureChanged; mangled sig 0x1047385af.
     /// IOSVideoPlayerView overrides this slot at vtable +0x360 (out of cluster).
     /// (VideoPlayerView.panValue(velocity:direction:currentTime:totalTime:), 1.3.15)
+    ///
+    /// Signature note (§5.2): the binary's slot is
+    /// `(velocity, ?, currentTime, totalTime, isVolume)`. The trailing `isVolume`
+    /// discriminator selected the seek vs. volume/brightness branch; the idiomatic
+    /// upstream KSPlayer signature carries the same branch information in
+    /// `direction: KSPanDirection` (.horizontal == seek; .vertical == isVolume/brightness).
+    /// Horizontal constants are RE-verified exact: divisor 0x40000 (262144),
+    /// clamp [-0.01, +0.01]. The §5.2 "3.0x velocity multiplier" and "60s-interval
+    /// haptic" are NOT applied here — they live in the IOSVideoPlayerView override
+    /// of vtable+0x360 (out of this cluster), not in the base-class panValue.
+    /// UNVERIFIED-GUESS: vertical divisor 0x2800 (10240) — upstream KSPlayer value
+    /// carried over; §5.2 pseudo-code documented only the horizontal seek path, so
+    /// no binary anchor pins the vertical brightness/volume divisor.
     open func panValue(velocity point: CGPoint, direction: KSPanDirection, currentTime _: Float, totalTime: Float) -> Float {
         if direction == .horizontal {
             return max(min(Float(point.x) / 0x40000, 0.01), -0.01) * totalTime
@@ -476,9 +517,11 @@ open class VideoPlayerView: PlayerView {
             self.speedTipLabel.alpha = 1
         }
 
-        // 延迟后隐藏
+        // 延迟后隐藏 — cancelable structured-concurrency delay (delayItem is a Task).
         delayItem?.cancel()
-        delayItem = DispatchWorkItem { [weak self] in
+        delayItem = Task { @MainActor [weak self] in
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            try Task.checkCancellation()
             guard let self else { return }
             UIView.animate(withDuration: 0.2) {
                 self.speedTipLabel.alpha = 0
@@ -486,7 +529,6 @@ open class VideoPlayerView: PlayerView {
                 self.speedTipLabel.isHidden = true
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: delayItem!)
     }
 }
 
@@ -733,27 +775,29 @@ extension VideoPlayerView {
     }
 
     /**
-     auto fade out controll view with animtion
+     auto fade out control view with animation
      */
     private func autoFadeOutViewWithAnimation() {
         delayItem?.cancel()
         // 播放的时候才自动隐藏
         guard toolBar.playButton.isSelected else { return }
-        delayItem = DispatchWorkItem { [weak self] in
+        // Cancelable structured-concurrency delay (delayItem is a Task).
+        let delay = KSOptions.animateDelayTimeInterval
+        delayItem = Task { @MainActor [weak self] in
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            try Task.checkCancellation()
             self?.isMaskShow = false
         }
-        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + KSOptions.animateDelayTimeInterval,
-                                      execute: delayItem!)
     }
 
     private func showLoader() {
-        loadingIndector.isHidden = false
-        loadingIndector.startAnimating()
+        loadingIndicator.isHidden = false
+        loadingIndicator.startAnimating()
     }
 
     private func hideLoader() {
-        loadingIndector.isHidden = true
-        loadingIndector.stopAnimating()
+        loadingIndicator.isHidden = true
+        loadingIndicator.stopAnimating()
     }
 
     private func addConstraint() {
@@ -778,7 +822,7 @@ extension VideoPlayerView {
         bottomMaskView.translatesAutoresizingMaskIntoConstraints = false
         navigationBar.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        loadingIndector.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
         seekToView.translatesAutoresizingMaskIntoConstraints = false
         replayButton.translatesAutoresizingMaskIntoConstraints = false
         lockButton.translatesAutoresizingMaskIntoConstraints = false
@@ -803,8 +847,8 @@ extension VideoPlayerView {
             bottomMaskView.leadingAnchor.constraint(equalTo: leadingAnchor),
             bottomMaskView.trailingAnchor.constraint(equalTo: trailingAnchor),
             bottomMaskView.heightAnchor.constraint(equalToConstant: 105),
-            loadingIndector.centerYAnchor.constraint(equalTo: centerYAnchor),
-            loadingIndector.centerXAnchor.constraint(equalTo: centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            loadingIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
             seekToView.centerYAnchor.constraint(equalTo: centerYAnchor),
             seekToView.centerXAnchor.constraint(equalTo: centerXAnchor),
             seekToView.widthAnchor.constraint(equalToConstant: 100),
@@ -960,13 +1004,15 @@ public enum KSPlayerTopBarShowCase {
     /// 始终显示
     case always
     /// 只在横屏界面显示
-    case horizantalOnly
+    // Typo fix (SOURCE RECONSTRUCTION mandate, UIComponents.md §18.6): the binary
+    // spelled this `horizantalOnly`; the Swift port corrects it to `horizontalOnly`.
+    case horizontalOnly
     /// 不显示
     case none
 }
 
 public extension KSOptions {
-    /// 顶部返回、标题、AirPlay按钮 显示选项，默认.Always，可选.HorizantalOnly、.None
+    /// 顶部返回、标题、AirPlay按钮 显示选项，默认.Always，可选.horizontalOnly、.None
     static var topBarShowInCase = KSPlayerTopBarShowCase.always
     /// 自动隐藏操作栏的时间间隔 默认5秒
     static var animateDelayTimeInterval = TimeInterval(5)

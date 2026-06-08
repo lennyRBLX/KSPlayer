@@ -2,18 +2,29 @@
 //  IOSVideoPlayerView+ControlHandlers.swift
 //  KSPlayer
 //
-//  Forward v1.3.15 reconstruction — the 33 Forward-specific methods added on
-//  top of the upstream KSPlayer `IOSVideoPlayerView` class. Method names,
-//  sizes, and behavior all sourced from `.reversal/UIComponents.md §1.2` and
-//  verified Ghidra decompiles.
+//  v1.3.15 reconstruction — the player-specific methods added on top of the
+//  upstream KSPlayer `IOSVideoPlayerView` class. Method names, sizes, and
+//  behavior all sourced from `.reversal/UIComponents.md §1.2` and verified
+//  Ghidra decompiles.
 //
-//  All public methods are `@MainActor` (per Forward's
-//  `IOSVideoPlayerView_MainActor_dispatcher @ 0x1014451C4` — every named
-//  Forward method routes through that dispatcher). The CLAUDE.md typo-fix
+//  All public methods are `@MainActor` (the binary routes every named method
+//  through the MainActor dispatcher @ 0x1014451C4). The CLAUDE.md typo-fix
 //  rule applies to identifiers; UserDefaults / persisted string keys keep
 //  the binary's original spelling where applicable.
 //
 
+// Platform guard rationale: this file extends the UIKit-only `IOSVideoPlayerView`.
+// The `&& canImport(CallKit)` clause is inherited verbatim from the core
+// `IOSVideoPlayerView.swift` guard (line 7) so the extension is compiled under
+// exactly the same condition set as the class it extends — narrowing it here in
+// isolation would extend a type that does not exist on a UIKit-without-CallKit
+// platform and fail to link. CallKit is *not* referenced by any handler below;
+// the dependency lives on the core class, so the guards must move together.
+// CROSS-FILE NOTE: tvOS has UIKit but no CallKit, so this guard currently excludes
+// the whole IOSVideoPlayerView surface from tvOS. If tvOS support is wanted, both
+// this guard and the core file's line-7 guard should narrow to `#if canImport(UIKit)`
+// together (with the §13 iOS-17 `singleSelection` calls kept behind their own
+// availability guards). Not changed here to keep the two guards in lockstep.
 #if canImport(UIKit) && canImport(CallKit)
 import AVKit
 import Combine
@@ -111,34 +122,80 @@ public extension IOSVideoPlayerView {
 
     // MARK: - 4. Jump forward (`handleJumpForward_impl @ 0x1014E29A8`)
 
-    /// Seek +N seconds (N from `PlayerPreferences.forwardBackwardDuration`, default 15).
-    /// RE: 0x150 = 336 bytes.
+    /// Seek +10s. Per doc §1.2 the magnitude is a verified `+10s` literal and the
+    /// accuracy flag is **read from the player's options** (the instance
+    /// `isAccurateSeek`, not a hardcoded value). RE: `handleJumpForward_impl @
+    /// 0x1014E29A8` (0x150 = 336 bytes, "Seek +10s (reads accuracy flag from
+    /// options)").
+    ///
+    /// The `±10s` here is the binary-documented value (§1.2 rows 187–188 and the
+    /// doubleTap §1.2 row 195 all agree on ±10s). The Components/play-app
+    /// `PlayerPreferences.forwardBackwardDuration` (default 15) lived in the app
+    /// layer in the binary; KSPlayer (this module) is upstream of the play app and
+    /// cannot import it, so this module keeps the §1.2 default of 10.
+    /// CROSS-FILE NEEDED: for a user-configurable jump duration, the play app should
+    /// pass `PlayerPreferences.forwardBackwardDuration` down to a future settable
+    /// hook on this view (e.g. a `jumpDuration` property) rather than hardcoding here.
     @objc func handleJumpForward() {
-        let delta: TimeInterval = 15  // default in absence of PlayerPreferences hookup
-        seekBy(delta, accurate: KSOptions.isAccurateSeek)
+        // Accuracy read from the player's instance options per §1.2.
+        let accurate = playerLayer?.options.isAccurateSeek ?? KSOptions.isAccurateSeek
+        seekBy(10, accurate: accurate)
     }
 
     // MARK: - 5. Jump back (`handleJumpBack_impl @ 0x1014E2B08`)
 
-    /// Seek −N seconds (hardcodes `accurate = true` per binary). RE: 0x110 = 272 bytes.
+    /// Seek −10s. Per doc §1.2 the magnitude is a verified `−10s` literal and this
+    /// handler **hardcodes `accurate = true`** (unlike `handleJumpForward`, which
+    /// reads it from options). RE: `handleJumpBack_impl @ 0x1014E2B08` (0x110 = 272
+    /// bytes, "Seek −10s (hardcodes accurate=1)").
     @objc func handleJumpBack() {
-        seekBy(-15, accurate: true)
+        seekBy(-10, accurate: true)
     }
 
+    /// Relative seek helper. Applies `accurate` to the player's **instance**
+    /// options (`KSPlayerLayer.options.isAccurateSeek`) — the flag `KSAVPlayer.seek`
+    /// actually reads to compute the CMTime tolerance (KSAVPlayer.swift:564 /
+    /// KSOptions.swift:143). Mutating the static `KSOptions.isAccurateSeek` here
+    /// would be a no-op for tolerance, so the per-instance flag is set instead.
+    /// `KSOptions` is a class, so this mutates the shared options object even though
+    /// `KSPlayerLayer.options` is `private(set)` (the setter gates reassignment of
+    /// the reference, not mutation of the pointed-to object).
     private func seekBy(_ delta: TimeInterval, accurate: Bool) {
         guard let layer = playerLayer else { return }
         let current = layer.player.currentPlaybackTime
-        var ks = KSOptions.isAccurateSeek
-        defer { KSOptions.isAccurateSeek = ks }
-        ks = accurate
+        // Apply accuracy to the instance options the seek path reads; restore after.
+        let previousAccurate = layer.options.isAccurateSeek
+        defer { layer.options.isAccurateSeek = previousAccurate }
+        layer.options.isAccurateSeek = accurate
         layer.seek(time: max(0, current + delta), autoPlay: layer.state.isPlaying) { _ in }
     }
 
-    // MARK: - 6 & 7. Toast prompt (`showPrompt @ 0x1014E4400` / `_mainQueue_impl @ 0x1014E4660`)
+    // MARK: - 6. Toast prompt — main-queue hop (`showPrompt @ 0x1014E4400`)
 
-    /// Toast notification with 5s auto-dismiss. Constraints: 50pt top, centerX,
-    /// ≤0.8 width, ≥36pt height. RE: 0x260 / 0x4BC = 608 / 1212 bytes.
+    /// Public toast entry point. Per the binary this is the thin "dispatch to the
+    /// main queue with weak self" wrapper; the constraint build + fade-in + 5s
+    /// auto-dismiss live in the separate `showPrompt_mainQueue(_:)` below. API
+    /// Surface Preservation [v6.0]: the binary kept these as two distinct functions
+    /// (0x1014E4400 hops to main, 0x1014E4660 builds the layout), so they are
+    /// reconstructed as two calls — this wrapper must NOT inline the layout body.
+    /// RE: `IOSVideoPlayerView_showPrompt @ 0x1014E4400` (0x260 = 608 bytes,
+    /// "Dispatch to main queue with weak self").
     @objc func showPrompt(_ text: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.showPrompt_mainQueue(text)
+        }
+    }
+
+    // MARK: - 7. Toast prompt — main-queue body (`showPrompt_mainQueue_impl @ 0x1014E4660`)
+
+    /// Main-queue body: lazily installs `promptLabel` with its layout constraints
+    /// (50pt top, centerX, ≤0.8 width, ≥36pt height), fades it in, then schedules
+    /// the 5s auto-dismiss. Kept separate from `showPrompt(_:)` so the queue hop and
+    /// the layout/auto-dismiss work stay on their documented binary boundary.
+    /// RE: `IOSVideoPlayerView_showPrompt_mainQueue_impl @ 0x1014E4660` (0x4BC =
+    /// 1212 bytes, "Builds NSLayoutConstraints (50pt top, centerX, ≤0.8 width, ≥36pt
+    /// height); 5s auto-dismiss").
+    @objc func showPrompt_mainQueue(_ text: String) {
         if promptLabel.superview == nil {
             addSubview(promptLabel)
             NSLayoutConstraint.activate([
@@ -215,25 +272,31 @@ public extension IOSVideoPlayerView {
 
     /// 3 horizontal UIStackViews pinned to `bottomBackground`. RE: 0x14B4 = 5300 bytes.
     /// Top row: definition / audio / subtitle buttons (20pt spacing, 30pt height).
-    /// Middle row: video info container + nav stack (7pt spacing, 30pt height).
+    /// Middle row: video info container + nav stack (10pt spacing, 30pt height).
     /// Bottom row: previous / play / next + spacers (8pt spacing, 35pt height).
+    ///
+    /// §1.4 correction: the middle row's inter-element spacing is **10pt**, not 7pt
+    /// — 7pt is the middle row's leading/trailing inset (set in the constraint block
+    /// below), a distinct value the prior rev conflated with spacing.
     @objc func buildFullScreenLayout() {
         addSubview(bottomBackground)
         bottomBackground.translatesAutoresizingMaskIntoConstraints = false
 
+        // Inter-element spacings set once with the §1.4-verified literals.
         let topRow = UIStackView(arrangedSubviews: [toolBar.definitionButton, audioMenuButton, subtitleMenuButton])
         topRow.axis = .horizontal
-        topRow.spacing = 20
+        topRow.spacing = 20    // 0x4034000000000000
         topRow.translatesAutoresizingMaskIntoConstraints = false
 
         let midRow = UIStackView(arrangedSubviews: [videoInfoContainer])
         midRow.axis = .horizontal
-        midRow.spacing = 7
+        midRow.spacing = 10    // 0x4024000000000000 — §1.4: 10pt spacing (7pt is the inset, not spacing)
+        midRow.distribution = .equalSpacing
         midRow.translatesAutoresizingMaskIntoConstraints = false
 
         let bottomRow = UIStackView(arrangedSubviews: [UIView(), previousButton, toolBarPlayButton, nextButton, UIView()])
         bottomRow.axis = .horizontal
-        bottomRow.spacing = 8
+        bottomRow.spacing = 8  // 0x4020000000000000
         bottomRow.translatesAutoresizingMaskIntoConstraints = false
 
         [topRow, midRow, bottomRow].forEach { bottomBackground.addSubview($0) }
@@ -250,12 +313,9 @@ public extension IOSVideoPlayerView {
             btn.backgroundColor = .clear
         }
 
-        // All layout constants verified via decompile of `0x1014DC1C4`.
-        topRow.spacing = 20    // 0x4034000000000000
-        midRow.spacing = 10    // 0x4024000000000000 — NOTE: prior rev said 7pt; binary is 10pt
-        midRow.distribution = .equalSpacing
-        bottomRow.spacing = 8  // 0x4020000000000000
-
+        // Row spacings + midRow distribution are set once at construction above
+        // with the §1.4-verified literals; the remaining layout constants (insets,
+        // tops, heights) are applied here, all verified via decompile of `0x1014DC1C4`.
         NSLayoutConstraint.activate([
             topRow.topAnchor.constraint(equalTo: bottomBackground.topAnchor, constant: 8),       // 0x4020000000000000
             topRow.leadingAnchor.constraint(equalTo: bottomBackground.leadingAnchor, constant: 15), // 0x402E000000000000
@@ -408,7 +468,12 @@ public extension IOSVideoPlayerView {
     // MARK: - 26. Audio track menu (`buildAudioTrackMenu @ 0x1014E5524`)
 
     /// Builds a single-selection `UIMenu` of audio tracks.
-    /// RE: 0x524 = 1316 bytes. `singleSelection` on iOS 17+.
+    /// RE: `buildAudioTrackMenu @ 0x1014E5524` (0x524 = 1316 bytes).
+    /// §13.1: tracks via `player.tracks(mediaType: .audio)`, one `UIAction`
+    /// per track (title from `CustomStringConvertible`, state `.on` if the
+    /// track is enabled), wrapped in a `UIMenu` carrying the `.singleSelection`
+    /// option (iOS 17+), assigned to `audioMenuButton` with
+    /// `showsMenuAsPrimaryAction = true`. Handler is `audioTrackSelected`.
     @objc func buildAudioTrackMenu() {
         guard let player = playerLayer?.player else { return }
         let tracks = player.tracks(mediaType: .audio)
@@ -418,7 +483,19 @@ public extension IOSVideoPlayerView {
                 self?.audioTrackSelected(track)
             }
         }
-        let menu = UIMenu(title: NSLocalizedString("Audio", comment: ""), children: actions)
+        // §13.1 step 3: `.singleSelection` makes the menu behave as a radio
+        // group. The option is iOS-17 / tvOS-17 only — platform-gated because
+        // the iOS/tvOS/macOS constraint forbids API that does not exist on a
+        // target's earlier OS floor. macOS gets no UIMenu here (UIKit-only file).
+        let menu: UIMenu
+        if #available(iOS 17.0, tvOS 17.0, *) {
+            menu = UIMenu(title: NSLocalizedString("Audio", comment: ""),
+                          options: .singleSelection,
+                          children: actions)
+        } else {
+            menu = UIMenu(title: NSLocalizedString("Audio", comment: ""),
+                          children: actions)
+        }
         audioMenuButton.menu = menu
         audioMenuButton.showsMenuAsPrimaryAction = true
     }
@@ -426,16 +503,37 @@ public extension IOSVideoPlayerView {
     // MARK: - 27. Subtitle menu (`handleSubtitleMenuSetup @ 0x1014E5000`)
 
     /// Guards if menu already exists; builds dual-subtitle sections.
-    /// RE: 0x230 = 560 bytes.
+    /// RE: `handleSubtitleMenuSetup @ 0x1014E5000` (0x230 = 560 bytes).
+    /// §13.2: (1) returns early if the menu already exists; (2) builds the
+    /// First/Second sections via `buildSubtitleMenuSections`; (4) appends a
+    /// "None" action that deselects all subtitles and a "Local Subtitle" file
+    /// picker; (5) wraps everything in a parent "Subtitles" `UIMenu` carrying
+    /// `.singleSelection` (iOS 17+).
     @objc func handleSubtitleMenuSetup() {
         guard subtitleMenuButton.menu == nil else { return }
         let sections = buildSubtitleMenuSections()
-        let none = UIAction(title: NSLocalizedString("None", comment: ""), state: .off) { _ in }
+        // §13.2 step 4: "None" deselects ALL subtitles (clears the primary slot;
+        // the play-app dual-subtitle compositor owns the secondary slot).
+        let none = UIAction(title: NSLocalizedString("None", comment: ""),
+                            state: srtControl.selectedSubtitleInfo == nil ? .on : .off) { [weak self] _ in
+            self?.srtControl.selectedSubtitleInfo = nil
+        }
         let local = UIAction(title: NSLocalizedString("Local Subtitle", comment: ""), image: UIImage(systemName: "doc")) { [weak self] _ in
             self?.openLocalSubtitlePicker()
         }
-        let menu = UIMenu(title: NSLocalizedString("Subtitles", comment: ""),
-                          children: sections + [UIMenu(options: .displayInline, children: [none, local])])
+        // §13.2 step 5: parent menu uses `.singleSelection` (iOS-17 / tvOS-17
+        // only — platform-gated for the same reason as the audio menu above).
+        let inlineActions: UIMenuElement = UIMenu(options: .displayInline, children: [none, local])
+        let children: [UIMenuElement] = sections + [inlineActions]
+        let menu: UIMenu
+        if #available(iOS 17.0, tvOS 17.0, *) {
+            menu = UIMenu(title: NSLocalizedString("Subtitles", comment: ""),
+                          options: .singleSelection,
+                          children: children)
+        } else {
+            menu = UIMenu(title: NSLocalizedString("Subtitles", comment: ""),
+                          children: children)
+        }
         subtitleMenuButton.menu = menu
         subtitleMenuButton.showsMenuAsPrimaryAction = true
     }
@@ -443,24 +541,72 @@ public extension IOSVideoPlayerView {
     // MARK: - 28. Subtitle sections (`buildSubtitleMenuSections @ 0x1014E5BF4`)
 
     /// "First Subtitle" + "Second Subtitle" sections. Dual-subtitle support.
-    /// RE: 0x8EC = 2284 bytes.
+    /// RE: `buildSubtitleMenuSections @ 0x1014E5BF4` (0x8EC = 2284 bytes).
+    ///
+    /// §13.2 step 3 — the verified body filters the subtitle-info list by
+    /// concrete class: `FFmpegAssetTrack` elements are container-**embedded**
+    /// subtitle streams (an `FFmpegAssetTrack` is surfaced as a `SubtitleInfo`
+    /// via `extension FFmpegAssetTrack: SubtitleInfo` in EmbedDataSource.swift),
+    /// while `URLSubtitleInfo` elements are **external** files / remote search
+    /// results. The two groups are placed in their own inline ("Embedded" /
+    /// "External") sub-sections inside each of the First/Second parent sections
+    /// so the user can tell a baked-in track from a sidecar one. The "Second
+    /// Subtitle" actions drive the secondary slot (`isSecondary = true`); the
+    /// play-app dual-subtitle compositor owns the actual secondary-track render,
+    /// so here the action records the chosen info on the compositor hook.
     @objc func buildSubtitleMenuSections() -> [UIMenuElement] {
         let infos = srtControl.subtitleInfos
         guard !infos.isEmpty else { return [] }
-        let firstActions: [UIAction] = infos.map { info in
-            UIAction(title: info.name) { [weak self] _ in
-                self?.srtControl.selectedSubtitleInfo = info
+
+        // §13.2 step 3 class split: embedded (FFmpegAssetTrack) vs external
+        // (URLSubtitleInfo). Anything that is neither (e.g. EmptySubtitleInfo)
+        // is treated as external so it is never silently dropped.
+        let embedded = infos.filter { $0 is FFmpegAssetTrack }
+        let external = infos.filter { !($0 is FFmpegAssetTrack) }
+
+        func makeSection(isSecondary: Bool) -> UIMenu {
+            let selected = srtControl.selectedSubtitleInfo
+            let action: (any SubtitleInfo) -> UIAction = { [weak self] info in
+                UIAction(title: info.name,
+                         state: (!isSecondary && selected?.subtitleID == info.subtitleID) ? .on : .off) { _ in
+                    self?.subtitleSelected(info, isSecondary: isSecondary)
+                }
             }
-        }
-        let secondActions: [UIAction] = infos.map { info in
-            UIAction(title: info.name) { _ in
-                // Secondary subtitle slot — wired by play app's dual-subtitle compositor.
+            var groups: [UIMenuElement] = []
+            if !embedded.isEmpty {
+                groups.append(UIMenu(title: NSLocalizedString("Embedded", comment: ""),
+                                     options: .displayInline,
+                                     children: embedded.map(action)))
             }
+            if !external.isEmpty {
+                groups.append(UIMenu(title: NSLocalizedString("External", comment: ""),
+                                     options: .displayInline,
+                                     children: external.map(action)))
+            }
+            let title = isSecondary
+                ? NSLocalizedString("Second Subtitle", comment: "")
+                : NSLocalizedString("First Subtitle", comment: "")
+            return UIMenu(title: title, children: groups)
         }
-        return [
-            UIMenu(title: NSLocalizedString("First Subtitle", comment: ""), children: firstActions),
-            UIMenu(title: NSLocalizedString("Second Subtitle", comment: ""), children: secondActions),
-        ]
+
+        return [makeSection(isSecondary: false), makeSection(isSecondary: true)]
+    }
+
+    /// Routes a subtitle selection to the primary or secondary slot.
+    /// Primary (`isSecondary == false`) drives `srtControl.selectedSubtitleInfo`
+    /// directly (matching the "None" action and the rest of this file).
+    /// Secondary (`isSecondary == true`) goes through the engine's dual-subtitle
+    /// API `KSPlayerLayer.setSelectedSubtitleInfo(_:isSecondary:)`, which stores
+    /// it on the SubtitleModel's `selectedSecondSubtitleInfo` — the slot the
+    /// play-app dual-subtitle compositor reads. RE: extracted from the §13.2
+    /// `buildSubtitleMenuSections` per-action closures (API Surface Preservation
+    /// — the embedded/external actions both funnel through one selection point).
+    private func subtitleSelected(_ info: any SubtitleInfo, isSecondary: Bool) {
+        if isSecondary {
+            playerLayer?.setSelectedSubtitleInfo(info, isSecondary: true)
+        } else {
+            srtControl.selectedSubtitleInfo = info
+        }
     }
 
     private func openLocalSubtitlePicker() {
@@ -504,10 +650,15 @@ public extension IOSVideoPlayerView {
     /// Creates `PlayerTransitionAnimator` for fullscreen transitions.
     /// RE: 0x114 = 276 bytes.
     @objc func createTransitionAnimator(isDismiss: Bool) -> PlayerTransitionAnimator? {
-        guard let originalSuperView = superview, let animationView = playerLayer?.player.view else {
+        // The container is the PRE-fullscreen superview captured in
+        // `enterFullScreen` (`originalSuperView` ivar), not the live `superview`
+        // (which is the fullscreen VC's view mid-transition). Fall back to the
+        // live superview only if the snapshot is unavailable.
+        guard let container = originalSuperView ?? superview,
+              let animationView = playerLayer?.player.view else {
             return nil
         }
-        return PlayerTransitionAnimator(containerView: originalSuperView,
+        return PlayerTransitionAnimator(containerView: container,
                                         animationView: animationView,
                                         isDismiss: isDismiss)
     }
