@@ -92,17 +92,25 @@ class PlayerFullScreenViewController: UIViewController {
         true
     }
 
-    // UNVERIFIED-GUESS: `preferredStatusBarStyle` returning `.lightContent` is a
-    // reconstruction inference (a fullscreen video VC conventionally forces
-    // light status-bar text). It is NOT in the doc's §8.4 selector table
-    // (lines 1400-1405 list only shouldAutorotate, supportedInterfaceOrientations,
-    // prefersHomeIndicatorAutoHidden, prefersStatusBarHidden) and has no anchoring
-    // binary address in the doc; Ghidra was unreachable this session so it could
-    // not be confirmed. No anchor for the `.lightContent` value either. Behaviorally
-    // harmless; retained for the fullscreen UX but flagged for verification.
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        .lightContent
-    }
+    /// RE: 0x1014F00CC-0x1014F042B (1.3.15) — the binary does NOT override
+    /// `preferredStatusBarStyle` on this class. The prior reconstruction's
+    /// `preferredStatusBarStyle { .lightContent }` was a fabrication; closure
+    /// removed it after proving via Ghidra that no such override exists.
+    /// `PlayerFullScreenViewController`'s selector cluster is fully contiguous:
+    ///   0x1014F00CC shouldAutorotate
+    ///   0x1014F0184 supportedInterfaceOrientations
+    ///   0x1014F0208 prefersHomeIndicatorAutoHidden
+    ///   0x1014F0310 prefersStatusBarHidden
+    ///   0x1014F03A4 initWithNibName:bundle:
+    /// There is no `preferredStatusBarStyle` getter between `shouldAutorotate`
+    /// and the initializer. The ONLY `preferredStatusBarStyle` getter in the
+    /// whole binary belongs to a different class — `SwiftUIIntrospect`'s
+    /// `IntrospectionPlatformViewController` @ 0x10133299C — and it forwards to a
+    /// child VC via objc_msgSend/objc_msgSendSuper2 (it does not return
+    /// `.lightContent`). The selector string @ 0x10332CDF0 has only DATA xrefs
+    /// (selector-table entries), confirming no method body on this class.
+    /// This VC therefore inherits `UIViewController.preferredStatusBarStyle`
+    /// (`.default`); no override is reconstructed.
 
     /// RE: 0x1014F0310 (prefersStatusBarHidden getter, 1.3.15). Reads the VC's own
     /// `statusHidden` ivar (`*(byte*)(self + statusHiden)` in the decompile).

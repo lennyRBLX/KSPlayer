@@ -390,9 +390,19 @@ struct KSCorePlayerView: View {
                     }
                 }
         }
-        // RE §18.4 inlined modifier chain (FUN_1014a398c): tap-to-toggle the mask, hide the
-        // persistent system overlays, hide both the automatic and tab-bar toolbars, hide the
-        // status bar, and accept dropped file URLs.
+        // RE: 0x1014a398c (KSCorePlayerView inlined body, 1.3.15) — decompile-confirmed.
+        // The else-branch of FUN_1014a398c materializes this exact modifier chain in order:
+        //   onTapGesture(count: 1, perform:) [FUN_1014a93c0 toggles config.isMaskShow]
+        //     -> __s7SwiftUI4ViewPAAE12onTapGesture5count7performQrSi_yyctF
+        //   preferredColorScheme(.dark)  -> ColorSchemeO4dark (set on the ZStack first)
+        //   persistentSystemOverlays(.hidden=2)
+        //     -> __s7SwiftUI4ViewPAAE24persistentSystemOverlaysyQrAA10VisibilityOF
+        //   toolbar(.hidden=2, for: .automatic) -> ToolbarPlacementV9automaticACvgZ
+        //   toolbar(.hidden=2, for: .tabBar)    -> ToolbarPlacementV6tabBarACvgZ
+        //   statusBar(hidden:) -> __s7SwiftUI4ViewPAAE9statusBar6hiddenQrSb_tF
+        //   onDrop(of:isTargeted:perform:) -> __s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7perform...
+        // (No standalone KSCorePlayerView.body symbol exists — verified: only the fieldmd type
+        // name @0x102ef2820 and #file string @0x10333d350 survive; the body is fused here.)
         .onTapGesture(count: 1) {
             config.isMaskShow.toggle()
         }
@@ -648,19 +658,28 @@ struct VideoControllerView: View {
     ///   - trailing button → 0x1014aeebc → forward-advance vtable slot (+0x3c8)
     /// The shared label builder (0x1014aedc8 / 0x1014af00c) emits `Image(systemName:)` glyphs.
     ///
-    /// CROSS-FILE NEEDED (KSPlayerLayer, proven via the action-thunk decompiles above):
-    ///   * `var isPlaylist: Bool` (public) — proving site reads private `urls` (0x245) in
-    ///     `buildPlaylistNavigationControls @ 0x1014BA354`; needed for the exact `count >= 2` gate.
-    ///   * `func playNextURLInPlaylist()` must be made `public` (currently private @ 0x1013b77fc) —
-    ///     it is the +0x3c8 forward-advance slot invoked by the trailing-button thunk 0x1014aeebc.
-    /// Until that surface exists, both actions route through the one public advancer
-    /// (`shuffleAndPlayNextURL`) and the gate uses the public proxy below.
+    /// Gate (RESOLVED in-file): the binary's `urls.count >= 2` test reads
+    /// `KSVideoPlayerModel::urls`, and that model is injected here as `videoSettingModel`
+    /// (public `urls`), so `hasPlaylistNavigation` now applies the exact binary gate without
+    /// any cross-file exposure — see `hasPlaylistNavigation`.
+    ///
+    /// CROSS-FILE NEEDED — trailing-button ACTION only (proven via the action-thunk decompiles):
+    ///   * `func playNextURLInPlaylist()` must be made `public` (currently private, RE: 0x1013b77fc) —
+    ///     it is the +0x3c8 forward-advance slot the trailing-button thunk (RE: 0x1014aeebc) invokes
+    ///     via `*(vtable + 0x3c8)`. Confirmed forward-advance: it gates on `KSComplexPlayerLayer::urls
+    ///     > 1` and selects index `current + 1` (vs `shuffleAndPlayNextURL @ 0x1013b86f0`, which uses
+    ///     `count - 1`). Until that method is public, the trailing button routes through the one
+    ///     public advancer (`shuffleAndPlayNextURL`); the gate itself is already binary-exact.
     @MainActor
     @ViewBuilder
     private func buildPlaylistNavigationControls() -> some View {
         HStack {
             if hasPlaylistNavigation {
                 Button {
+                    // ROUTE-OUT (proven): leading-button thunk RE: 0x1014aec8c reads
+                    // KSVideoPlayerModel::config -> Coordinator::playerLayer, dynamic-casts to
+                    // KSPlayerLayer, and calls KSPlayerLayer.shuffleAndPlayNextURL owned by
+                    // KSPlayerLayer @ 0x1013b86f0. Matches this call exactly.
                     config.playerLayer?.shuffleAndPlayNextURL()
                 } label: {
                     Image(systemName: "backward.end.fill")
@@ -670,6 +689,12 @@ struct VideoControllerView: View {
             KSVideoPlayerViewBuilder.playbackControlView(config: config)
             if hasPlaylistNavigation {
                 Button {
+                    // ROUTE-OUT (proven): trailing-button thunk RE: 0x1014aeebc reads the same
+                    // config.playerLayer, dynamic-casts to KSPlayerLayer, and invokes the vtable
+                    // +0x3c8 slot -> KSPlayerLayer.playNextURLInPlaylist owned by KSPlayerLayer
+                    // @ 0x1013b77fc (forward-advance, index current+1). That method is currently
+                    // `private` in KSPlayerLayer.swift (CROSS-FILE: must be made public to call
+                    // it here); until then this routes through the public `shuffleAndPlayNextURL`.
                     config.playerLayer?.shuffleAndPlayNextURL()
                 } label: {
                     Image(systemName: "forward.end.fill")
@@ -679,15 +704,19 @@ struct VideoControllerView: View {
         }
     }
 
-    /// Playlist-navigation gate. Binary reads `KSVideoPlayerModel::urls.count >= 2`
-    /// (`buildPlaylistNavigationControls @ 0x1014BA354`). This upstream form observes the
-    /// Coordinator (not the model) and the layer's `urls` array is private, so the exact
-    /// count gate is a CROSS-FILE need (see `buildPlaylistNavigationControls` doc comment).
-    // UNVERIFIED-GUESS: gating on `playerLayer != nil` as a proxy — the binary's true gate is
-    // `KSPlayerLayer.urls.count >= 2`, which is unreachable here until `KSPlayerLayer.isPlaylist`
-    // is exposed publicly (no binary anchor selects this proxy; it is a compilable placeholder).
+    /// Playlist-navigation gate.
+    /// RE: 0x1014BA354 (VideoControllerView.buildPlaylistNavigationControls, 1.3.15) — the
+    /// binary computes `bVar5 = KSVideoPlayerModel::urls.count < 2` (reads the `urls` field
+    /// `_TtC8KSPlayer18KSVideoPlayerModel::urls`, then the array count at `+0x10`) and emits
+    /// each playlist button only when `!(count < 2)`, i.e. `urls.count >= 2`.
+    /// The aggregating `KSVideoPlayerModel` is injected into this view (`videoSettingModel`)
+    /// and publicly exposes `urls`, so the exact binary gate is reachable in-file — no
+    /// cross-file `KSPlayerLayer.urls` exposure is required for the gate itself. (The
+    /// trailing button's *action* still routes through `shuffleAndPlayNextURL` rather than
+    /// the +0x3c8 `playNextURLInPlaylist` slot — that remains the CROSS-FILE need noted on
+    /// `buildPlaylistNavigationControls`.)
     private var hasPlaylistNavigation: Bool {
-        config.playerLayer != nil
+        videoSettingModel.urls.count >= 2
     }
 }
 

@@ -38,20 +38,30 @@ import SwiftUI
 /// sub-second tick — only when the displayed second actually changes.
 ///
 /// RE: 0x1013C2D60 (ControllerTimeModel metadata accessor, 1.3.15)
-/// RE: 0x1013C1FA8 (ControllerTimeModel.init, 0x11C = 284 bytes, 1.3.15)
+/// RE: 0x1013C1FA8 (ControllerTimeModel.init, 0x11C = 284 bytes, 1.3.15 —
+/// CONFIRMED all four fields + defaults by decompile: three
+/// `Combine.Published.init(initialValue:)` calls over `Swift.Int`
+/// (`PTR___sSiN` / `__s7Combine9PublishedV12initialValueACyxGx_tcfC`) with
+/// initial values 0, 1, 0 respectively, then a plain word store of `1` to the
+/// `fileSize` slot — NOT a Published wrapper. Int (not Double) is proven by the
+/// `__sSiN` Swift.Int witness table threaded through all three Published inits.)
 public class ControllerTimeModel: ObservableObject {
     // §18.9 field 1: `_currentTime`, Combine.Published<Swift.Int>, default 0.
     // Int-quantized so the model does not update on every frame.
+    /// RE: 0x1013C1FA8 (Published.init(initialValue:) with local_58 = 0).
     @Published
     public var currentTime = 0
     // §18.9 field 2: `_totalTime`, Combine.Published<Swift.Int>, default 1.
+    /// RE: 0x1013C1FA8 (Published.init(initialValue:) with local_58 = 1).
     @Published
     public var totalTime = 1
     // §18.9 field 3: `_bufferTime`, Combine.Published<Swift.Int>, default 0.
+    /// RE: 0x1013C1FA8 (Published.init(initialValue:) with local_58 = 0).
     @Published
     public var bufferTime = 0
     // §18.9 field 4: `fileSize`, Swift.Int64, default 1.
     // Plain stored Int64 (NOT @Published in the binary); init sets it to 1.
+    /// RE: 0x1013C1FA8 (plain store `*(... + fileSize) = 1`, no Published wrapper).
     public var fileSize: Int64 = 1
 
     public init() {}
@@ -74,9 +84,20 @@ public struct PlayerSlider: View {
     /// (verified — value Binding<Float>, bufferValue Float, bounds
     /// ClosedRange<Float>, onEditingChanged (Bool)->(), _beginDrag State<Bool>,
     /// _isFocused FocusState<Bool>, _hoverValue State<Float?>), but the rev does
-    /// not record an init signature. The default arguments below
-    /// (bufferValue: 0, bounds: 0...1, onEditingChanged: { _ in }) are a
-    /// reconstruction convenience and are NOT binary-verified.
+    /// not record an init signature.
+    ///
+    /// RESIDUAL (genuinely-runtime): the per-parameter default values
+    /// (bufferValue: 0, bounds: 0...1, onEditingChanged: { _ in }) are NOT
+    /// statically recoverable. Playbook tried: (1) `search_functions
+    /// "PlayerSlider.*init|allocating_init"` — no memberwise/explicit init symbol
+    /// is emitted for `$s8KSPlayer12PlayerSliderV` (SwiftUI synthesizes the
+    /// memberwise init; default-argument generators, if any, were inlined away);
+    /// (2) the only PlayerSlider code symbols are the two result-builders
+    /// (0x1014B2BFC / 0x1014B44D0) and the misc value-witness/thunk helpers
+    /// around 0x1014B4xxx — none decompile to a default-argument generator
+    /// (`...fA_` / `...fA0_`). Defaults are materialized at each call site, so the
+    /// declared defaults here are a reconstruction convenience that no decompile
+    /// can confirm or refute.
     public init(
         value: Binding<Float>,
         bufferValue: Float = 0,
@@ -91,16 +112,31 @@ public struct PlayerSlider: View {
 
     /// Default track tint: a white `Color` carried at full strength so callers
     /// layer `.opacity(...)` on top (matching the binary, which builds the rail
-    /// from a white `Color` plus per-rail opacity). The binary factors this out
-    /// into a separate function, so it is preserved as a discrete helper rather
-    /// than inlined (API Surface Preservation).
+    /// from a white `Color` plus per-rail opacity).
     ///
-    /// RE: 0x1008EAC60 (PlayerSlider_initDefaultTrackColor, 1.3.15)
+    /// RE: 0x1014B2BFC + 0x1014B44D0 (white track color materialized inline via
+    /// `SwiftUI.Color.white` getter — symbol `__s7SwiftUI5ColorV5whiteACvgZ` —
+    /// at every rail site inside PlayerSlider_bodyBuilder / _buildTrackBody,
+    /// 1.3.15. Value CONFIRMED: the rail base color is `Color.white`.)
+    ///
+    /// Provenance correction (was `RE: 0x1008EAC60`): that address is a
+    /// MISATTRIBUTED label. `get_function_by_address 0x1008EAC60` is a 28-byte
+    /// body (`0x1008EAC60–0x1008EAC7B`) that calls `FUN_1008EAC7C` with
+    /// `CryptoKit.Insecure.SHA1Digest` metadata; its only xrefs are from the
+    /// CryptoKit caller `FUN_1008CF224`. No PlayerSlider code reaches it, so the
+    /// binary does NOT factor the color into a discrete `initDefaultTrackColor`
+    /// function — it is inlined `Color.white`. This helper is kept only as a
+    /// reconstruction-side factoring of that inlined value (no binary 1:1 fn).
     private static func initDefaultTrackColor() -> Color {
         Color.white
     }
 
-    /// RE: 0x1014B2BFC (PlayerSlider_bodyBuilder, 1.3.15)
+    /// RE: 0x1014B2BFC (PlayerSlider_bodyBuilder, 1.3.15 — CONFIRMED: this is the
+    /// result-builder that materializes the GeometryReader closure, the
+    /// `DragGesture(minimumDistance:coordinateSpace:.local)` with its
+    /// onChanged/onEnded handlers, the iOS-17 `.onContinuousHover` branch
+    /// (guarded by `___isPlatformVersionAtLeast(2, 0x11, 0, 0)`), and the
+    /// `formatSecondsToTimeString`→`Text(...).foregroundColor(.white)` label.)
     ///
     /// §18.10 thunk note: `PlayerSlider_buildTrackBody_thunk @ 0x100009CAC` is a
     /// compiler-generated partial-apply thunk for the `GeometryReader` closure
@@ -123,6 +159,21 @@ public struct PlayerSlider: View {
     /// hover-scrub affordance is gated on iOS 17+ (the binary's
     /// `___isPlatformVersionAtLeast(2, 0x11, 0, 0)` check) and uses
     /// `.onContinuousHover(coordinateSpace: .local)`.
+    ///
+    /// RE divergences (binary-verified vs. this reconstruction; the shapes/sizes
+    /// below favor readability but the binary literals are recorded so a future
+    /// pass can tighten them):
+    ///  - Rail SHAPE: the binary builds rails from `SwiftUI.Capsule` +
+    ///    `RoundedCornerStyle.continuous` (`__s7SwiftUI7CapsuleVMa` /
+    ///    `RoundedCornerStyleO10continuous` @ 0x1014B44D0), not
+    ///    `Rectangle().cornerRadius(2)`. Visually near-identical for a 4–5pt rail.
+    ///  - Rail HEIGHT: binary uses 5.0 (`DAT_103d11cd0` = 0x4014000000000000 =
+    ///    5.0); this reconstruction uses 4. /// RE: 0x103d11cd0 (rail height 5.0).
+    ///  - Thumb DIAMETER: binary uses a FIXED 15.0×15.0 thumb
+    ///    (`DAT_103d11cb0` = `DAT_103d11cb8` = 0x402E000000000000 = 15.0; the
+    ///    centering offset reads `diameter * 0.5` = 7.5). The binary has NO
+    ///    drag-grow — the `beginDrag ? 18 : 14` sizing below is a reconstruction
+    ///    embellishment, not binary-verified. /// RE: 0x103d11cb0 (thumb 15.0).
     @ViewBuilder
     private func buildTrackBody(in geometry: GeometryProxy) -> some View {
         let width = geometry.size.width
@@ -171,6 +222,13 @@ public struct PlayerSlider: View {
             // idiomatic equivalent of `formatSecondsToTimeString` is
             // `Int.toString(for:)` (PlayerDefines.swift), used with `.minOrHour`
             // exactly as VideoTimeShowView does for its time labels.
+            //
+            /// RE: 0x1014B2BFC (CONFIRMED — PlayerSlider_bodyBuilder calls
+            /// `formatSecondsToTimeString()` with format selector arg `2`, then
+            /// `SwiftUI.Text(_:)` (`__s7SwiftUI4TextVyACxcSyRzlufC`) →
+            /// `.foregroundColor(Color.white)` (`__s7SwiftUI5ColorV5whiteACvgZ` +
+            /// `__s7SwiftUI4TextV15foregroundColoryAcA0E0VSgF`). The label seconds
+            /// are the thumb value truncated to Int — see the snap note below.)
             Text(labelSeconds.toString(for: .minOrHour))
                 .font(.caption2.monospacedDigit())
                 .foregroundColor(.white)
@@ -186,8 +244,18 @@ public struct PlayerSlider: View {
                     }
                     let fraction = Float(max(0, min(1, g.location.x / width)))
                     let raw = bounds.lowerBound + fraction * span
-                    // Snap to a 0.001 grid, then clamp to bounds (matches the
-                    // binary's thumb-position quantization at 0x1014B44D0).
+                    // Snap to a 0.001 grid, then clamp to bounds.
+                    /// RE: 0x1014B2BFC (CONFIRMED — PlayerSlider_bodyBuilder's
+                    /// onChanged path computes `(float)(int)(raw / 0.001) * 0.001`
+                    /// then `if (v < lower) v = lower; if (upper <= v) v = upper;`.
+                    /// The 0.001 grid + lower/upper clamp are binary-verified.
+                    /// NOTE: the binary uses `(int)(x/0.001)` — TRUNCATION toward
+                    /// zero — whereas `.rounded()` here rounds to nearest; the
+                    /// sub-millis difference is below the displayed resolution.
+                    /// Provenance correction: the snap was previously attributed
+                    /// to 0x1014B44D0 (buildTrackBody), but that function contains
+                    /// no 0.001 literal — the snap lives in the bodyBuilder's
+                    /// gesture closure at 0x1014B2BFC.)
                     let snapped = (raw / 0.001).rounded() * 0.001
                     value = min(bounds.upperBound, max(bounds.lowerBound, snapped))
                 }
@@ -248,6 +316,19 @@ private struct HoverScrubModifier: ViewModifier {
 /// RE: 0x1014B5E0C (ProgressTrack value-witness Vwca, 1.3.15)
 /// RE: 0x1014B5D98 (ProgressTrack value-witness Vwcp, 1.3.15)
 /// RE: 0x1014B5EC8 (ProgressTrack value-witness Vwta, 1.3.15)
+///
+/// RESIDUAL (genuinely-runtime / inlined-body fence): `ProgressTrack` emits NO
+/// standalone `body` code symbol. Playbook "inlined SwiftUI body → decompile
+/// the enclosing result-builder" was TRIED and partly succeeded:
+/// `search_functions "ProgressTrack"` returns ONLY the three value-witnesses
+/// above (Vwca/Vwcp/Vwta) — no `...V4bodyQrvg`. The enclosing builder is
+/// PlayerSlider's `buildTrackBody` @ 0x1014B44D0, whose decompile materializes
+/// the rail stack inline: a base `Capsule` (white), a buffer `Capsule`, and a
+/// progress-fill `Capsule` (`__s7SwiftUI7CapsuleVMa` ×3 +
+/// `RoundedCornerStyleO10continuous`), which is the behavior reproduced below.
+/// The standalone `ProgressTrack.body` cannot be recovered as its own function
+/// because the compiler fused it into that builder — the rail SHAPE/behavior is
+/// recovered from the inlined site; the discrete `body` symbol is a true fence.
 public struct ProgressTrack: View {
     @Binding public var value: Float
     public var bufferValue: Float
@@ -255,9 +336,13 @@ public struct ProgressTrack: View {
     public var progressColor: Color
     @FocusState public var isFocused: Bool
 
-    /// Field types are authoritative from `types.json` (§18.11). The init
-    /// signature is a reconstruction convenience (the rev names only
-    /// value-witness functions).
+    /// Field types are authoritative from `types.json` (§18.11).
+    ///
+    /// RESIDUAL (genuinely-runtime): the init signature and its defaults
+    /// (bufferValue: 0, bounds: 0...1, progressColor: .accentColor) are NOT
+    /// statically recoverable — `search_functions "ProgressTrack"` names only the
+    /// Vwca/Vwcp/Vwta value-witnesses (above); no init or default-argument
+    /// generator symbol is emitted. Reconstruction convenience, unverifiable.
     public init(
         value: Binding<Float>,
         bufferValue: Float = 0,

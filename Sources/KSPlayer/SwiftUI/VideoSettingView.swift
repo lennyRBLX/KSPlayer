@@ -281,13 +281,20 @@ extension VideoSettingView {
 
 // MARK: - DynamicInfoView
 
-/// RE: 0x1014C6BA0 (DynamicInfoView_projectedValue_getter / $dynamicInfo, 1.3.15).
+/// RE: 0x1014C6BA0 (DynamicInfoView_projectedValue_getter / $dynamicInfo, 1.3.15)
+/// — decompile confirms it calls `SwiftUI.ObservedObject.projectedValue`
+/// (`__s7SwiftUI14ObservedObjectV14projectedValueAC7WrapperVyx_Gvg`), the
+/// synthesized `$dynamicInfo` accessor for the single
+/// `_dynamicInfo :: ObservedObject<KSPlayer.DynamicInfo>` field (doc §18.13).
+/// The `"Audio Video sync"` label is a verified binary string @ 0x10333D6D0.
 ///
-/// Doc §18.13: SwiftUI View struct with a single field
-/// `_dynamicInfo :: ObservedObject<KSPlayer.DynamicInfo>`. Renders the live
+/// RESIDUAL (inlined-body): the `body` itself emits no standalone code
+/// symbol — `search_functions("DynamicInfoView")` (1.3.15) returns ONLY the
+/// projected-value getter above, no `DynamicInfoView.body`. SwiftUI fuses the
+/// `body` (the six `LabeledContent` rows) into the enclosing result builder, so
+/// it is recoverable only from the inlined site, not as a separate function.
+/// Field roster is authoritative from `types.json`; renders the live
 /// decode/render metrics (FPS, A/V sync, dropped frames, bytes read, bitrates).
-/// The `$dynamicInfo` projected-value accessor at 0x1014C6BA0 is synthesized by
-/// the `@ObservedObject` wrapper.
 @available(iOS 16, tvOS 16, macOS 13, *)
 public struct DynamicInfoView: View {
     @ObservedObject
@@ -304,11 +311,15 @@ public struct DynamicInfoView: View {
 
 // MARK: - HUDLogView
 
-/// RE: no named function (1.3.15) — `search_functions("HUDLogView")` returns none
-/// per doc §18.13; the body is inlined, so this type is reconstructed from its
-/// `types.json` field roster and documented role rather than a code address.
-/// (0x1014C6BA0 is `DynamicInfoView`'s `$dynamicInfo` projected-value accessor, a
-/// sibling type — not an anchor for `HUDLogView`, so it is deliberately not cited.)
+/// RESIDUAL (inlined-body): `HUDLogView` emits NO named code symbol in
+/// 1.3.15 — `search_functions("HUDLogView")` returns none (tried this session;
+/// confirms doc §18.13 and §18.25's inlined-value-type list). Neither the type
+/// metadata nor a `body` getter is a standalone function: the body is fused into
+/// its enclosing result builder, so it is recoverable only from the inlined site,
+/// not as a separate address. The single-field roster is authoritative from
+/// `types.json`. (0x1014C6BA0 is `DynamicInfoView`'s `$dynamicInfo`
+/// projected-value accessor — a sibling type, NOT an anchor for `HUDLogView`, so
+/// it is deliberately not cited here.)
 ///
 /// Doc §18.13: SwiftUI View struct with a single field
 /// `_dynamicInfo :: ObservedObject<KSPlayer.DynamicInfo>` — the same on-screen HUD

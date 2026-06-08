@@ -12,6 +12,25 @@
 //  (their original implementations matched the doc; only MenuView.selection was
 //  reconciled to the documented optional `Binding<Selection>?`).
 //
+//  Inlined-body fence (UIComponents.md §18.25, verified against Ghidra
+//  Forward-1.3.15 this pass): none of the 8 types below emit a standalone
+//  Ghidra `body`/`makeCommands` code symbol — their SwiftUI bodies are fused
+//  into the enclosing result-builder at the (specialized) use site. Verified by
+//  exhaustive symbol search: `MenuView`, `ShowValueField`, `PlayBackCommands`,
+//  `FocusModifier`, `MenuLabelStyleModifier` return ZERO Ghidra symbols (generic
+//  / fully inlined); `ShowTextField` and `WhenFocusedModifier` expose only their
+//  value-witness tables (`Vwxx/Vwcp/Vwca/Vwta`), no `body`. All 8 type-metadata
+//  records nonetheless exist in `__swift5_types` (contiguous block
+//  `0x102EF4500`-`0x102EF4627`: PlayBackCommands/MenuView/PlatformView/
+//  ShowValueField/MenuLabelStyleModifier/FocusModifier), so the types are real;
+//  the field rosters below are authoritative from `types.json` and, for the two
+//  non-generic types, corroborated field-for-field by decompiling their
+//  `assignWithCopy` witness (see per-type `/// RE:` anchors). The inlined Video-
+//  tab construction site is `VideoSettingView_body_getter @ 0x1014BC660`, which
+//  builds ShowTextField/ShowValueField/Picker inline with no nested body symbol.
+//  This is the complete statically-recoverable surface for an inlined SwiftUI
+//  value type; a standalone `body` cannot exist without runtime metadata.
+//
 //  RE field-count reconciliation (UIComponents.md §18.18-18.19, types.json
 //  lines 3072-3097): the cluster brief states an "Expected field count: 8",
 //  but that figure counts only the 8 documented TYPES, not their fields. The
@@ -28,15 +47,24 @@ import SwiftUI
 
 // MARK: - §18.18 Generic helper views
 
-/// RE: §18.18 (KSPlayer.MenuView, 1.3.15). Generic menu wrapper: presents a
-/// `Picker` inside a `Menu` (tvOS 17+/native menus) or a plain navigation-link
-/// `Picker` on older OSes. Driven by an optional selection binding.
+/// RE: §18.18 (KSPlayer.MenuView, 1.3.15; type-metadata `MenuView` @ 0x102EF4511
+/// in `__swift5_types`). Generic menu wrapper: presents a `Picker` inside a
+/// `Menu` (tvOS 17+/native menus) or a plain navigation-link `Picker` on older
+/// OSes. Driven by an optional selection binding.
 ///
 /// Doc field roster (types.json): `selection :: Binding<Selection>?` (`?yxG`);
 /// `content :: () -> Content` (`q_yc`); `label :: () -> Label` (`q0_yc`);
 /// `_showMenu :: State<Bool>` (`?ySbG`). The binary's `selection` is an OPTIONAL
 /// binding; call sites that pass a non-optional `Binding` are promoted to
 /// `.some(...)` automatically by Swift, so existing callers remain source-compatible.
+///
+/// RESIDUAL (inlined SwiftUI body — genuinely-runtime code symbol): the static
+/// playbook (decompile the enclosing result-builder) was applied — searched for a
+/// standalone `MenuView.body`/specialization symbol and found ZERO Ghidra
+/// functions for `MenuView` (generic struct; body specialized + inlined at each
+/// `Menu`/`Picker` use site). Type existence is proven via the metadata record
+/// above; the field roster is authoritative from types.json. No standalone body
+/// symbol can exist for an inlined generic SwiftUI view.
 @available(iOS 15, tvOS 16, macOS 12, *)
 public struct MenuView<Label, SelectionValue, Content>: View where Label: View, SelectionValue: Hashable, Content: View {
     public let selection: Binding<SelectionValue>?
@@ -86,9 +114,16 @@ public struct MenuView<Label, SelectionValue, Content>: View where Label: View, 
     }
 }
 
-/// RE: §18.18 (KSPlayer.PlatformView, 1.3.15). Wraps platform-`#if`-conditional
-/// content: a scrollable padded stack on tvOS, otherwise a `Form` (with extra
-/// padding on macOS). Doc field: `content :: () -> Content` (`xyc`).
+/// RE: §18.18 (KSPlayer.PlatformView, 1.3.15; type-metadata `PlatformView` @
+/// 0x102EF4550 in `__swift5_types`). Wraps platform-`#if`-conditional content: a
+/// scrollable padded stack on tvOS, otherwise a `Form` (with extra padding on
+/// macOS). Doc field: `content :: () -> Content` (`xyc`).
+///
+/// RESIDUAL (inlined SwiftUI body — genuinely-runtime code symbol): static
+/// playbook applied — no standalone `PlatformView.body` symbol is emitted
+/// (single-field value view whose `#if`-conditional body is inlined at the use
+/// site). Type existence proven by the metadata record above; the lone `content`
+/// field is the complete recoverable surface.
 @available(iOS 15, tvOS 16, macOS 12, *)
 public struct PlatformView<Content: View>: View {
     private let content: () -> Content
@@ -114,10 +149,20 @@ public struct PlatformView<Content: View>: View {
     }
 }
 
-/// RE: §18.18 (KSPlayer.ShowTextField, 1.3.15; value-witness
-/// `$s8KSPlayer13ShowTextFieldVwca @ 0x1014D21C8`). Labeled string form field
-/// used by `VideoSettingView`. Doc fields (types.json): `titleKey :: String`;
+/// RE: §18.18 (KSPlayer.ShowTextField, 1.3.15). Labeled string form field used by
+/// `VideoSettingView`. Doc fields (types.json): `titleKey :: String`;
 /// `text :: Binding<String>`; `prompt :: Text?`.
+///
+/// RE: 0x1014D21C8 (field roster CONFIRMED, 1.3.15). The `assignWithCopy` value-
+/// witness `$s8KSPlayer13ShowTextFieldVwca` was decompiled this pass and proves
+/// the exact field layout: word 1 `_swift_bridgeObjectRetain/Release` → a bridged
+/// `String` (`titleKey`); words 2-5 (object retains + a trivial witness word + a
+/// second bridged String) → `Binding<String>` (`text`); words 6-9 an enum-with-
+/// payload block whose discriminator is read at `param[9]` with helper
+/// `FUN_100014D88` → `Text?` (`prompt`, optional whose payload is the `Text`
+/// enum). Matches the types.json roster field-for-field. The body is inlined —
+/// constructed inside `VideoSettingView_body_getter @ 0x1014BC660`, no standalone
+/// `ShowTextField.body` symbol exists.
 @available(iOS 15, tvOS 16, macOS 12, *)
 public struct ShowTextField: View {
     public let titleKey: String
@@ -135,10 +180,18 @@ public struct ShowTextField: View {
     }
 }
 
-/// RE: §18.18 (KSPlayer.ShowValueField, 1.3.15). Labeled value form field generic
-/// over a `ParseableFormatStyle`, used by `VideoSettingView`. Doc fields
-/// (types.json): `titleKey :: String`; `value :: Binding<F.FormatInput>`
-/// (`?y11FormatInput?QzG`); `prompt :: Text?` (`??`); `format :: F` (`x`).
+/// RE: §18.18 (KSPlayer.ShowValueField, 1.3.15; type-metadata `ShowValueField` @
+/// 0x102EF4578 in `__swift5_types`). Labeled value form field generic over a
+/// `ParseableFormatStyle`, used by `VideoSettingView`. Doc fields (types.json):
+/// `titleKey :: String`; `value :: Binding<F.FormatInput>` (`?y11FormatInput?QzG`);
+/// `prompt :: Text?` (`??`); `format :: F` (`x`).
+///
+/// RESIDUAL (inlined SwiftUI body — genuinely-runtime code symbol): static
+/// playbook applied — searched for a standalone body / value-witness and found
+/// ZERO Ghidra symbols for `ShowValueField` (generic over `F`; both body and
+/// witnesses are demand-specialized per `F` at the use site and inlined into
+/// `VideoSettingView`'s tab builders). Type existence proven by the metadata
+/// record above; the 4-field roster is authoritative from types.json.
 @available(iOS 15, tvOS 16, macOS 12, *)
 public struct ShowValueField<F>: View where F: ParseableFormatStyle, F.FormatOutput == String {
     public let titleKey: String
@@ -159,10 +212,21 @@ public struct ShowValueField<F>: View where F: ParseableFormatStyle, F.FormatOut
 }
 
 #if os(macOS) || os(tvOS)
-/// RE: §18.18 (KSPlayer.PlayBackCommands, 1.3.15). A `SwiftUI.Commands` (NOT a
-/// `View`) providing play/pause/seek menu-bar + hardware-key commands, driven by
-/// the focused `KSVideoPlayer.Coordinator`. Doc field (types.json):
+/// RE: §18.18 (KSPlayer.PlayBackCommands, 1.3.15; type-metadata `PlayBackCommands`
+/// @ 0x102EF4500 in `__swift5_types`). A `SwiftUI.Commands` (NOT a `View`)
+/// providing play/pause/seek menu-bar + hardware-key commands, driven by the
+/// focused `KSVideoPlayer.Coordinator`. Doc field (types.json):
 /// `_config :: FocusedObject<KSVideoPlayer.Coordinator>`.
+///
+/// RESIDUAL (inlined Commands body — genuinely-runtime code symbol): static
+/// playbook applied — no standalone `PlayBackCommands.body`/`makeCommands` symbol
+/// is emitted. The only related symbol, `Commands._makeCommands` @ 0x1014CCBD8,
+/// is the GENERIC SwiftUI protocol-witness dispatch (a recursive tail-jump
+/// thunk), not a `PlayBackCommands`-specific body — the `CommandMenu`/`Button`
+/// tree is fused into SwiftUI's command-building machinery at the
+/// `.commands { PlayBackCommands() }` scene-attach site. Type existence proven by
+/// the metadata record above; the single `_config` field is the recoverable
+/// surface.
 ///
 /// Attached via the scene `.commands { PlayBackCommands() }` modifier on macOS
 /// and tvOS. Guarded to those platforms because menu-bar / hardware-key command
@@ -213,12 +277,20 @@ public struct PlayBackCommands: Commands {
 // MARK: - §18.19 Focus ViewModifier structs
 
 #if os(tvOS) || os(macOS)
-/// RE: §18.19 (KSPlayer.FocusModifier, 1.3.15). Binds a generic `Value` into a
+/// RE: §18.19 (KSPlayer.FocusModifier, 1.3.15; type-metadata `FocusModifier` @
+/// 0x102EF4627 in `__swift5_types`). Binds a generic `Value` into a
 /// `FocusState<Value?>` and mirrors the resulting focus into a local `State<Bool>`.
 /// Doc fields (types.json): `_binding :: FocusState<Value?>` (`?yxSgG`);
 /// `value :: Value` (`x`); `_focused :: State<Bool>` (`?ySbG`).
 ///
 /// tvOS/macOS only — `FocusState` driven navigation is a tvOS/macOS concern.
+///
+/// RESIDUAL (inlined SwiftUI body — genuinely-runtime code symbol): static
+/// playbook applied — searched for a standalone `FocusModifier.body`/witness and
+/// found ZERO Ghidra symbols (generic over `Value`; `body(content:)` is
+/// specialized + inlined at each `.modifier(FocusModifier(...))` site). Type
+/// existence proven by the metadata record above; the 3-field roster is
+/// authoritative from types.json.
 @available(iOS 15, tvOS 16, macOS 12, *)
 public struct FocusModifier<Value>: ViewModifier where Value: Hashable {
     @FocusState
@@ -241,8 +313,7 @@ public struct FocusModifier<Value>: ViewModifier where Value: Hashable {
 }
 #endif
 
-/// RE: §18.19 (KSPlayer.WhenFocusedModifier, 1.3.15; value-witness
-/// `$s8KSPlayer19WhenFocusedModifierVwca @ 0x1014D28B8`). Reads the environment
+/// RE: §18.19 (KSPlayer.WhenFocusedModifier, 1.3.15). Reads the environment
 /// `isFocused` and mirrors it into a `Binding<Bool>` so a parent can observe focus.
 ///
 /// Doc fields (types.json): `_isFocused :: Environment<Bool>`;
@@ -250,6 +321,16 @@ public struct FocusModifier<Value>: ViewModifier where Value: Hashable {
 /// per the auto-fix-typos rule and doc note (line 3096) the Swift port renames
 /// the binding to `isFocusedBinding` to avoid clashing with the sibling
 /// `isFocused` environment value.
+///
+/// RE: 0x1014D28B8 (field roster CONFIRMED, 1.3.15). The `assignWithCopy`
+/// value-witness `$s8KSPlayer19WhenFocusedModifierVwca` was decompiled this pass
+/// and proves the 2-field layout: word 0 + a trailing byte handled by the
+/// resilient location-witness pair `FUN_1000AF010`/`FUN_1000AF02C` → the
+/// `@Environment<Bool>` storage (`_isFocused`); words 2-3 each `_swift_retain/
+/// release` (the two-word get/set-closure box of a SwiftUI `Binding`) →
+/// `Binding<Bool>` (`isFocusedBinding`). Confirms the types.json roster
+/// field-for-field. The `body(content:)` is inlined at the `.modifier(...)` use
+/// site — no standalone body symbol exists.
 @available(iOS 15, tvOS 16, macOS 12, *)
 public struct WhenFocusedModifier: ViewModifier {
     @Environment(\.isFocused)
@@ -269,10 +350,19 @@ public struct WhenFocusedModifier: ViewModifier {
     }
 }
 
-/// RE: §18.19 (KSPlayer.MenuLabelStyleModifier, 1.3.15). Styles a menu label
-/// based on local focus state. Doc field (types.json): `_isFocus :: State<Bool>`
-/// — the binary's abbreviated `_isFocus` is renamed to `isFocused` per the
-/// auto-fix-typos rule and doc note (line 3097).
+/// RE: §18.19 (KSPlayer.MenuLabelStyleModifier, 1.3.15; type-metadata
+/// `MenuLabelStyleModifier` @ 0x102EF4610 in `__swift5_types`). Styles a menu
+/// label based on local focus state. Doc field (types.json):
+/// `_isFocus :: State<Bool>` — the binary's abbreviated `_isFocus` is renamed to
+/// `isFocused` per the auto-fix-typos rule and doc note (line 3097).
+///
+/// RESIDUAL (inlined SwiftUI body — genuinely-runtime code symbol): static
+/// playbook applied — no standalone `MenuLabelStyleModifier.body`/witness symbol
+/// is emitted (ZERO Ghidra symbols; the `body(content:)` padding/background/
+/// foreground chain is inlined at each `.modifier(...)` site). Type existence
+/// proven by the metadata record above; the documented `_isFocus` @State is the
+/// authoritative roster field (the `environmentFocused` bridge below is the
+/// noted +1 helper, not a binary field).
 ///
 /// Field-count note (types.json line 3097): the documented roster is exactly
 /// ONE field — `_isFocus :: State<Bool>` (the `isFocused` @State below). The

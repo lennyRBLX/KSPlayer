@@ -448,23 +448,31 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
-    /// RE: base-class virtual (KSSliderDelegate-style delta), dispatched via
-    /// vtable +0x360 from panGestureChanged; mangled sig 0x1047385af.
-    /// IOSVideoPlayerView overrides this slot at vtable +0x360 (out of cluster).
-    /// (VideoPlayerView.panValue(velocity:direction:currentTime:totalTime:), 1.3.15)
+    /// RE: 0x1015064e4 (VideoPlayerView.panValue base impl, 1.3.15). Base-class
+    /// virtual; the IOSVideoPlayerView vtable slot +0x360 (vtable entry at data
+    /// 0x103c67140) points back at this base address 0x1015064e4 — IOSVideoPlayerView
+    /// does NOT override panValue, it inherits this body (corrects the earlier
+    /// "IOSVideoPlayerView overrides +0x360" note). Dispatched via vtable +0x360 from
+    /// panGestureChanged_impl@0x1014e0e80 (call sites 0x1014e0f60 / 0x1014e1090 /
+    /// 0x1014e119c, each: ldr x8,[meta+0x360]; blr x8).
     ///
-    /// Signature note (§5.2): the binary's slot is
-    /// `(velocity, ?, currentTime, totalTime, isVolume)`. The trailing `isVolume`
-    /// discriminator selected the seek vs. volume/brightness branch; the idiomatic
-    /// upstream KSPlayer signature carries the same branch information in
-    /// `direction: KSPanDirection` (.horizontal == seek; .vertical == isVolume/brightness).
-    /// Horizontal constants are RE-verified exact: divisor 0x40000 (262144),
-    /// clamp [-0.01, +0.01]. The §5.2 "3.0x velocity multiplier" and "60s-interval
-    /// haptic" are NOT applied here — they live in the IOSVideoPlayerView override
-    /// of vtable+0x360 (out of this cluster), not in the base-class panValue.
-    /// UNVERIFIED-GUESS: vertical divisor 0x2800 (10240) — upstream KSPlayer value
-    /// carried over; §5.2 pseudo-code documented only the horizontal seek path, so
-    /// no binary anchor pins the vertical brightness/volume divisor.
+    /// Signature note (§5.2): the binary slot is `(velocityX, velocityY, ?, totalTime,
+    /// discriminator)`. The trailing `discriminator` (`param_5 & 1`) selects the
+    /// seek vs. volume/brightness branch; the idiomatic upstream KSPlayer signature
+    /// carries the same information in `direction: KSPanDirection`
+    /// (.horizontal == seek; .vertical == volume/brightness). Note KSPanDirection
+    /// raw values invert the binary's flag: the binary returns the vertical result
+    /// when `discriminator & 1 != 0`, and .vertical.rawValue == 1, so the branch maps
+    /// 1:1.
+    ///
+    /// All constants decompile-verified against 0x1015064e4 (disasm):
+    ///   horizontal divisor 0x40000 (262144) — asm float32 0x36800000 == 3.8146973e-06 == 1/0x40000;
+    ///   horizontal clamp [-0.01, +0.01] — asm float32 0xBC23D70A / 0x3C23D70A;
+    ///   vertical divisor 0x2800 (10240) — asm float32 0xC6200000 == -10240.0, i.e. `velocityY / -10240`.
+    /// There is NO 3.0x velocity multiplier and no haptic in this function — the
+    /// horizontal path is exactly `clamp(velocityX/0x40000, -0.01, 0.01) * totalTime`
+    /// (the §5.2 "3.0x"/"60s haptic" notes do not materialize in any panValue slot;
+    /// if present at all they belong to a different gesture path, not this one).
     open func panValue(velocity point: CGPoint, direction: KSPanDirection, currentTime _: Float, totalTime: Float) -> Float {
         if direction == .horizontal {
             return max(min(Float(point.x) / 0x40000, 0.01), -0.01) * totalTime
