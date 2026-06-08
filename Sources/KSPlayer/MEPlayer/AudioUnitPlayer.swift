@@ -10,32 +10,38 @@ import AVFAudio
 import CoreAudio
 import QuartzCore
 
-/// Raw `AudioUnit` API implementation. Lowest latency, no processing chain.
+/// Raw `AudioUnit` API implementation. Lowest latency, NO processing chain.
 /// Uses RemoteIO on iOS/tvOS and HALOutput on macOS.
 ///
 /// RE: 0x1013f89e4 (AudioUnitPlayer.init, 1.3.15) — full disasm 0x1013f89e4–0x1013f8b58.
-/// Field layout (init-verified offsets): outputUnit @+0x10, rateUnit @+0x20 (varispeed),
-/// volumeUnit @+0x28 (MultiChannelMixer), minDelayAfterPrepare @+0x48 (0.15),
-/// playbackRate @+0x54 (1.0f), isMuted @+0x58, outputLatencySystem @+0x68.
+/// init creates EXACTLY ONE AudioUnit (the output unit, self+0x10) via the single
+/// `AudioComponentInstanceNew` call site at 0x1013f8aec. There is NO varispeed unit and
+/// NO mixer unit — no `AudioComponentInstanceNew` for either exists anywhere in the class.
+/// Init-verified field layout:
+///   self+0x10 = output AudioUnit (RemoteIO/HALOutput)
+///   self+0x18 = currentRenderReadOffset (UInt32)
+///   self+0x20 = sourceNodeAudioFormat (AVAudioFormat) — set by prepare @0x1013f8b5c, NOT a unit
+///   self+0x28 = weak renderSource (swift_unknownObjectWeakInit)
+///   self+0x48 = minDelayAfterPrepare (Double, 0.15 = 0x3fc3333333333333)
+///   self+0x50 = isPlaying (Bool) — prepare stops/re-arms the output unit off this flag
+///   self+0x54 = playbackRate (Float, 1.0f = 0x3f800000)
+///   self+0x58 = isMuted (Bool)
+///   self+0x68 = outputLatencySystem (Double) — AVAudioSession.outputLatency snapshot
+///
+/// `playbackRate` and `volume` are AudioOutput protocol requirements. This player has no
+/// processing units to route them through, so they are backed as STORED properties (matching
+/// the binary: no `AudioUnitGet/SetParameter` for rate/volume is emitted against self+0x10).
+/// `isMuted` is enforced in software by zeroing the render buffer in the input callback.
 public final class AudioUnitPlayer: AudioOutput {
     /// Output RemoteIO/HALOutput AudioUnit. (self+0x10) Created in `init`.
     /// RE: 0x1013f8aec (AudioComponentInstanceNew → self+0x10, EnableIO on input element).
     private var audioUnitForOutput: AudioUnit!
 
-    /// Varispeed AudioUnit handle backing `playbackRate`. (self+0x20)
-    /// Rate is applied at the unit level via `AudioUnitGet/SetParameter(inID: 0, inScope: 1)`.
-    /// `init` zeroes this; the unit is created lazily in `setupProcessingUnits()`.
-    /// RE: rate getter 0x1013f49d0 / setter 0x1013f4a50 (both `ldr x0,[self+0x20]`, scope 1).
-    private var rateUnit: AudioUnit?
-
-    /// MultiChannelMixer AudioUnit handle backing `volume`. (self+0x28)
-    /// Volume is applied at the unit level via `kMultiChannelMixerParam_Volume`
-    /// (`AudioUnitGet/SetParameter(inID: 0, inScope: 0)`).
-    /// `init` zeroes this; the unit is created lazily in `setupProcessingUnits()`.
-    /// RE: volume getter 0x1013f47c8 / setter 0x1013f4848 (scope 0, param 14 = volume).
-    private var volumeUnit: AudioUnit?
-
     private var currentRenderReadOffset = UInt32(0)
+
+    /// Last-negotiated source format. (self+0x20)
+    /// RE: 0x1013f8b5c (prepare) — `str param_1,[self+0x20]` after the NSObject `==` early-out;
+    /// init leaves it nil (zeroed at 0x1013f89e4). This is the stored format, NOT a varispeed unit.
     private var sourceNodeAudioFormat: AVAudioFormat?
     private var sampleSize = UInt32(MemoryLayout<Float>.size)
     public weak var renderSource: OutputRenderSourceDelegate?
@@ -78,53 +84,21 @@ public final class AudioUnitPlayer: AudioOutput {
         }
     }
 
-    /// Playback rate. Backing default 1.0f stored at self+0x54; get/set are applied at the
-    /// unit level through the varispeed `rateUnit` (self+0x20, scope 1, param id 0).
+    /// Playback rate (AudioOutput requirement). Stored property, init default 1.0f. (self+0x54)
     ///
-    /// RE: getter 0x1013f49d0 / setter 0x1013f4a50 (1.3.15) — both `AudioUnitGet/SetParameter`
-    /// on the rate unit with `inScope = kAudioUnitScope_Input` (1). The stored 1.0f default is
-    /// init-written at self+0x54 (0x1013f8a48).
-    public var playbackRate: Float {
-        get {
-            guard let rateUnit else { return storedPlaybackRate }
-            var value = AudioUnitParameterValue(storedPlaybackRate)
-            AudioUnitGetParameter(rateUnit, 0, kAudioUnitScope_Input, 0, &value)
-            return Float(value)
-        }
-        set {
-            storedPlaybackRate = newValue
-            guard let rateUnit else { return }
-            AudioUnitSetParameter(rateUnit, 0, kAudioUnitScope_Input, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
+    /// RE: 0x1013f8a48 (AudioUnitPlayer.init, 1.3.15) — `str` of 0x3f800000 (1.0f) into self+0x54.
+    /// This player has no varispeed unit (init makes only the output unit at self+0x10), so the
+    /// rate is held as a stored scalar; there is no `AudioUnitGet/SetParameter` for it anywhere
+    /// in the class. (Rate-via-unit lives in the sibling AudioEnginePlayer / graph players.)
+    public var playbackRate: Float = 1
 
-    /// Stored playback-rate default (self+0x54, init 1.0f). Serves as the backing value before
-    /// the varispeed unit exists, and as the cached scalar the unit get/set round-trips.
-    private var storedPlaybackRate: Float = 1
-
-    /// Volume. Applied at the unit level through the MultiChannelMixer `volumeUnit`
-    /// (self+0x28, scope 0, `kMultiChannelMixerParam_Volume`).
+    /// Volume (AudioOutput requirement). Stored property, default 1.0.
     ///
-    /// RE: getter 0x1013f47c8 / setter 0x1013f4848 (1.3.15) — `AudioUnitGet/SetParameter` on the
-    /// mixer unit with `inID` (0) and `inScope = kAudioUnitScope_Global` (0). The binary passes
-    /// scope literal 0 (Global), NOT Output (2): disasm shows
-    /// `_AudioUnitGet/SetParameter(unit=self+0x28, inID=0, inScope=0, inElement=0, …)`.
-    public var volume: Float {
-        get {
-            guard let volumeUnit else { return storedVolume }
-            var value = AudioUnitParameterValue(storedVolume)
-            AudioUnitGetParameter(volumeUnit, kMultiChannelMixerParam_Volume, kAudioUnitScope_Global, 0, &value)
-            return Float(value)
-        }
-        set {
-            storedVolume = newValue
-            guard let volumeUnit else { return }
-            AudioUnitSetParameter(volumeUnit, kMultiChannelMixerParam_Volume, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
-
-    /// Stored volume backing value, used before the mixer unit exists.
-    private var storedVolume: Float = 1
+    /// RE: 0x1013f89e4 (AudioUnitPlayer.init, 1.3.15) — the init default block writes no volume
+    /// unit and emits no mixer-param call. With no MultiChannelMixer in this player, volume is a
+    /// plain stored scalar; the render path copies samples verbatim (mute aside). Mixer-backed
+    /// volume is an AudioEnginePlayer/graph-player concern, not this raw-AudioUnit path.
+    public var volume: Float = 1
 
     /// Mute state (self+0x58). Implemented by writing zeros in the render callback when set,
     /// matching the binary (no dedicated mute unit).
@@ -135,11 +109,13 @@ public final class AudioUnitPlayer: AudioOutput {
     /// `outputLatencySystem`. Refreshed in `init` and `flush()`.
     private var outputLatency = TimeInterval(0)
 
-    /// RE: 0x1013f89e4 (AudioUnitPlayer.init, 1.3.15) — full disasm.
-    /// Sets the default-field block (minDelayAfterPrepare = 0.15, playbackRate = 1.0f,
-    /// isMuted = false, outputLatencySystem snapshot) and creates ONLY the output unit.
-    /// The rate (self+0x20) and mixer (self+0x28) units are NOT created here — a separate
-    /// setup path (`setupProcessingUnits()`) builds them.
+    /// RE: 0x1013f89e4 (AudioUnitPlayer.init, 1.3.15) — full disasm 0x1013f89e4–0x1013f8b58.
+    /// Sets the default-field block (minDelayAfterPrepare = 0.15 @+0x48, playbackRate = 1.0f
+    /// @+0x54, isMuted = false @+0x58, outputLatencySystem snapshot @+0x68) and weak-inits
+    /// renderSource @+0x28, then creates EXACTLY ONE AudioUnit — the output unit @+0x10 — via the
+    /// single `AudioComponentInstanceNew` call site (0x1013f8aec), enabling IO on its input
+    /// element. self+0x20 (the source format) is zeroed here and filled by `prepare`. There is no
+    /// varispeed or mixer unit anywhere in the class.
     public init() {
         // Snapshot the system output latency once (Forward field self+0x68).
         // RE: 0x1013f8ab8 — [[AVAudioSession sharedInstance] outputLatency].
@@ -173,49 +149,19 @@ public final class AudioUnitPlayer: AudioOutput {
                              UInt32(MemoryLayout<UInt32>.size))
     }
 
-    /// Lazily creates the varispeed (`rateUnit`, self+0x20) and MultiChannelMixer
-    /// (`volumeUnit`, self+0x28) processing units and pushes the cached `playbackRate`/`volume`
-    /// onto them. `init` deliberately leaves both nil (it only creates the output unit); the
-    /// binary defers their creation to a separate setup path (residual in the doc), which we
-    /// anchor at the first `prepare(audioFormat:)`.
+    /// Negotiates the output unit for a new source format and (re)initializes it.
     ///
-    /// Kept as a distinct step from the output-unit creation in `init` per the API-surface
-    /// preservation rule: rate and volume are driven through two SEPARATE unit handles, not
-    /// folded into the output unit.
-    private func setupProcessingUnits() {
-        if rateUnit == nil {
-            var varispeedDescription = AudioComponentDescription()
-            varispeedDescription.componentType = kAudioUnitType_FormatConverter
-            varispeedDescription.componentSubType = kAudioUnitSubType_Varispeed
-            varispeedDescription.componentManufacturer = kAudioUnitManufacturer_Apple
-            if let component = AudioComponentFindNext(nil, &varispeedDescription) {
-                var unit: AudioUnit?
-                AudioComponentInstanceNew(component, &unit)
-                rateUnit = unit
-                if let rateUnit {
-                    // Push the cached rate (self+0x54) onto the freshly created unit.
-                    AudioUnitSetParameter(rateUnit, 0, kAudioUnitScope_Input, 0, AudioUnitParameterValue(storedPlaybackRate), 0)
-                }
-            }
-        }
-        if volumeUnit == nil {
-            var mixerDescription = AudioComponentDescription()
-            mixerDescription.componentType = kAudioUnitType_Mixer
-            mixerDescription.componentSubType = kAudioUnitSubType_MultiChannelMixer
-            mixerDescription.componentManufacturer = kAudioUnitManufacturer_Apple
-            if let component = AudioComponentFindNext(nil, &mixerDescription) {
-                var unit: AudioUnit?
-                AudioComponentInstanceNew(component, &unit)
-                volumeUnit = unit
-                if let volumeUnit {
-                    // Push the cached volume (self+0x54-adjacent stored value) onto the mixer.
-                    // Scope 0 (Global) to match the binary's volume setter at 0x1013f4848.
-                    AudioUnitSetParameter(volumeUnit, kMultiChannelMixerParam_Volume, kAudioUnitScope_Global, 0, AudioUnitParameterValue(storedVolume), 0)
-                }
-            }
-        }
-    }
-
+    /// RE: 0x1013f8b5c (AudioUnitPlayer.prepare, 1.3.15). The binary, in order:
+    ///   • early-outs when the stored format (self+0x20) is NSObject-`==` to the incoming one;
+    ///   • stores the new format at self+0x20 (releasing the old);
+    ///   • if isPlaying (self+0x50 == 1) calls `AudioOutputUnitStop` then clears the flag, and
+    ///     `AudioUnitUninitialize`, before reconfiguring;
+    ///   • `setPreferredOutputNumberOfChannels:` / `setPreferredSampleRate:` on the shared
+    ///     `AVAudioSession` (RemoteIO platforms);
+    ///   • `AudioUnitSetProperty` StreamFormat (8) / AudioChannelLayout (0x13) /
+    ///     SetRenderCallback (0x17) on the OUTPUT unit (self+0x10), all scope Input (1);
+    ///   • `AudioUnitAddRenderNotify` + `AudioUnitInitialize`.
+    /// Crucially it touches ONLY self+0x10 — there is no varispeed/mixer unit to configure.
     public func prepare(audioFormat: AVAudioFormat) {
         let now = CACurrentMediaTime()
         guard now - lastPrepareTime >= minDelayAfterPrepare else { return }
@@ -224,8 +170,6 @@ public final class AudioUnitPlayer: AudioOutput {
             return
         }
         sourceNodeAudioFormat = audioFormat
-        // Create the rate/mixer units on first prepare (init leaves them nil).
-        setupProcessingUnits()
         #if !os(macOS)
         // AVAudioSession channel negotiation only exists on RemoteIO platforms.
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
@@ -262,20 +206,15 @@ public final class AudioUnitPlayer: AudioOutput {
     }
 
     /// Teardown. The load-bearing step is `AudioUnitUninitialize(outputUnit)` — the binary's
-    /// class DESTROY vtable slot (0x1013f936c) before `__deallocating_deinit` (0x1013fa094).
-    /// The Swift-level `deinit` + ARC release of the unit handles is the idiomatic equivalent of
-    /// that {destroy, dealloc-deinit} pair. Also disposes the lazily-created rate/mixer units.
+    /// class DESTROY vtable slot (0x1013f936c) ahead of `__deallocating_deinit` (0x1013fa094).
+    /// The Swift `deinit` + ARC release of the single output-unit handle is the idiomatic
+    /// equivalent of that {destroy, dealloc-deinit} pair. There are no rate/mixer units to
+    /// dispose — the binary's dealloc-deinit only `swift_release`s self+0x10/+0x18 and deallocs.
     /// RE: 0x1013f936c (DESTROY slot: AudioUnitUninitialize(self+0x10)) +
     ///     0x1013fa094 (__deallocating_deinit: swift_release self+0x10/+0x18, deallocObject).
     deinit {
         if let audioUnitForOutput {
             AudioUnitUninitialize(audioUnitForOutput)
-        }
-        if let rateUnit {
-            AudioComponentInstanceDispose(rateUnit)
-        }
-        if let volumeUnit {
-            AudioComponentInstanceDispose(volumeUnit)
         }
     }
 }

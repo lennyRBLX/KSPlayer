@@ -7,6 +7,11 @@
 
 import AVFoundation
 import AVKit
+// Libavutil: needed by setAVDictOption(key:value:dict:) for the C av_dict_set /
+// av_dict_set_int writers (RE: 0x101429304). Matches the import surface of the
+// sibling MEPlayer files that build AVDictionary options (AVFFmpegExtension.swift,
+// TranscodeContext.swift). All three target platforms link FFmpegKit statically.
+import Libavutil
 #if canImport(UIKit)
 import UIKit
 #else
@@ -459,11 +464,11 @@ private extension KSMEPlayer {
     /// baseline by delegating the consolidated timing-field clear to
     /// `options.resetOptions()` (binary `options` witness `[+0x310]`), then zeroes
     /// the four KSMEPlayer-owned state fields and drives the demux item to its
-    /// terminal `.finished` state (state transition 6 — `MESourceState.finished`).
+    /// terminal end-of-stream state (state transition 6 — `MEPlayerItem.State.endOfStream`).
     ///
     /// Decompile order (verified): `options.resetOptions()` → `loadState = .idle`
     /// (0) → `playbackState = .idle` (0, with the state-change delegate forward) →
-    /// `isReadyToPlay = false` → `loopCount = 0` → playerItem state→6 (.finished)
+    /// `isReadyToPlay = false` → `loopCount = 0` → playerItem state→6 (.endOfStream)
     /// via the relocated MEPlayerItem set-state dispatcher (0x10142a680) → tail
     /// clear-video gate on `KSOptions.isClearVideoWhereReplace`.
     ///
@@ -477,16 +482,14 @@ private extension KSMEPlayer {
         playbackState = .idle
         isReadyToPlay = false
         loopCount = 0
-        // Drive the demux/decode item to its terminal state (transition 6 =
-        // MESourceState.finished). The binary calls the relocated MEPlayerItem
-        // set-state dispatcher (0x10142a680) on the retained playerItem.
-        // CROSS-FILE NEEDED: MEPlayerItem.swift has no public hook to request the
-        // .finished(6) transition (its `state` is private). The closest public
-        // surface that retires the read loop is `playerItem.shutdown()`, but that
-        // also tears down I/O — heavier than the binary's bare state write. Until
-        // MEPlayerItem exposes a finish hook, the playerItem state-6 transition is
-        // left to the existing lifecycle (shutdown path), matching observable
-        // behavior without an out-of-cluster edit.
+        // Drive the demux/decode item to its terminal end-of-stream state
+        // (transition 6 = MEPlayerItem.State.endOfStream). RE 0x1014234dc: the
+        // binary retains the playerItem and routes a State.endOfStream (raw 6)
+        // transition through the relocated set-state dispatcher (0x10142a680).
+        // `markEndOfStream()` (MEPlayerItem) performs exactly that bare state-byte
+        // write + `_state` Published re-publish — distinct from `shutdown()`,
+        // which additionally tears down I/O.
+        playerItem.markEndOfStream()
         // Tail: clear the displayed frame when configured (mirrors shutdown()).
         if KSOptions.isClearVideoWhereReplace {
             if let metalPlayView = videoOutput as? MetalPlayView {
@@ -676,6 +679,30 @@ extension KSMEPlayer: MediaPlayerProtocol {
         videoOutput?.options = options
     }
 
+    /// RE: 0x10141d328 — the engine hand-off for `KSPlayerLayer.replacePlayerFromMEPlayerItem`
+    /// (0x1013b07c4), branch 3 of player-type selection: swap the inner player from an
+    /// already-constructed `MEPlayerItem` rather than building one from a URL. Verified
+    /// decompile order: `reset()` (which drives the *outgoing* item to `.endOfStream` and
+    /// clears engine state) → drop the old item's delegate → adopt `newItem` → copy
+    /// `newItem.options` into the engine → re-attach the delegate and re-point the audio /
+    /// video outputs' `renderSource` at the new item. Unlike `replace(url:options:)`, the
+    /// binary does NOT rebuild `videoOutput` here — it keeps the existing render surface
+    /// and only re-points it.
+    public func replace(playerItem newItem: MEPlayerItem) {
+        KSLog("replace playerItem \(self)")
+        // RE: FUN_10141d328 calls KSMEPlayer_reset() first (NOT shutdown()).
+        reset()
+        playerItem.delegate = nil
+        playerItem = newItem
+        let options = newItem.options
+        self.options = options
+        playerItem.delegate = self
+        audioOutput.flush()
+        audioOutput.renderSource = playerItem
+        videoOutput?.renderSource = playerItem
+        videoOutput?.options = options
+    }
+
     public var currentPlaybackTime: TimeInterval {
         get {
             playerItem.currentPlaybackTime
@@ -747,18 +774,49 @@ extension KSMEPlayer: MediaPlayerProtocol {
         playerItem.dynamicInfo
     }
 
-    /// RE: 0x101429304 (KSMEPlayer.setAVDictOption, 1.3.15). Thin wrapper that
-    /// writes a single key/value into an FFmpeg `AVDictionary` during item/option
-    /// setup (the binary's `av_dict_set(&dict, key, value, 0)` helper). Exposed so
-    /// callers can layer format/codec options onto the player's FFmpeg context
-    /// without reaching into the C dictionary directly.
-    /// TODO(re-verify): exact owning dictionary (format-context vs codec options)
-    /// and whether a non-zero flags argument (e.g. AV_DICT_APPEND) is ever passed
-    /// — the decompile body could not be retrieved this session (Ghidra timeout);
-    /// modeled here as the standard overwrite (flags 0) against the options'
-    /// `formatContextOptions`.
-    func setAVDictOption(key: String, value: String) {
-        options.formatContextOptions[key] = value
+    /// RE: 0x101429304 (1.3.15). RESOLVED — this address does NOT belong to
+    /// KSMEPlayer. Ghidra's name heuristic labels 0x101429304
+    /// `KSMEPlayer_setAVDictOption`, but its *sole* caller is
+    /// `Remuxer_configureOutputStreams` @ 0x1014291a4 (a ProAVPlayer HLS-remux
+    /// method, adjacent to the `Remuxer_*` / `RemuxerIOAction_*` cluster). It is a
+    /// per-entry `[String: Any]` → C `AVDictionary` option builder, not a player
+    /// method and not a `formatContextOptions` poke.
+    ///
+    /// Decompiled body (this session — the earlier Ghidra timeout is cleared):
+    /// the value arg is `Any` (not `String`). It `_swift_dynamicCast`s the boxed
+    /// value in order Int64 → Int → String → [String] → [String:String] and writes
+    /// into a *caller-supplied* `AVDictionary **` (param_4):
+    ///   • Int64 / Int  → `av_dict_set_int` (FUN_102c06d28 @ 0x102c06d28; snprintf
+    ///                    "%lld" then av_dict_set with DONT_STRDUP_VAL cleared),
+    ///   • String       → `av_dict_set`     (FUN_102c06a40 @ 0x102c06a40),
+    ///   • [String]     → join with "+"  (0x2b) then `av_dict_set`,
+    ///   • [String:String] → join "key=value" pairs with "\r\n" then `av_dict_set`.
+    /// The owning dictionary is therefore the caller's *local* AVDictionary — not a
+    /// format-context vs codec-options choice on any `KSOptions` — and the flags
+    /// argument is always 0 (plain overwrite). No `AV_DICT_APPEND` is ever passed
+    /// by this helper.
+    ///
+    /// CANONICAL HOME: this logic is already reconstructed (same RE anchor) as
+    /// `TranscodeContext.applyOption(key:value:dict:)` and as the generic
+    /// `Dictionary<String, _>.avOptions` builder in AVFFmpegExtension.swift. The
+    /// KSMEPlayer-side helper that existed here was a mis-attributed phantom with a
+    /// wrong signature (`value: String`) and a wrong body (writing
+    /// `options.formatContextOptions`); it had zero call sites. Kept below only as a
+    /// thin, behaviour-faithful pass-through over an `inout` C dictionary so the
+    /// address stays cross-referenceable; real consumers use the canonical home.
+    func setAVDictOption(key: String, value: Any, dict: inout OpaquePointer?) {
+        if let int64Value = value as? Int64 {
+            av_dict_set_int(&dict, key, int64Value, 0)
+        } else if let intValue = value as? Int {
+            av_dict_set_int(&dict, key, Int64(intValue), 0)
+        } else if let stringValue = value as? String {
+            av_dict_set(&dict, key, stringValue, 0)
+        } else if let arrayValue = value as? [String] {
+            av_dict_set(&dict, key, arrayValue.joined(separator: "+"), 0)
+        } else if let dictValue = value as? [String: String] {
+            let joined = dictValue.map { "\($0.key)=\($0.value)" }.joined(separator: "\r\n")
+            av_dict_set(&dict, key, joined, 0)
+        }
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {

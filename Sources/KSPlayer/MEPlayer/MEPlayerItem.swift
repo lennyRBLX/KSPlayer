@@ -103,8 +103,15 @@ public final class MEPlayerItem: Sendable {
         case cannotResume = 3
     }
 
-    private let url: URL
-    private let options: KSOptions
+    // Module-internal (not `private`): the binary's
+    // `KSPlayerLayer.replacePlayerFromMEPlayerItem` (0x1013b07c4) reads these two
+    // fields directly from same-module code — it copies `MEPlayerItem.options`
+    // into the layer and writes `self.url = MEPlayerItem.io.url`. The demuxer-I/O
+    // URL (`io.url` in the binary) is the source URL the item was constructed
+    // with, surfaced here as `url`. Same exposure rationale as `ioContext` above.
+    // `let` keeps them read-only outside `init`; relaxing only the visibility.
+    let url: URL
+    let options: KSOptions
     private let operationQueue = OperationQueue()
     private let condition = NSCondition()
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
@@ -144,9 +151,33 @@ public final class MEPlayerItem: Sendable {
     private var pbArray: [PBSlot] = []
 
     /// Each entry in `pbArray`: one `AbstractAVIOContext`-backed open.
-    fileprivate struct PBSlot {
+    ///
+    /// RE: the binary's `pbArray` is a Swift `Array` of `PBClass` (the
+    /// reconstructed accounting class in `PBClass.swift`), each element heap
+    /// allocated and individually retained while `updatePBArrayProgress`
+    /// (0x10142d174) walks it. `PBClass` owns the byte bookkeeping (fields
+    /// `pb`@+0x10, `_bytesRead`@+0x18, `add`@+0x20). We wrap it here in a small
+    /// reference type that *also* retains the matching `AbstractAVIOContext`:
+    /// the binary keeps that object alive through the `Unmanaged.passRetained`
+    /// stored in the AVIOContext's `opaque`, but holding it explicitly makes the
+    /// ARC lifetime obvious on the Swift side and gives us the receiver for the
+    /// close witness during teardown / `io_close2` matching.
+    fileprivate final class PBSlot {
+        /// Binary `PBClass` element — owns the per-context byte accounting
+        /// (`updateBytesRead()` / `totalBytesRead`).
+        let pbClass: PBClass
+        /// The Swift I/O object kept alive alongside the context.
         let context: AbstractAVIOContext
-        let pb: UnsafeMutablePointer<AVIOContext>
+
+        /// The opened `AVIOContext *` (the binary's `PBClass.pb`, slot+0x10).
+        /// Force-unwrapped: every tracked slot is created around a freshly
+        /// opened context, so `PBClass.pb` is always non-nil here.
+        var pb: UnsafeMutablePointer<AVIOContext> { pbClass.pb! }
+
+        init(context: AbstractAVIOContext, pb: UnsafeMutablePointer<AVIOContext>) {
+            self.context = context
+            self.pbClass = PBClass(pb: pb)
+        }
     }
 
     /// RE: Suspension continuation for the read loop when the source pauses
@@ -294,6 +325,18 @@ public final class MEPlayerItem: Sendable {
         }
     }
 
+    /// Drive the item to its terminal end-of-stream state (`State.endOfStream`, 6).
+    ///
+    /// RE: cross-file hook for `KSMEPlayer.reset()` (0x1014234dc), whose verified
+    /// decompile retains the `playerItem` and routes a `State.endOfStream` (raw 6)
+    /// transition through the relocated state dispatcher `FUN_10142a680`. `state`
+    /// is `private`; this exposes the in-class write so `reset()` can perform the
+    /// bare state-byte transition the binary drives (the `.endOfStream` arm of the
+    /// `didSet` is a no-op beyond the `_state` Published re-publish).
+    func markEndOfStream() {
+        state = .endOfStream
+    }
+
     private lazy var timer: Timer = .scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
         self?.codecDidChangeCapacity()
     }
@@ -302,7 +345,12 @@ public final class MEPlayerItem: Sendable {
         // metadata可能会实时变化。所以把它放在DynamicInfo里面
         toDictionary(self?.formatCtx?.pointee.metadata)
     } bytesRead: { [weak self] in
-        self?.formatCtx?.pointee.pb?.pointee.bytes_read ?? 0
+        // RE: the binary's DynamicInfo.bytesRead closure (0x10143d9d0, stored at
+        // DynamicInfo+0x20) is a bare tail-call to updatePBArrayProgress. Bytes
+        // flow through the custom-IO `pbArray` sub-contexts (which include the
+        // primary input — FFmpeg opens it via the same `io_open` that appends
+        // slots), not the top-level `formatCtx.pb`, so the count is summed there.
+        self?.updatePBArrayProgress() ?? 0
     } audioBitrate: { [weak self] in
         Int(8 * (self?.audioTrack?.bitrate ?? 0))
     } videoBitrate: { [weak self] in
@@ -2000,43 +2048,61 @@ extension MEPlayerItem {
     }
 
     /// RE: 0x10142d174 (MEPlayerItem_updatePBArrayProgress, 1.3.15)
-    /// Walks the custom-IO `pbArray` slots, sums the bytes pulled through each
-    /// open `AVIOContext` (`bytes_read`), and feeds the aggregate as an I/O
-    /// buffering-progress percentage to the delegate. This is the custom-protocol
-    /// counterpart to the FFmpeg-default `dynamicInfo.bytesRead` reporter
-    /// (`formatCtx.pb.bytes_read`): when the source is opened through the cache
-    /// hierarchy, the bytes flow through the `pbArray`-tracked sub-contexts rather
-    /// than the top-level `formatCtx.pb`, so progress is summed from the slots.
+    /// Total bytes pulled through the custom-IO layer. This is the `bytesRead`
+    /// provider for `dynamicInfo` — the binary's `DynamicInfo.bytesRead` closure
+    /// (`0x10143d9d0`, stored at DynamicInfo+0x20) is a bare tail-call to this
+    /// method. Despite the binary symbol's "progress" name, it computes **no**
+    /// percentage and touches **no** delegate: it returns a raw `Int64` byte
+    /// count, the custom-IO counterpart to the FFmpeg-default
+    /// `formatCtx.pb.bytes_read` reader.
     ///
-    /// - Returns: The aggregate buffering progress as a 0–100 `UInt8`.
-    @discardableResult
-    func updatePBArrayProgress() -> UInt8 {
+    /// Two acquisition paths in the binary, in priority order:
+    ///   1. Fast path (0x10142d1d0-0x10142d2b8): when not still `.opening`, the
+    ///      binary attempts `ioContext as? <P>` via `swift_dynamicCast` (source
+    ///      metadata = `AbstractAVIOContext` from `0x1013ca710`; destination
+    ///      witness/type slots `DAT_103d08df8`/`DAT_102eeb9b0` are GOT-zeroed
+    ///      with no recoverable name strings) and, on a non-empty existential,
+    ///      dispatches the protocol's byte accessors and returns that count
+    ///      directly (`return lVar12` @ 0x10142d29c). This is only a shortcut:
+    ///      it yields the *same logical value* — total bytes through the IO layer
+    ///      — as the slot sum below, just sourced from the top context when it
+    ///      conforms. The concrete protocol is not statically expressible here
+    ///      without modifying `AbstractAVIOContext` (a different file), and the
+    ///      slot sum is exactly the path the binary itself falls through to when
+    ///      the cast fails, so we implement the always-correct slot sum.
+    ///   2. Slot sum (0x10142d2e0-0x10142d45c): walk `pbArray` and sum each
+    ///      element's reset-aware running total. The binary's `state == 1`
+    ///      (`.opening`) check at 0x10142d1c8 jumps straight here, skipping the
+    ///      fast path while the source is still opening.
+    ///
+    /// Per-element accounting is delegated to `PBClass` (see `PBClass.swift`),
+    /// whose `updateBytesRead()` / `totalBytesRead` reconstruct the binary's
+    /// reset-aware fold (0x10142d378-0x10142d3cc):
+    ///   - `current = pb->bytes_read` (the inner read `*(pb + 0xc0)`).
+    ///   - if `current < _bytesRead` the counter went backwards (the AVIOContext
+    ///     was reopened/seeked and reset), so `add += _bytesRead` before update.
+    ///   - `_bytesRead = current`; element total = `add + _bytesRead`.
+    /// Because FFmpeg opens the format context's primary input through the same
+    /// `io_open` callback that appends slots (see `_customIOOpen`'s
+    /// `defaultIOOpen` branch @ 0x101436a30-0x101436b30), `pbArray` carries the
+    /// main `pb` too — so this sum equals `formatCtx.pb.bytes_read` for plain
+    /// sources and additionally covers segmented / multi-context (HLS cache
+    /// hierarchy) sources.
+    ///
+    /// - Returns: Total bytes read across the custom-IO layer.
+    func updatePBArrayProgress() -> Int64 {
+        // Slot sum — the always-correct path the binary computes directly while
+        // `.opening` and falls through to whenever the ioContext fast-path cast
+        // does not apply (see step 1/2 above).
         guard !pbArray.isEmpty else { return 0 }
-        // Sum bytes read across every tracked custom-IO sub-context.
-        var totalBytesRead: Int64 = 0
+        var total: Int64 = 0
         for slot in pbArray {
-            totalBytesRead += slot.pb.pointee.bytes_read
+            // Refresh the live counter with the reset-aware fold, then add this
+            // element's running total (`add + _bytesRead`). RE: 0x10142d378.
+            slot.pbClass.updateBytesRead()
+            total += slot.pbClass.totalBytesRead
         }
-        // TODO(re-verify): exact pbArray progress computation. The doc names the
-        // function ("Update PB array buffering progress") but does not specify the
-        // denominator. We report progress relative to the known container size
-        // (initFileSize, preserved from avio_size at open); for size-less live
-        // sources we fall back to the bitrate-derived fileSize estimate. Clamped
-        // to 0...100 to match LoadingState.progress (UInt8).
-        let denominator = initFileSize > 0 ? Double(initFileSize) : fileSize
-        let progress: UInt8
-        if denominator > 0 {
-            let ratio = Double(totalBytesRead) / denominator
-            progress = UInt8(max(0.0, min(100.0, ratio * 100.0)))
-        } else {
-            progress = 0
-        }
-        // Feed the computed progress to the delegate via the standard loading
-        // state, mirroring codecDidChangeCapacity's reporting path. Track-level
-        // counts come from the current video/audio capacities.
-        let loadingState = options.playable(capacitys: videoAudioTracks, isFirst: isFirst, isSeek: isSeek)
-        delegate?.sourceDidChange(loadingState: loadingState)
-        return progress
+        return total
     }
 }
 
@@ -2184,10 +2250,11 @@ extension MEPlayerItem {
     /// `AV_FRAME_DATA_*` constant from FFmpegKit's `<libavutil/frame.h>`, which
     /// is the source of truth for the exact integer value. Cross-ref
     /// PlayerCore.md / DolbyVision.md / TrackDecode.md side-data tables. NOTE:
-    /// the DV RPU / DV-metadata staging copies (binary type 0x18=24
-    /// `AV_FRAME_DATA_DOVI_RPU_BUFFER`, type 0x19=25 `AV_FRAME_DATA_DOVI_METADATA`)
-    /// are handled in FFmpegDecode.swift, NOT here — this entry point covers the
-    /// CC / mastering-display / content-light / SEI / dynamic-HDR / ambient arms.
+    /// the DV RPU staging copy (binary type 0x18=24 `AV_FRAME_DATA_DOVI_RPU_BUFFER`)
+    /// is handled in FFmpegDecode.swift; the DV-metadata arm (type
+    /// `AV_FRAME_DATA_DOVI_METADATA`) — which carries the binary's
+    /// `FUN_10150c0a4` serialize + 3-condition activation gate + DoviDisplayModel
+    /// install — is reconstructed here (see the dedicated case below).
     ///   0x01 / 1  (AV_FRAME_DATA_A53_CC)                     -> CC packet -> subtitle track
     ///   0x0B / 11 (AV_FRAME_DATA_MASTERING_DISPLAY_METADATA) -> MasteringDisplayMetadata
     ///   0x0E / 14 (AV_FRAME_DATA_CONTENT_LIGHT_LEVEL)        -> ContentLightMetadata
@@ -2195,6 +2262,7 @@ extension MEPlayerItem {
     ///   0x14 / 20 (AV_FRAME_DATA_SEI_UNREGISTERED)           -> CMTime-stamped SEI string callback
     ///   (AV_FRAME_DATA_DYNAMIC_HDR_VIVID)                    -> HDR Vivid flag
     ///   (AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT)          -> AmbientViewingEnvironment
+    ///   (AV_FRAME_DATA_DOVI_METADATA)                        -> DV serialize + activation gate
     ///
     /// - Parameters:
     ///   - frame: The decoded AVFrame containing side data
@@ -2317,6 +2385,74 @@ extension MEPlayerItem {
                     ambient_light_x: UInt16(data.ambient_light_x.num).bigEndian,
                     ambient_light_y: UInt16(data.ambient_light_y.num).bigEndian
                 )
+
+            // Type 0x19 / 25: AV_FRAME_DATA_DOVI_METADATA -- Dolby Vision activation.
+            //
+            // RE: 0x101407908 type-0x18 arm (the binary dispatches the DV-metadata
+            // staging + activation under the 0x18 immediate; the symbolic constant
+            // AV_FRAME_DATA_DOVI_METADATA from <libavutil/frame.h> is the source of
+            // truth for the exact integer). The binary's arm does three things in
+            // sequence:
+            //   1. `FUN_10150c0a4(metadata)` -> serialize to the 3008-byte KSDOVIMetadata
+            //      buffer, then `memcpy(self+0x70, serialized, 0xBC0)`.
+            //      RE: 0x101407be0 (call to convertAVDOVIToKSDOVIMetadata)
+            //   2. A 3-condition activation gate.
+            //      RE: 0x101407c40 .. 0x101407cc4
+            //   3. Install the DoviDisplayModel singleton (DAT_104458878) into
+            //      `KSOptions.display`, guarded by a `_swift_once`-built model.
+            //      RE: 0x101407cb0 (display existential write), DAT_104458878 read at
+            //      0x101407cc4, KSOptions_createDoviDisplayModel once-token DAT_103d06108.
+            case AV_FRAME_DATA_DOVI_METADATA:
+                let metadataPtr = sideData.data.withMemoryRebound(
+                    to: AVDOVIMetadata.self, capacity: 1
+                ) { $0 }
+                // Step 1: serialize via the address-anchored named entry point
+                // (= the binary's FUN_10150c0a4 call). Produces the 0xBC0 GPU buffer.
+                let gpuMetadata = convertAVDOVIToKSDOVIMetadata(metadataPtr)
+
+                // Step 2: 3-condition activation gate (DolbyVision.md lines 899-909).
+                // The binary reads, in order:
+                //   * track DV flag `*(byte*)(track+0x13a) & 1`  -> `assetTrack.dovi != nil`
+                //   * AVFrame pixel format `*(int*)(frame+0x120) == 2` (AV_PIX_FMT_VIDEOTOOLBOX)
+                //   * `KSOptions.hardwareDecode == 1`
+                // Gate is independent of `enhanceDolby` (processFrameSideData does NOT
+                // read DAT_104450978) -- matching the render-site gate at
+                // MetalPlayView.swift drawFrame (RE: same 0x101407908 anchor).
+                let trackIsDovi = assetTrack.dovi != nil
+                let frameIsVideoToolbox = frame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue
+                if trackIsDovi, frameIsVideoToolbox, options.hardwareDecode {
+                    // Step 3: DoviDisplayModel "install".
+                    //
+                    // STRUCTURAL DIVERGENCE (intentional, see DisplayModel.swift lines
+                    // 15-23): the binary writes the DoviDisplayModel singleton
+                    // (DAT_104458878) into `KSOptions.display`, which is an EXISTENTIAL
+                    // `DisplayEnum` protocol there. This reconstruction keeps
+                    // `DisplayEnum` a value-type *enum* (geometry-only: plane/vr/vrBox),
+                    // so a `DoviDisplayModel` class instance cannot be stored in it.
+                    // The DV reshape path is instead installed OUT-OF-BAND via the
+                    // `doviMetadata:` parameter on `MetalView.draw` ->
+                    // `MetalRender.drawDovi(...)` (MetalPlayView.swift draw, lines
+                    // 989-990), with `DoviGPUMetadata.from` rebuilding the buffer at the
+                    // render site (MetalPlayView.swift:631). The DoviDisplayModel type
+                    // itself (DisplayMetal-owned) is preserved unchanged; only the
+                    // install mechanism differs.
+                    //
+                    // The observable activation effect the binary's display swap
+                    // produces -- DV tone-mapped rendering with `dynamicRange` reported
+                    // as Dolby Vision -- is realized here by setting the activation
+                    // marker that the render path consumes. This mirrors the binary's
+                    // dynamicRange tail (MetalPlayView.swift:664/714,
+                    // `options.dynamicRange = .dolbyVision`).
+                    options.dynamicRange = .dolbyVision
+                    // Stage the serialized buffer for the renderer (the binary's
+                    // `self+0x70` staging; here surfaced through the per-frame
+                    // `doviMetadata:` render path). `_ =` documents that the buffer is
+                    // produced and gated even though MEPlayerItem does not own the
+                    // CAMetalLayer; the FFmpegDecode decode loop performs the equivalent
+                    // `self+0x70` copy and the VideoVTBFrame carries the DV metadata
+                    // downstream to drawDovi.
+                    _ = gpuMetadata
+                }
 
             default:
                 break

@@ -171,9 +171,19 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
-    // RE field #8 (0x1041F79C0) `url`.
+    // RE field #8 (0x1041F79C0) `url`. Backed by `_url`: most writers go through the
+    // computed `url` setter below, which runs the 3-way player-selection branch (the
+    // binary's `url` property observer). `replacePlayerFromMEPlayerItem` (0x1013b07c4)
+    // instead stores the field raw (value-witness copy, no observer) because it hands
+    // the already-built item to the engine itself; it writes `_url` directly. `init`
+    // likewise seeds `_url` directly (the observer cannot run before `super.init`).
+    private var _url: URL
     public private(set) var url: URL {
-        didSet {
+        get { _url }
+        set {
+            // Manual oldValue capture (computed setter has no implicit `oldValue`).
+            let oldValue = _url
+            _url = newValue
             let firstPlayerType: MediaPlayerProtocol.Type
             if isWirelessRouteActive {
                 // airplay的话，默认使用KSAVPlayer
@@ -267,7 +277,10 @@ open class KSPlayerLayer: NSObject {
     // remote command handlers (gated on `options.registerRemoteControll`), then factors notification
     // observer registration into `initNotificationObservers`.
     public init(url: URL, isAutoPlay: Bool = KSOptions.isAutoPlay, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
-        self.url = url
+        // Seed the backing field directly: the computed `url` setter runs the
+        // player-selection branch and cannot execute before `super.init()` / before
+        // `player` is set. The designated-init player wiring happens explicitly below.
+        _url = url
         self.options = options
         self.delegate = delegate
         let firstPlayerType: MediaPlayerProtocol.Type
@@ -365,10 +378,9 @@ open class KSPlayerLayer: NSObject {
     /// seeks with the completion handler. When the player is not yet ready it stashes the seek target
     /// (`shouldSeekTo`) and the auto-play intent, then fires completion(false).
     ///
-    /// CROSS-FILE NEEDED: the verified decompile clears `SubtitleModel.parts` (Combine `_parts`
-    /// key-path write) before seeking, but `SubtitleModel.parts` is `private(set)` (Subtitle/
-    /// KSSubtitle.swift). Expose a `clearParts()` method (or relax the setter) so the pre-seek clear
-    /// can be reinstated. The seek itself proceeds without it for now.
+    /// RE: the verified decompile clears `SubtitleModel.parts` (Combine `_parts` key-path write,
+    /// `parts = []`) before seeking, so stale cues do not flash during the jump. `SubtitleModel.parts`
+    /// is `private(set)`; the in-class write is exposed via `SubtitleModel.clearParts()`.
     open func play(time: TimeInterval, autoPlay: Bool, completion: ((Bool) -> Void)? = nil) {
         guard time.isFinite else {
             completion?(false)
@@ -376,7 +388,9 @@ open class KSPlayerLayer: NSObject {
         }
         if player.isReadyToPlay, player.seekable {
             if abs(time - player.currentPlaybackTime) >= 1.0 {
-                // RE: clear subtitles before the seek (subtitleModel.parts = []) — gated, CROSS-FILE.
+                // RE: clear subtitles before the seek (subtitleModel.parts = [], `_parts` Published
+                // write) so stale cues do not flash during the jump.
+                subtitleModel.clearParts()
                 player.seek(time: time) { [weak self] finished in
                     guard let self else { return }
                     if autoPlay {
@@ -761,29 +775,35 @@ extension KSPlayerLayer {
     /// RE: 0x1013b07c4 `replacePlayerFromMEPlayerItem` (0x304/772B). Branch 3 of player-type selection:
     /// replace the inner player from an already-constructed `MEPlayerItem`. Per the verified decompile
     /// it copies the item's `options` into the layer, swaps the layer URL to the item's source URL
-    /// (`MEPlayerItem.io.url`), resets the UI (`resetPlayerUI`), then updates Published state. Carries
-    /// ZERO `enhanceDolby`/`DAT_104450978` references — the DV/player-type routing decision is owned by
-    /// `PlayerCenter` (see PlayerCore.md §enhanceDolby); this method only swaps in the chosen player
-    /// after that decision is made.
+    /// (`MEPlayerItem.io.url`), resets the UI (`resetPlayerUI`), re-publishes `state = .initialized`,
+    /// then hands the item to the engine (`KSMEPlayer.replace(playerItem:)`, FUN_10141d328 — which in
+    /// turn runs `KSMEPlayer.reset()`). Carries ZERO `enhanceDolby`/`DAT_104450978` references — the
+    /// DV/player-type routing decision is owned by `PlayerCenter` (see PlayerCore.md §enhanceDolby);
+    /// this method only swaps in the chosen player after that decision is made.
     ///
-    /// CROSS-FILE NEEDED: MEPlayerItem.swift currently keeps `url`, `options`, and `io`/`ioContext`
-    /// private — there is no public accessor to read `playerItem.options` or `playerItem.io.url`, and
-    /// KSMEPlayer.swift exposes no `replace(playerItem:)` entry. The options-copy, URL-swap, and item
-    /// hand-off below are therefore gated behind those accessors. Until they exist (MEPlayerItem +
-    /// KSMEPlayer clusters), this method performs only the in-scope UI reset + state re-publish.
+    /// Cross-file decls this depends on (all reinstated): `MEPlayerItem.options` and the source URL
+    /// (`MEPlayerItem.url`; the binary's `io.url` is the demuxer-I/O source URL) are now module-internal
+    /// reads, and `KSMEPlayer.replace(playerItem:)` performs the engine hand-off.
     func replacePlayerFromMEPlayerItem(_ playerItem: MEPlayerItem) {
-        // The current player must be an MEPlayer-family engine for the item swap to apply.
-        guard player is KSMEPlayer else { return }
-        // RE step (verified decompile): self.options = playerItem.options
-        //   — requires `MEPlayerItem.options` to be public (CROSS-FILE).
-        // RE step: self.url = playerItem.io.url
-        //   — requires `MEPlayerItem.io`/`io.url` to be public (CROSS-FILE).
-        // RE step: hand the constructed item to the engine
-        //   — requires `KSMEPlayer.replace(playerItem:)` (CROSS-FILE).
+        // The current player must be an MEPlayer-family engine for the item swap to apply
+        // (binary: `player as? KSMEPlayer` cast gate — the whole body is skipped when nil).
+        guard let mePlayer = player as? KSMEPlayer else { return }
+        // RE: self.options = playerItem.options (verified decompile; retain/release of the KSOptions
+        // reference). `options` has no observer, so the direct property write is faithful.
+        options = playerItem.options
+        // RE: self.url = playerItem.io.url — the item's source URL. Written to the backing field
+        // directly (binary does a raw value-witness field store, NOT the property observer): the
+        // engine hand-off below performs the player swap, so the `url` setter's 3-way selection branch
+        // must NOT run here.
+        _url = playerItem.url
+        // RE: resetPlayerUI() — push url/options into the subtitle model + reload sources.
         resetPlayerUI()
-        // Re-publish state so observers see the freshly-swapped item (binary updates the Published
-        // `_state` via the Combine key-path tail at the end of the function).
+        // RE: state = .initialized (FUN_1013aebc0(0) observer log/notify + the `_state` Published
+        // write). Re-publish so observers see the freshly-swapped item.
         state = .initialized
+        // RE: hand the constructed item to the engine (FUN_10141d328 → KSMEPlayer.replace(playerItem:),
+        // which calls KSMEPlayer.reset() and re-points the audio/video outputs + delegate at the item).
+        mePlayer.replace(playerItem: playerItem)
     }
 
     /// RE: 0x1013ae954 `resetPlayerUI` (0x150/336B). Reset the UI-side state to defaults after a
@@ -791,14 +811,12 @@ extension KSPlayerLayer {
     /// reloads the subtitle data sources for that URL — matching the binary's
     /// `SubtitleModel_resetAndReloadSubtitleSources` call), then copies the layer's `options` into the
     /// subtitle model so HDR/positioning preferences track the new media.
-    ///
-    /// CROSS-FILE NEEDED: SubtitleModel (Subtitle/KSSubtitle.swift) has no `options` stored property,
-    /// but the verified decompile writes `SubtitleModel::options = KSPlayerLayer::options`. Add an
-    /// `options: KSOptions` field to SubtitleModel so this copy can be reinstated.
     func resetPlayerUI() {
         // RE: assigning `url` triggers SubtitleModel.url.didSet → reload of subtitle data sources.
         subtitleModel.url = url
-        // RE: self.options copied into subtitleModel.options — gated on the missing field (CROSS-FILE).
+        // RE: self.options copied into subtitleModel.options (verified decompile tail; retain/release
+        // of the KSOptions reference). SubtitleModel.options is `KSOptions?` (KSSubtitle.swift:588).
+        subtitleModel.options = options
     }
 
     // MARK: - Class predicates
@@ -910,15 +928,14 @@ extension KSPlayerLayer {
     /// currentTime/totalTime, and (3) auto-advances buffering(3)→bufferFinished(4) when the load state
     /// reports playable.
     ///
-    /// CROSS-FILE NEEDED: SubtitleModel has no `dynamicRange` stored property, but the verified
-    /// decompile copies `KSOptions::dynamicRange` into `SubtitleModel::dynamicRange` here. Add a
-    /// `dynamicRange: DynamicRange` field to SubtitleModel (Subtitle/KSSubtitle.swift) to reinstate
-    /// the sync (the `dynamicRange` lives on `VideoSubtitleView`/`MetalSubtitleView` today, not the
-    /// model).
     private func handlePlaybackStateUpdate(currentTime: TimeInterval, totalTime: TimeInterval) {
         if player.isReadyToPlay {
-            // (1) Keep the subtitle container aligned with the current player-view geometry.
-            // RE: also copies options.dynamicRange → subtitleModel.dynamicRange (gated, CROSS-FILE).
+            // (1a) Sync the video dynamic range from options into the subtitle model so HDR-aware
+            // subtitle rendering tracks the current media. RE: single-byte copy
+            // `KSOptions::dynamicRange` → `SubtitleModel::dynamicRange` (both non-optional
+            // `DynamicRange`; KSOptions.swift:68, KSSubtitle.swift:584).
+            subtitleModel.dynamicRange = options.dynamicRange
+            // (1b) Keep the subtitle container aligned with the current player-view geometry.
             subtitleView.frame = player.view?.frame ?? subtitleView.frame
         }
         // (2) Delegate notification.
@@ -999,10 +1016,13 @@ extension KSPlayerLayer {
 
     // MARK: - Picture in Picture
 
-    /// RE: 0x1013b79dc `stopPictureInPicture` (0x88/136B). Stop PiP and clean up. The binary also
-    /// writes the `KSComplexPlayerLayer.isPictureInPictureStopped` flag; that field lives on the
-    /// subclass (see CROSS-FILE note below), so the base implementation performs only the
-    /// base-accessible teardown — stopping the engine PiP controller and restoring the UI.
+    /// RE: 0x1013b79dc `stopPictureInPicture` (0x88/136B). Stop PiP and clean up: stop the engine PiP
+    /// controller with `restoreUserInterface: true`. The binary additionally writes the
+    /// `KSComplexPlayerLayer.isPictureInPictureStoped = false` flag FIRST — but that field lives on the
+    /// subclass, so the flag write is performed by `KSComplexPlayerLayer.stopPictureInPicture()`
+    /// (override), which sets the flag and then calls `super` for this controller teardown. (In the
+    /// binary the single method resolves the field into the subclass storage because `self` is always a
+    /// `KSComplexPlayerLayer` at the relevant call sites.)
     open func stopPictureInPicture() {
         if #available(tvOS 14.0, *) {
             player.pipController?.stop(restoreUserInterface: true)

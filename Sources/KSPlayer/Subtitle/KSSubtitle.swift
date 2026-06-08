@@ -575,6 +575,17 @@ open class SubtitleModel: ObservableObject {
     @Published
     public private(set) var parts = [SubtitlePart]()
 
+    /// Clear the active subtitle parts (Combine `_parts` Published write).
+    ///
+    /// RE: cross-file hook for `KSPlayerLayer.play(time:autoPlay:completion:)`
+    /// (0x1013b1b2c), whose verified decompile writes `subtitleModel.parts = []`
+    /// through the `_parts` key-path before issuing a long seek, so stale cues do
+    /// not flash during the jump. `parts` is `private(set)`; this exposes the
+    /// in-class write to that external pre-seek clear.
+    public func clearParts() {
+        parts = []
+    }
+
     /// #7 — user timing adjustment (seconds); not `@Published`.
     /// RE field `subtitleDelay: Double`.
     public var subtitleDelay = 0.0 // s

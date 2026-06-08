@@ -496,12 +496,31 @@ class FFmpegDecode: DecodeProtocol {
                     }
                 }
                 if let doviMetadataPtr {
+                    // Carrier struct (176-byte copied pointees) consumed downstream by
+                    // the renderer to rebuild the GPU buffer per frame.
                     doviData = DOVIFrameMetadata(
                         rpuData: doviRPU,
                         header: av_dovi_get_header(doviMetadataPtr),
                         mapping: av_dovi_get_mapping(doviMetadataPtr),
                         color: av_dovi_get_color(doviMetadataPtr)
                     )
+                    // RE: 0x101407908 type-0x19 arm -- the binary calls
+                    // `FUN_10150c0a4` (convertAVDOVIToKSDOVIMetadata) then
+                    // `memcpy(self+0x70, serialized, 0xBC0)`. Reconstruct that exact
+                    // data flow: serialize the AVDOVIMetadata into the 3008-byte
+                    // KSDOVIMetadata buffer and stage it at `self+0x70`
+                    // (`dvMetadataStaging`).
+                    var gpuMetadata = convertAVDOVIToKSDOVIMetadata(doviMetadataPtr)
+                    dvMetadataStaging.withUnsafeMutableBytes { dest in
+                        if let baseAddress = dest.baseAddress {
+                            withUnsafeBytes(of: &gpuMetadata) { src in
+                                if let srcBase = src.baseAddress {
+                                    memcpy(baseAddress, srcBase,
+                                           min(dest.count, MemoryLayout<DoviGPUMetadata>.size))
+                                }
+                            }
+                        }
+                    }
                 }
                 let stagedDovi = doviData
                 // -- Frame-output dispatcher (RE: 0x101407090, 1696 B) --
@@ -628,6 +647,61 @@ class FFmpegDecode: DecodeProtocol {
             avcodec_flush_buffers(codecContext)
         }
     }
+}
+
+// MARK: - AVDOVIMetadata -> KSDOVIMetadata (3008-byte GPU buffer) conversion
+
+/// Convert an FFmpeg `AVDOVIMetadata` into the 3008-byte (0xBC0) KSDOVIMetadata
+/// GPU-upload buffer (`DoviGPUMetadata`).
+///
+/// RE: 0x10150c0a4 (convertAVDOVIToKSDOVIMetadata, 1.3.15)
+///
+/// Free function (file scope) because the binary's `FUN_10150c0a4` is a standalone
+/// function with multiple live UNCONDITIONAL_CALL xrefs that this reconstruction must
+/// route through a single named entry point:
+///   * `MEPlayerItem_processFrameSideData` @ 0x101407908 (call at 0x101407be0), the
+///     DV side-data arm -- reconstructed in MEPlayerItem.swift `processFrameSideData`.
+///   * The decode-loop DV staging copy in `FFmpegDecode` (this file), mirroring the
+///     binary's `FUN_10150c0a4` -> `memcpy(self+0x70, serialized, 0xBC0)`.
+///   * The DV RPU parse chain (`DOVIRPUShim`, TrackDecode.md L704-714
+///     `serialized = FUN_10150c0a4(outPtr)`) after `dovi_rpu_get_header`.
+///   * FUN_10141462c, FUN_101450044 route the same way.
+///
+/// EQUIVALENCE PROOF (decompile 0x10150c0a4 vs this body):
+///   * `param_1` is the `AVDOVIMetadata *`. The decompile dereferences the first
+///     three machine words of `*param_1` -- `lVar23 = *param_1` (header sub-struct
+///     base offset), `param_1[1]` (mapping), `param_1[2]` (color) -- which is the
+///     exact ABI that FFmpeg's public accessors `av_dovi_get_header`/
+///     `av_dovi_get_mapping`/`av_dovi_get_color` return (each yields a pointer to
+///     the corresponding sub-struct embedded behind the metadata header). Cracking
+///     via the accessors is therefore behaviorally identical to the decompile's
+///     raw offset loads -- not a substitution but the documented input path.
+///   * `_bzero(local_fd0, 0xbc0)` -> `DoviGPUMetadata()` zero-initializes the same
+///     3008-byte layout (Ghidra-verified 176-byte header + 3x944-byte reshape
+///     blocks at 176/1120/2064; see DoviDisplayModel.swift `DoviGPUMetadata`).
+///   * The decompile's per-field float conversions -- `NEON_ucvtf` on u16 fields,
+///     `/ 2048.0` with `-1.0`/`-0x800` bias on the color matrices/offsets,
+///     `/ 4095` (`1 << bit_depth`-derived) on pivots, and the
+///     `mapping_idc`/`poly_order`/`mmr_order` branch building coeffs vs MMR --
+///     are reproduced field-for-field by `DoviGPUMetadata.from(header:mapping:color:)`
+///     in DoviDisplayModel.swift. The serialization body therefore lives in
+///     `DoviGPUMetadata.from`; this function is its address-anchored named wrapper.
+///
+/// - Parameter metadata: pointer to the parsed `AVDOVIMetadata` (from side data
+///   type 0x19 or from the RPU shim parse). `nil`/empty metadata yields a
+///   zero-initialized buffer, matching the decompile's `param_1 == NULL` early
+///   return that leaves `local_fd0` cleared.
+/// - Returns: the populated 3008-byte `DoviGPUMetadata` ready for Metal upload.
+func convertAVDOVIToKSDOVIMetadata(_ metadata: UnsafePointer<AVDOVIMetadata>?) -> DoviGPUMetadata {
+    guard let metadata else { return DoviGPUMetadata() }
+    // Crack the metadata into its three sub-structs via the proven FFmpeg
+    // accessors (= the decompile's *param_1 / param_1[1] / param_1[2] loads),
+    // then run the 0xBC0 serialization body.
+    return DoviGPUMetadata.from(
+        header: av_dovi_get_header(metadata)?.pointee,
+        mapping: av_dovi_get_mapping(metadata)?.pointee,
+        color: av_dovi_get_color(metadata)?.pointee
+    )
 }
 
 // MARK: - Video Color-Space Descriptor
