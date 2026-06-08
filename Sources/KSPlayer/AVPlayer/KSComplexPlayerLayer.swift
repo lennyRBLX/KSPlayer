@@ -276,6 +276,21 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         onPlayerReadySetupAll()
     }
 
+    // MARK: - Stop PiP (RE: KSPlayerLayer_stopPictureInPicture @ 0x1013b79dc)
+
+    /// RE: 0x1013b79dc `stopPictureInPicture` (0x88/136B). The verified decompile
+    /// writes `KSComplexPlayerLayer.isPictureInPictureStoped = false` FIRST, then
+    /// stops the engine PiP controller with `restoreUserInterface: true`
+    /// (vtable+0xd8, arg 1). The flag lives on this subclass — the binary's method
+    /// is defined on `KSPlayerLayer` but resolves the field into the subclass
+    /// storage because `self` is a `KSComplexPlayerLayer` — so the field write is
+    /// reinstated here, in subclass scope, before delegating the controller
+    /// teardown to the base implementation.
+    open override func stopPictureInPicture() {
+        isPictureInPictureStopped = false
+        super.stopPictureInPicture()
+    }
+
     // MARK: - Deinit (RE: KSComplexPlayerLayer_deinit_cleanup @ 0x1013b43d0)
 
     deinit {

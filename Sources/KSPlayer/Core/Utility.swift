@@ -17,17 +17,26 @@ import AppKit
 #if canImport(MobileCoreServices)
 import MobileCoreServices.UTType
 #endif
+/// RE: 0x1013E5E0C (LayerContainerView class metadata, 1.3.15)
+/// ObjC-rooted UIView, 0 stored fields. Hosts a custom gradient backing
+/// CALayer — used as the top/bottom mask overlays (`topMaskView` /
+/// `bottomMaskView` on VideoPlayerView).
 open class LayerContainerView: UIView {
     #if canImport(UIKit)
+    // UIKit supplies the backing layer via the +layerClass override (no init needed).
+    /// RE: 0x1013E5B88 (LayerContainerView +layerClass resolver — returns CAGradientLayer.self, 1.3.15)
     override open class var layerClass: AnyClass {
         CAGradientLayer.self
     }
     #else
+    // macOS/AppKit has no +layerClass hook, so the gradient layer is assigned in init instead.
+    /// RE: 0x1004323B4 (LayerContainerView.init(frame:) super + gradient layer assign, 1.3.15)
     override public init(frame: CGRect) {
         super.init(frame: frame)
         layer = CAGradientLayer()
     }
 
+    /// RE: 0x1013E5F24 (LayerContainerView.init?(coder:) — unsupported, fatalError, 1.3.15)
     @available(*, unavailable)
     public required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")

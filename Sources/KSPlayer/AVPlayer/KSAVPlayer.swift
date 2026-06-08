@@ -493,9 +493,18 @@ extension KSAVPlayer {
     /// RE: 0x1013923d4 (KSAVPlayer.saveShouldResumePlayback, 1.3.15). Tail-call thunk 0x1013931b0.
     /// KSMEPlayer counterpart: 0x101424db4.
     private func saveShouldResumePlayback() {
-        // options+0x46 — the "always resume" intent flag (loop playback keeps resuming).
-        // TODO(re-verify): confirm the exact KSOptions field at byte offset 0x46 vs isLoopPlay.
-        shouldResumePlayback = options.isLoopPlay || playbackState == .playing
+        // options+0x46 — the "always resume" intent flag. Resolved from the binary: the byte at
+        // KSOptions+0x46 is `resumeFromSavedPosition` (RE field name `enterForgeResumePlay`, the
+        // Forward/"Forge"-derived resume-on-reenter flag), NOT `isLoopPlay`. `isLoopPlay` lives at
+        // KSOptions+0x70; the Ghidra auto-comment that read "offset 70" was decimal 70 == 0x46,
+        // which is why the original guess conflated the two. Layout proof: KSOptions.init (0x10139a074)
+        // zeroes both 0x46/0x47 with a single 2-byte constant store (`*(u16*)(self+0x46)=0`), so 0x46
+        // is a literal-`false` Bool — `isLoopPlay`/`isAutoPlay`/`isSecondOpen` are instead loaded from
+        // static globals. Field-descriptor (0x103780768) declaration order pins 0x45=isAutoPlay,
+        // 0x46=enterForgeResumePlay, 0x47=isDLNARunning. The accessor's literal displacement is
+        // `ldrb w8,[x19,#0x46]` then `tbz w8,#0`.
+        /// RE: 0x101392418 (ldrb [options+0x46]); init layout 0x10139a074; field md 0x103780768.
+        shouldResumePlayback = options.resumeFromSavedPosition || playbackState == .playing
     }
 
     /// Dynamic metadata for the AVPlayer path. The binary returns the empty-array storage

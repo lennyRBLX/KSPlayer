@@ -10,7 +10,13 @@ import UIKit
 #else
 import AppKit
 #endif
+/// RE: 0x1013CAF2C (AudioPlayerView class metadata, 1.3.15)
+/// ObjC-rooted UIView, parent KSPlayer.PlayerView, 0 stored fields.
+/// Audio-only sibling of VideoPlayerView; inherits the full PlayerView
+/// field set (playerLayer, delegate, toolBar, playTimeDidChange, backBlock)
+/// and adds no state of its own.
 open class AudioPlayerView: PlayerView {
+    /// RE: 0x1013CA8E4 (AudioPlayerView.init(frame:) — toolBar setup + constraints, 1.3.15)
     override public init(frame: CGRect) {
         super.init(frame: frame)
         toolBar.timeType = .min

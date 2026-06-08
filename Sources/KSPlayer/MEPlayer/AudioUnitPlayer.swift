@@ -140,11 +140,12 @@ public final class AudioUnitPlayer: AudioOutput {
         let nodeForOutput = AudioComponentFindNext(nil, &descriptionForOutput)
         AudioComponentInstanceNew(nodeForOutput!, &audioUnitForOutput)
         var value = UInt32(1)
-        // RE: 0x1013f8aec — AudioUnitSetProperty(unit, 0x7d3 = kAudioOutputUnitProperty_EnableIO,
-        // scope 2 = kAudioUnitScope_Input, element 0, &1, 4). EnableIO is set on the INPUT element.
+        // RE: 0x1013f8b18 — AudioUnitSetProperty(unit, 0x7d3 = kAudioOutputUnitProperty_EnableIO,
+        // scope 2 = kAudioUnitScope_Output, element 0, &1, 4). EnableIO is enabled on the OUTPUT
+        // element of the output-only unit (scope register w2 = #0x2 at 0x1013f8b0c).
         AudioUnitSetProperty(audioUnitForOutput,
                              kAudioOutputUnitProperty_EnableIO,
-                             kAudioUnitScope_Input, 0,
+                             kAudioUnitScope_Output, 0,
                              &value,
                              UInt32(MemoryLayout<UInt32>.size))
     }

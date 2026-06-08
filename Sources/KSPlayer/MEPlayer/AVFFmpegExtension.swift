@@ -193,7 +193,7 @@ extension AVCodecParameters {
         av_dict_free(&avOptions)
         guard result == 0 else {
             avcodec_free_context(&codecContextOption)
-            throw NSError(errorCode: .codesContextOpen, avErrorCode: result)
+            throw NSError(errorCode: .codecContextOpen, avErrorCode: result)
         }
         return codecContext
     }
@@ -326,7 +326,7 @@ extension AVPixelFormat {
         }
     }
 
-    var leftShift: UInt8 {
+    var leftShift: Int32 {
         if [AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE].contains(self) {
             return 6
         } else {

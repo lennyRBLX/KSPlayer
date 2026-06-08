@@ -24,11 +24,26 @@ let package = Package(
                 .product(name: "FFmpegKit", package: "FFmpegKit"),
                 .product(name: "Libass", package: "FFmpegKit"),
                 "DisplayCriteria",
+                "DOVIRPUShim",
             ],
             resources: [.process("Metal/Shaders.metal")],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
             ]
+        ),
+        // C shim bridging FFmpeg's private ff_dovi_rpu_parse API for the
+        // VTB Dolby Vision decode path. The binary (v1.3.15) calls this
+        // directly; see TrackDecode.md L704-714 for the Phase 2 chain.
+        // Depends on Libavcodec (contains ff_dovi_rpu_parse symbol) and
+        // Libavutil (public AVDOVIMetadata types in dovi_meta.h).
+        .target(
+            name: "DOVIRPUShim",
+            dependencies: [
+                .product(name: "Libavcodec", package: "FFmpegKit"),
+                .product(name: "Libavutil", package: "FFmpegKit"),
+            ],
+            path: "Sources/DOVIRPUShim",
+            publicHeadersPath: "include"
         ),
         .target(
             name: "DisplayCriteria"

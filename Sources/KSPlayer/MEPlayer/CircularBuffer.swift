@@ -17,6 +17,12 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     private var tailIndex = UInt(0)
     private let expanding: Bool
     private let sorted: Bool
+    // RE: Forward v1.3.15 -- `isClearItem: Bool` (field #7 of 11; see
+    // .reversal/DisplayMetal.md §CircularBuffer). When true, each slot is
+    // cleared/nulled on dequeue so the held frame is released immediately;
+    // when false the slot retains its reference until overwritten by a later
+    // push. Declaration order keeps it between `sorted` and `destroyed`.
+    private let isClearItem: Bool
     private var destroyed = false
     @inline(__always)
     private var _count: Int { Int(tailIndex &- headIndex) }
@@ -30,9 +36,10 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     public internal(set) var fps: Float = 24
     public private(set) var maxCount: Int
     private var mask: UInt
-    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true) {
+    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true, isClearItem: Bool = true) {
         self.expanding = expanding
         self.sorted = sorted
+        self.isClearItem = isClearItem
         let capacity = initialCapacity.nextPowerOf2()
         _buffer = ContiguousArray<Item?>(repeating: nil, count: Int(capacity))
         maxCount = Int(capacity)
@@ -106,7 +113,13 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             return nil
         } else {
             headIndex &+= 1
-            _buffer[index] = nil
+            // RE: `isClearItem` gates the on-dequeue slot release. When set
+            // (the default), null the slot so the held frame is freed now;
+            // when clear, leave the reference in place until a later push
+            // overwrites it.
+            if isClearItem {
+                _buffer[index] = nil
+            }
             if _count == maxCount >> 1 {
                 condition.signal()
             }

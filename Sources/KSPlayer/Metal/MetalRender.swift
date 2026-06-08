@@ -12,7 +12,9 @@ import QuartzCore
 import simd
 
 class MetalRender {
+    /// RE: 0x1014683c4 (device once-body, 1.3.15) — DAT_104458f68
     static let device = MTLCreateSystemDefaultDevice()!
+    /// RE: 0x10146852c (library once-body — carryover misnomer "sharedInstance_init", 1.3.15) — DAT_103d0f3e8
     static let library: MTLLibrary = {
         var library: MTLLibrary!
         library = device.makeDefaultLibrary()
@@ -22,14 +24,27 @@ class MetalRender {
         return library
     }()
 
+    /// RE: 0x101468428 (textureCache once-body, 1.3.15) — DAT_104458f70
+    /// Lazy CVMetalTextureCache for zero-copy IOSurface plane→texture mapping.
+    /// Built via CVMetalTextureCacheCreate; consumed by texture(pixelBuffer:).
+    private static var textureCache: CVMetalTextureCache? = {
+        var cache: CVMetalTextureCache?
+        let status = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        guard status == kCVReturnSuccess else { return nil }
+        return cache
+    }()
+
+    /// RE: FUN_1014449f8 @ 0x1014449f8 (delayed CVMetalTextureCache flush, 1.3.15)
+    /// Called from MetalPlayView.clearDisplay after a 1-second Task.sleep on MainActor.
+    /// Flushes the shared CVMetalTextureCache (DAT_104458f70) to release GPU texture resources.
+    static func flushTextureCache() {
+        if let cache = textureCache {
+            CVMetalTextureCacheFlush(cache, 0)
+        }
+    }
+
     private let renderPassDescriptor = MTLRenderPassDescriptor()
     private let commandQueue = MetalRender.device.makeCommandQueue()
-    private lazy var samplerState: MTLSamplerState? = {
-        let samplerDescriptor = MTLSamplerDescriptor()
-        samplerDescriptor.minFilter = .linear
-        samplerDescriptor.magFilter = .linear
-        return MetalRender.device.makeSamplerState(descriptor: samplerDescriptor)
-    }()
 
     private lazy var colorConversion601VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_601_4.pointee.videoRange.buffer
 
@@ -75,7 +90,7 @@ class MetalRender {
         return buffer
     }()
 
-    // MARK: - Forward additions (RE/62): BCS adjustment buffer
+    // MARK: - BCS (Brightness/Contrast/Saturation) adjustment buffer
 
     /// Metal buffer for brightness/contrast/saturation uniforms (float3)
     private var bcsBuffer: MTLBuffer? = {
@@ -102,11 +117,13 @@ class MetalRender {
     // MARK: - Dolby Vision display model (RE: MetalPlayView_renderFrameImpl @ 0x1014457f4)
 
     /// Process-wide DoviDisplayModel singleton, created on first DV frame.
-    /// Binary uses swift_once(&DAT_103d06280, KSOptions_createDoviDisplayModel) → DAT_104458878.
+    /// Binary uses swift_once(&DAT_103d06280, KSOptions_createDoviDisplayModel) -> DAT_104458878.
     /// All callers share the same instance; this property is a thin actor-isolated accessor.
+    /// RE: 0x1013a30cc (KSOptions_createDoviDisplayModel, 1.3.15)
     @MainActor
-    private var doviDisplayModel: DoviDisplayModel? { KSOptions.createDoviDisplayModel() }
+    private var doviDisplayModel: DoviDisplayModel { KSOptions.createDoviDisplayModel() }
 
+    /// RE: 0x10146b508 (clear-present helper, 1.3.15); Drawable protocol slot +0x10 witness: 0x10146a0e4
     func clear(drawable: MTLDrawable) {
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
@@ -121,6 +138,10 @@ class MetalRender {
         commandBuffer.waitUntilCompleted()
     }
 
+    /// RE: 0x10146a0c4 -> 0x101469550 -> 0x10146bec4 (videoPipeline protocol-witness chain, 1.3.15)
+    /// Standard (non-DV) render path. Binary creates and binds ZERO sampler states in this path —
+    /// only three fragment buffers (matrix@0 / colorOffset@1 / leftShift@2). The only MTLSamplerState
+    /// in the binary belongs to the Anime4K upscale path (DAT_103d0f400), not MetalRender.
     @MainActor
     func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable) {
         let inputTextures = pixelBuffer.textures()
@@ -136,7 +157,6 @@ class MetalRender {
             state = display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
         }
         encoder.setRenderPipelineState(state)
-        encoder.setFragmentSamplerState(samplerState, index: 0)
         for (index, texture) in inputTextures.enumerated() {
             texture.label = "texture\(index)"
             encoder.setFragmentTexture(texture, index: index)
@@ -176,6 +196,9 @@ class MetalRender {
         commandBuffer.waitUntilCompleted()
     }
 
+    /// RE: 0x10146ba30 (setYCbCrColorConversionFragmentBuffers, body 10146ba30-10146bec3, 1172 B, 1.3.15)
+    /// Thunk at 0x1014683c0 is a 4-byte tail-call into 0x10146ba30.
+    /// Binds matrix@0 / colorOffset@1 / leftShift@2. Early-returns when planeCount < 2 (BGRA).
     private func setFragmentBuffer(pixelBuffer: PixelBufferProtocol, encoder: MTLRenderCommandEncoder) {
         if pixelBuffer.planeCount > 1 {
             let buffer: MTLBuffer?
@@ -193,7 +216,10 @@ class MetalRender {
             encoder.setFragmentBuffer(buffer, offset: 0, index: 0)
             let colorOffset = isFullRangeVideo ? colorOffsetFullRangeMatrixBuffer : colorOffsetVideoRangeMatrixBuffer
             encoder.setFragmentBuffer(colorOffset, offset: 0, index: 1)
-            let leftShift = pixelBuffer.leftShift == 0 ? leftShiftMatrixBuffer : leftShiftSixMatrixBuffer
+            // RE: leftShift selection gated by pixelBuffer[+0x20] (bitDepth query), NOT leftShift field.
+            // DAT_104458f78 = (1,1,1) for 8-bit, DAT_104458f80 = (64,64,64) for 10-bit.
+            // 10-bit P010 stores 10 significant bits in high bits of 16-bit word, needs x64 normalize.
+            let leftShift = pixelBuffer.bitDepth > 8 ? leftShiftSixMatrixBuffer : leftShiftMatrixBuffer
             encoder.setFragmentBuffer(leftShift, offset: 0, index: 2)
         }
         if needsBCSAdjustment {
@@ -201,6 +227,9 @@ class MetalRender {
         }
     }
 
+    /// RE: 0x101467e04 (makePipelineState standalone wrapper, DEAD by code-xref — reflection-only, 1.3.15)
+    /// Live pipeline creation goes directly through buildRenderPipelineState @0x101467ed0 from lazy getters.
+    /// This standalone wrapper is preserved as a convenience; the shipped binary inlined it at every call site.
     static func makePipelineState(fragmentFunction: String, isSphere: Bool = false, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.colorAttachments[0].pixelFormat = KSOptions.colorPixelFormat(bitDepth: bitDepth)
@@ -221,17 +250,43 @@ class MetalRender {
         // swftlint:enable force_try
     }
 
+    /// RE: 0x10146b76c (MetalRender.texture(pixelBuffer:), 1.3.15)
+    /// Zero-copy CVMetalTextureCache path: lazily inits textureCache (DAT_104458f70),
+    /// bails to empty array if cache is nil, detects bitDepth=10 from FourCC set,
+    /// then per-plane CVMetalTextureCacheCreateTextureFromImage -> CVMetalTextureGetTexture.
     static func texture(pixelBuffer: CVPixelBuffer) -> [MTLTexture] {
-        guard let iosurface = CVPixelBufferGetIOSurface(pixelBuffer)?.takeUnretainedValue() else {
+        guard let cache = textureCache else {
             return []
         }
-        let formats = KSOptions.pixelFormat(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
-        return (0 ..< pixelBuffer.planeCount).compactMap { index in
-            let width = pixelBuffer.widthOfPlane(at: index)
-            let height = pixelBuffer.heightOfPlane(at: index)
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: formats[index], width: width, height: height, mipmapped: false)
-            return device.makeTexture(descriptor: descriptor, iosurface: iosurface, plane: index)
+        let isPlanar = CVPixelBufferIsPlanar(pixelBuffer)
+        let planeCount = isPlanar ? CVPixelBufferGetPlaneCount(pixelBuffer) : 1
+        let formatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let bitDepth: Int32 = formatType.bitDepth
+        let formats = KSOptions.pixelFormat(planeCount: planeCount, bitDepth: bitDepth)
+        var textures = [MTLTexture]()
+        textures.reserveCapacity(planeCount)
+        for plane in 0 ..< planeCount {
+            let width = isPlanar ? CVPixelBufferGetWidthOfPlane(pixelBuffer, plane) : CVPixelBufferGetWidth(pixelBuffer)
+            let height = isPlanar ? CVPixelBufferGetHeightOfPlane(pixelBuffer, plane) : CVPixelBufferGetHeight(pixelBuffer)
+            var cvTexture: CVMetalTexture?
+            let status = CVMetalTextureCacheCreateTextureFromImage(
+                kCFAllocatorDefault,
+                cache,
+                pixelBuffer,
+                nil,
+                formats[plane],
+                width,
+                height,
+                plane,
+                &cvTexture
+            )
+            guard status == kCVReturnSuccess, let cvTex = cvTexture,
+                  let texture = CVMetalTextureGetTexture(cvTex) else {
+                continue
+            }
+            textures.append(texture)
         }
+        return textures
     }
 
     /// Update BCS buffer from current KSOptions values
@@ -246,6 +301,8 @@ class MetalRender {
         bitDepth == 10 ? nv12BCS10 : nv12BCS
     }
 
+    /// RE: software-decode texture path (PixelBuffer class → MTLBuffer → MTLTexture), 1.3.15
+    /// Counterpart to the hardware-decode CVMetalTextureCache path above.
     static func textures(formats: [MTLPixelFormat], widths: [Int], heights: [Int], buffers: [MTLBuffer?], lineSizes: [Int]) -> [MTLTexture] {
         (0 ..< formats.count).compactMap { i in
             guard let buffer = buffers[i] else {
@@ -272,6 +329,11 @@ extension vImage_YpCbCrToARGBMatrix {
             | B |    | 1   2 - 2 * Kb                                                     0  |  | Cr |
      @/textblock
      */
+    /// RE: 0x10146a9a8 (shared 3x3 simd-row builder, 1.3.15)
+    /// Per-standard coefficient once-bodies: 0x10146a918 (601), 0x10146a93c (709),
+    /// 0x10146a960 (240M), 0x10146a984 (2020). Each sets Kr/Kb globals, feeds two
+    /// matrix once-inits (video-range + full-range), which call FUN_10146a9a8 to build
+    /// the simd_float3x3 packed into an MTLBuffer labeled "colorConversionMatrix".
     init(Kr: Float, Kb: Float) {
         let Kg = 1 - Kr - Kb
         self.init(Yp: 1, Cr_R: 2 - 2 * Kr, Cr_G: -Kr * (2 - 2 * Kr) / Kg, Cb_G: -Kb * (2 - 2 * Kb) / Kg, Cb_B: 2 - 2 * Kb)

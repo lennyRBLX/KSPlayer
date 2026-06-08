@@ -643,14 +643,26 @@ public actor AssIncrementImageRenderer {
 
     /// Clear the accumulated subtitle chunks for this renderer.
     ///
-    /// RE: `AssIncrementImageRenderer_releaseSubtitles` @ 0x1001b7ac8. The
-    /// binary resets a global array slot (`DAT_104450b20`) back to
-    /// `_swiftEmptyArrayStorage`. In this reconstruction the chunk store is
-    /// per-instance (`subtitles`), so the clear is applied to the instance
-    /// array; the behavioral effect (no chunks remain to replay) is preserved.
-    /// - TODO(re-verify): the binary mutates a *module-global* array
-    ///   (`DAT_104450b20`), not instance state — confirm whether a shared
-    ///   chunk cache exists across renderers or this is an instance reset.
+    /// RE: 0x1001b7ac8. The address the symbol catalog labels
+    /// `AssIncrementImageRenderer_releaseSubtitles` is, on decompile, *not* a
+    /// per-instance release method: its entire body is
+    /// `DAT_104450b20 = _swiftEmptyArrayStorage`, and it is invoked only as a
+    /// `swift_once` initializer token — `FUN_1001444b4 @ 0x1001444b4` runs
+    /// `_swift_once(&DAT_103c74b88, <this fn>)` and then
+    /// `_swift_bridgeObjectRetain(DAT_104450b20)`. That is the canonical shape of
+    /// a lazily-initialized module-global `static var` array whose default value
+    /// is `[]`. `DAT_104450b20` has ~12 READ sites across unrelated functions and
+    /// exactly one WRITE (this once-init) — i.e. it is shared global state, not
+    /// the renderer's instance `subtitles` storage. So there is no binary
+    /// "release subtitles" behavior to mirror here; the misnamed function is the
+    /// seed-to-empty initializer for a separate global array.
+    ///
+    /// We keep a real `releaseSubtitles()` entry point because the app's teardown
+    /// path (`shutdown()` / `FFmpegSubtitle.renderImageCleanup`) wants to drop the
+    /// accumulated per-instance chunks; clearing the instance array is the correct
+    /// reconstruction of that intent, independent of the mislabeled global init.
+    /// - RE: 0x1001b7ac8 (global once-init `static var array = []`),
+    ///   0x1001444b4 (the `swift_once` + retain accessor that proves it).
     public func releaseSubtitles() {
         subtitles = []
     }
@@ -660,41 +672,71 @@ public actor AssIncrementImageRenderer {
     /// Kept for source compatibility with `FFmpegSubtitle.renderImageCleanup`,
     /// which calls `assImageRenderer?.shutdown()`. The wrapped `AssImageRenderer`
     /// owns the libass handles; this clears our accumulated chunk set so the
-    /// next frame batch starts clean. (The binary's full actor teardown is the
-    /// `deallocHelper` path below.)
+    /// next frame batch starts clean. (Actor teardown itself is Swift-synthesized
+    /// — see the deinit note below for why the "deallocHelper" address is a
+    /// Ghidra mislabel, not a real teardown path.)
     public func shutdown() {
         subtitles = []
     }
 }
 
-// MARK: - Deinit / dealloc helper
+// MARK: - Deinit (Swift-synthesized)
 //
-// RE: `AssIncrementImageRenderer_deallocHelper` @ 0x100148460. The binary's
-// `__deallocating_deinit` thunk allocates a small record and tail-calls the real
-// teardown body (`FUN_1001484ac`), which releases the bridged `header` /
-// `fontsDir` strings, the `subtitles` array storage, and the wrapped `renderer`,
-// then runs `_swift_defaultActor_destroy` / `_swift_defaultActor_deallocate`.
+// RE: 0x100148460 / FUN_1001484ac @ 0x1001484ac. The symbol catalog labels
+// 0x100148460 `AssIncrementImageRenderer_deallocHelper`, but decompiling the body
+// it tail-calls (FUN_1001484ac) shows this is NOT a teardown/release sequence:
 //
-// Swift synthesizes the default-actor destroy + stored-property release for an
-// `actor` automatically, so no explicit `deinit` body is required to match the
-// binary's behavior. This entry records the address for cross-reference per the
-// no-skip rule (the helper has no observable side effect beyond the synthesized
-// stored-property release + actor destroy).
-// - TODO(re-verify): `FUN_1001484ac` body (the concrete release sequence) maps
-//   to the synthesized actor destroy in Swift; confirm no extra side effect.
+//   * FUN_1001484ac constructs *two* `DispatchQueue`s via the
+//     `OS_dispatch_queue ... label:qos:attributes:autoreleaseFrequency:target:`
+//     initializer, with string labels read from 0x1032e3f90 / 0x1032e3fd0 =
+//     "com.onevcat.kingfisher.DiskStorage.Backend.propertyQueue" and
+//     "com.onevcat.Kingfisher.<...>". It builds a `Foundation.URL`
+//     (`__s10Foundation3URLVMa`) and sets `DispatchQoS`/`Attributes`/
+//     `AutoreleaseFrequency.inherit`. Constructing dispatch queues + a URL is
+//     *setup/init* work — a deinit never does this.
+//   * FUN_1001484ac has two callers: 0x100148460 (the "deallocHelper" thunk) and
+//     FUN_10014814c @ 0x10014814c, which is an `_swift_allocObject()` + call init
+//     flow. The trailing `FUN_1000f5674(..., FUN_100147c48)` calls are the normal
+//     Swift outlined error-cleanup epilogue, not a release chain.
+//
+// This matches the documented Ghidra mislabel pattern for this binary (see
+// SubtitleSystem.md "deinit_deallocator @ 0x1013fcd28 — Mislabeled by Ghidra,
+// actually an init actor-hop thunk") and the "Kingfisher false-friend" note: the
+// labels here are Kingfisher's, so the address does not belong to this renderer's
+// deinit at all. There is therefore no bespoke release body to reconstruct.
+//
+// `AssIncrementImageRenderer` is an `actor`, so Swift synthesizes the
+// default-actor destroy + stored-property release (`header`/`fontsDir`/
+// `subtitles`/`renderer`) automatically; no explicit `deinit` is required. Entry
+// retained for cross-reference per the no-skip rule.
+// - RE: 0x1001484ac (DispatchQueue+URL init body, mislabeled "dealloc"),
+//   0x10014814c (the alloc+init caller that confirms init, not deinit).
 
 // MARK: - Array storage helpers (stdlib specializations)
 
 //
-// RE: `growArrayBuffer` @ 0x100072c78 and `reallocArrayBuffer` @ 0x100014a70
-// are the Swift `Array` copy-on-write append / reallocation specializations
-// backing the `subtitles` array (the binary reaches them through
-// `FUN_1013962e8` / `FUN_1014735a8` inside `addSubtitleChunk` /
-// `renderSubtitleOverlay`). They are stdlib `_ArrayBuffer` growth routines, not
-// bespoke KSPlayer logic — Swift's native `Array.append` performs exactly this
-// CoW growth, so they are represented by the idiomatic `subtitles.append(...)`
-// above rather than reconstructed as standalone functions.
-// - TODO(re-verify): both addresses resolve to generic stdlib array-buffer
-//   specializations shared with the Swift runtime; no distinct Swift source
-//   body is meaningful.
+// RE: 0x100072c78 ("growArrayBuffer") and 0x100014a70 ("reallocArrayBuffer") —
+// decompiled, both are confirmed generic Swift `_ContiguousArrayBuffer`
+// copy-on-write helpers, not bespoke KSPlayer logic:
+//
+//   * 0x100072c78 is a 7-instruction outlined storage-swap stub:
+//     `ldr x3,[x20]; bl 0x100072f30; str x0,[x20]` — load the current buffer
+//     slot, call the reallocation routine, store the new buffer back. (Ghidra's
+//     decompile names the callee `LimitPreLoadIOContext_getSyncThreshold`, a
+//     spurious nearest-symbol label for the tiny outlined helper at 0x100072f30.)
+//   * 0x100014a70 is the full reallocation specialization. It implements the
+//     stdlib growth policy: when the COW grow flag is set it picks
+//     `max(requested, oldCapacity >> 1 ... oldCapacity & ~1)`, clamps to the live
+//     element count at `+0x10`, then `_swift_allocObject` + `_malloc_size`,
+//     writes count to `+0x10` and capacity (`2*allocSize - 0x40`) to `+0x18`,
+//     copies elements with `_memcpy` (unique) or `_memmove` (shared) from the old
+//     buffer's `+0x20` payload, and `_swift_bridgeObjectRelease`s the old buffer.
+//     The empty case returns `_swiftEmptyArrayStorage`. This is exactly the
+//     `_ContiguousArrayBuffer` reallocation Swift emits for `Array.append`.
+//
+// Swift's native `subtitles.append(...)` performs precisely this CoW growth, so
+// these are represented idiomatically above rather than reconstructed as
+// standalone functions. (Callers: 0x100072c78 ← FUN_10002bcd0; 0x100014a70 ←
+// FUN_100014988 — generic array-mutation outlines, not subtitle-specific.)
+// - RE: 0x100072c78 (outlined buffer-swap), 0x100014a70 (CoW realloc, cap-double).
 //

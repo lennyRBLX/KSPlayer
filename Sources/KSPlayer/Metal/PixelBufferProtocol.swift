@@ -19,7 +19,7 @@ public protocol PixelBufferProtocol: AnyObject {
     var width: Int { get }
     var height: Int { get }
     var bitDepth: Int32 { get }
-    var leftShift: UInt8 { get }
+    var leftShift: Int32 { get }
     var planeCount: Int { get }
     var formatDescription: CMVideoFormatDescription? { get }
     var aspectRatio: CGSize { get set }
@@ -33,7 +33,7 @@ public protocol PixelBufferProtocol: AnyObject {
     func textures() -> [MTLTexture]
     func widthOfPlane(at planeIndex: Int) -> Int
     func heightOfPlane(at planeIndex: Int) -> Int
-    func matche(formatDescription: CMVideoFormatDescription) -> Bool
+    func matches(formatDescription: CMVideoFormatDescription) -> Bool
 }
 
 extension PixelBufferProtocol {
@@ -41,7 +41,7 @@ extension PixelBufferProtocol {
 }
 
 extension CVPixelBuffer: PixelBufferProtocol {
-    public var leftShift: UInt8 { 0 }
+    public var leftShift: Int32 { 0 }
     public var cvPixelBuffer: CVPixelBuffer? { self }
     public var width: Int { CVPixelBufferGetWidth(self) }
     public var height: Int { CVPixelBufferGetHeight(self) }
@@ -136,6 +136,7 @@ extension CVPixelBuffer: PixelBufferProtocol {
         CVPixelBufferGetPixelFormatType(self).bitDepth
     }
 
+    /// RE: VTCreateCGImageFromCVPixelBuffer (CVPixelBuffer conformance, 1.3.15)
     public func cgImage() -> CGImage? {
         var cgImage: CGImage?
         VTCreateCGImageFromCVPixelBuffer(self, options: nil, imageOut: &cgImage)
@@ -154,11 +155,13 @@ extension CVPixelBuffer: PixelBufferProtocol {
         CVPixelBufferGetBaseAddressOfPlane(self, planeIndex)
     }
 
+    /// RE: MetalRender.texture(pixelBuffer:) via IOSurface plane mapping (CVPixelBuffer conformance, 1.3.15)
     public func textures() -> [MTLTexture] {
         MetalRender.texture(pixelBuffer: self)
     }
 
-    public func matche(formatDescription: CMVideoFormatDescription) -> Bool {
+    public func matches(formatDescription: CMVideoFormatDescription) -> Bool {
+        // Binary spells this "matche" — typo fixed per reconstruction rules
         CMVideoFormatDescriptionMatchesImageBuffer(formatDescription, imageBuffer: self)
     }
 }
@@ -169,7 +172,7 @@ class PixelBuffer: PixelBufferProtocol {
     let height: Int
     let planeCount: Int
     var aspectRatio: CGSize
-    let leftShift: UInt8
+    let leftShift: Int32
     let isFullRangeVideo: Bool
     var cvPixelBuffer: CVPixelBuffer? { nil }
     var colorPrimaries: CFString?
@@ -177,6 +180,15 @@ class PixelBuffer: PixelBufferProtocol {
     var yCbCrMatrix: CFString?
     var colorspace: CGColorSpace?
     var formatDescription: CMVideoFormatDescription? = nil
+    /// HDR mastering-display metadata side data extracted from AVFrame.
+    /// Witness table slot +0xc0; feeds CAEDRMetadata.hdr10(displayInfo:contentInfo:opticalOutputScale:).
+    var displayInfo: Data?
+    /// HDR content-light-level metadata side data extracted from AVFrame.
+    /// Witness table slot +0xd8; feeds CAEDRMetadata.hdr10(displayInfo:contentInfo:opticalOutputScale:).
+    var contentInfo: Data?
+    /// Ambient-viewing-environment metadata side data extracted from AVFrame.
+    /// Witness table slot +0xf0; feeds CAEDRMetadata.hlg(ambientViewingEnvironment:).
+    var ambientViewingEnvironment: Data?
     private let format: AVPixelFormat
     private let formats: [MTLPixelFormat]
     private let widths: [Int]
@@ -184,6 +196,7 @@ class PixelBuffer: PixelBufferProtocol {
     private let buffers: [MTLBuffer?]
     private let lineSize: [Int]
 
+    /// RE: PixelBuffer.init (software decode AVFrame→Metal buffer copy, 1.3.15)
     init(frame: AVFrame) {
         yCbCrMatrix = frame.colorspace.ycbcrMatrix
         colorPrimaries = frame.color_primaries.colorPrimaries
@@ -197,6 +210,28 @@ class PixelBuffer: PixelBufferProtocol {
         leftShift = format.leftShift
         bitDepth = format.bitDepth
         planeCount = Int(format.planeCount)
+        // Extract per-frame HDR side data into Data? fields for the EDR metadata
+        // pipeline (witness table slots +0xc0, +0xd8, +0xf0). These feed
+        // MotionSensor_createEDRMetadata -> CAEDRMetadata constructors.
+        var extractedDisplayInfo: Data?
+        var extractedContentInfo: Data?
+        var extractedAmbientViewingEnvironment: Data?
+        if frame.nb_side_data > 0 {
+            for i in 0 ..< frame.nb_side_data {
+                if let sideData = frame.side_data[Int(i)]?.pointee {
+                    if sideData.type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA {
+                        extractedDisplayInfo = Data(bytes: sideData.data, count: Int(sideData.size))
+                    } else if sideData.type == AV_FRAME_DATA_CONTENT_LIGHT_LEVEL {
+                        extractedContentInfo = Data(bytes: sideData.data, count: Int(sideData.size))
+                    } else if sideData.type == AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT {
+                        extractedAmbientViewingEnvironment = Data(bytes: sideData.data, count: Int(sideData.size))
+                    }
+                }
+            }
+        }
+        displayInfo = extractedDisplayInfo
+        contentInfo = extractedContentInfo
+        ambientViewingEnvironment = extractedAmbientViewingEnvironment
         let desc = av_pix_fmt_desc_get(format)?.pointee
         let chromaW = desc?.log2_chroma_w == 1 ? 2 : 1
         let chromaH = desc?.log2_chroma_h == 1 ? 2 : 1
@@ -242,6 +277,7 @@ class PixelBuffer: PixelBufferProtocol {
         self.buffers = buffers
     }
 
+    /// RE: MetalRender.textures(formats:widths:heights:buffers:lineSizes:) (PixelBuffer, 1.3.15)
     func textures() -> [MTLTexture] {
         MetalRender.textures(formats: formats, widths: widths, heights: heights, buffers: buffers, lineSizes: lineSize)
     }
@@ -254,6 +290,7 @@ class PixelBuffer: PixelBufferProtocol {
         heights[planeIndex]
     }
 
+    /// RE: PixelBuffer.cgImage (software decode RGB24/swresample path, 1.3.15)
     func cgImage() -> CGImage? {
         let image: CGImage?
         if format == AV_PIX_FMT_RGB24 {
@@ -274,7 +311,8 @@ class PixelBuffer: PixelBufferProtocol {
         return image
     }
 
-    public func matche(formatDescription: CMVideoFormatDescription) -> Bool {
+    public func matches(formatDescription: CMVideoFormatDescription) -> Bool {
+        // Binary spells this "matche" — typo fixed per reconstruction rules
         self.formatDescription == formatDescription
     }
 }

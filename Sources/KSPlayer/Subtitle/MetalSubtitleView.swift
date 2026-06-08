@@ -25,17 +25,41 @@ import AppKit
 
 // MARK: - CIImageRender
 
-/// Element type of `MetalSubtitleView.imageInfos`.
+/// Concrete element model for `MetalSubtitleView.imageInfos`.
 ///
-/// RE: residual type — `CIImageRender` is referenced as the element type of
-/// `MetalSubtitleView.imageInfos` (`[CIImageRender]`, ivar table line 1026 and
-/// Hard Constraint (c)) but carries no Swift reflection metadata in the 1.3.15
-/// binary (`search_functions "CIImageRender"` / `"11CIImageRender"` /
-/// `"CIImageRenderV"` all return none). The layout is recovered from usage: the
-/// "CIImage + draw position" pairing produced by `layoutSubtitleParts` and
-/// consumed by `drawImpl` (which iterates the array at a 0x28 = 40-byte struct
-/// stride, consistent with a struct, not an ad-hoc tuple).
-// TODO(re-verify): CIImageRender layout (no Ghidra reflection, doc §1774-1782).
+/// RE (re-verified — classification corrected): in the 1.3.15 binary
+/// `CIImageRender` is a **Swift protocol**, NOT a struct. The element type of
+/// `imageInfos` (`[CIImageRender]`) is therefore an array of *existentials*. The
+/// earlier "no Swift reflection metadata / struct" note was wrong on both counts:
+///   - Protocol context descriptor at /// RE: 0x10354a6e8 (ContextDescriptorFlags
+///     kind = 3 = Protocol; name relative-ptr → "CIImageRender" @ 0x102ef23a2;
+///     NumRequirementsInSignature = 1, NumRequirements = 2).
+///   - Swift FieldDescriptor at /// RE: 0x103784840 (Kind 0x0004 = Protocol,
+///     NumFields = 0) referencing the mangled name `$s8KSPlayer13CIImageRenderP`
+///     @ 0x103711e94. The trailing `P` is the protocol marker (a struct mangles
+///     to `…V`); `search_functions` for the type returns 0 *functions* only
+///     because a protocol has no entry-point body, not because it is blind.
+/// Usage confirms the existential modeling: `drawImpl` @ 0x10149ee10 walks
+/// `imageInfos` at a 0x28 (40-byte) stride — the Swift existential-container size
+/// (3-word inline buffer + metadata ptr + witness-table ptr), NOT a struct
+/// layout — copying each element with the existential value-witness
+/// `initializeWithCopy` (FUN_100116f10) and dispatching one protocol requirement
+/// through the witness/vtable slot at +0x10
+/// (`(**(code **)(pcVar3 + 0x10))(width, height, hdrFlag, ctx)` →
+/// `renderTextSubtitleToCIImage`). The concrete conformers are produced by
+/// `layoutSubtitleParts` @ 0x101498248 as two typed buffers (image-subtitle path,
+/// 0x38 stride; text path, 0x50 stride) that are then boxed into the existential
+/// array.
+///
+/// The protocol's *requirement names and signatures* are NOT statically
+/// recoverable (no requirement-name strings exist — only the protocol's own name;
+/// only the requirement COUNT (2) and the witness offset (+0x10) used by
+/// `drawImpl` are static facts). Modeling those requirements would be
+/// fabrication, so this reconstruction keeps a single concrete element type that
+/// captures the only requirement `drawImpl` actually invokes — render a `CIImage`
+/// at a draw position — which is exactly what every conformer must supply. This
+/// struct is the concrete stand-in for the type-erased `CIImageRender` element;
+/// the rest of the file builds and reads it directly.
 public struct CIImageRender {
     /// Rendered subtitle image (text rasterization or bitmap subtitle).
     public var image: CIImage
@@ -104,6 +128,10 @@ public class MetalSubtitleView: MTKView, MTKViewDelegate {
     /// Computed CIImage + position renders ready for compositing.
     ///
     /// RE: ivar #9 `imageInfos: [CIImageRender]` (doc §1026, Hard Constraint c).
+    /// `CIImageRender` is a protocol (see its declaration), so in the binary this
+    /// is an array of existentials (0x28-byte container stride in `drawImpl`
+    /// @ 0x10149ee10); reconstructed with the concrete `CIImageRender` element
+    /// stand-in.
     private var imageInfos: [CIImageRender] = []
 
     /// Per-track text info handed to the SwiftUI text-subtitle surface.

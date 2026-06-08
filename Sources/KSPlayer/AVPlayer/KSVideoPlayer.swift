@@ -97,6 +97,16 @@ extension KSVideoPlayer: UIViewRepresentable {
             }
         }
 
+        /// Published recording-state flag (field 5, §18.2). Default `false`.
+        /// The binary's `Coordinator_init_publishedProperties` stores a plain
+        /// zero here (`local_6a = 0`) with no observed accessor side effect, so
+        /// this is a pure published flag the UI binds to — recording is driven
+        /// through the engine's `startRecord`/`stopRecord` surface, not a
+        /// `didSet` on this property.
+        /// RE: 0x1013BF9F8 (Coordinator_init_publishedProperties, field 5, 1.3.15)
+        @Published
+        public var isRecord = false
+
         @Published
         public var playbackRate: Float = 1.0 {
             didSet {
@@ -129,6 +139,9 @@ extension KSVideoPlayer: UIViewRepresentable {
         public var onFinish: ((KSPlayerLayer, Error?) -> Void)?
         public var onStateChanged: ((KSPlayerLayer, KSPlayerState) -> Void)?
         public var onBufferChanged: ((Int, TimeInterval) -> Void)?
+        /// Fires when the backing layer's media URL changes (field 15, §18.2).
+        /// RE: 0x1013BF9F8 (Coordinator_init_publishedProperties, field 15, 1.3.15)
+        public var onURLChanged: ((KSPlayerLayer, URL?) -> Void)?
         #if canImport(UIKit)
         fileprivate var onSwipe: ((UISwipeGestureRecognizer.Direction) -> Void)?
         @objc fileprivate func swipeGestureAction(_ recognizer: UISwipeGestureRecognizer) {
@@ -151,10 +164,12 @@ extension KSVideoPlayer: UIViewRepresentable {
                 playerLayer.delegate = nil
                 playerLayer.set(url: url, options: options)
                 playerLayer.delegate = self
+                onURLChanged?(playerLayer, url)
                 return playerLayer.player.view ?? UIView()
             } else {
                 let playerLayer = KSPlayerLayer(url: url, options: options, delegate: self)
                 self.playerLayer = playerLayer
+                onURLChanged?(playerLayer, url)
                 return playerLayer.player.view ?? UIView()
             }
         }
@@ -164,6 +179,7 @@ extension KSVideoPlayer: UIViewRepresentable {
             onPlay = nil
             onFinish = nil
             onBufferChanged = nil
+            onURLChanged = nil
             #if canImport(UIKit)
             onSwipe = nil
             #endif
@@ -222,13 +238,13 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
         onStateChanged?(layer, state)
         if state == .readyToPlay {
             playbackRate = layer.player.playbackRate
-            if let subtitleDataSouce = layer.player.subtitleDataSouce {
+            if let subtitleDataSource = layer.player.subtitleDataSource {
                 // 要延后增加内嵌字幕。因为有些内嵌字幕是放在视频流的。所以会比readyToPlay回调晚。
                 DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 1) { [weak self] in
                     guard let self else { return }
-                    self.subtitleModel.addSubtitle(dataSouce: subtitleDataSouce)
+                    self.subtitleModel.addSubtitle(dataSource: subtitleDataSource)
                     if self.subtitleModel.selectedSubtitleInfo == nil, layer.options.autoSelectEmbedSubtitle {
-                        self.subtitleModel.selectedSubtitleInfo = subtitleDataSouce.infos.first { $0.isEnabled }
+                        self.subtitleModel.selectedSubtitleInfo = subtitleDataSource.infos.first { $0.isEnabled }
                     }
                 }
             }
@@ -310,6 +326,12 @@ public extension KSVideoPlayer {
         return self
     }
 
+    /// The backing layer's media URL changed.
+    func onURLChanged(_ handler: @escaping (KSPlayerLayer, URL?) -> Void) -> Self {
+        coordinator.onURLChanged = handler
+        return self
+    }
+
     #if canImport(UIKit)
     func onSwipe(_ handler: @escaping (UISwipeGestureRecognizer.Direction) -> Void) -> Self {
         coordinator.onSwipe = handler
@@ -326,11 +348,10 @@ extension View {
     }
 }
 
-/// 这是一个频繁变化的model。View要少用这个
-public class ControllerTimeModel: ObservableObject {
-    // 改成int才不会频繁更新
-    @Published
-    public var currentTime = 0
-    @Published
-    public var totalTime = 1
-}
+// NOTE: `ControllerTimeModel` is defined canonically in
+// SwiftUI/PlayerSlider.swift (its designated UIComponents cluster home), with
+// the full 4-field roster (currentTime, totalTime, bufferTime, fileSize) per
+// reversal doc §11.4 / §18.9. The earlier 2-field stub that lived here was a
+// redeclaration of that type in the same module — a hard build error — and has
+// been removed so the PlayerSlider.swift definition is the single source.
+// RE: 0x1013C2D60 (metadata accessor) / 0x1013C1FA8 (init).

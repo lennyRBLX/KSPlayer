@@ -66,7 +66,7 @@ fragment half4 displayNV12Texture(VertexOut in [[ stage_in ]],
     return half4(half3x3(yuvToBGRMatrix)*(yuv*half3(leftShift)+half3(colorOffset)), 1);
 }
 
-// Forward addition (RE/62): BCS adjustment applied after color conversion
+// BCS (brightness/contrast/saturation) adjustment applied after color conversion (RE/62)
 // bcs.x = brightness (-1..+1), bcs.y = contrast (0..2), bcs.z = saturation (0..2)
 half3 applyBCS(half3 rgb, float3 bcs) {
     rgb += half3(bcs.x);

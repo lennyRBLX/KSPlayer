@@ -511,10 +511,19 @@ public class AudioDescriptor: Equatable {
     ///     Int16/Int32/Float64 path, and no AudioUnitPlayer carve-out, in the binary);
     ///   - `interleaved` iff the active `audioPlayerType` == AudioRendererPlayer (else planar).
     /// The 3-tier channel-layout TAG retry (0x1013eb964 tag table) runs first.
-    // TODO(re-verify): does 1.3.15 truly force Float32 for AudioUnitPlayer too, or is the
-    // AUP int-passthrough an upstream KSPlayer addition the binary dropped? The doc marks
-    // AudioDescriptor "No Forward modifications — identical to upstream KSPlayer", so this
-    // is upstream behavior diverging from the traced binary; we follow the binary (Float32).
+    /// RE-VERIFIED (1.3.15, asm @ 0x10144cb10): Float32 IS forced for AudioUnitPlayer too.
+    /// The `initWithCommonFormat:` argument is a single hardcoded immediate `mov w2,#0x1`
+    /// (commonFormat = 1 = pcmFormatFloat32) on the lone path to the AVAudioFormat alloc
+    /// (block @ 0x10144caa0). No branch on `audioPlayerType`, no sampleFormat-derived
+    /// Int16/Int32/Float64 selection, no AudioUnitPlayer carve-out — and this builder is the
+    /// single shared output-format path for all 4 call sites (KSMEPlayer setup + AudioDescriptor
+    /// init/update), so AudioUnitPlayer funnels through it unchanged. `interleaved` is the only
+    /// runtime-varying arg: `cset w21, (DAT_104458738 == AudioRendererPlayer.self)` @ 0x10144caf4,
+    /// i.e. interleaved iff audioPlayerType == AudioRendererPlayer. Conclusion: the upstream
+    /// KSPlayer AUP int-passthrough was dropped by the binary; we correctly follow the binary
+    /// (unconditional Float32). DAT_104458738 = audioPlayerType slot (see AudioUnitPlayer_singletonInit
+    /// @ 0x1013a03e4); FUN_1013f7f80 @ 0x1013f7f80 returns AudioRendererPlayer.self (objc_opt_self
+    /// on class @ 0x103d0be50) as the interleaved comparison target.
     static func audioFormat(sampleFormat: AVSampleFormat, sampleRate: Int32, outChannel: inout AVChannelLayout, channelCount: AVAudioChannelCount) -> AVAudioFormat {
         if channelCount != AVAudioChannelCount(outChannel.nb_channels) {
             av_channel_layout_default(&outChannel, Int32(channelCount))

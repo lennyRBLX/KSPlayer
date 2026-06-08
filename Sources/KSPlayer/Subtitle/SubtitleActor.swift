@@ -200,24 +200,42 @@ public actor SubtitleActor {
         handleTimeChange()
     }
 
-    // MARK: - handleTimeChange (RE: 0x10137adb8 — see note)
+    // MARK: - handleTimeChange (RE: inlined into setCurrentTime chain — see note)
 
     /// Handle a playback-time change: recompute the active parts window for the
     /// stored track at `currentTime` and notify observers if it shifted.
     ///
-    /// RE NOTE: The doc's catalog lists `SubtitleActor_handleTimeChange` @
-    /// 0x10137adb8, but the Ghidra body at that address is a SwiftUI
-    /// `_BackgroundModifier<Color>` type-metadata accessor
-    /// (`__s7SwiftUI19_BackgroundModifierVMa`, `PTR___s7SwiftUI5ColorVN`,
-    /// lazy-cache guard `DAT_103d05bd8`) — a false-friend in the same
-    /// 0x10137xxxx low-address zone where SubtitleSystem.md already STRUCK two
-    /// SubtitleActor entries (`0x10137ace0`, `0x10000af54`). It carries zero
-    /// subtitle logic, so it is NOT transliterated. This method is
-    /// reconstructed by ROLE: the actor's time-change handler, which the
-    /// documented surface requires and which `setCurrentTime` invokes.
-    /// // TODO(re-verify): pin the true Ghidra entry for SubtitleActor's
-    /// // time-change handler; 0x10137adb8 is a SwiftUI metadata-accessor
-    /// // mis-attribution.
+    /// RE NOTE — re-verify RESOLVED: there is NO standalone time-change-handler
+    /// function in the binary; the role is inlined into the `setCurrentTime`
+    /// async continuation chain. Evidence:
+    ///
+    ///  1. The catalog's `SubtitleActor_handleTimeChange` @ 0x10137adb8 is a
+    ///     mis-attribution. Its decompiled body is a SwiftUI
+    ///     `_BackgroundModifier<Color>` type-metadata accessor — lazy-cache
+    ///     guard `DAT_103d05bd8`, a call to `__s7SwiftUI19_BackgroundModifierVMa`
+    ///     passing `PTR___s7SwiftUI5ColorVN` (Color metadata) +
+    ///     `…ColorVAA4ViewAAWP` (the `Color: View` witness). Zero subtitle logic.
+    ///     Both its callers (`FUN_10137ab34`, `FUN_10137af2c`, @ 0x10137ab48 /
+    ///     0x10137af6c) merely hand the symbol to a metadata-cache helper
+    ///     (`FUN_1007189a0(_, &DAT_103d05b90, …, handleTimeChange)`) as a
+    ///     generic-metadata instantiation fn-pointer — it is never invoked as a
+    ///     time handler. It sits in the same 0x10137xxxx zone where
+    ///     SubtitleSystem.md already STRUCK two SubtitleActor entries
+    ///     (`0x10137ace0` = `ModifiedContent/_PaddingLayout` accessor, also
+    ///     re-confirmed here; `0x10000af54`).
+    ///  2. `search_functions("handleTimeChange")` over all 165,776 functions
+    ///     returns ONLY that one bogus symbol — no correctly-named entry exists.
+    ///  3. `createOrUpdateActor` @ 0x1014910a4 has exactly one logic-bearing
+    ///     callee (`startParsing`); 0x10137adb8 is absent from the actor's call
+    ///     graph entirely.
+    ///  4. The real driver is `setCurrentTime` @ 0x100040584: it snapshots state
+    ///     and hands it to a continuation (`FUN_100004eac` / trampoline
+    ///     `FUN_10003a410`) that `swift_task_switch`es onto the actor's executor
+    ///     (`FUN_10003a42c` → …), where the time-driven selection runs. So the
+    ///     binary expresses "recompute on the actor after a time change" via the
+    ///     continuation hop; here that hop is provided by actor isolation, and
+    ///     this method is the synchronous body `setCurrentTime`/`ingest`/
+    ///     `setParts` call once already on the actor.
     func handleTimeChange() {
         // Derive the visible window from the canonical `parts` storage using
         // the `SubtitlePart == TimeInterval` predicate (start <= t <= end).
@@ -278,14 +296,31 @@ public actor SubtitleActor {
 
     // MARK: - deinit (RE: 0x10149733c)
 
-    /// RE: `SubtitleActor_deinit` @ 0x10149733c. The Ghidra body does work
-    /// beyond compiler-synthesized ARC release: it tests the `+0x59` flag and,
-    /// when set, reads `+0x10` and calls `FUN_1013ccc5c` — the same
-    /// observation-teardown shape as `notifyObservers`. (The separate
-    /// `dealloc` @ 0x1014973a0 and `release_helper` @ 0x101497380 are the
-    /// runtime/ARC helpers and need no hand-written body.) Resolves
-    /// // TODO(re-verify): yes — deinit performs observer teardown +
-    /// task cancellation, not pure ARC.
+    /// RE: `SubtitleActor_deinit` @ 0x10149733c — VERIFIED: the deinit performs
+    /// observer teardown, not pure compiler-synthesized ARC release. Decompiled
+    /// body, transcribed exactly:
+    ///
+    ///     if ((*(byte *)(self + 0x59) & 1) != 0) {   // observation-active flag
+    ///         uVar1 = *(undefined8 *)(self + 0x10);   // load the observed state
+    ///         FUN_1013ccc5c(uVar1, ...);              // observation teardown
+    ///     }
+    ///
+    /// The teardown call `FUN_1013ccc5c` @ 0x1013ccc5c is a one-line protocol
+    /// witness thunk — `(**(code **)(PTR_PTR_103a28368 + 0x10))(state, ...)` —
+    /// i.e. it dispatches through a witness table's slot `+0x10`. That is the
+    /// SAME teardown shape `notifyObservers` @ 0x1014970c8 uses (identical
+    /// `+0x59` gate, `+0x10` load, then `FUN_1013ccc5c`): the Combine
+    /// `@Published`/observation plumbing that detaches the actor's observers.
+    /// So the actor's observer list IS released on deinit through the witness,
+    /// which the reconstruction models as `observers.removeAll()`.
+    ///
+    /// (The separate `dealloc` @ 0x1014973a0 and `release_helper` @ 0x101497380
+    /// are the runtime/ARC helpers and need no hand-written body.) The
+    /// `parseTask?.cancel()` below has no direct counterpart in the 0x10149733c
+    /// body — the in-flight parse `Task` is a reconstruction-side handle (the
+    /// binary spawns its parse via `swift_task_*` with no retained cancel slot),
+    /// so cancelling it here is the Swift-idiomatic equivalent of dropping that
+    /// detached work when the actor dies.
     deinit {
         parseTask?.cancel()
         observers.removeAll()

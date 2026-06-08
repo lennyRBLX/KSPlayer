@@ -372,9 +372,17 @@ public final class AssImageRenderer {
         var result: [Int32] = []
         result.reserveCapacity(count)
         for i in 0 ..< count {
-            // libass ASS_Style.Alignment is the per-style numpad alignment.
-            // TODO(re-verify): confirm `ASS_Style.Alignment` is exported by the
-            // FFmpegKit Libass module (binary reads style+0x70 as Int32).
+            // libass `ASS_Style.Alignment` is the per-style numpad alignment (1-9).
+            // RE: 0x101476030 reads the style field at +0x70 as a 4-byte int
+            // (`uVar3 = *puVar8`, puVar8 = styles + 0x70) and strides one full
+            // `ASS_Style` (0x98 bytes; `puVar8 + 0x26` where 0x26 * 4 == 0x98) per
+            // iteration — matching libass's public `ass_types.h` layout where
+            // `Alignment` is an `int` at offset 0x70 and `sizeof(ASS_Style)` == 0x98.
+            // EXTERNAL_DEP (not a runtime fence): `Alignment` is a public field of
+            // `ASS_Style` exported by the FFmpegKit `Libass` module via `ass_types.h`
+            // — the same header that exposes the sibling `ASS_Track.n_styles` /
+            // `.styles` fields read just above and the `ASS_Image` struct used by
+            // the render path, so it is available through this file's `import Libass`.
             result.append(Int32(styles[i].Alignment))
         }
         alignments = result
