@@ -22,7 +22,7 @@ let package = Package(
             name: "KSPlayer",
             dependencies: [
                 .product(name: "FFmpegKit", package: "FFmpegKit"),
-                .product(name: "Libass", package: "FFmpegKit"),
+                .product(name: "libass", package: "FFmpegKit"),
                 "DisplayCriteria",
                 "DOVIRPUShim",
             ],
