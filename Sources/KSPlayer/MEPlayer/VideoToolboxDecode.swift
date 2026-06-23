@@ -50,9 +50,10 @@ class VideoToolboxDecode: DecodeProtocol {
 
     /// C `DOVIContext` decode-state for the VTB Dolby-Vision path. RE: the
     /// binary stores the FFmpeg `__C.DOVIContext` parser state at `self+0xC10`.
-    /// Allocated via `ks_dovi_ctx_alloc()` (wraps `ff_dovi_ctx_alloc`),
-    /// freed in `shutdown()`. Used by `extractDoviRPU` to parse raw RPU
-    /// NALUs into full `AVDOVIMetadata` (header + mapping + color).
+    /// Allocated via `ks_dovi_ctx_alloc()` (a zero-initialized caller-owned
+    /// buffer; FFmpeg 8.x removed the `ff_dovi_ctx_alloc` heap helper), freed in
+    /// `shutdown()`. Used by `extractDoviRPU` to parse raw RPU NALUs into a full
+    /// `AVDOVIMetadata` (header + mapping + color) via `ff_dovi_get_metadata`.
     private var doviContext: OpaquePointer? // DOVIContext*
 
     /// Frame reorder buffer. VTB outputs in decode order; we sort to PTS.
@@ -82,7 +83,11 @@ class VideoToolboxDecode: DecodeProtocol {
         // track carries Dolby Vision metadata. The context persists for
         // the lifetime of the decoder and accumulates RPU parse state.
         if session.assetTrack.dovi != nil {
-            doviContext = OpaquePointer(ks_dovi_ctx_alloc())
+            // `ks_dovi_ctx_alloc()` returns `DOVIContext *` which the C
+            // forward-declaration imports into Swift as `OpaquePointer?` —
+            // assign directly without the redundant `OpaquePointer(...)` wrap
+            // (the initializer doesn't accept an already-typed pointer).
+            doviContext = ks_dovi_ctx_alloc()
         }
     }
 
@@ -120,8 +125,9 @@ class VideoToolboxDecode: DecodeProtocol {
         // then for each DV RPU NALU (type 0x3E / unspec62 in HEVC):
         //   - strips emulation prevention bytes (0x00,0x00,0x03 -> 0x00,0x00)
         //   - calls ff_dovi_rpu_parse on the doviContext
-        //   - extracts DV header via dovi_rpu_get_header (FUN_102402568)
-        //   - serializes DV metadata via FUN_10150c0a4
+        //   - extracts the combined AVDOVIMetadata via ff_dovi_get_metadata
+        //     (FUN_102402568; earlier notes mislabeled this "dovi_rpu_get_header")
+        //   - serializes DV metadata via convertAVDOVIToKSDOVIMetadata (FUN_10150c0a4)
         //   - copies 3008-byte result into self+0x50 (dvMetadataStaging)
         if packetSize > 0, session.assetTrack.dovi != nil {
             extractDoviRPU(data: data, size: packetSize)
@@ -174,6 +180,9 @@ class VideoToolboxDecode: DecodeProtocol {
             // via classifyDynamicRange, calls VideoVTBFrame_init (sole caller), copies
             // 3008-byte DV staging buffer, sorts reorder buffer, drains frames whose PTS
             // distance exceeds 1.5 * frameDuration.
+            //
+            // HIGH-7: Binary at 0x101450560 calls _VTDecompressionSessionDecodeFrameWithOutputHandler
+            // with a Block_copy'd block object — NOT the inline-callback variant.
             let status = VTDecompressionSessionDecodeFrame(
                 session.decompressionSession,
                 sampleBuffer: sampleBuffer,
@@ -200,28 +209,66 @@ class VideoToolboxDecode: DecodeProtocol {
                     return
                 }
 
-                // RE: DV tag polarity check at +0x13A — the binary reads the
-                // DOVIDecoderConfigurationRecord discriminator to determine if
-                // the track carries Dolby Vision enhancement layer data.
-                let hasDoviData = isDovi && stagedDoviData != nil
+                // Per-frame DV verdict — binary @ 0x1014508b4 derives this on every decoded frame
+                // and passes it into VideoVTBFrame_init as the frame's `isDovi`. The full DR is NOT
+                // stored; the binary only consumes the Boolean projection.
+                //
+                // Disassembly trace (1014508b4 .. 10145103c):
+                //   0fbc: ldrb w8,[codecCtx+0x13a]      ; DV-config-record discriminator
+                //   0fc0: tbz w8,#0, ELSE
+                //         ; THEN — stream advertises DV:
+                //   0fc4: ldr x20,[codecCtx+0xd0]      ; format description ptr
+                //   0fc8: cbz x20, COMMON              ; (no fmtdesc → fall through with w20=0)
+                //   0fd4: bl 0x1013ee0cc                ; classifyDynamicRange_fromFormatDescription
+                //   0fe4: cmp w20,#2
+                //   0fe8: cset w20,hi                   ; ★ w20 = (code > 2) ? 1 : 0
+                //         ;     i.e. dolbyVision(3) OR hdr10Fallback(4) → isDovi
+                //         ; ELSE — no DV config record: codec-profile fallback (Profile-7 → static)
+                //   1038: mov x2,x20                    ; pass per-frame isDovi to VideoVTBFrame_init
+                //
+                // Translation: when the captured (stream-level) `isDovi` is true we refine to a
+                // per-frame Bool from `classifyDynamicRange(codecTag:formatDescription:)`. When the
+                // stream isn't advertised as DV we keep the captured value (the binary's codec-profile
+                // path operates on the decoder's internal codec field and isn't safely reachable
+                // here; using the captured static is the conservative substitute).
+                let perFrameIsDovi: Bool
+                if isDovi, let pixelBuffer = imageBuffer {
+                    var fmt: CMVideoFormatDescription?
+                    let createStatus = CMVideoFormatDescriptionCreateForImageBuffer(
+                        allocator: nil,
+                        imageBuffer: pixelBuffer,
+                        formatDescriptionOut: &fmt
+                    )
+                    if createStatus == noErr, let fmt {
+                        // codecTag = 0 forces classifier Path 2 (formatDescription-based) — same
+                        // entry the binary's 0x1013ee0cc reaches via the DV-config-record branch.
+                        let code = KSOptions.classifyDynamicRange(codecTag: 0, formatDescription: fmt)
+                        perFrameIsDovi = code > 2   // .dolbyVision || hdr10Fallback
+                    } else {
+                        perFrameIsDovi = isDovi
+                    }
+                } else {
+                    perFrameIsDovi = isDovi
+                }
 
+                // RE: DV staging gate — binary unconditionally memmoves the 0xBC0 staging from
+                // self+0x50 (decoder) at 101450f88-f94 BEFORE the polarity check; the Swift
+                // gates on the per-frame DV verdict so we only attach staging to actual DV frames.
+                let hasDoviData = perFrameIsDovi && stagedDoviData != nil
+
+                // HIGH-9: VideoVTBFrame init — binary's VideoVTBFrame_init at 0x1014537a4
+                // receives (pixelBuffer, fps, isDovi, …) — the per-frame DV verdict is one of
+                // its arguments (x2 in the call setup at 101451038).
                 let frame: VideoVTBFrame
                 if let imageBuffer = imageBuffer as PixelBufferProtocol? {
-                    frame = VideoVTBFrame(
-                        fps: fps,
-                        isDovi: isDovi,
-                        pixelBuffer: imageBuffer
-                    )
+                    frame = VideoVTBFrame(pixelBuffer: imageBuffer, fps: fps, isDovi: perFrameIsDovi)
                 } else {
-                    frame = VideoVTBFrame(
-                        fps: fps,
-                        isDovi: isDovi
-                    )
+                    frame = VideoVTBFrame(fps: fps, isDovi: perFrameIsDovi)
                 }
 
                 // Copy staged DV metadata into the frame if present
                 // RE: Binary copies 3008-byte DV staging buffer (memmove 0xBC0)
-                // from self+0x50 into the VideoVTBFrame
+                // from self+0x50 into the VideoVTBFrame at +0x80
                 if hasDoviData {
                     frame.doviData = stagedDoviData
                 }
@@ -283,13 +330,12 @@ class VideoToolboxDecode: DecodeProtocol {
         frames.removeAll()
         lastTimestamp = 0
         maxTimestamp = 0
-        startTime = 0
-        // RE: Binary flushes DOVIContext parser state on seek to prevent
-        // stale RPU data from a previous segment carrying over
-        if let ctx = doviContext {
-            ks_dovi_ctx_flush(UnsafeMutableRawPointer(ctx).assumingMemoryBound(to: DOVIContext.self))
-        }
-        doviData = nil
+        // MED-1: Binary at 0x101451d88 sets startTime to 0xffffffffffffffff (-1)
+        // as the sentinel meaning "uninitialized/needs reset", not 0.
+        startTime = -1
+        // MED-1: Binary does NOT call ks_dovi_ctx_flush or clear doviData
+        // in doFlushCodec — the DOVI context persists across flushes.
+        // Removed: ks_dovi_ctx_flush(ctx) and doviData = nil
     }
 
     func shutdown() {
@@ -297,7 +343,7 @@ class VideoToolboxDecode: DecodeProtocol {
         session.invalidate()
         // RE: Binary frees DOVIContext on decoder teardown
         if let ctx = doviContext {
-            ks_dovi_ctx_free(UnsafeMutableRawPointer(ctx).assumingMemoryBound(to: DOVIContext.self))
+            ks_dovi_ctx_free(ctx)
             doviContext = nil
         }
     }
@@ -379,8 +425,10 @@ class VideoToolboxDecode: DecodeProtocol {
     ///   Step 1: Walk AVCC NALUs, identify DV RPU (HEVC type 62 / unspec62)
     ///   Step 2: Emulation-prevention-byte removal (0x00,0x00,0x03 -> 0x00,0x00)
     ///   Step 3: ff_dovi_rpu_parse(doviContext, buf, outPos, 0)
-    ///   Step 4: dovi_rpu_get_header(doviContext) -> AVDOVIMetadata*
-    ///   Step 5: dovi_metadata_serialize -> 3008-byte memcpy to self+0x50
+    ///   Step 4: ff_dovi_get_metadata(doviContext, &out) -> AVDOVIMetadata* (owned)
+    ///           (FUN_102402568 @ 0x102402568; earlier notes mislabeled this
+    ///            "dovi_rpu_get_header", which does not exist in FFmpeg)
+    ///   Step 5: convertAVDOVIToKSDOVIMetadata -> 3008-byte memcpy to self+0x50
     ///
     /// The binary separates these into distinct function calls for lifecycle
     /// and error handling. This reconstruction preserves the multi-step
@@ -389,6 +437,85 @@ class VideoToolboxDecode: DecodeProtocol {
         // RE: Binary only parses DV RPU for HEVC streams (unspec62 is HEVC-only)
         guard codecID == AV_CODEC_ID_HEVC else { return }
 
+        // LOW-2: Binary at 0x101450154-0x101450880 first checks if data starts
+        // with Annex-B start code patterns before falling through to AVCC path.
+        // Detect format: Annex-B (start codes) vs AVCC (length-prefixed).
+        let isAnnexB: Bool
+        if size >= 4, data[0] == 0x00, data[1] == 0x00, data[2] == 0x00, data[3] == 0x01 {
+            // 4-byte start code: 0x00, 0x00, 0x00, 0x01
+            isAnnexB = true
+        } else if size >= 3, data[0] == 0x00, data[1] == 0x00, data[2] == 0x01 {
+            // 3-byte start code: 0x00, 0x00, 0x01
+            isAnnexB = true
+        } else {
+            isAnnexB = false
+        }
+
+        if isAnnexB {
+            extractDoviRPU_AnnexB(data: data, size: size)
+        } else {
+            extractDoviRPU_AVCC(data: data, size: size)
+        }
+    }
+
+    /// LOW-2: Annex-B start code format NALU parser for DV RPU extraction.
+    /// RE: Binary at 0x101450154 scans for next start code to determine NAL unit boundaries.
+    private func extractDoviRPU_AnnexB(data: UnsafeMutablePointer<UInt8>, size: Int) {
+        var offset = 0
+
+        // Helper: find next start code position from a given offset
+        func findNextStartCode(from pos: Int) -> (position: Int, length: Int)? {
+            var i = pos
+            while i + 2 < size {
+                if data[i] == 0x00, data[i + 1] == 0x00 {
+                    if i + 3 < size, data[i + 2] == 0x00, data[i + 3] == 0x01 {
+                        return (i, 4) // 4-byte start code
+                    }
+                    if data[i + 2] == 0x01 {
+                        return (i, 3) // 3-byte start code
+                    }
+                }
+                i += 1
+            }
+            return nil
+        }
+
+        // Skip initial start code
+        if offset + 3 < size, data[offset] == 0x00, data[offset + 1] == 0x00,
+           data[offset + 2] == 0x00, data[offset + 3] == 0x01 {
+            offset += 4
+        } else if offset + 2 < size, data[offset] == 0x00, data[offset + 1] == 0x00,
+                  data[offset + 2] == 0x01 {
+            offset += 3
+        }
+
+        while offset < size {
+            // Find the end of this NAL (next start code or end of data)
+            let nalStart = offset
+            let nalEnd: Int
+            if let next = findNextStartCode(from: offset) {
+                nalEnd = next.position
+                offset = next.position + next.length // advance past start code for next iteration
+            } else {
+                nalEnd = size
+                offset = size // done
+            }
+
+            let nalLen = nalEnd - nalStart
+            guard nalLen > 0 else { continue }
+
+            // HEVC NAL type is bits 1-6 of the first byte: (byte >> 1) & 0x3F
+            let nalType = (data[nalStart] >> 1) & 0x3F
+
+            // unspec62 = 62 = DV RPU NALU
+            if nalType == 62 {
+                processDoviRPU_NALU(data: data, nalStart: nalStart + 2, rpuLen: nalLen - 2)
+            }
+        }
+    }
+
+    /// AVCC (length-prefixed) NALU parser for DV RPU extraction — original path.
+    private func extractDoviRPU_AVCC(data: UnsafeMutablePointer<UInt8>, size: Int) {
         var offset = 0
         while offset + 4 < size {
             // Step 1: Read 4-byte big-endian NAL length (AVCC format)
@@ -405,82 +532,94 @@ class VideoToolboxDecode: DecodeProtocol {
 
             // unspec62 = 62 = DV RPU NALU
             if nalType == 62 {
-                let rpuStart = offset + 2 // skip NAL header (2 bytes for HEVC)
-                let rpuLen = nalLen - 2
-                guard rpuLen > 0 else {
-                    offset += nalLen
-                    continue
-                }
-
-                // Step 2: Emulation-prevention-byte removal
-                // RE: Binary at FUN_1013efd48 / FUN_1013f03e0
-                // Scan for 0x00,0x00,0x03 -> drop the 0x03 byte
-                var stripped = Data(capacity: rpuLen)
-                var zeroRun = 0
-                for i in 0 ..< rpuLen {
-                    let byte = data[rpuStart + i]
-                    if zeroRun == 2, byte == 0x03 {
-                        zeroRun = 0
-                        continue // remove EPB
-                    }
-                    stripped.append(byte)
-                    zeroRun = (byte == 0) ? zeroRun + 1 : 0
-                }
-
-                // Step 3: Parse RPU through DOVIContext via ff_dovi_rpu_parse
-                // RE: Binary calls ff_dovi_rpu_parse(self.doviContext, buf, outPos, 0)
-                // This is a SEPARATE call from the metadata extraction (step 4).
-                guard let ctx = doviContext else {
-                    // Fallback: store raw RPU without parsed metadata
-                    doviData = DOVIFrameMetadata(rpuData: stripped, header: nil, mapping: nil, color: nil)
-                    offset += nalLen
-                    continue
-                }
-
-                let ctxPtr = UnsafeMutableRawPointer(ctx).assumingMemoryBound(to: DOVIContext.self)
-                let parseResult: Int32 = stripped.withUnsafeBytes { rawBuf in
-                    guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                        return Int32(-1)
-                    }
-                    return ks_dovi_rpu_parse(ctxPtr, ptr, stripped.count)
-                }
-
-                // Step 4: Extract AVDOVIMetadata from the context
-                // RE: FUN_102402568 (dovi_rpu_get_header) -- SEPARATE call after parse
-                let parsedMetadata: UnsafePointer<AVDOVIMetadata>? = (parseResult >= 0)
-                    ? ks_dovi_get_metadata(ctxPtr)
-                    : nil
-
-                if let metadata = parsedMetadata {
-                    // Step 5: Copy serialized metadata to staging buffer
-                    // RE: Binary does memmove(tempBuf, serialized, 0xBC0) then
-                    // memcpy(self+0x50, tempBuf, 0xBC0). The 3008-byte staging
-                    // buffer holds the full serialized DV metadata.
-                    let metadataSize = min(MemoryLayout<AVDOVIMetadata>.size, dvMetadataStaging.count)
-                    dvMetadataStaging.withUnsafeMutableBytes { dest in
-                        if let baseAddress = dest.baseAddress {
-                            memcpy(baseAddress, metadata, metadataSize)
-                        }
-                    }
-
-                    // Extract header, mapping, and color sub-structures via
-                    // the public av_dovi_get_* accessors (same pattern as
-                    // FFmpegDecode's AV_FRAME_DATA_DOVI_METADATA handler).
-                    // RE: Binary extracts these via FUN_102402568 (dovi_rpu_get_header)
-                    // and the serialized metadata structure's sub-field offsets.
-                    doviData = DOVIFrameMetadata(
-                        rpuData: stripped,
-                        header: av_dovi_get_header(metadata),
-                        mapping: av_dovi_get_mapping(metadata),
-                        color: av_dovi_get_color(metadata)
-                    )
-                } else {
-                    // Parse failed -- store raw RPU as fallback
-                    doviData = DOVIFrameMetadata(rpuData: stripped, header: nil, mapping: nil, color: nil)
-                }
+                processDoviRPU_NALU(data: data, nalStart: offset + 2, rpuLen: nalLen - 2)
             }
 
             offset += nalLen
+        }
+    }
+
+    /// Shared DV RPU NALU processing: EPB removal, ff_dovi_rpu_parse, metadata extraction.
+    /// Used by both Annex-B and AVCC paths.
+    private func processDoviRPU_NALU(data: UnsafeMutablePointer<UInt8>, nalStart: Int, rpuLen: Int) {
+        guard rpuLen > 0 else { return }
+
+        // Step 2: Emulation-prevention-byte removal
+        // RE: Binary at FUN_1013efd48 / FUN_1013f03e0
+        // Scan for 0x00,0x00,0x03 -> drop the 0x03 byte
+        var stripped = Data(capacity: rpuLen)
+        var zeroRun = 0
+        for i in 0 ..< rpuLen {
+            let byte = data[nalStart + i]
+            if zeroRun == 2, byte == 0x03 {
+                zeroRun = 0
+                continue // remove EPB
+            }
+            stripped.append(byte)
+            zeroRun = (byte == 0) ? zeroRun + 1 : 0
+        }
+
+        // Step 3: Parse RPU through DOVIContext via ff_dovi_rpu_parse
+        // RE: Binary calls ff_dovi_rpu_parse(self.doviContext, buf, outPos, 0)
+        // This is a SEPARATE call from the metadata extraction (step 4).
+        guard let ctx = doviContext else {
+            // Fallback: store raw RPU without parsed metadata
+            doviData = DOVIFrameMetadata(rpuData: stripped, header: nil, mapping: nil, color: nil)
+            return
+        }
+
+        // `ctx` is `OpaquePointer` (DOVIContext is opaque to Swift);
+        // pass directly to the shim — see the flush/free sites above.
+        let parseResult: Int32 = stripped.withUnsafeBytes { rawBuf in
+            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return Int32(-1)
+            }
+            return ks_dovi_rpu_parse(ctx, ptr, stripped.count)
+        }
+
+        // Step 4: Extract the combined AVDOVIMetadata from the context.
+        // RE: FUN_102402568 @ 0x102402568 = ff_dovi_get_metadata (mislabeled
+        // "dovi_rpu_get_header" in earlier notes) -- a SEPARATE call after parse
+        // that allocates + assembles header + mapping + color + ext blocks.
+        // Ownership of the result passes to us; we free it once values are read.
+        var outMetadata: UnsafeMutablePointer<AVDOVIMetadata>?
+        let metadataSize: Int32 = (parseResult >= 0)
+            ? ks_dovi_get_metadata(ctx, &outMetadata)
+            : 0
+
+        if metadataSize > 0, let metadata = outMetadata {
+            defer { ks_dovi_metadata_free(metadata) }
+            let cMetadata = UnsafePointer<AVDOVIMetadata>(metadata)
+
+            // Step 5: Serialize to the 3008-byte staging buffer.
+            // RE: Binary does serialized = FUN_10150c0a4(outPtr) then
+            // memmove(tempBuf, serialized, 0xBC0) / memcpy(self+0x50, 0xBC0).
+            // convertAVDOVIToKSDOVIMetadata is the FUN_10150c0a4 analog; mirror
+            // FFmpegDecode's AV_FRAME_DATA_DOVI_METADATA handler exactly.
+            var gpuMetadata = convertAVDOVIToKSDOVIMetadata(cMetadata)
+            dvMetadataStaging.withUnsafeMutableBytes { dest in
+                if let baseAddress = dest.baseAddress {
+                    withUnsafeBytes(of: &gpuMetadata) { src in
+                        if let srcBase = src.baseAddress {
+                            memcpy(baseAddress, srcBase,
+                                   min(dest.count, MemoryLayout<DoviGPUMetadata>.size))
+                        }
+                    }
+                }
+            }
+
+            // Extract header, mapping, and color sub-structures via the public
+            // av_dovi_get_* accessors. DOVIFrameMetadata copies the pointees
+            // (Model.swift:671-676), so this stays valid after `metadata` is freed.
+            doviData = DOVIFrameMetadata(
+                rpuData: stripped,
+                header: av_dovi_get_header(cMetadata),
+                mapping: av_dovi_get_mapping(cMetadata),
+                color: av_dovi_get_color(cMetadata)
+            )
+        } else {
+            // Parse failed or no metadata available -- store raw RPU as fallback.
+            doviData = DOVIFrameMetadata(rpuData: stripped, header: nil, mapping: nil, color: nil)
         }
     }
 
@@ -569,9 +708,7 @@ class DecompressionSession {
         #if os(macOS)
         // macOS requires explicit registration of professional video workflow decoders
         VTRegisterProfessionalVideoWorkflowVideoDecoders()
-        if #available(macOS 11.0, *) {
-            VTRegisterSupplementalVideoDecoderIfAvailable(formatDescription.mediaSubType.rawValue)
-        }
+        VTRegisterSupplementalVideoDecoderIfAvailable(formatDescription.mediaSubType.rawValue)
         #endif
         let attributes: NSMutableDictionary = [
             kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
@@ -587,10 +724,8 @@ class DecompressionSession {
         guard status == noErr, let decompressionSession = session else {
             return nil
         }
-        if #available(iOS 14.0, tvOS 14.0, macOS 11.0, *) {
-            VTSessionSetProperty(decompressionSession, key: kVTDecompressionPropertyKey_PropagatePerFrameHDRDisplayMetadata,
-                                 value: kCFBooleanTrue)
-        }
+        VTSessionSetProperty(decompressionSession, key: kVTDecompressionPropertyKey_PropagatePerFrameHDRDisplayMetadata,
+                             value: kCFBooleanTrue)
         if let destinationDynamicRange = options.availableDynamicRange(nil) {
             let pixelTransferProperties = [kVTPixelTransferPropertyKey_DestinationColorPrimaries: destinationDynamicRange.colorPrimaries,
                                            kVTPixelTransferPropertyKey_DestinationTransferFunction: destinationDynamicRange.transferFunction,
@@ -630,10 +765,9 @@ class DecompressionSession {
 
     /// RE: 0x101451dec / 0x101451eb0 (DecompressionSession_invalidate, v1.3.15)
     /// Tear down VTDecompressionSession as a DecompressionSession method.
-    /// Structured teardown: finish delayed frames, wait for async completion,
-    /// then invalidate the session.
+    /// MED-2: Binary at 0x101451dec only calls #2 and #3 — does NOT call
+    /// VTDecompressionSessionFinishDelayedFrames. Removed to match binary.
     fileprivate func invalidate() {
-        VTDecompressionSessionFinishDelayedFrames(decompressionSession)
         VTDecompressionSessionWaitForAsynchronousFrames(decompressionSession)
         VTDecompressionSessionInvalidate(decompressionSession)
     }
@@ -675,10 +809,8 @@ class DecompressionSession {
 
         guard status == noErr, let newSession = session else { return }
 
-        if #available(iOS 14.0, tvOS 14.0, macOS 11.0, *) {
-            VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_PropagatePerFrameHDRDisplayMetadata,
-                                 value: kCFBooleanTrue)
-        }
+        VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_PropagatePerFrameHDRDisplayMetadata,
+                             value: kCFBooleanTrue)
         if let destinationDynamicRange = options.availableDynamicRange(nil) {
             let pixelTransferProperties = [kVTPixelTransferPropertyKey_DestinationColorPrimaries: destinationDynamicRange.colorPrimaries,
                                            kVTPixelTransferPropertyKey_DestinationTransferFunction: destinationDynamicRange.transferFunction,
@@ -696,11 +828,7 @@ class DecompressionSession {
     /// handler to extract CMSampleBuffer attachments (including DV metadata)
     /// from decoded frames.
     fileprivate static func copyAttachments(from imageBuffer: CVImageBuffer) -> CFDictionary? {
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            return CVBufferCopyAttachments(imageBuffer, .shouldPropagate)
-        } else {
-            return CVBufferGetAttachments(imageBuffer, .shouldPropagate)
-        }
+        CVBufferCopyAttachments(imageBuffer, .shouldPropagate)
     }
 
     /// RE: 0x101453638 (DecompressionSession_parseAVCCNALUs, v1.3.15)
