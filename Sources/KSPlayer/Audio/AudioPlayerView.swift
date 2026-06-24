@@ -10,13 +10,7 @@ import UIKit
 #else
 import AppKit
 #endif
-/// RE: 0x1013CAF2C (AudioPlayerView class metadata, 1.3.15)
-/// ObjC-rooted UIView, parent KSPlayer.PlayerView, 0 stored fields.
-/// Audio-only sibling of VideoPlayerView; inherits the full PlayerView
-/// field set (playerLayer, delegate, toolBar, playTimeDidChange, backBlock)
-/// and adds no state of its own.
 open class AudioPlayerView: PlayerView {
-    /// RE: 0x1013CA8E4 (AudioPlayerView.init(frame:) — toolBar setup + constraints, 1.3.15)
     override public init(frame: CGRect) {
         super.init(frame: frame)
         toolBar.timeType = .min
@@ -29,7 +23,7 @@ open class AudioPlayerView: PlayerView {
         toolBar.timeSlider.setThumbImage(UIColor(rgb: 0x2980FF).createImage(size: CGSize(width: 2, height: 15)), for: .normal)
         toolBar.timeSlider.minimumTrackTintColor = UIColor(rgb: 0xC8C7CC)
         toolBar.timeSlider.maximumTrackTintColor = UIColor(rgb: 0xEDEDED)
-        toolBar.timeSlider.trackHeight = 7
+        toolBar.timeSlider.trackHeigt = 7
         addSubview(toolBar)
         toolBar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([

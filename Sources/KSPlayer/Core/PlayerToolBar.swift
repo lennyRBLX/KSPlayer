@@ -13,8 +13,6 @@ import AppKit
 #endif
 import AVKit
 
-/// RE: 0x1013DFBD0 (PlayerToolBar CMa, _objc_opt_self(_TtC8KSPlayer13PlayerToolBar), 1.3.15)
-/// (corrected 1.3.15 value; not the stale 0x1012CD370 which is mid-body of FUN_10129d8e0)
 public class PlayerToolBar: UIStackView {
     public let srtButton = UIButton()
     public let timeLabel = UILabel()
@@ -27,7 +25,7 @@ public class PlayerToolBar: UIStackView {
     public let audioSwitchButton = UIButton()
     public let definitionButton = UIButton()
     public let pipButton = UIButton()
-    public var onFocusUpdate: ((_ focusedItem: UIView) -> Void)?
+    public var onFocusUpdate: ((_ cofusedItem: UIView) -> Void)?
     public var timeType = TimeType.minOrHour {
         didSet {
             if timeType != oldValue {
@@ -59,7 +57,7 @@ public class PlayerToolBar: UIStackView {
         }
     }
 
-    lazy var startDateTimeInterval: TimeInterval = {
+    lazy var startDateTimeInteral: TimeInterval = {
         let date = Date()
         let calendar = Calendar.current
         let components = calendar.dateComponents([.year, .month, .day], from: date)
@@ -68,7 +66,7 @@ public class PlayerToolBar: UIStackView {
     }()
 
     var todayInterval: TimeInterval {
-        Date().timeIntervalSince1970 - startDateTimeInterval
+        Date().timeIntervalSince1970 - startDateTimeInteral
     }
 
     public var totalTime: TimeInterval = 0 {
@@ -99,19 +97,16 @@ public class PlayerToolBar: UIStackView {
         }
     }
 
-    /// RE: 0x1013DE724 (PlayerToolBar.init(frame:), field init + super call, 1.3.15)
     override init(frame: CGRect) {
         super.init(frame: frame)
         initUI()
     }
 
-    /// RE: 0x1013DEA20 (PlayerToolBar.init(coder:), field init then fatalError, 1.3.15)
     @available(*, unavailable)
     required init(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// RE: 0x1013DECA8 (PlayerToolBar.initUI / configureSubviews, 1.3.15)
     private func initUI() {
         let focusColor = UIColor.white
         let tintColor = UIColor.gray
@@ -226,14 +221,12 @@ public class PlayerToolBar: UIStackView {
         #endif
     }
 
-    /// RE: 0x1013DFB7C (PlayerToolBar.addArrangedSubview(_:), super call + unhide, 1.3.15)
     override public func addArrangedSubview(_ view: UIView) {
         super.addArrangedSubview(view)
         view.isHidden = false
     }
 
     #if canImport(UIKit)
-    /// RE: 0x1013DFCD4 (PlayerToolBar.didUpdateFocus(in:with:), focus tint update, 1.3.15)
     override open func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         if let nextFocusedItem = context.nextFocusedItem {
@@ -258,7 +251,6 @@ public class PlayerToolBar: UIStackView {
     }
     #endif
 
-    /// RE: 0x1013DFFFC (PlayerToolBar.addTarget(_:action:), wires button targets, 1.3.15)
     open func addTarget(_ target: AnyObject?, action: Selector) {
         playButton.addTarget(target, action: action, for: .primaryActionTriggered)
         playbackRateButton.addTarget(target, action: action, for: .primaryActionTriggered)

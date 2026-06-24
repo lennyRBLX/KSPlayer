@@ -12,12 +12,6 @@ import AppKit
 #endif
 import AVFoundation
 
-/// RE: 0x1013E40E4 (PlayerView CMa, 1.3.15) — enum reflection (`ENUM_CASES_1.3.15.md`, UIComponents.md lines 837-858)
-/// records only the 12 case NAMES in 0-based declaration order; explicit rawValue assignments are NOT
-/// reflection-provable. The 101-based raw values here mirror the `PlayerToolBar` UIButton `.tag` scheme
-/// (`tag == 101 + caseIndex`: play→101, srt→104, rate→108, definition→109, pip→110, audioSwitch→111,
-/// videoSwitch→112) and are required for `PlayerButtonType(rawValue: button.tag)` in `onButtonPressed`
-/// to resolve. Documentation-only note per doc caveat; the values are self-consistent, not binary-verified.
 public enum PlayerButtonType: Int {
     case play = 101
     case pause
@@ -33,11 +27,6 @@ public enum PlayerButtonType: Int {
     case videoSwitch
 }
 
-/// RE: no dedicated CMa (protocols have no metadata accessor, 1.3.15) — referenced only as PlayerView field #2
-/// `delegate: weak ControllerDelegate?` (UIComponents.md line 771). The doc does not enumerate this protocol's
-/// methods anywhere; the 7-method roster below is reconstructed from PlayerView's `delegate?.playerController(...)`
-/// call sites (lines ~114, 174, 185, 192, 196) and the documented callback fields, not from a doc roster.
-/// No binary address anchors the individual methods.
 public protocol PlayerControllerDelegate: AnyObject {
     func playerController(state: KSPlayerState)
     func playerController(currentTime: TimeInterval, totalTime: TimeInterval)
@@ -49,7 +38,6 @@ public protocol PlayerControllerDelegate: AnyObject {
     func playerController(seek: TimeInterval)
 }
 
-/// RE: 0x1013E40E4 (PlayerView CMa, 1.3.15) — UIKit base class; superclass of VideoPlayerView (0x10150B5F4). Distinct from Components.PlayerView SwiftUI struct.
 open class PlayerView: UIView, KSPlayerLayerDelegate, KSSliderDelegate {
     public typealias ControllerDelegate = PlayerControllerDelegate
     public var playerLayer: KSPlayerLayer? {
@@ -60,9 +48,6 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, KSSliderDelegate {
 
     public weak var delegate: ControllerDelegate?
     public let toolBar = PlayerToolBar()
-    // Additive KSPlayer-API field: NOT in the doc's verified 5-field roster (UIComponents.md lines 768-774:
-    // playerLayer, delegate, toolBar, playTimeDidChange, backBlock). Legitimate subtitle URL plumbing — used by
-    // `set(url:options:)` below to feed the subtitle pipeline. Kept per the "Implement Everything" rule.
     public let srtControl = SubtitleModel()
     // Listen to play time change
     public var playTimeDidChange: ((TimeInterval, TimeInterval) -> Void)?

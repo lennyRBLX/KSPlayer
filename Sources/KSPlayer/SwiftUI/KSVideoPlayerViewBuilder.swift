@@ -59,23 +59,6 @@ enum KSVideoPlayerViewBuilder {
         }
     }
 
-    /// Subtitle-track selection list body: an "Off" row (tag `nil`) followed by one
-    /// tagged `Text(track.name)` per available subtitle track. Tracks are read from
-    /// `config.subtitleModel.subtitleInfos` (empty when no player layer is attached),
-    /// each tagged by its `subtitleID`. This is the raw list content (no `MenuView`
-    /// wrapper) used inside the subtitle picker; `subtitleButton` reuses the same
-    /// track set inside a `MenuView`.
-    /// RE: 0x1014ABE00 (KSVideoPlayerViewBuilder.subtitleListBody, 1.3.15)
-    ///     inner ForEach row closure RE: 0x1014AC260 (…_ForEachContent)
-    @MainActor
-    @ViewBuilder
-    static func subtitleListBody(config: KSVideoPlayer.Coordinator) -> some View {
-        Text("Off").tag(nil as String?)
-        ForEach(config.subtitleModel.subtitleInfos, id: \.subtitleID) { track in
-            Text(track.name).tag(track.subtitleID as String?)
-        }
-    }
-
     @MainActor
     static func playbackRateButton(playbackRate: Binding<Float>) -> some View {
         MenuView(selection: playbackRate) {
@@ -95,23 +78,6 @@ enum KSVideoPlayerViewBuilder {
             Text(title)
                 .font(.title3)
             ProgressView()
-                .opacity(config.state == .buffering ? 1 : 0)
-        }
-    }
-
-    /// Title row shown at the top of the player chrome: the media title rendered
-    /// in `.title2.weight(.semibold)` alongside a buffering spinner constrained to
-    /// `maxWidth: 100, alignment: .leading`. The spinner is fully opaque only while
-    /// `config.state == .buffering`, otherwise transparent (matching the binary's
-    /// `1.0`/`0.0` opacity gate read from the Coordinator's `@Published` state).
-    /// RE: 0x1014AC6F0 (KSVideoPlayerViewBuilder.configSetup, 1.3.15)
-    @MainActor
-    static func configSetup(title: String, config: KSVideoPlayer.Coordinator) -> some View {
-        HStack {
-            Text(title)
-                .font(.title2.weight(.semibold))
-            ProgressView()
-                .frame(maxWidth: 100, alignment: .leading)
                 .opacity(config.state == .buffering ? 1 : 0)
         }
     }

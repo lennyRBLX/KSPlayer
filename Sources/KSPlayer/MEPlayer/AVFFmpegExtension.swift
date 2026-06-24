@@ -3,74 +3,6 @@ import FFmpegKit
 import Libavcodec
 import Libavfilter
 import Libavformat
-import VideoToolbox
-
-// MARK: - DV-Aware Codec Tag Resolver
-// Binary ref: FUN_1013fd1dc in Forward v1.3.15
-// Determines the correct codec_tag for output streams based on DOVIDecoderConfigurationRecord.
-// Returns the tag in host byte order (caller must convert to big-endian for codec_tag field).
-// Returns nil to signal "zero the tag" (non-video or unrecognized codec).
-
-/// Resolve the correct codec_tag for a video output stream, matching Forward v1.3.15 behavior.
-/// The binary calls this after `avcodec_parameters_copy` to overwrite codec_tag with the
-/// DV-aware value. It checks the DOVIDecoderConfigurationRecord and returns:
-/// - `dvh1` for DV profile 5, or profile 8 with compat_id 1
-/// - `dvhe` for DV profile 8 with compat_id 4 (HDR10 base)
-/// - `dav1` for DV profile 10 (AV1 base) with compat_id 1 or 4
-/// - Generic HEVC MediaSubType for non-DV HEVC
-/// - 0 for non-HEVC/non-AV1 codecs
-public func resolveVideoCodecTag(codecID: AVCodecID, dovi: DOVIDecoderConfigurationRecord?) -> UInt32 {
-    // If we have a valid DV configuration record, determine tag from profile
-    if let dovi {
-        let profile = dovi.dv_profile
-        let compat = dovi.dv_bl_signal_compatibility_id
-
-        // Profile 5 (IPTPQc2 only, no base layer compat) → dvh1
-        // Profile 8 with compat_id 1 (SDR base) → dvh1
-        if profile == 5 || (profile == 8 && compat == 1) {
-            // 'dvh1' in little-endian FourCC = 0x31687664
-            return 0x31687664
-        }
-
-        // Profile 8 with compat_id 4 (HDR10 base) → dvhe
-        if profile == 8 && compat == 4 {
-            // 'dvhe' in little-endian FourCC = 0x65687664
-            return 0x65687664
-        }
-
-        // Profile 10 (AV1 DV) with compat_id 1 or 4 → dav1
-        if profile == 10 && (compat == 1 || compat == 4) {
-            if codecID == AV_CODEC_ID_AV1 {
-                // 'dav1' in little-endian FourCC = 0x31766164
-                return 0x31766164
-            }
-        }
-    }
-
-    // Non-DV path: return generic codec-appropriate tag
-    if codecID == AV_CODEC_ID_HEVC {
-        return CMFormatDescription.MediaSubType.hevc.rawValue
-    } else if codecID == AV_CODEC_ID_H264 {
-        return CMFormatDescription.MediaSubType.h264.rawValue
-    } else if codecID == AV_CODEC_ID_AV1 {
-        // 'av01' in little-endian FourCC
-        return 0x31307661
-    }
-
-    // Unknown codec: signal "zero the tag"
-    return 0
-}
-
-/// Resolve codec_tag and write it to the output stream's codecpar in big-endian format.
-/// This mirrors the binary's `rev w8, w0` + `str w8, [x22, #0x8]` pattern at 0x101402028.
-public func applyResolvedCodecTag(
-    to codecpar: UnsafeMutablePointer<AVCodecParameters>,
-    codecID: AVCodecID,
-    dovi: DOVIDecoderConfigurationRecord?
-) {
-    let tag = resolveVideoCodecTag(codecID: codecID, dovi: dovi)
-    codecpar.pointee.codec_tag = tag.bigEndian
-}
 
 func toDictionary(_ native: OpaquePointer?) -> [String: String] {
     var dict = [String: String]()
@@ -156,18 +88,7 @@ extension AVCodecParameters {
             throw NSError(errorCode: .codecContextSetParam, avErrorCode: result)
         }
         if codec_type == AVMEDIA_TYPE_VIDEO, options?.hardwareDecode ?? false {
-            // RE: Forward 0x1012d680c — skip VT setup for AV1 on hardware that doesn't support it
-            var skipHWDecode = false
-            if codecContext.pointee.codec_id == AV_CODEC_ID_AV1 {
-                if #available(iOS 16.0, macOS 13.0, tvOS 16.0, *) {
-                    skipHWDecode = !VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
-                } else {
-                    skipHWDecode = true
-                }
-            }
-            if !skipHWDecode {
-                codecContext.getFormat()
-            }
+            codecContext.getFormat()
         }
         guard let codec = avcodec_find_decoder(codecContext.pointee.codec_id) else {
             avcodec_free_context(&codecContextOption)
@@ -193,7 +114,7 @@ extension AVCodecParameters {
         av_dict_free(&avOptions)
         guard result == 0 else {
             avcodec_free_context(&codecContextOption)
-            throw NSError(errorCode: .codecContextOpen, avErrorCode: result)
+            throw NSError(errorCode: .codesContextOpen, avErrorCode: result)
         }
         return codecContext
     }
@@ -326,7 +247,7 @@ extension AVPixelFormat {
         }
     }
 
-    var leftShift: Int32 {
+    var leftShift: UInt8 {
         if [AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE].contains(self) {
             return 6
         } else {

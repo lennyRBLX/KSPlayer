@@ -489,7 +489,7 @@ public class KSButton: NSButton {
 
 public class KSSlider: NSSlider {
     weak var delegate: KSSliderDelegate?
-    public var trackHeight = CGFloat(2)
+    public var trackHeigt = CGFloat(2)
     public var isPlayable = false
     public var isUserInteractionEnabled: Bool = true
     var tintColor: UIColor?

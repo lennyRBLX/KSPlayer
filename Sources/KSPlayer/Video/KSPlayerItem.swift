@@ -10,7 +10,6 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 
-/// RE: 0x1014ee7bc (KSPlayerResource class descriptor, 1.3.15) — no traced methods; constructed/read inline by KSPlayerLayer/UI.
 public class KSPlayerResource: Equatable, Hashable {
     public static func == (lhs: KSPlayerResource, rhs: KSPlayerResource) -> Bool {
         lhs.definitions == rhs.definitions
@@ -19,7 +18,7 @@ public class KSPlayerResource: Equatable, Hashable {
     public let name: String
     public let definitions: [KSPlayerResourceDefinition]
     public let cover: URL?
-    public let subtitleDataSource: SubtitleDataSource?
+    public let subtitleDataSouce: SubtitleDataSouce?
     public var nowPlayingInfo: KSNowPlayableMetadata?
     public let extinf: [String: String]?
     /**
@@ -32,14 +31,14 @@ public class KSPlayerResource: Equatable, Hashable {
      */
     public convenience init(url: URL, options: KSOptions = KSOptions(), name: String = "", cover: URL? = nil, subtitleURLs: [URL]? = nil, extinf: [String: String]? = nil) {
         let definition = KSPlayerResourceDefinition(url: url, definition: "", options: options)
-        let subtitleDataSource: URLSubtitleDataSource?
+        let subtitleDataSouce: URLSubtitleDataSouce?
         if let subtitleURLs {
-            subtitleDataSource = URLSubtitleDataSource(urls: subtitleURLs)
+            subtitleDataSouce = URLSubtitleDataSouce(urls: subtitleURLs)
         } else {
-            subtitleDataSource = nil
+            subtitleDataSouce = nil
         }
 
-        self.init(name: name, definitions: [definition], cover: cover, subtitleDataSource: subtitleDataSource, extinf: extinf)
+        self.init(name: name, definitions: [definition], cover: cover, subtitleDataSouce: subtitleDataSouce, extinf: extinf)
     }
 
     /**
@@ -50,10 +49,10 @@ public class KSPlayerResource: Equatable, Hashable {
      - parameter cover:       video cover
      - parameter subtitle:   video subtitle
      */
-    public init(name: String, definitions: [KSPlayerResourceDefinition], cover: URL? = nil, subtitleDataSource: SubtitleDataSource? = nil, extinf: [String: String]? = nil) {
+    public init(name: String, definitions: [KSPlayerResourceDefinition], cover: URL? = nil, subtitleDataSouce: SubtitleDataSouce? = nil, extinf: [String: String]? = nil) {
         self.name = name
         self.cover = cover
-        self.subtitleDataSource = subtitleDataSource
+        self.subtitleDataSouce = subtitleDataSouce
         self.definitions = definitions
         self.extinf = extinf
         nowPlayingInfo = KSNowPlayableMetadata(title: name)
@@ -102,7 +101,6 @@ extension KSPlayerResourceDefinition: Identifiable {
     public var id: Self { self }
 }
 
-/// RE: value-witness only — 0x1014efbcc (KSNowPlayableMetadata Vwcp, 1.3.15; also Vwca 0x1014efc54 / Vwta 0x1014efd2c). nowPlayingInfo dict assembled inline by KSPlayerLayer.registerRemoteCommandHandlers (0x1013b555c).
 public struct KSNowPlayableMetadata {
     private let mediaType: MPNowPlayingInfoMediaType?
     private let isLiveStream: Bool?

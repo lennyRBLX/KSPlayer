@@ -1,57 +1,17 @@
 //
-//  UIKitExtend.swift
+//  File.swift
 //  KSPlayer
 //
 //  Created by kintan on 2018/3/9.
 //
-//  Cluster note (KSPlayerUIViewHelpers): the UIComponents reversal cluster map
-//  designates this file as the home for four ObjC-rooted UIKit helper types —
-//  `KSSlider`, `ProgressView`, `LayerContainerView`, and `AudioPlayerView`.
-//  `KSSlider` lives here (below). The other three were reconstructed by prior
-//  runs co-located with the types they are wired into, and are intentionally
-//  NOT duplicated here (a second declaration would be a redeclaration error and,
-//  for `ProgressView`, would break its deliberate `private` mangling). Their
-//  reconstructed homes — recorded here for cluster traceability:
-//
-//    • ProgressView        RE: 0x1014D6F74 — KSPlayer's own brightness/volume
-//        progress-bar widget (6 stored fields, conforms BrightnessVolumeViewProtocol).
-//        Reconstructed in `Video/BrightnessVolume.swift` as a `private final class`,
-//        co-located with its sole owner `BrightnessVolume.progressView` and its
-//        sibling `SystemView` (both share the `P33_46D5…AB2` private discriminator).
-//        Keeping it private requires same-file co-location, so it stays there.
-//        (init(frame:) 0x1014D7484, init(coder:) 0x1014D6D58, alloc/init 0x101382678,
-//         move(to:)/addToSuperview 0x1014D708C, setProgress/update 0x1014D6F94,
-//         MainActor guard 0x1014D6E44.)
-//
-//    • LayerContainerView  RE: 0x1013E5E0C — gradient-overlay host view
-//        (0 stored fields; +layerClass → CAGradientLayer). Reconstructed in
-//        `Core/Utility.swift`, where it also exposes the `gradientLayer` accessor
-//        that VideoPlayerView's top/bottom mask overlays depend on.
-//        (+layerClass 0x1013E5B88, init(frame:) 0x1004323B4, init(coder:) 0x1013E5F24.)
-//
-//    • AudioPlayerView     RE: 0x1013CAF2C — audio-only `PlayerView` subclass
-//        (0 stored fields). Reconstructed in `Audio/AudioPlayerView.swift`,
-//        beside the rest of the audio-playback UI. (init(frame:) 0x1013CA8E4.)
-//
-//  MenuController (RE: 0x1014ED910) is likewise NOT here — per the cluster map it
-//  belongs to `Video/KSMenu.swift`, which owns it.
-//
 #if canImport(UIKit)
 import UIKit
 
-// `_TtC8KSPlayer8KSSlider` — 5 stored properties per `.reversal/types.json`:
-// `tapGesture`, `panGesture`, `delegate`, `trackHeigt`, `isPlayable`.
-// `trackHeigt` is a binary typo (correct: `trackHeight`); per CLAUDE.md
-// typo-fix rule the Swift port renames it.
-/// RE: 0x1013E55FC (KSSlider class metadata, 1.3.15)
-// CMa correction (v5.3 R2, G-R2-3): supersedes stale 0x1012D2EB4 (mid-body of
-// FUN_10129d8e0); 0x1013E55FC is the verified §18.0 anchor — decompile shows
-// `_objc_opt_self(&_TtC8KSPlayer8KSSlider)`.
 public class KSSlider: UXSlider {
     private var tapGesture: UITapGestureRecognizer!
     private var panGesture: UIPanGestureRecognizer!
     weak var delegate: KSSliderDelegate?
-    public var trackHeight = CGFloat(2)
+    public var trackHeigt = CGFloat(2)
     public var isPlayable = false
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -71,8 +31,8 @@ public class KSSlider: UXSlider {
 
     override open func trackRect(forBounds bounds: CGRect) -> CGRect {
         var customBounds = super.trackRect(forBounds: bounds)
-        customBounds.origin.y -= trackHeight / 2
-        customBounds.size.height = trackHeight
+        customBounds.origin.y -= trackHeigt / 2
+        customBounds.size.height = trackHeigt
         return customBounds
     }
 
@@ -83,22 +43,14 @@ public class KSSlider: UXSlider {
 
     // MARK: - handle UI slider actions
 
-    /// RE: 0x1013E4DA8 (progressSliderTouchBegan_impl, 276 bytes, 1.3.15)
     @objc private func progressSliderTouchBegan(_ sender: KSSlider) {
         guard isPlayable else { return }
         tapGesture.isEnabled = false
         panGesture.isEnabled = false
-        // Removed dead `value = value` self-assignment — a Ghidra decompile
-        // artifact (no-op), not real behavior. The doc (UIComponents.md §5.1)
-        // mandates only: disable tap/pan gestures + emit `.touchDown`. UISlider
-        // already clamps `value` to [minimumValue, maximumValue] on set, so no
-        // re-clamp is warranted; static recovery of the original op was
-        // attempted (Ghidra MCP offline, no cached decompile) and could not
-        // confirm any clamp, so none is fabricated.
+        value = value
         delegate?.slider(value: Double(sender.value), event: .touchDown)
     }
 
-    /// RE: 0x1013E4ECC (progressSliderValueChanged_impl, 172 bytes, 1.3.15)
     @objc private func progressSliderValueChanged(_ sender: KSSlider) {
         guard isPlayable else { return }
         delegate?.slider(value: Double(sender.value), event: .valueChanged)
@@ -111,7 +63,6 @@ public class KSSlider: UXSlider {
         delegate?.slider(value: Double(sender.value), event: .touchUpInside)
     }
 
-    /// RE: 0x1013E515C (actionTapGesture_impl, 288 bytes, 1.3.15)
     @objc private func actionTapGesture(sender: UITapGestureRecognizer) {
         //        guard isPlayable else {
         //            return
@@ -123,7 +74,6 @@ public class KSSlider: UXSlider {
         delegate?.slider(value: Double(value), event: .touchUpInside)
     }
 
-    /// RE: 0x1013E528C (actionPanGesture_impl, 380 bytes, 1.3.15)
     @objc private func actionPanGesture(sender: UIPanGestureRecognizer) {
         //        guard isPlayable else {
         //            return

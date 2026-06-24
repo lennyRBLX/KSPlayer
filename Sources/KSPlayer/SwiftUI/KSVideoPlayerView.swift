@@ -8,36 +8,14 @@ import AVFoundation
 import MediaPlayer
 import SwiftUI
 
-/// RE: 0x1014A35F8 (KSVideoPlayerView.init, 1.3.15) / 0x1014A36BC (body) / 0x1014A7098
-/// (handleMediaURLChange). The top-level SwiftUI player screen: hosts the `KSVideoPlayer`
-/// bridge, the subtitle overlay, the controller overlay, and the tvOS settings drop-down.
-///
-/// NOTE (model-vs-coordinator divergence): doc §18.3 records the view's primary state as a
-/// `SwiftUI.StateObject<KSVideoPlayerModel>` whose `_url`/`urls` feed a
-/// `ConstantURLSubtitleDataSource` branch. This upstream form holds a
-/// `@StateObject KSVideoPlayer.Coordinator` directly and constructs the subtitle data source
-/// from the injected `subtitleDataSource` in `onAppear`. The URL-change reaction documented as
-/// `handleMediaURLChange @ 0x1014A7098` is realized here by `openURL(_:)` + the `url` `didSet`.
 @available(iOS 16.0, macOS 13.0, tvOS 16.0, *)
 @MainActor
 public struct KSVideoPlayerView: View {
-    private let subtitleDataSource: SubtitleDataSource?
-    /// RE: doc §18.3 field #3 `liftCycleBlock` (binary typo "lift"→"life", auto-corrected).
-    /// Injectable lifecycle hook invoked with `(coordinator, true)` on appear and
-    /// `(coordinator, false)` on disappear.
-    private let lifeCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> Void)?
+    private let subtitleDataSouce: SubtitleDataSouce?
     @State
     private var title: String
     @StateObject
     private var playerCoordinator: KSVideoPlayer.Coordinator
-    /// Stable aggregating model fed to the canonical §18.14 `VideoSettingView(model:)`.
-    /// The settings sheet was relocated to its own cluster file and now consumes a
-    /// `KSVideoPlayerModel`; this view drives the sheet from its `playerCoordinator`, so
-    /// the Coordinator is wrapped once in a `@StateObject` model (kept across renders) and
-    /// its `title` is mirrored from this view's `@State title` wherever that title is
-    /// reassigned (the `onStateChanged` metadata handler and `openURL`).
-    @StateObject
-    private var videoSettingModel: KSVideoPlayerModel
     @Environment(\.dismiss)
     private var dismiss
     @FocusState
@@ -62,27 +40,22 @@ public struct KSVideoPlayerView: View {
     }
 
     public init(url: URL, options: KSOptions, title: String? = nil) {
-        self.init(coordinator: KSVideoPlayer.Coordinator(), url: url, options: options, title: title, subtitleDataSource: nil)
+        self.init(coordinator: KSVideoPlayer.Coordinator(), url: url, options: options, title: title, subtitleDataSouce: nil)
     }
 
-    public init(coordinator: KSVideoPlayer.Coordinator, url: URL, options: KSOptions, title: String? = nil, subtitleDataSource: SubtitleDataSource? = nil, lifeCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> Void)? = nil) {
-        self.init(coordinator: coordinator, url: .init(wrappedValue: url), options: options, title: .init(wrappedValue: title ?? url.lastPathComponent), subtitleDataSource: subtitleDataSource, lifeCycleBlock: lifeCycleBlock)
+    public init(coordinator: KSVideoPlayer.Coordinator, url: URL, options: KSOptions, title: String? = nil, subtitleDataSouce: SubtitleDataSouce? = nil) {
+        self.init(coordinator: coordinator, url: .init(wrappedValue: url), options: options, title: .init(wrappedValue: title ?? url.lastPathComponent), subtitleDataSouce: subtitleDataSouce)
     }
 
-    public init(coordinator: KSVideoPlayer.Coordinator, url: State<URL>, options: KSOptions, title: State<String>, subtitleDataSource: SubtitleDataSource?, lifeCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> Void)? = nil) {
+    public init(coordinator: KSVideoPlayer.Coordinator, url: State<URL>, options: KSOptions, title: State<String>, subtitleDataSouce: SubtitleDataSouce?) {
         _url = url
         _playerCoordinator = .init(wrappedValue: coordinator)
         _title = title
-        // Wrap the same Coordinator in the aggregating model the relocated settings sheet
-        // expects. Seeded with the initial title; kept in sync afterward where `title` is
-        // reassigned (onStateChanged / openURL).
-        _videoSettingModel = .init(wrappedValue: KSVideoPlayerModel(title: title.wrappedValue, coordinator: coordinator, options: options))
         #if os(macOS)
         NSDocumentController.shared.noteNewRecentDocumentURL(url.wrappedValue)
         #endif
         self.options = options
-        self.subtitleDataSource = subtitleDataSource
-        self.lifeCycleBlock = lifeCycleBlock
+        self.subtitleDataSouce = subtitleDataSouce
     }
 
     public var body: some View {
@@ -102,7 +75,7 @@ public struct KSVideoPlayerView: View {
                 #endif
                 #if os(tvOS)
                 if isDropdownShow {
-                    VideoSettingView(model: videoSettingModel)
+                    VideoSettingView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, subtitleTitle: title)
                         .focused($focusableField, equals: .info)
                 }
                 #endif
@@ -141,9 +114,6 @@ public struct KSVideoPlayerView: View {
                 if state == .readyToPlay {
                     if let movieTitle = playerLayer.player.dynamicInfo?.metadata["title"] {
                         title = movieTitle
-                        // Keep the settings-sheet model's title in sync with the
-                        // resolved media title (sheet's "Search Subtitle" reads model.title).
-                        videoSettingModel.title = movieTitle
                     }
                 }
             }
@@ -158,11 +128,9 @@ public struct KSVideoPlayerView: View {
             .ignoresSafeArea()
             .onAppear {
                 focusableField = .play
-                if let subtitleDataSource {
-                    playerCoordinator.subtitleModel.addSubtitle(dataSource: subtitleDataSource)
+                if let subtitleDataSouce {
+                    playerCoordinator.subtitleModel.addSubtitle(dataSouce: subtitleDataSouce)
                 }
-                // RE §18.3: lifecycle hook fires with `isAppearing = true` on appear.
-                lifeCycleBlock?(playerCoordinator, true)
                 // 不要加这个，不然playerCoordinator无法释放，也可以在onDisappear调用removeMonitor释放
                 //                    #if os(macOS)
                 //                    NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) {
@@ -170,10 +138,6 @@ public struct KSVideoPlayerView: View {
                 //                        return $0
                 //                    }
                 //                    #endif
-            }
-            .onDisappear {
-                // RE §18.3: lifecycle hook fires with `isAppearing = false` on disappear.
-                lifeCycleBlock?(playerCoordinator, false)
             }
 
         #if os(iOS) || os(xrOS)
@@ -190,7 +154,7 @@ public struct KSVideoPlayerView: View {
         .onKeyPressRightArrow {
             playerCoordinator.skip(interval: 15)
         }
-        .onKeyPressSpace {
+        .onKeyPressSapce {
             if playerCoordinator.state.isPlaying {
                 playerCoordinator.playerLayer?.pause()
             } else {
@@ -261,7 +225,7 @@ public struct KSVideoPlayerView: View {
 
     private func controllerView(playerWidth: Double) -> some View {
         VStack {
-            VideoControllerView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, title: $title, volumeSliderSize: playerWidth / 4, videoSettingModel: videoSettingModel)
+            VideoControllerView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, title: $title, volumeSliderSize: playerWidth / 4)
             #if !os(xrOS)
             // 设置opacity为0，还是会去更新View。所以只能这样了
             if playerCoordinator.isMaskShow {
@@ -281,7 +245,7 @@ public struct KSVideoPlayerView: View {
         }
         .sheet(isPresented: $showVideoSetting) {
             NavigationStack {
-                VideoSettingView(model: videoSettingModel)
+                VideoSettingView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, subtitleTitle: title)
             }
             .buttonStyle(.plain)
         }
@@ -345,89 +309,8 @@ public struct KSVideoPlayerView: View {
             } else if url.isAudio || url.isMovie {
                 self.url = url
                 title = url.lastPathComponent
-                // Mirror the new title into the settings-sheet model (see onStateChanged).
-                videoSettingModel.title = url.lastPathComponent
             }
         }
-    }
-}
-
-/// RE: doc §18.4 (KSCorePlayerView, 1.3.15). The 5-field core player view that wraps the
-/// `KSVideoPlayer` UIView/NSView bridge with the system-overlay / toolbar / status-bar / drop
-/// modifiers.
-///
-/// In the 1.3.15 binary SwiftUI inlined this struct's `body` into `KSVideoPlayerView.body`
-/// (`FUN_1014a398c`) — no standalone `body` or View-conformance symbol was emitted; only its
-/// `__swift5_fieldmd` field descriptor and `#file` string survive (doc §18.4, verified live).
-/// Per the reconstruction rules ("Implement Everything, Scrap Later"), the named type is
-/// materialized here as a real `View` with its documented 5-field roster and the inlined
-/// modifier chain, rather than left as reflection-only metadata. `_config` is the
-/// `ObservedObject<Coordinator>` lifted from the parent model's `config`.
-@available(iOS 16.0, macOS 13.0, tvOS 16.0, *)
-struct KSCorePlayerView: View {
-    @ObservedObject
-    fileprivate var config: KSVideoPlayer.Coordinator
-    fileprivate let url: URL
-    fileprivate let options: KSOptions
-    @Binding
-    fileprivate var title: String
-    fileprivate let subtitleDataSource: SubtitleDataSource?
-
-    var body: some View {
-        ZStack {
-            KSVideoPlayer(coordinator: config, url: url, options: options)
-                .onStateChanged { playerLayer, state in
-                    if state == .readyToPlay {
-                        if let movieTitle = playerLayer.player.dynamicInfo?.metadata["title"] {
-                            title = movieTitle
-                        }
-                    }
-                }
-                .ignoresSafeArea()
-                .onAppear {
-                    if let subtitleDataSource {
-                        config.subtitleModel.addSubtitle(dataSource: subtitleDataSource)
-                    }
-                }
-        }
-        // RE: 0x1014a398c (KSCorePlayerView inlined body, 1.3.15) — decompile-confirmed.
-        // The else-branch of FUN_1014a398c materializes this exact modifier chain in order:
-        //   onTapGesture(count: 1, perform:) [FUN_1014a93c0 toggles config.isMaskShow]
-        //     -> __s7SwiftUI4ViewPAAE12onTapGesture5count7performQrSi_yyctF
-        //   preferredColorScheme(.dark)  -> ColorSchemeO4dark (set on the ZStack first)
-        //   persistentSystemOverlays(.hidden=2)
-        //     -> __s7SwiftUI4ViewPAAE24persistentSystemOverlaysyQrAA10VisibilityOF
-        //   toolbar(.hidden=2, for: .automatic) -> ToolbarPlacementV9automaticACvgZ
-        //   toolbar(.hidden=2, for: .tabBar)    -> ToolbarPlacementV6tabBarACvgZ
-        //   statusBar(hidden:) -> __s7SwiftUI4ViewPAAE9statusBar6hiddenQrSb_tF
-        //   onDrop(of:isTargeted:perform:) -> __s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7perform...
-        // (No standalone KSCorePlayerView.body symbol exists — verified: only the fieldmd type
-        // name @0x102ef2820 and #file string @0x10333d350 survive; the body is fused here.)
-        .onTapGesture(count: 1) {
-            config.isMaskShow.toggle()
-        }
-        .persistentSystemOverlays(.hidden)
-        .toolbar(.hidden, for: .automatic)
-        #if !os(macOS)
-        // The .tabBar toolbar placement is UIKit-only (iOS/tvOS/visionOS).
-        .toolbar(.hidden, for: .tabBar)
-        #endif
-        #if os(iOS) || os(xrOS)
-        // statusBar(hidden:) exists only on iOS/visionOS (tvOS and macOS have no status bar).
-        .statusBar(hidden: true)
-        #endif
-        #if !os(tvOS)
-        .onDrop(of: ["public.file-url"], isTargeted: nil) { providers -> Bool in
-            providers.first?.loadDataRepresentation(forTypeIdentifier: "public.file-url") { data, _ in
-                if let data, let path = NSString(data: data, encoding: 4), let dropped = URL(string: path as String) {
-                    if dropped.isSubtitle {
-                        config.subtitleModel.selectedSubtitleInfo = URLSubtitleInfo(url: dropped)
-                    }
-                }
-            }
-            return true
-        }
-        #endif
     }
 }
 
@@ -454,7 +337,7 @@ extension View {
         }
     }
 
-    func onKeyPressSpace(action: @escaping () -> Void) -> some View {
+    func onKeyPressSapce(action: @escaping () -> Void) -> some View {
         if #available(iOS 17.0, macOS 14.0, tvOS 17.0, *) {
             return onKeyPress(.space) {
                 action()
@@ -466,17 +349,6 @@ extension View {
     }
 }
 
-/// RE: 0x1014B7578 (VideoControllerView.body, 1.3.15). The transport/controls overlay
-/// (close, AirPlay, audio, mute, content-mode, subtitle, playback-rate, PiP, info, and
-/// — when a multi-URL playlist is loaded — previous/next playlist navigation), plus the
-/// `.sheet`-presented `VideoSettingView`.
-///
-/// NOTE (model-vs-coordinator divergence): doc §18.7 records this view as observing a
-/// `SwiftUI.ObservedObject<KSVideoPlayerModel>` (the RE binary's aggregating model).
-/// This upstream form observes the `KSVideoPlayer.Coordinator` directly; the rendered
-/// controls and behavior are equivalent. The playlist-navigation gate (doc reads
-/// `KSVideoPlayerModel::urls.count >= 2`) is therefore expressed here against the
-/// player layer's playlist surface — see `buildPlaylistNavigationControls`.
 @available(iOS 16, tvOS 16, macOS 13, *)
 struct VideoControllerView: View {
     @ObservedObject
@@ -486,11 +358,6 @@ struct VideoControllerView: View {
     @Binding
     fileprivate var title: String
     fileprivate var volumeSliderSize: Double?
-    /// Aggregating model the relocated §18.14 `VideoSettingView(model:)` consumes for
-    /// this view's own info `.sheet`. Owned (as a `@StateObject`) by the parent
-    /// `KSVideoPlayerView` and injected here so both sheets share one stable model whose
-    /// `title` the parent keeps in sync.
-    fileprivate var videoSettingModel: KSVideoPlayerModel
     @State
     private var showVideoSetting = false
     @Environment(\.dismiss)
@@ -564,7 +431,7 @@ struct VideoControllerView: View {
             }
             Spacer()
             #if !os(xrOS)
-            buildPlaylistNavigationControls()
+            KSVideoPlayerViewBuilder.playbackControlView(config: config)
             Spacer()
             HStack {
                 KSVideoPlayerViewBuilder.titleView(title: title, config: config)
@@ -581,7 +448,7 @@ struct VideoControllerView: View {
         .buttonStyle(.borderless)
         #endif
         .sheet(isPresented: $showVideoSetting) {
-            VideoSettingView(model: videoSettingModel)
+            VideoSettingView(config: config, subtitleModel: config.subtitleModel, subtitleTitle: title)
         }
     }
 
@@ -647,100 +514,54 @@ struct VideoControllerView: View {
     private var infoButton: some View {
         KSVideoPlayerViewBuilder.infoButton(showVideoSetting: $showVideoSetting)
     }
+}
 
-    /// RE: 0x1014BA354 (VideoControllerView.buildPlaylistNavigationControls, 1.3.15).
-    /// Renders the central transport row flanked by previous/next playlist buttons. The two
-    /// playlist buttons are gated on the layer carrying a multi-URL playlist (binary:
-    /// `KSVideoPlayerModel::urls.count >= 2`, i.e. only emitted when the count is *not* < 2)
-    /// and are styled with `.borderlessButtonStyle()`. Each action thunk reads
-    /// `config.playerLayer`, dynamic-casts it to `KSPlayerLayer`, and advances the playlist:
-    ///   - leading button  → 0x1014aec8c → `KSPlayerLayer.shuffleAndPlayNextURL` @ 0x1013b86f0
-    ///   - trailing button → 0x1014aeebc → forward-advance vtable slot (+0x3c8)
-    /// The shared label builder (0x1014aedc8 / 0x1014af00c) emits `Image(systemName:)` glyphs.
-    ///
-    /// Gate (RESOLVED in-file): the binary's `urls.count >= 2` test reads
-    /// `KSVideoPlayerModel::urls`, and that model is injected here as `videoSettingModel`
-    /// (public `urls`), so `hasPlaylistNavigation` now applies the exact binary gate without
-    /// any cross-file exposure — see `hasPlaylistNavigation`.
-    ///
-    /// CROSS-FILE NEEDED — trailing-button ACTION only (proven via the action-thunk decompiles):
-    ///   * `func playNextURLInPlaylist()` must be made `public` (currently private, RE: 0x1013b77fc) —
-    ///     it is the +0x3c8 forward-advance slot the trailing-button thunk (RE: 0x1014aeebc) invokes
-    ///     via `*(vtable + 0x3c8)`. Confirmed forward-advance: it gates on `KSComplexPlayerLayer::urls
-    ///     > 1` and selects index `current + 1` (vs `shuffleAndPlayNextURL @ 0x1013b86f0`, which uses
-    ///     `count - 1`). Until that method is public, the trailing button routes through the one
-    ///     public advancer (`shuffleAndPlayNextURL`); the gate itself is already binary-exact.
-    @MainActor
+@available(iOS 15, tvOS 16, macOS 12, *)
+public struct MenuView<Label, SelectionValue, Content>: View where Label: View, SelectionValue: Hashable, Content: View {
+    public let selection: Binding<SelectionValue>
     @ViewBuilder
-    private func buildPlaylistNavigationControls() -> some View {
-        HStack {
-            if hasPlaylistNavigation {
-                Button {
-                    // ROUTE-OUT (proven): leading-button thunk RE: 0x1014aec8c reads
-                    // KSVideoPlayerModel::config -> Coordinator::playerLayer, dynamic-casts to
-                    // KSPlayerLayer, and calls KSPlayerLayer.shuffleAndPlayNextURL owned by
-                    // KSPlayerLayer @ 0x1013b86f0. Matches this call exactly.
-                    config.playerLayer?.shuffleAndPlayNextURL()
+    public let content: () -> Content
+    @ViewBuilder
+    public let label: () -> Label
+    @State
+    private var showMenu = false
+    public var body: some View {
+        if #available(tvOS 17, *) {
+            Menu {
+                Picker(selection: selection) {
+                    content()
                 } label: {
-                    Image(systemName: "backward.end.fill")
+                    EmptyView()
                 }
-                .buttonStyle(.borderless)
+                .pickerStyle(.inline)
+            } label: {
+                label()
             }
-            KSVideoPlayerViewBuilder.playbackControlView(config: config)
-            if hasPlaylistNavigation {
-                Button {
-                    // ROUTE-OUT (proven): trailing-button thunk RE: 0x1014aeebc reads the same
-                    // config.playerLayer, dynamic-casts to KSPlayerLayer, and invokes the vtable
-                    // +0x3c8 slot -> KSPlayerLayer.playNextURLInPlaylist owned by KSPlayerLayer
-                    // @ 0x1013b77fc (forward-advance, index current+1). That method is currently
-                    // `private` in KSPlayerLayer.swift (CROSS-FILE: must be made public to call
-                    // it here); until then this routes through the public `shuffleAndPlayNextURL`.
-                    config.playerLayer?.shuffleAndPlayNextURL()
-                } label: {
-                    Image(systemName: "forward.end.fill")
-                }
-                .buttonStyle(.borderless)
-            }
+            .menuIndicator(.hidden)
+        } else {
+            Picker(selection: selection, content: content, label: label)
+            #if !os(macOS)
+                .pickerStyle(.navigationLink)
+            #endif
+                .frame(height: 50)
+            #if os(tvOS)
+                .frame(width: 110)
+            #endif
         }
-    }
-
-    /// Playlist-navigation gate.
-    /// RE: 0x1014BA354 (VideoControllerView.buildPlaylistNavigationControls, 1.3.15) — the
-    /// binary computes `bVar5 = KSVideoPlayerModel::urls.count < 2` (reads the `urls` field
-    /// `_TtC8KSPlayer18KSVideoPlayerModel::urls`, then the array count at `+0x10`) and emits
-    /// each playlist button only when `!(count < 2)`, i.e. `urls.count >= 2`.
-    /// The aggregating `KSVideoPlayerModel` is injected into this view (`videoSettingModel`)
-    /// and publicly exposes `urls`, so the exact binary gate is reachable in-file — no
-    /// cross-file `KSPlayerLayer.urls` exposure is required for the gate itself. (The
-    /// trailing button's *action* still routes through `shuffleAndPlayNextURL` rather than
-    /// the +0x3c8 `playNextURLInPlaylist` slot — that remains the CROSS-FILE need noted on
-    /// `buildPlaylistNavigationControls`.)
-    private var hasPlaylistNavigation: Bool {
-        videoSettingModel.urls.count >= 2
     }
 }
 
-// NOTE: MenuView was relocated to PlatformView.swift (SwiftUIHelpers cluster, §18.18).
-// The documented `selection` field is an OPTIONAL `Binding<Selection>?`; the moved
-// definition reconciles that. Call sites here pass non-optional bindings, which Swift
-// promotes to `.some(...)` automatically — no call-site change required.
-
-/// RE: 0x1000853AC (VideoTimeShowView value-witness, 1.3.15). Drives the current/total time
-/// labels from the `ControllerTimeModel` Published ints, styled by `timeFont`; renders a
-/// scrubbable `Slider` when the player is seekable, otherwise a "Live Streaming" label.
-/// Doc §18.8 field #3 records `timeFont` as a non-optional `SwiftUI.Font`; the default below
-/// reproduces the binary's caption-style fallback while keeping the field non-optional.
 @available(iOS 15, tvOS 15, macOS 12, *)
 struct VideoTimeShowView: View {
     @ObservedObject
     fileprivate var config: KSVideoPlayer.Coordinator
     @ObservedObject
     fileprivate var model: ControllerTimeModel
-    fileprivate var timeFont: Font = .caption2.monospacedDigit()
+    fileprivate var timeFont: Font?
     public var body: some View {
         if config.playerLayer?.player.seekable ?? false {
             HStack {
-                Text(model.currentTime.toString(for: .minOrHour)).font(timeFont)
+                Text(model.currentTime.toString(for: .minOrHour)).font(timeFont ?? .caption2.monospacedDigit())
                 Slider(value: Binding {
                     Float(model.currentTime)
                 } set: { newValue, _ in
@@ -756,7 +577,7 @@ struct VideoTimeShowView: View {
                 #if os(xrOS)
                     .tint(.white.opacity(0.8))
                 #endif
-                Text((model.totalTime).toString(for: .minOrHour)).font(timeFont)
+                Text((model.totalTime).toString(for: .minOrHour)).font(timeFont ?? .caption2.monospacedDigit())
             }
             .font(.system(.title2))
         } else {
@@ -769,33 +590,171 @@ extension EventModifiers {
     static let none = Self()
 }
 
-// NOTE: VideoSubtitleView (the §18.15 subtitle-overlay view, plus its
-// SubtitleLeftView / SubtitleRightView per-part surfaces) is owned by the
-// SubtitleSystem cluster and lives in Subtitle/VideoSubtitleView.swift —
-// reconstructed there from `VideoSubtitleView_buildSubtitleBody @ 0x10149C7D4`
-// as the canonical single-field type (`_model :: ObservedObject<SubtitleModel>`,
-// `init(model:)`). An earlier upstream copy of `VideoSubtitleView` (with a
-// `static imageView(_:)` helper and a companion `private extension SubtitlePart`
-// computing `subtitleView`) lived here; it was a stale same-module REDECLARATION
-// of the SubtitleSystem-owned type and additionally called
-// `LiveTextImage(uiImage:)`, which does not match `LiveTextImage`'s
-// `init(cgImage:)`. The local copy and its `SubtitlePart` extension are removed;
-// `KSVideoPlayerView.body` constructs the canonical type via
-// `VideoSubtitleView(model: playerCoordinator.subtitleModel)` (see `body` above),
-// whose `init(model:)` is the Subtitle/ version's designated initializer.
+@available(iOS 16, tvOS 16, macOS 13, *)
+struct VideoSubtitleView: View {
+    @ObservedObject
+    fileprivate var model: SubtitleModel
+    var body: some View {
+        ZStack {
+            ForEach(model.parts) { part in
+                part.subtitleView
+            }
+        }
+    }
 
-// NOTE: VideoSettingView (the §18.14 player-settings sheet) and its four nested
-// content views (VideoView/AudioView/SubtitleView/InfoView), plus DynamicInfoView and
-// HUDLogView, were relocated to VideoSettingView.swift (their designated §18.13/§18.14
-// cluster home). An earlier upstream copy of a flat, 3-field `VideoSettingView`
-// (config:subtitleModel:subtitleTitle:) lived here; it was a stale duplicate of the
-// canonical 3-field type (_model/_dismiss/_selectedTab) and caused a same-module
-// REDECLARATION build error. The local copy is removed; the canonical type's
-// `init(model:)` is fed by the `videoSettingModel` @StateObject that `KSVideoPlayerView`
-// owns (and `VideoControllerView` receives by injection) — a stable `KSVideoPlayerModel`
-// wrapping the `KSVideoPlayer.Coordinator`, with its `title` mirrored from the view state.
+    fileprivate static func imageView(_ image: UIImage) -> some View {
+        #if enableFeatureLiveText && canImport(VisionKit) && !targetEnvironment(simulator)
+        if #available(macCatalyst 17.0, *) {
+            return LiveTextImage(uiImage: image)
+        } else {
+            return Image(uiImage: image)
+                .resizable()
+        }
+        #else
+        return Image(uiImage: image)
+            .resizable()
+        #endif
+    }
+}
 
-// NOTE: PlatformView was relocated to PlatformView.swift (SwiftUIHelpers cluster, §18.18).
+private extension SubtitlePart {
+    @available(iOS 16, tvOS 16, macOS 13, *)
+    @MainActor
+    var subtitleView: some View {
+        VStack {
+            if let image {
+                Spacer()
+                GeometryReader { geometry in
+                    let fitRect = image.fitRect(geometry.size)
+                    VideoSubtitleView.imageView(image)
+                        .offset(CGSize(width: fitRect.origin.x, height: fitRect.origin.y))
+                        .frame(width: fitRect.size.width, height: fitRect.size.height)
+                }
+                // 不能加scaledToFit。不然的话图片的缩放比率会有问题。
+//                .scaledToFit()
+                .padding()
+            } else if let text {
+                let textPosition = textPosition ?? SubtitleModel.textPosition
+                if textPosition.verticalAlign == .bottom || textPosition.verticalAlign == .center {
+                    Spacer()
+                }
+                Text(AttributedString(text))
+                    .font(Font(SubtitleModel.textFont))
+                    .shadow(color: .black.opacity(0.9), radius: 1, x: 1, y: 1)
+                    .foregroundColor(SubtitleModel.textColor)
+                    .italic(SubtitleModel.textItalic)
+                    .background(SubtitleModel.textBackgroundColor)
+                    .multilineTextAlignment(.center)
+                    .alignmentGuide(textPosition.horizontalAlign) {
+                        $0[.leading]
+                    }
+                    .padding(textPosition.edgeInsets)
+                #if !os(tvOS)
+                    .textSelection(.enabled)
+                #endif
+                if textPosition.verticalAlign == .top || textPosition.verticalAlign == .center {
+                    Spacer()
+                }
+            } else {
+                // 需要加这个，不然图片无法清空。感觉是 swiftUI的bug。
+                Text("")
+            }
+        }
+    }
+}
+
+@available(iOS 16, tvOS 16, macOS 13, *)
+struct VideoSettingView: View {
+    @ObservedObject
+    fileprivate var config: KSVideoPlayer.Coordinator
+    @ObservedObject
+    fileprivate var subtitleModel: SubtitleModel
+    @State
+    fileprivate var subtitleTitle: String
+    @Environment(\.dismiss)
+    private var dismiss
+
+    var body: some View {
+        PlatformView {
+            let videoTracks = config.playerLayer?.player.tracks(mediaType: .video)
+            if let videoTracks, !videoTracks.isEmpty {
+                Picker(selection: Binding {
+                    videoTracks.first { $0.isEnabled }?.trackID
+                } set: { value in
+                    if let track = videoTracks.first(where: { $0.trackID == value }) {
+                        config.playerLayer?.player.select(track: track)
+                    }
+                }) {
+                    ForEach(videoTracks, id: \.trackID) { track in
+                        Text(track.description).tag(track.trackID as Int32?)
+                    }
+                } label: {
+                    Label("Video Track", systemImage: "video.fill")
+                }
+                LabeledContent("Video Type", value: (videoTracks.first { $0.isEnabled }?.dynamicRange ?? .sdr).description)
+            }
+            TextField("Sutitle delay", value: $subtitleModel.subtitleDelay, format: .number)
+            TextField("Title", text: $subtitleTitle)
+            Button("Search Sutitle") {
+                subtitleModel.searchSubtitle(query: subtitleTitle, languages: ["zh-cn"])
+            }
+            LabeledContent("Stream Type", value: (videoTracks?.first { $0.isEnabled }?.fieldOrder ?? .progressive).description)
+            if let dynamicInfo = config.playerLayer?.player.dynamicInfo {
+                DynamicInfoView(dynamicInfo: dynamicInfo)
+            }
+            if let fileSize = config.playerLayer?.player.fileSize, fileSize > 0 {
+                LabeledContent("File Size", value: fileSize.kmFormatted + "B")
+            }
+        }
+        #if os(macOS) || targetEnvironment(macCatalyst) || os(xrOS)
+        .toolbar {
+            Button("Done") {
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        #endif
+    }
+}
+
+@available(iOS 16, tvOS 16, macOS 13, *)
+public struct DynamicInfoView: View {
+    @ObservedObject
+    fileprivate var dynamicInfo: DynamicInfo
+    public var body: some View {
+        LabeledContent("Display FPS", value: dynamicInfo.displayFPS, format: .number)
+        LabeledContent("Audio Video sync", value: dynamicInfo.audioVideoSyncDiff, format: .number)
+        LabeledContent("Dropped Frames", value: dynamicInfo.droppedVideoFrameCount + dynamicInfo.droppedVideoPacketCount, format: .number)
+        LabeledContent("Bytes Read", value: dynamicInfo.bytesRead.kmFormatted + "B")
+        LabeledContent("Audio bitrate", value: dynamicInfo.audioBitrate.kmFormatted + "bps")
+        LabeledContent("Video bitrate", value: dynamicInfo.videoBitrate.kmFormatted + "bps")
+    }
+}
+
+@available(iOS 15, tvOS 16, macOS 12, *)
+public struct PlatformView<Content: View>: View {
+    private let content: () -> Content
+    public var body: some View {
+        #if os(tvOS)
+        ScrollView {
+            content()
+                .padding()
+        }
+        .pickerStyle(.navigationLink)
+        #else
+        Form {
+            content()
+        }
+        #if os(macOS)
+        .padding()
+        #endif
+        #endif
+    }
+
+    public init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+}
 
 @available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *)
 struct KSVideoPlayerView_Previews: PreviewProvider {
@@ -804,3 +763,21 @@ struct KSVideoPlayerView_Previews: PreviewProvider {
         KSVideoPlayerView(coordinator: KSVideoPlayer.Coordinator(), url: url, options: KSOptions())
     }
 }
+
+// struct AVContentView: View {
+//    var body: some View {
+//        StructAVPlayerView().frame(width: UIScene.main.bounds.width, height: 400, alignment: .center)
+//    }
+// }
+//
+// struct StructAVPlayerView: UIViewRepresentable {
+//    let playerVC = AVPlayerViewController()
+//    typealias UIViewType = UIView
+//    func makeUIView(context _: Context) -> UIView {
+//        playerVC.view
+//    }
+//
+//    func updateUIView(_: UIView, context _: Context) {
+//        playerVC.player = AVPlayer(url: URL(string: "https://bitmovin-a.akamaihd.net/content/dataset/multi-codec/hevc/stream_fmp4.m3u8")!)
+//    }
+// }

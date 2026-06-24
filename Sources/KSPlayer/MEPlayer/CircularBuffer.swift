@@ -17,12 +17,6 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     private var tailIndex = UInt(0)
     private let expanding: Bool
     private let sorted: Bool
-    // RE: Forward v1.3.15 -- `isClearItem: Bool` (field #7 of 11; see
-    // .reversal/DisplayMetal.md §CircularBuffer). When true, each slot is
-    // cleared/nulled on dequeue so the held frame is released immediately;
-    // when false the slot retains its reference until overwritten by a later
-    // push. Declaration order keeps it between `sorted` and `destroyed`.
-    private let isClearItem: Bool
     private var destroyed = false
     @inline(__always)
     private var _count: Int { Int(tailIndex &- headIndex) }
@@ -36,10 +30,9 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     public internal(set) var fps: Float = 24
     public private(set) var maxCount: Int
     private var mask: UInt
-    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true, isClearItem: Bool = true) {
+    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true) {
         self.expanding = expanding
         self.sorted = sorted
-        self.isClearItem = isClearItem
         let capacity = initialCapacity.nextPowerOf2()
         _buffer = ContiguousArray<Item?>(repeating: nil, count: Int(capacity))
         maxCount = Int(capacity)
@@ -113,13 +106,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             return nil
         } else {
             headIndex &+= 1
-            // RE: `isClearItem` gates the on-dequeue slot release. When set
-            // (the default), null the slot so the held frame is freed now;
-            // when clear, leave the reference in place until a later push
-            // overwrites it.
-            if isClearItem {
-                _buffer[index] = nil
-            }
+            _buffer[index] = nil
             if _count == maxCount >> 1 {
                 condition.signal()
             }
@@ -148,40 +135,6 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         return result
     }
 
-    // RE source: Forward v1.3.15 CircularBuffer_search_time (0x1013fc3c0)
-    // Finds frames containing the given timestamp (start <= ts < end), removes up to that point.
-    // RE stub: not yet wired
-    public func search(for timestamp: Int64) -> [Item] {
-        search { item in
-            item.timestamp <= timestamp && (item.timestamp + item.duration) > timestamp
-        }
-    }
-
-    /// Non-destructive peek at the head item without removing it
-    // RE stub: not yet wired
-    public func peek() -> Item? {
-        condition.lock()
-        defer { condition.unlock() }
-        guard headIndex < tailIndex else { return nil }
-        return _buffer[Int(headIndex & mask)]
-    }
-
-    /// Non-destructive scan returning all items matching a predicate without removal
-    // RE stub: not yet wired
-    public func scan(where predicate: (Item) -> Bool) -> [Item] {
-        condition.lock()
-        defer { condition.unlock() }
-        var result = [Item]()
-        var i = headIndex
-        while i < tailIndex {
-            if let item = _buffer[Int(i & mask)], predicate(item) {
-                result.append(item)
-            }
-            i += 1
-        }
-        return result
-    }
-
     public func flush() {
         condition.lock()
         defer { condition.unlock() }
@@ -198,10 +151,6 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     }
 
     private func _doubleCapacity() {
-        // RE: Forward v1.3.15 emits per-item-type logs on capacity grow
-        // ("Packet Buffer double Capacity to ...", "SubtitleFrame Buffer double Capacity to ...").
-        // Mirror that via Item type name. See .reversal/DisplayMetal.md §CircularBuffer.
-        KSLog("\(String(describing: Item.self)) Buffer double Capacity to \(maxCount << 1)")
         var newBacking: ContiguousArray<Item?> = []
         let newCapacity = maxCount << 1 // Double the storage.
         precondition(newCapacity > 0, "Can't double capacity of \(_buffer.count)")

@@ -81,7 +81,7 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     var playbackRate: Float { get set }
     var playbackVolume: Float { get set }
     var contentMode: UIViewContentMode { get set }
-    var subtitleDataSource: SubtitleDataSource? { get }
+    var subtitleDataSouce: SubtitleDataSouce? { get }
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
     var playbackCoordinator: AVPlaybackCoordinator { get }
     @available(tvOS 14.0, *)
@@ -102,8 +102,6 @@ public extension MediaPlayerProtocol {
     var nominalFrameRate: Float {
         tracks(mediaType: .video).first { $0.isEnabled }?.nominalFrameRate ?? 0
     }
-
-    var renderSynchronizer: AVSampleBufferRenderSynchronizer? { nil }
 }
 
 @MainActor
@@ -241,7 +239,7 @@ public extension MediaPlayerTrack {
 public extension CMFormatDescription {
     var dynamicRange: DynamicRange {
         let contentRange: DynamicRange
-        if codecType.string == "dvhe" || codecType.string == "dvh1" || codecType == kCMVideoCodecType_DolbyVisionHEVC {
+        if codecType.string == "dvhe" || codecType == kCMVideoCodecType_DolbyVisionHEVC {
             contentRange = .dolbyVision
         } else if bitDepth == 10 || transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String { /// HDR
             contentRange = .hdr10

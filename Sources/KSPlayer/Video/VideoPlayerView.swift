@@ -14,35 +14,23 @@ import AppKit
 import Combine
 import MediaPlayer
 
-// KSPanDirection is declared canonically in Core/KSPanDirection.swift
-// (public enum KSPanDirection: Int { case horizontal = 0; case vertical = 1 }).
-// The earlier raw-type-less duplicate that lived here was a redeclaration
-// conflict and contradicted ENUM_CASES_1.3.15 (definitive: horizontal=0,
-// vertical=1) — removed so the Core declaration is the single source.
+/// internal enum to check the pan direction
+public enum KSPanDirection {
+    case horizontal
+    case vertical
+}
 
-// Typo fix (SOURCE RECONSTRUCTION mandate): binary/upstream spelled this
-// `LoadingIndector`. The canonical type is now `LoadingIndicator`; a deprecated
-// `LoadingIndector` alias is kept so upstream KSPlayer consumers still compile.
-public protocol LoadingIndicator {
+public protocol LoadingIndector {
     func startAnimating()
     func stopAnimating()
 }
 
-@available(*, deprecated, renamed: "LoadingIndicator", message: "Typo fixed: use LoadingIndicator.")
-public typealias LoadingIndector = LoadingIndicator
-
 #if canImport(UIKit)
-extension UIActivityIndicatorView: LoadingIndicator {}
+extension UIActivityIndicatorView: LoadingIndector {}
 #endif
 // swiftlint:disable type_body_length file_length
 open class VideoPlayerView: PlayerView {
-    /// RE: 0x10150B5F4 field #1 (VideoPlayerView.delayItem, 1.3.15) —
-    /// types.json-verified as `Swift.Task<(), Error>?`. The binary scheduled the
-    /// auto-fade-out / speed-tip dismissal as a cancelable structured-concurrency
-    /// Task (delay via Task.sleep, cancel on each interaction), not the older
-    /// upstream DispatchWorkItem + asyncAfter pattern. `Task.cancel()` provides the
-    /// same cancelable-delayed-fade-out behavior the DispatchWorkItem reconstruction had.
-    private var delayItem: Task<Void, Error>?
+    private var delayItem: DispatchWorkItem?
     /// Gesture used to show / hide control view
     public let tapGesture = UITapGestureRecognizer()
     public let doubleTapGesture = UITapGestureRecognizer()
@@ -56,11 +44,7 @@ open class VideoPlayerView: PlayerView {
     public let topMaskView = LayerContainerView()
     // 是否播放过
     private(set) var isPlayed = false
-    /// RE: 0x10150B5F4 field #11 (VideoPlayerView.cancellables, 1.3.15) —
-    /// types.json-verified as `[Combine.AnyCancellable]`. The binary collected an
-    /// array of Combine subscriptions; only the pip-button binding is wired today,
-    /// but the array type is preserved so additional subscriptions can be appended.
-    private var cancellables = [AnyCancellable]()
+    private var cancellable: AnyCancellable?
 
     public private(set) var currentDefinition = 0 {
         didSet {
@@ -73,8 +57,8 @@ open class VideoPlayerView: PlayerView {
     public private(set) var resource: KSPlayerResource? {
         didSet {
             if let resource, oldValue != resource {
-                if let subtitleDataSource = resource.subtitleDataSource {
-                    srtControl.addSubtitle(dataSource: subtitleDataSource)
+                if let subtitleDataSouce = resource.subtitleDataSouce {
+                    srtControl.addSubtitle(dataSouce: subtitleDataSouce)
                 }
                 subtitleBackView.isHidden = true
                 subtitleBackView.image = nil
@@ -94,18 +78,8 @@ open class VideoPlayerView: PlayerView {
     public var titleLabel = UILabel()
     public var subtitleLabel = UILabel()
     public var subtitleBackView = UIImageView()
-    /// Activity indicator for loading.
-    /// RE: 0x10150B5F4 field #16 (VideoPlayerView.loadingIndicator, 1.3.15) —
-    /// binary preserved the typo "Indector"; corrected here per the typo-auto-fix
-    /// mandate. A deprecated `loadingIndector` alias below keeps upstream parity.
-    public var loadingIndicator: UIView & LoadingIndicator = UIActivityIndicatorView(frame: CGRect(x: 0, y: 0, width: 30, height: 30))
-
-    /// Deprecated misspelling kept for upstream KSPlayer source compatibility.
-    @available(*, deprecated, renamed: "loadingIndicator", message: "Typo fixed: use loadingIndicator.")
-    public var loadingIndector: UIView & LoadingIndicator {
-        get { loadingIndicator }
-        set { loadingIndicator = newValue }
-    }
+    /// Activty Indector for loading
+    public var loadingIndector: UIView & LoadingIndector = UIActivityIndicatorView(frame: CGRect(x: 0, y: 0, width: 30, height: 30))
     public var seekToView: UIView & SeekViewProtocol = SeekView()
     public var replayButton = UIButton()
     public var lockButton = UIButton()
@@ -167,9 +141,7 @@ open class VideoPlayerView: PlayerView {
     override public init(frame: CGRect) {
         super.init(frame: frame)
         setupUIComponents()
-        if let pipCancellable = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton) {
-            cancellables.append(pipCancellable)
-        }
+        cancellable = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton)
         toolBar.onFocusUpdate = { [weak self] _ in
             self?.autoFadeOutViewWithAnimation()
         }
@@ -219,8 +191,8 @@ open class VideoPlayerView: PlayerView {
         bottomMaskView.gradientLayer.startPoint = CGPoint(x: 0, y: 1)
         bottomMaskView.gradientLayer.endPoint = .zero
 
-        loadingIndicator.isHidden = true
-        controllerView.addSubview(loadingIndicator)
+        loadingIndector.isHidden = true
+        controllerView.addSubview(loadingIndector)
         // Top views
         topMaskView.addSubview(navigationBar)
         navigationBar.addArrangedSubview(titleLabel)
@@ -312,11 +284,11 @@ open class VideoPlayerView: PlayerView {
             if #available(iOS 14.0, tvOS 15.0, *) {
                 buildMenusForButtons()
             }
-            if let subtitleDataSource = layer.player.subtitleDataSource {
+            if let subtitleDataSouce = layer.player.subtitleDataSouce {
                 // 要延后增加内嵌字幕。因为有些内嵌字幕是放在视频流的。所以会比readyToPlay回调晚。
                 DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 1) { [weak self] in
                     guard let self else { return }
-                    self.srtControl.addSubtitle(dataSource: subtitleDataSource)
+                    self.srtControl.addSubtitle(dataSouce: subtitleDataSouce)
                     if self.srtControl.selectedSubtitleInfo == nil, layer.options.autoSelectEmbedSubtitle {
                         self.srtControl.selectedSubtitleInfo = self.srtControl.subtitleInfos.first { $0.isEnabled }
                     }
@@ -416,10 +388,6 @@ open class VideoPlayerView: PlayerView {
         isMaskShow.toggle()
     }
 
-    /// RE: base-class virtual, dispatched via vtable +0x350 from
-    /// panGestureDirection_impl@0x10150a2c4 on .began; mangled sig 0x10473ed99.
-    /// IOSVideoPlayerView overrides this slot at 0x1014e0d84 (out of cluster).
-    /// (VideoPlayerView.panGestureBegan(location:direction:), 1.3.15)
     open func panGestureBegan(location _: CGPoint, direction: KSPanDirection) {
         if direction == .horizontal {
             // 给tmpPanValue初值
@@ -429,10 +397,6 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
-    /// RE: base-class virtual, dispatched via vtable +0x358 from
-    /// panGestureDirection_impl@0x10150a2c4 on .changed; mangled sig 0x10473f817.
-    /// IOSVideoPlayerView overrides this slot at 0x1014e0e80 (out of cluster).
-    /// (VideoPlayerView.panGestureChanged(velocity:direction:), 1.3.15)
     open func panGestureChanged(velocity point: CGPoint, direction: KSPanDirection) {
         if direction == .horizontal {
             if !KSOptions.enablePlaytimeGestures {
@@ -448,31 +412,6 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
-    /// RE: 0x1015064e4 (VideoPlayerView.panValue base impl, 1.3.15). Base-class
-    /// virtual; the IOSVideoPlayerView vtable slot +0x360 (vtable entry at data
-    /// 0x103c67140) points back at this base address 0x1015064e4 — IOSVideoPlayerView
-    /// does NOT override panValue, it inherits this body (corrects the earlier
-    /// "IOSVideoPlayerView overrides +0x360" note). Dispatched via vtable +0x360 from
-    /// panGestureChanged_impl@0x1014e0e80 (call sites 0x1014e0f60 / 0x1014e1090 /
-    /// 0x1014e119c, each: ldr x8,[meta+0x360]; blr x8).
-    ///
-    /// Signature note (§5.2): the binary slot is `(velocityX, velocityY, ?, totalTime,
-    /// discriminator)`. The trailing `discriminator` (`param_5 & 1`) selects the
-    /// seek vs. volume/brightness branch; the idiomatic upstream KSPlayer signature
-    /// carries the same information in `direction: KSPanDirection`
-    /// (.horizontal == seek; .vertical == volume/brightness). Note KSPanDirection
-    /// raw values invert the binary's flag: the binary returns the vertical result
-    /// when `discriminator & 1 != 0`, and .vertical.rawValue == 1, so the branch maps
-    /// 1:1.
-    ///
-    /// All constants decompile-verified against 0x1015064e4 (disasm):
-    ///   horizontal divisor 0x40000 (262144) — asm float32 0x36800000 == 3.8146973e-06 == 1/0x40000;
-    ///   horizontal clamp [-0.01, +0.01] — asm float32 0xBC23D70A / 0x3C23D70A;
-    ///   vertical divisor 0x2800 (10240) — asm float32 0xC6200000 == -10240.0, i.e. `velocityY / -10240`.
-    /// There is NO 3.0x velocity multiplier and no haptic in this function — the
-    /// horizontal path is exactly `clamp(velocityX/0x40000, -0.01, 0.01) * totalTime`
-    /// (the §5.2 "3.0x"/"60s haptic" notes do not materialize in any panValue slot;
-    /// if present at all they belong to a different gesture path, not this one).
     open func panValue(velocity point: CGPoint, direction: KSPanDirection, currentTime _: Float, totalTime: Float) -> Float {
         if direction == .horizontal {
             return max(min(Float(point.x) / 0x40000, 0.01), -0.01) * totalTime
@@ -481,9 +420,6 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
-    /// RE: base-class virtual, dispatched via vtable +0x368 from
-    /// panGestureDirection_impl@0x10150a2c4 on state==3 (.ended).
-    /// (VideoPlayerView.panGestureEnded(), 1.3.15)
     open func panGestureEnded() {
         // 移动结束也需要判断垂直或者平移
         // 比如水平移动结束时，要快进到指定位置，如果这里没有判断，当我们调节音量完之后，会出现屏幕跳动的bug
@@ -525,11 +461,9 @@ open class VideoPlayerView: PlayerView {
             self.speedTipLabel.alpha = 1
         }
 
-        // 延迟后隐藏 — cancelable structured-concurrency delay (delayItem is a Task).
+        // 延迟后隐藏
         delayItem?.cancel()
-        delayItem = Task { @MainActor [weak self] in
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            try Task.checkCancellation()
+        delayItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             UIView.animate(withDuration: 0.2) {
                 self.speedTipLabel.alpha = 0
@@ -537,6 +471,7 @@ open class VideoPlayerView: PlayerView {
                 self.speedTipLabel.isHidden = true
             }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: delayItem!)
     }
 }
 
@@ -722,7 +657,6 @@ public extension VideoPlayerView {
 // MARK: - private functions
 
 extension VideoPlayerView {
-    /// RE: 0x10150a444 -> 0x10150a2c4 (VideoPlayerView.panGestureAction:/panGestureDirection_impl, 1.3.15)
     @objc private func panGestureAction(_ pan: UIPanGestureRecognizer) {
         // 播放结束时，忽略手势,锁屏状态忽略手势
         guard !replayButton.isSelected, !isLock else { return }
@@ -783,29 +717,27 @@ extension VideoPlayerView {
     }
 
     /**
-     auto fade out control view with animation
+     auto fade out controll view with animtion
      */
     private func autoFadeOutViewWithAnimation() {
         delayItem?.cancel()
         // 播放的时候才自动隐藏
         guard toolBar.playButton.isSelected else { return }
-        // Cancelable structured-concurrency delay (delayItem is a Task).
-        let delay = KSOptions.animateDelayTimeInterval
-        delayItem = Task { @MainActor [weak self] in
-            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            try Task.checkCancellation()
+        delayItem = DispatchWorkItem { [weak self] in
             self?.isMaskShow = false
         }
+        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + KSOptions.animateDelayTimeInterval,
+                                      execute: delayItem!)
     }
 
     private func showLoader() {
-        loadingIndicator.isHidden = false
-        loadingIndicator.startAnimating()
+        loadingIndector.isHidden = false
+        loadingIndector.startAnimating()
     }
 
     private func hideLoader() {
-        loadingIndicator.isHidden = true
-        loadingIndicator.stopAnimating()
+        loadingIndector.isHidden = true
+        loadingIndector.stopAnimating()
     }
 
     private func addConstraint() {
@@ -830,7 +762,7 @@ extension VideoPlayerView {
         bottomMaskView.translatesAutoresizingMaskIntoConstraints = false
         navigationBar.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndector.translatesAutoresizingMaskIntoConstraints = false
         seekToView.translatesAutoresizingMaskIntoConstraints = false
         replayButton.translatesAutoresizingMaskIntoConstraints = false
         lockButton.translatesAutoresizingMaskIntoConstraints = false
@@ -855,8 +787,8 @@ extension VideoPlayerView {
             bottomMaskView.leadingAnchor.constraint(equalTo: leadingAnchor),
             bottomMaskView.trailingAnchor.constraint(equalTo: trailingAnchor),
             bottomMaskView.heightAnchor.constraint(equalToConstant: 105),
-            loadingIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
-            loadingIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
+            loadingIndector.centerYAnchor.constraint(equalTo: centerYAnchor),
+            loadingIndector.centerXAnchor.constraint(equalTo: centerXAnchor),
             seekToView.centerYAnchor.constraint(equalTo: centerYAnchor),
             seekToView.centerXAnchor.constraint(equalTo: centerXAnchor),
             seekToView.widthAnchor.constraint(equalToConstant: 100),
@@ -1012,15 +944,13 @@ public enum KSPlayerTopBarShowCase {
     /// 始终显示
     case always
     /// 只在横屏界面显示
-    // Typo fix (SOURCE RECONSTRUCTION mandate, UIComponents.md §18.6): the binary
-    // spelled this `horizantalOnly`; the Swift port corrects it to `horizontalOnly`.
-    case horizontalOnly
+    case horizantalOnly
     /// 不显示
     case none
 }
 
 public extension KSOptions {
-    /// 顶部返回、标题、AirPlay按钮 显示选项，默认.Always，可选.horizontalOnly、.None
+    /// 顶部返回、标题、AirPlay按钮 显示选项，默认.Always，可选.HorizantalOnly、.None
     static var topBarShowInCase = KSPlayerTopBarShowCase.always
     /// 自动隐藏操作栏的时间间隔 默认5秒
     static var animateDelayTimeInterval = TimeInterval(5)
