@@ -62,10 +62,13 @@ private final class IOInterruptRegistry {
     /// annotation here — not a new lock or actor.
     nonisolated(unsafe) static let shared = IOInterruptRegistry()
 
-    // once-init FUN_101a349c4 — body not provided; field defaults; UNRESOLVED
+    // once-init FUN_101a349c4 (orchestrator-resolved from binary): RESOLVED.
+    //   *(self+0x10)=NSLock()  *(self+0x18)=1  *(self+0x20)=_swiftEmptyDictionarySingleton
+    // nextID starts at 1 (not 0): the binary uses id 0 as a trap sentinel — the
+    // counter is 1-based so the first issued token id is 1.
     init() {
         self.lock = NSLock()
-        self.nextID = 0
+        self.nextID = 1
         self.contexts = [:]
     }
 
