@@ -5,14 +5,17 @@
 //  C shim implementation bridging FFmpeg's private DV RPU parser APIs
 //  into a safe interface for Swift.
 //
-//  RE: TrackDecode.md L704-714 documents the binary's Phase 2 chain:
-//    ff_dovi_rpu_parse(ctx, buf, outPos, 0)
-//    size = FUN_102402568(ctx, &outPtr)             // ff_dovi_get_metadata
-//    serialized = FUN_10150c0a4(outPtr)             // convertAVDOVIToKSDOVIMetadata (KS serializer)
-//    memmove(tempBuf, serialized, 0xBC0)            // 3008 bytes
+//  RE: the binary's Phase-2 DV chain (decode loop @ 0x101a6ce44). NOTE: the
+//  addresses below are CORRECTED — the prior TrackDecode.md anchors
+//  (0x102402568 / 0x10150c0a4) were WRONG (font/glyph code); confirmed by the
+//  1B.1 deterministic audit (unique-string anchor + static-archive fingerprint):
+//    ff_dovi_rpu_parse(ctx, buf, outPos, 0)            @ 0x102a3b9ac
+//    size = ff_dovi_get_metadata(ctx, &outPtr)         @ 0x102a3b744
+//    serialized = convertAVDOVIToKSDOVIMetadata(outPtr) @ 0x101b31c6c  (KS serializer)
+//    memmove(tempBuf, serialized, 0xBC0)               // 3008 bytes
 //    memcpy(self+0x50, tempBuf, 0xBC0)
 //  Steps 1 (parse) and 2 (get_metadata) are wrapped here; the serialize +
-//  stage steps (FUN_10150c0a4 / convertAVDOVIToKSDOVIMetadata) live on the
+//  stage steps (convertAVDOVIToKSDOVIMetadata @ 0x101b31c6c) live on the
 //  Swift side in the decode loop.
 //
 //  This shim re-declares the private function prototypes and lets the
@@ -95,8 +98,9 @@ int ks_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata) {
     }
     *out_metadata = NULL;
 
-    // RE: FUN_102402568 @ 0x102402568 = ff_dovi_get_metadata. It calls
-    // av_dovi_metadata_alloc and assembles a fresh combined AVDOVIMetadata
+    // RE: ff_dovi_get_metadata @ 0x102a3b744 (CORRECTED; the prior 0x102402568
+    // was wrong — font code — per the 1B.1 deterministic audit). It calls
+    // av_dovi_metadata_alloc (@ 0x10323b430) and assembles a fresh combined AVDOVIMetadata
     // (header + mapping + color + extension blocks) into *out_metadata,
     // returning its size (> 0), 0 if none, or a negative AVERROR. Ownership of
     // *out_metadata passes to the caller (free with ks_dovi_metadata_free).
