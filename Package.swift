@@ -47,6 +47,19 @@ let package = Package(
         .target(
             name: "DisplayCriteria"
         ),
+        .target(
+            name: "PreLoadIOContext",
+            dependencies: [
+                "KSPlayer",
+                .product(name: "Libavformat", package: "FFmpegKit"),
+            ],
+            path: "Sources/PreLoadIOContext"
+        ),
+        .target(
+            name: "ProAVPlayer",
+            dependencies: ["KSPlayer", "PreLoadIOContext"],
+            path: "Sources/ProAVPlayer"
+        ),
         .testTarget(
             name: "KSPlayerTests",
             dependencies: ["KSPlayer"],
