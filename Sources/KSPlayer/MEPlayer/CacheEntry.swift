@@ -13,18 +13,20 @@
 // `encodeIfPresent` for the single Optional). Properties are declared in key
 // order 0–4 so that synthesis matches the binary's key order.
 final class CacheEntry: Codable {
-    // field offsets (from __swift5_fieldmd reflection + accessor decompiles):
-    var logicalPos: Int   // +0x10, 8B  (slot accessors load/store 8 bytes)
-    var physicalPos: Int  // +0x18, 8B
-    var size: UInt32      // +0x20, 4B  (getter returns 4B; bounds-check compares UNSIGNED)
-    var eof: Bool         // +0x24, 1B  (reflection `Sb`; init writes 0 = false)
-    var maxSize: UInt32?  // +0x28 value / +0x2c discriminator (uint5 packed; encodeIfPresent)
+    // field types pinned from mangled property descriptors (authoritative — demangled):
+    //   CacheEntry.logicalPos : Swift.UInt64  ·  .physicalPos : Swift.UInt64
+    //   CacheEntry.size : Swift.UInt32  ·  .maxSize : Swift.UInt32?  ·  .eof : Swift.Bool
+    var logicalPos: UInt64   // +0x10, 8B  (mangled: logicalPoss6UInt64Vv)
+    var physicalPos: UInt64  // +0x18, 8B  (mangled: physicalPoss6UInt64Vv)
+    var size: UInt32         // +0x20, 4B  (mangled: size...s6UInt32V; bounds-check compares UNSIGNED)
+    var eof: Bool            // +0x24, 1B  (reflection `Sb`; init writes 0 = false)
+    var maxSize: UInt32?     // +0x28 value / +0x2c discriminator (mangled: maxSizes6UInt32VSgv; encodeIfPresent)
 
     // Slot 9 memberwise init @0x1019e28dc: stores logicalPos(+0x10),
     // physicalPos(+0x18), size(+0x20) from params; eof(+0x24) defaults to
     // false (init writes 0); maxSize(+0x28/+0x2c) stored from the Optional
     // param. There is no `eof` parameter — the binary always initialises it false.
-    init(logicalPos: Int, physicalPos: Int, size: UInt32, maxSize: UInt32?) {
+    init(logicalPos: UInt64, physicalPos: UInt64, size: UInt32, maxSize: UInt32?) {
         self.logicalPos = logicalPos
         self.physicalPos = physicalPos
         self.size = size
