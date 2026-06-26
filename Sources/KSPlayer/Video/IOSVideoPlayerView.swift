@@ -230,8 +230,8 @@ open class IOSVideoPlayerView: VideoPlayerView {
     }
 
     override open func change(definitionIndex: Int) {
-        Task {
-            let image = await playerLayer?.player.thumbnailImageAtCurrentTime()
+        Task { @MainActor in
+            let image = await self.playerLayer?.player.thumbnailImageAtCurrentTime()
             if let image {
                 self.maskImageView.image = UIImage(cgImage: image)
                 self.maskImageView.alpha = 1
@@ -357,7 +357,7 @@ public class AirplayStatusView: UIView {
 
 public extension KSOptions {
     /// func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask
-    static var supportedInterfaceOrientations = UIInterfaceOrientationMask.portrait
+    nonisolated(unsafe) static var supportedInterfaceOrientations = UIInterfaceOrientationMask.portrait
 }
 
 extension UIApplication {

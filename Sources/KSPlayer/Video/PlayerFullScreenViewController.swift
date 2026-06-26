@@ -57,7 +57,7 @@ class PlayerFullScreenViewController: UIViewController {
     }
 }
 
-extension PlayerFullScreenViewController: PlayerViewFullScreenDelegate {
+extension PlayerFullScreenViewController: @preconcurrency PlayerViewFullScreenDelegate {
     func player(isMaskShow: Bool, isFullScreen: Bool) {
         if isFullScreen {
             statusHiden = !isMaskShow

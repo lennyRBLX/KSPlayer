@@ -277,17 +277,17 @@ open class SubtitleModel: ObservableObject {
         }
     }
 
-    public static var textColor: Color = .white
-    public static var textBackgroundColor: Color = .clear
+    nonisolated(unsafe) public static var textColor: Color = .white
+    nonisolated(unsafe) public static var textBackgroundColor: Color = .clear
     public static var textFont: UIFont {
         textBold ? .boldSystemFont(ofSize: textFontSize) : .systemFont(ofSize: textFontSize)
     }
 
-    public static var textFontSize = SubtitleModel.Size.standard.rawValue
-    public static var textBold = false
-    public static var textItalic = false
-    public static var textPosition = TextPosition()
-    public static var audioRecognizes = [any AudioRecognize]()
+    nonisolated(unsafe) public static var textFontSize = SubtitleModel.Size.standard.rawValue
+    nonisolated(unsafe) public static var textBold = false
+    nonisolated(unsafe) public static var textItalic = false
+    nonisolated(unsafe) public static var textPosition = TextPosition()
+    nonisolated(unsafe) public static var audioRecognizes = [any AudioRecognize]()
     private var subtitleDataSouces: [SubtitleDataSouce] = KSOptions.subtitleDataSouces
     @Published
     public private(set) var subtitleInfos = [any SubtitleInfo]()
@@ -305,9 +305,10 @@ open class SubtitleModel: ObservableObject {
                 addSubtitle(dataSouce: datasouce)
             }
             // 要用async，不能在更新UI的时候，修改Publishe变量
-            DispatchQueue.main.async { [weak self] in
-                self?.parts = []
-                self?.selectedSubtitleInfo = nil
+            nonisolated(unsafe) let strongSelf = self
+            Task { @MainActor in
+                strongSelf.parts = []
+                strongSelf.selectedSubtitleInfo = nil
             }
         }
     }
@@ -365,22 +366,45 @@ open class SubtitleModel: ObservableObject {
                         $0 === info
                     }
                 }
-                Task { @MainActor in
-                    try? await dataSouce.searchSubtitle(query: query, languages: languages)
-                    subtitleInfos.append(contentsOf: dataSouce.infos)
-                }
+                runSearchOnMainActor(dataSouce: dataSouce, query: query, languages: languages)
             }
         }
     }
 
+    private func runSearchOnMainActor(dataSouce: SearchSubtitleDataSouce, query: String?, languages: [String]) {
+        nonisolated(unsafe) let captured = dataSouce
+        nonisolated(unsafe) let strongSelf = self
+        Task { @MainActor in
+            await Self.performSearch(captured, query: query, languages: languages)
+            strongSelf.subtitleInfos.append(contentsOf: captured.infos)
+        }
+    }
+
+    private static func performSearch(_ dataSouce: SearchSubtitleDataSouce, query: String?, languages: [String]) async {
+        nonisolated(unsafe) let captured = dataSouce
+        try? await captured.searchSubtitle(query: query, languages: languages)
+    }
+
     public func addSubtitle(dataSouce: SubtitleDataSouce) {
         if let dataSouce = dataSouce as? FileURLSubtitleDataSouce {
-            Task { @MainActor in
-                try? await dataSouce.searchSubtitle(fileURL: url)
-                subtitleInfos.append(contentsOf: dataSouce.infos)
-            }
+            runFileURLSearchOnMainActor(dataSouce: dataSouce)
         } else {
             subtitleInfos.append(contentsOf: dataSouce.infos)
         }
+    }
+
+    private func runFileURLSearchOnMainActor(dataSouce: FileURLSubtitleDataSouce) {
+        nonisolated(unsafe) let captured = dataSouce
+        let capturedURL = url
+        nonisolated(unsafe) let strongSelf = self
+        Task { @MainActor in
+            await Self.performFileURLSearch(captured, fileURL: capturedURL)
+            strongSelf.subtitleInfos.append(contentsOf: captured.infos)
+        }
+    }
+
+    private static func performFileURLSearch(_ dataSouce: FileURLSubtitleDataSouce, fileURL: URL?) async {
+        nonisolated(unsafe) let captured = dataSouce
+        try? await captured.searchSubtitle(fileURL: fileURL)
     }
 }

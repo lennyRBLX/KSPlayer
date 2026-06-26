@@ -13,7 +13,7 @@ import UIKit
 import AppKit
 #endif
 
-public class KSMEPlayer: NSObject {
+public final class KSMEPlayer: NSObject {
     private var loopCount = 1
     private var playerItem: MEPlayerItem
     public let audioOutput: AudioOutput
@@ -288,7 +288,7 @@ extension KSMEPlayer: MEPlayerDelegate {
     }
 }
 
-extension KSMEPlayer: MediaPlayerProtocol {
+extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     public var chapters: [Chapter] {
         playerItem.chapters
     }
@@ -506,6 +506,7 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
             completionHandler()
             return
         }
+        nonisolated(unsafe) let handler = completionHandler
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
@@ -513,7 +514,7 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
             if self.playbackState != .playing {
                 self.play()
             }
-            completionHandler()
+            handler()
         }
     }
 
@@ -522,6 +523,7 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
             completionHandler()
             return
         }
+        nonisolated(unsafe) let handler = completionHandler
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
@@ -529,7 +531,7 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
             if self.playbackState != .paused {
                 self.pause()
             }
-            completionHandler()
+            handler()
         }
     }
 
@@ -549,18 +551,19 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
             completionHandler()
             return
         }
+        nonisolated(unsafe) let handler = completionHandler
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
             }
             guard self.loadState != .playable, let countDown = bufferingCommand.completionDueDate?.timeIntervalSinceNow else {
-                completionHandler()
+                handler()
                 return
             }
             self.bufferingCountDownTimer?.invalidate()
             self.bufferingCountDownTimer = nil
             self.bufferingCountDownTimer = Timer(timeInterval: countDown, repeats: false) { _ in
-                completionHandler()
+                handler()
             }
         }
     }

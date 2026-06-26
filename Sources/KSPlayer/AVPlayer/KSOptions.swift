@@ -458,32 +458,32 @@ public enum VideoInterlacingType: String {
 }
 
 public extension KSOptions {
-    static var firstPlayerType: MediaPlayerProtocol.Type = KSAVPlayer.self
-    static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
+    nonisolated(unsafe) static var firstPlayerType: MediaPlayerProtocol.Type = KSAVPlayer.self
+    nonisolated(unsafe) static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
     /// 最低缓存视频时间
-    static var preferredForwardBufferDuration = 3.0
+    nonisolated(unsafe) static var preferredForwardBufferDuration = 3.0
     /// 最大缓存视频时间
-    static var maxBufferDuration = 30.0
+    nonisolated(unsafe) static var maxBufferDuration = 30.0
     /// 是否开启秒开
-    static var isSecondOpen = false
+    nonisolated(unsafe) static var isSecondOpen = false
     /// 开启精确seek
-    static var isAccurateSeek = false
+    nonisolated(unsafe) static var isAccurateSeek = false
     /// Applies to short videos only
-    static var isLoopPlay = false
+    nonisolated(unsafe) static var isLoopPlay = false
     /// 是否自动播放，默认true
-    static var isAutoPlay = true
+    nonisolated(unsafe) static var isAutoPlay = true
     /// seek完是否自动播放
-    static var isSeekedAutoPlay = true
-    static var hardwareDecode = true
+    nonisolated(unsafe) static var isSeekedAutoPlay = true
+    nonisolated(unsafe) static var hardwareDecode = true
     // 默认不用自研的硬解，因为有些视频的AVPacket的pts顺序是不对的，只有解码后的AVFrame里面的pts是对的。
-    static var asynchronousDecompression = false
-    static var isPipPopViewController = false
-    static var canStartPictureInPictureAutomaticallyFromInline = true
-    static var preferredFrame = true
-    static var useSystemHTTPProxy = true
+    nonisolated(unsafe) static var asynchronousDecompression = false
+    nonisolated(unsafe) static var isPipPopViewController = false
+    nonisolated(unsafe) static var canStartPictureInPictureAutomaticallyFromInline = true
+    nonisolated(unsafe) static var preferredFrame = true
+    nonisolated(unsafe) static var useSystemHTTPProxy = true
     /// 日志级别
-    static var logLevel = LogLevel.warning
-    static var logger: LogHandler = OSLog(lable: "KSPlayer")
+    nonisolated(unsafe) static var logLevel = LogLevel.warning
+    nonisolated(unsafe) static var logger: LogHandler = OSLog(lable: "KSPlayer")
     internal static func deviceCpuCount() -> Int {
         var ncpu = UInt(0)
         var len: size_t = MemoryLayout.size(ofValue: ncpu)

@@ -11,7 +11,7 @@ import Libavcodec
 import Libavfilter
 import Libavformat
 
-public final class MEPlayerItem: Sendable {
+public final class MEPlayerItem {
     private let url: URL
     private let options: KSOptions
     private let operationQueue = OperationQueue()
@@ -91,7 +91,7 @@ public final class MEPlayerItem: Sendable {
         Int(8 * (self?.videoTrack?.bitrate ?? 0))
     }
 
-    private static var onceInitial: Void = {
+    nonisolated(unsafe) private static var onceInitial: Void = {
         var result = avformat_network_init()
         av_log_set_callback { ptr, level, format, args in
             guard let format else {
@@ -502,10 +502,11 @@ extension MEPlayerItem {
                 }
                 isSeek = true
                 allPlayerItemTracks.forEach { $0.seek(time: seekToTime) }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.seekingCompletionHandler?(result >= 0)
-                    self.seekingCompletionHandler = nil
+                nonisolated(unsafe) let weakSelf = self
+                let resultCode = result
+                DispatchQueue.main.async {
+                    weakSelf.seekingCompletionHandler?(resultCode >= 0)
+                    weakSelf.seekingCompletionHandler = nil
                 }
                 audioClock.time = CMTime(seconds: seekToTime, preferredTimescale: time.timescale) + startTime
                 videoClock.time = CMTime(seconds: seekToTime, preferredTimescale: time.timescale) + startTime

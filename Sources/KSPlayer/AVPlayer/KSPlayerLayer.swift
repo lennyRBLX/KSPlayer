@@ -64,6 +64,7 @@ public protocol KSPlayerLayerDelegate: AnyObject {
     func player(layer: KSPlayerLayer, bufferedCount: Int, consumeTime: TimeInterval)
 }
 
+@MainActor
 open class KSPlayerLayer: NSObject {
     public weak var delegate: KSPlayerLayerDelegate?
     @Published
@@ -163,26 +164,25 @@ open class KSPlayerLayer: NSObject {
     public private(set) var state = KSPlayerState.initialized {
         willSet {
             if state != newValue {
-                runOnMainThread { [weak self] in
-                    guard let self else { return }
-                    KSLog("playerStateDidChange - \(newValue)")
-                    self.delegate?.player(layer: self, state: newValue)
-                }
+                KSLog("playerStateDidChange - \(newValue)")
+                delegate?.player(layer: self, state: newValue)
             }
         }
     }
 
     private lazy var timer: Timer = .scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-        guard let self, self.player.isReadyToPlay else {
-            return
-        }
-        self.delegate?.player(layer: self, currentTime: self.player.currentPlaybackTime, totalTime: self.player.duration)
-        if self.player.playbackState == .playing, self.player.loadState == .playable, self.state == .buffering {
-            // 一个兜底保护，正常不能走到这里
-            self.state = .bufferFinished
-        }
-        if self.player.isPlaying {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = self.player.currentPlaybackTime
+        MainActor.assumeIsolated {
+            guard let self, self.player.isReadyToPlay else {
+                return
+            }
+            self.delegate?.player(layer: self, currentTime: self.player.currentPlaybackTime, totalTime: self.player.duration)
+            if self.player.playbackState == .playing, self.player.loadState == .playable, self.state == .buffering {
+                // 一个兜底保护，正常不能走到这里
+                self.state = .bufferFinished
+            }
+            if self.player.isPlaying {
+                MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = self.player.currentPlaybackTime
+            }
         }
     }
 
@@ -237,7 +237,7 @@ open class KSPlayerLayer: NSObject {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
+    isolated deinit {
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
             player.pipController?.contentSource = nil
         }
@@ -396,10 +396,7 @@ extension KSPlayerLayer: MediaPlayerDelegate {
         guard player.playbackState != .seeking else { return }
         if player.loadState == .playable, startTime > 0 {
             let diff = CACurrentMediaTime() - startTime
-            runOnMainThread { [weak self] in
-                guard let self else { return }
-                delegate?.player(layer: self, bufferedCount: bufferedCount, consumeTime: diff)
-            }
+            delegate?.player(layer: self, bufferedCount: bufferedCount, consumeTime: diff)
             if bufferedCount == 0 {
                 var dic = ["firstTime": diff]
                 if options.tcpConnectedTime > 0 {
@@ -451,18 +448,12 @@ extension KSPlayerLayer: MediaPlayerDelegate {
             KSLog(error as CustomStringConvertible)
         } else {
             let duration = player.duration
-            runOnMainThread { [weak self] in
-                guard let self else { return }
-                delegate?.player(layer: self, currentTime: duration, totalTime: duration)
-            }
+            delegate?.player(layer: self, currentTime: duration, totalTime: duration)
             state = .playedToTheEnd
         }
         timer.fireDate = Date.distantFuture
         bufferedCount = 1
-        runOnMainThread { [weak self] in
-            guard let self else { return }
-            delegate?.player(layer: self, finish: error)
-        }
+        delegate?.player(layer: self, finish: error)
         if error == nil {
             nextPlayer()
         }
@@ -472,7 +463,7 @@ extension KSPlayerLayer: MediaPlayerDelegate {
 // MARK: - AVPictureInPictureControllerDelegate
 
 @available(tvOS 14.0, *)
-extension KSPlayerLayer: AVPictureInPictureControllerDelegate {
+extension KSPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
     public func pictureInPictureControllerDidStopPictureInPicture(_: AVPictureInPictureController) {
         player.pipController?.stop(restoreUserInterface: false)
     }

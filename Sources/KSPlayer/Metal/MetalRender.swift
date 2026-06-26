@@ -4,7 +4,7 @@
 //
 //  Created by kintan on 2020/1/11.
 //
-import Accelerate
+@preconcurrency import Accelerate
 import CoreVideo
 import Foundation
 import Metal

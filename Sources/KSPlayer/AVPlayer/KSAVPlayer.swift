@@ -309,8 +309,12 @@ extension KSAVPlayer {
             }
             playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
             loopCountObservation = playerLooper?.observe(\.loopCount) { [weak self] playerLooper, _ in
-                guard let self else { return }
-                self.delegate?.playBack(player: self, loopCount: playerLooper.loopCount)
+                let loopCount = playerLooper.loopCount
+                nonisolated(unsafe) let weakSelf = self
+                Task { @MainActor in
+                    guard let s = weakSelf else { return }
+                    s.delegate?.playBack(player: s, loopCount: loopCount)
+                }
             }
             loopStatusObservation = playerLooper?.observe(\.status) { [weak self] playerLooper, _ in
                 guard let self else { return }
@@ -359,7 +363,7 @@ extension KSAVPlayer {
     }
 }
 
-extension KSAVPlayer: MediaPlayerProtocol {
+extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     public var subtitleDataSouce: SubtitleDataSouce? { nil }
     public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
     public var view: UIView? { playerView }
@@ -511,7 +515,7 @@ extension AVAssetTrack {
     func toMediaPlayerTrack() {}
 }
 
-class AVMediaPlayerTrack: MediaPlayerTrack {
+class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
     let formatDescription: CMFormatDescription?
     let description: String
     private let track: AVPlayerItemTrack

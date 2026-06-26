@@ -20,8 +20,11 @@ public class URLSubtitleInfo: KSSubtitle, SubtitleInfo {
     public var isEnabled: Bool = false {
         didSet {
             if isEnabled, parts.isEmpty {
+                nonisolated(unsafe) let strongSelf = self
+                let downloadURL = self.downloadURL
+                let userAgent = self.userAgent
                 Task {
-                    try? await parse(url: downloadURL, userAgent: userAgent)
+                    try? await strongSelf.parse(url: downloadURL, userAgent: userAgent)
                 }
             }
         }
@@ -77,11 +80,11 @@ public protocol SearchSubtitleDataSouce: SubtitleDataSouce {
 }
 
 public extension KSOptions {
-    static var subtitleDataSouces: [SubtitleDataSouce] = [DirectorySubtitleDataSouce()]
+    nonisolated(unsafe) static var subtitleDataSouces: [SubtitleDataSouce] = [DirectorySubtitleDataSouce()]
 }
 
 public class PlistCacheSubtitleDataSouce: CacheSubtitleDataSouce {
-    public static let singleton = PlistCacheSubtitleDataSouce()
+    nonisolated(unsafe) public static let singleton = PlistCacheSubtitleDataSouce()
     public var infos = [any SubtitleInfo]()
     private let srtCacheInfoPath: String
     // 因为plist不能保存URL

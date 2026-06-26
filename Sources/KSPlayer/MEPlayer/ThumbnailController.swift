@@ -12,7 +12,7 @@ import Libavformat
 #if canImport(UIKit)
 import UIKit
 #endif
-public struct FFThumbnail {
+public struct FFThumbnail: Sendable {
     public let image: UIImage
     public let time: TimeInterval
 }
@@ -29,12 +29,23 @@ public class ThumbnailController {
     }
 
     public func generateThumbnail(for url: URL, thumbWidth: Int32 = 240) async throws -> [FFThumbnail] {
-        try await Task {
-            try getPeeks(for: url, thumbWidth: thumbWidth)
+        let count = thumbnailCount
+        return try await Self.peeksTask(url: url, thumbWidth: thumbWidth, count: count, owner: self)
+    }
+
+    private static func peeksTask(url: URL, thumbWidth: Int32, count: Int, owner: ThumbnailController) async throws -> [FFThumbnail] {
+        nonisolated(unsafe) let strongOwner = owner
+        let progress: @Sendable ([FFThumbnail], URL, Int) -> Void = { thumbs, fileURL, index in
+            Task { @MainActor in
+                strongOwner.delegate?.didUpdate(thumbnails: thumbs, forFile: fileURL, withProgress: index)
+            }
+        }
+        return try await Task.detached {
+            try Self.getPeeks(for: url, thumbWidth: thumbWidth, thumbnailCount: count, progress: progress)
         }.value
     }
 
-    private func getPeeks(for url: URL, thumbWidth: Int32 = 240) throws -> [FFThumbnail] {
+    private static func getPeeks(for url: URL, thumbWidth: Int32 = 240, thumbnailCount: Int, progress: @Sendable ([FFThumbnail], URL, Int) -> Void) throws -> [FFThumbnail] {
         let urlString: String
         if url.isFileURL {
             urlString = url.path
@@ -71,7 +82,6 @@ public class ThumbnailController {
         }
         var codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: nil)
         defer {
-            avcodec_close(codecContext)
             var codecContext: UnsafeMutablePointer<AVCodecContext>? = codecContext
             avcodec_free_context(&codecContext)
         }
@@ -119,7 +129,7 @@ public class ThumbnailController {
                     if let image {
                         let thumbnail = FFThumbnail(image: image, time: timeBase.cmtime(for: currentTimeStamp).seconds)
                         thumbnails.append(thumbnail)
-                        delegate?.didUpdate(thumbnails: thumbnails, forFile: url, withProgress: i)
+                        progress(thumbnails, url, i)
                     }
                     break
                 }

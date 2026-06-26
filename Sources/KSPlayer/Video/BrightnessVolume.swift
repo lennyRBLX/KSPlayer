@@ -129,7 +129,7 @@ private final class SystemView: UIVisualEffectView {
     }
 }
 
-extension SystemView: BrightnessVolumeViewProtocol {
+extension SystemView: @preconcurrency BrightnessVolumeViewProtocol {
     public func setProgress(_ progress: Float, type: UInt) {
         if type == 0 {
             imageView.image = brightnessImage
@@ -198,7 +198,7 @@ private final class ProgressView: UIView {
     }
 }
 
-extension ProgressView: BrightnessVolumeViewProtocol {
+extension ProgressView: @preconcurrency BrightnessVolumeViewProtocol {
     func setProgress(_ progress: Float, type: UInt) {
         progressView.setProgress(progress, animated: false)
         if progress == 0 {
