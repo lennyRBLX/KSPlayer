@@ -75,7 +75,13 @@ public class PreLoadIOContext: CacheIOContext {
     //   `position` is the UInt64 second word (param_2), `invalid` the char param_3.
     func updatePlaybackSnapshot(time: Double, position: UInt64, invalid: Bool) { // name inferred (devirt)
         _playbackSnapshotLock.lock()
-        if time.isNaN || time.isInfinite || invalid {
+        // Binary gate (FUN_101ba6980): isNaN || isInfinite || time < 0 || invalid.
+        // The `time < 0` (negative-finite) clause was RECOVERED by the M1C audit's
+        // independent recheck — decompile clauses C/D are sign-bit-guarded
+        // (`(long)param_1 < 0`) finite-exponent tests that reject every negative
+        // finite time (counterexample -1.0 = 0xBFF0… → nil). The original
+        // reconstruction omitted it. -0.0 is NOT rejected (matches strict `< 0`).
+        if time.isNaN || time.isInfinite || time < 0 || invalid {
             _playbackSnapshot = nil      // binary: *puVar1=0; puVar1[1]=0; tag byte=1
         } else {
             _playbackSnapshot = (time: time, position: position) // binary: tag byte=0
