@@ -345,11 +345,14 @@ public extension FixedWidthInteger {
 }
 
 open class AbstractAVIOContext {
+    // Forward addition (binary __swift5_fieldmd: readLimit@+0x10, bufferSize@+0x14;
+    // vtable slots 0/1/2 are its synthesized getter/setter/read). Default -1
+    // (binary init sets *(self+0x10) = 0xffffffff).
+    public var readLimit: Int32 = -1
     let bufferSize: Int32
-    let writable: Bool
-    public init(bufferSize: Int32 = 32 * 1024, writable: Bool = false) {
+    // Forward dropped `writable` (not a stored field in the binary) + its init param.
+    public init(bufferSize: Int32 = 32 * 1024) {
         self.bufferSize = bufferSize
-        self.writable = writable
     }
 
     open func read(buffer _: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
