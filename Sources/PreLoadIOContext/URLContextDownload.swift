@@ -10,10 +10,11 @@ import Libavformat
 //   fields — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative);
 //            `context`/`keepAlive`/`isReadComplete` are v4 concrete (transcribed
 //            verbatim); `url` is ⚑ best-effort (confirmed via l2_field_gate).
-//   init   — s3 @101b90bc0: the cached decompile is the outer *allocating* thunk
-//            (_swift_allocObject → FUN_101b90c58(7 args) → return); the inner
-//            field-store body (FUN_101b90c58) is NOT in the cached decompile set
-//            → init is a faithful spine + UNRESOLVED for the field assignments.
+//   init   — real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (cached;
+//            7-arg, also reused by CacheIOContext/ReadCacheIOContext to build their
+//            `download`). Opens an FFmpeg URLContext (deep IO; stripped calls named
+//            only by the P2 oracle) → UNRESOLVED→P2; inherited init(bufferSize:) is
+//            the compilable spine.
 //
 // UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
 //   the binary (no readable body) → inherited, NOT reconstructed. — P2

@@ -10,11 +10,11 @@ import KSPlayer
 //            The closure / source-context / int field TYPES are ⚑ best-effort
 //            (the brief's inferred shapes); confirmed against the binary where a
 //            property descriptor exists (see l2_field_gate). `// type inferred`.
-//   init   — s15 @101b95c6c: the cached decompile is the outer *allocating* thunk
-//            (_swift_allocObject → FUN_101b96a28(param_1) → _swift_release); the
-//            inner field-store body (FUN_101b96a28) is NOT in the cached decompile
-//            set → init is a faithful spine + UNRESOLVED for the exact field
-//            assignment sequence.
+//   init   — real designated init s15 @101b95c6c → inner FUN_101b96a28 (cached): a
+//            1-arg source init that stores source WEAK into sourceContext + builds 3
+//            closures (entryListProvider/endProvider/eofProvider) weakly capturing it.
+//            Source param type + closure bodies not deterministically resolvable →
+//            UNRESOLVED→P2; inherited init(bufferSize:) is the compilable spine.
 //
 // UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
 //   the binary (no readable body) → NOT reconstructed here; inherited from the
