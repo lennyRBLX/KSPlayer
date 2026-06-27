@@ -32,7 +32,8 @@ public class CacheOnlyIOContext: AbstractAVIOContext {
     //   ⚑ guess corrected — matches the known CacheEntry.logicalPos UInt64 shape).
     var logicalPos: UInt64 = 0 // type inferred — ⚑ (brief said Int64; l2 gate → UInt64)
     // sourceContext: optional wrapped upstream context for network fallback.
-    var sourceContext: AbstractAVIOContext? // type inferred — ⚑ (a wrapped source ctx)
+    //   WEAK reference (binary uses _swift_weakInit/_swift_weakAssign on this field).
+    weak var sourceContext: AbstractAVIOContext? // type inferred — ⚑ (referent class not pinned; AbstractAVIOContext? retained best-effort)
     // allowNetworkFallback: whether misses may fall through to sourceContext. v4 concrete.
     var allowNetworkFallback: Bool = false
     // requestedBytes: running count of bytes requested (for the byte budget).
@@ -40,11 +41,10 @@ public class CacheOnlyIOContext: AbstractAVIOContext {
     // maxNetworkBytes: ceiling on bytes served via the network fallback path.
     var maxNetworkBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
 
-    // s15 @101b95c6c — designated init (1 inner arg in the thunk).
-    //   Outer thunk: _swift_allocObject → FUN_101b96a28(param_1) → _swift_release.
-    // UNRESOLVED: inner init FUN_101b96a28 (field-store sequence + the exact param
-    //   set / defaults) is NOT in the cached decompiles — faithful spine only.
-    //   super.init() with AbstractAVIOContext's default bufferSize.
+    // UNRESOLVED: real designated init s15 @101b95c6c → inner FUN_101b96a28 (1 arg = source, stored WEAK
+    //   into sourceContext). Builds 3 closures (entryListProvider/endProvider/eofProvider @+0x18/+0x28/+0x38)
+    //   that weakly capture source. source param type + closure bodies not deterministically resolvable
+    //   → deferred (not reconstructed; inherited init(bufferSize:) is the compilable spine). — P2
     public override init(bufferSize: Int32 = 32 * 1024) {
         super.init(bufferSize: bufferSize)
     }
