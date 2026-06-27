@@ -3,23 +3,24 @@
 //  KSPlayer — DOVIRPUShim
 //
 //  C shim exposing ff_dovi_rpu_parse and related private FFmpeg APIs.
-//  The binary (v1.3.15) calls these directly because it statically links
+//  The binary (v1.3.17) calls these directly because it statically links
 //  FFmpeg. FFmpegKit ships prebuilt xcframeworks with these symbols linked
 //  in but not exposed through public headers. This shim re-declares the
 //  function prototypes so the linker resolves them at build time.
 //
-//  RE references (Forward 1.3.15, image base 0x100000000):
-//    TrackDecode.md L704-714 (Phase 2 DV RPU parsing chain)
-//    ff_dovi_rpu_parse      — definition @ 0x1024027d0; call site (the address
-//                             the RE notes anchor) @ 0x10140608c.
-//    ff_dovi_get_metadata   — @ 0x102402568. The RE notes mislabel this
-//                             "dovi_rpu_get_header"; no such symbol exists in
-//                             FFmpeg. The address realizes
-//                             `int ff_dovi_get_metadata(DOVIContext*, AVDOVIMetadata**)`.
-//    convertAVDOVIToKSDOVIMetadata — @ 0x10150c0a4 (KS-side serializer that
+//  RE references (Forward 1.3.17, image base 0x100000000). Addresses CORRECTED
+//  per the 1B.1 deterministic audit (unique-string anchor + static-archive
+//  fingerprint) and the FFmpeg-symbol oracle; the prior TrackDecode.md anchors
+//  (0x1024027d0 / 0x102402568 / 0x10150c0a4 / 0x10140608c) were WRONG — they
+//  resolve to font/glyph/ORM code, not DV functions:
+//    decode loop (rpu_parse → get_metadata → serialize chain) @ 0x101a6ce44
+//    ff_dovi_rpu_parse      — definition @ 0x102a3b9ac.
+//    ff_dovi_get_metadata   — definition @ 0x102a3b744. Realizes
+//                             `int ff_dovi_get_metadata(DOVIContext*, AVDOVIMetadata**)`;
+//                             allocates via av_dovi_metadata_alloc @ 0x10323b430.
+//    convertAVDOVIToKSDOVIMetadata — @ 0x101b31c6c (KS-side serializer that
 //                             flattens the AVDOVIMetadata into the 3008-byte
-//                             KSDOVIMetadata GPU buffer; previously mislabeled
-//                             "dovi_metadata_serialize"). Caller responsibility,
+//                             KSDOVIMetadata GPU buffer). Caller responsibility,
 //                             not part of this shim.
 //
 
@@ -66,7 +67,7 @@ void ks_dovi_ctx_flush(DOVIContext *ctx);
 /// Parse a raw DV RPU bitstream (after EPB removal) through the DOVIContext.
 /// Returns 0 on success, negative on failure.
 /// RE: Wraps ff_dovi_rpu_parse(ctx, data, size, 0). The FFmpeg function is
-/// defined at binary 0x1024027d0; Forward's per-frame call site is 0x10140608c.
+/// defined at binary 0x102a3b9ac; Forward's per-frame call site is 0x101a6ce44.
 /// This is step 1 of the binary's Phase 2 chain -- parse only, no extraction.
 int ks_dovi_rpu_parse(DOVIContext *ctx,
                       const uint8_t *data,
@@ -83,10 +84,10 @@ int ks_dovi_rpu_parse(DOVIContext *ctx,
 /// with ks_dovi_metadata_free. Use av_dovi_get_header/mapping/color on the
 /// returned pointer to read the sub-structures.
 ///
-/// RE: step 2 of the Phase 2 chain. Forward calls FUN_102402568(ctx, &outPtr)
-/// @ 0x102402568 = ff_dovi_get_metadata. (Earlier notes mislabeled this
-/// "dovi_rpu_get_header" and read ctx->dm directly at the wrong offset/type;
-/// ctx->dm is a private AVDOVIColorMetadata*, not the combined metadata.)
+/// RE: step 2 of the Phase 2 chain. Forward calls ff_dovi_get_metadata(ctx, &outPtr)
+/// @ 0x102a3b744. (Earlier notes mislabeled this "dovi_rpu_get_header" at the wrong
+/// address 0x102402568 — font code — and read ctx->dm directly at the wrong
+/// offset/type; ctx->dm is a private AVDOVIColorMetadata*, not the combined metadata.)
 int ks_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata);
 
 /// Free an AVDOVIMetadata returned by ks_dovi_get_metadata. The struct is a
