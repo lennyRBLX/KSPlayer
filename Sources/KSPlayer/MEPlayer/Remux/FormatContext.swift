@@ -34,7 +34,7 @@ public final class FormatContext {
     public var bitrate: Int64                                 // +0x38  DERIVED — external/unmapped; NOT Int
     public var assetTracks: [FFmpegAssetTrack]                // +0x40  default [] (binary builds from a stream loop)
     public var formatName: String                            // +0x48  DERIVED (from formatCtx->iformat->name)
-    public var seekByBytes: Bool                             // +0x58  binary stores constant 0 (false)
+    public var seekByBytes: Bool                             // +0x58  DERIVED (conditionally 0/1 across branches; default false)
     public var byteSeek: Bool                               // +0x59  DERIVED (from format flags + name compare)
     public var startTime: CMTime                            // +0x5c  DERIVED (from formatCtx->start_time / kCMTimeZero)
     public var maxFrameDuration: Int                        // +0x78  DERIVED (3600 or 10 from format flags); field-record sugar `Si` — NOT Double
@@ -64,7 +64,9 @@ public final class FormatContext {
         // param (faithful to the dominant store); the derived-fallback override is UNRESOLVED.
         self.duration = duration     // +0x28 = param_1 (derived override on ioContext==nil branch UNRESOLVED)
 
-        // --- seekByBytes: binary stores constant 0 at +0x58 (faithful) ---
+        // --- seekByBytes: default false. UNRESOLVED: binary conditionally stores 0
+        //     (inner L222) or a computed 1 (inner L211, uVar20) across branches —
+        //     derivation not reconstructed (faithful partial); NOT a constant. ---
         self.seekByBytes = false
 
         // --- assetTracks: empty default (binary populates +0x40 from a per-stream
