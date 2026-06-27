@@ -63,7 +63,7 @@ let package = Package(
         ),
         .testTarget(
             name: "KSPlayerTests",
-            dependencies: ["KSPlayer"],
+            dependencies: ["KSPlayer", "PreLoadIOContext"],
             resources: [.process("Resources")]
         ),
     ]

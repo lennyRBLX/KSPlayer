@@ -1,4 +1,5 @@
 @testable import KSPlayer
+@testable import PreLoadIOContext   // CacheIOContext's fields are internal (faithful) → @testable
 import Foundation
 import XCTest
 
@@ -6,6 +7,8 @@ import XCTest
 /// - 1C.1: IO-cancellation primitives (construction + registration path). Cancel/
 ///   isCancelled behavior is NOT in the Forward 1.3.17 binary → deferred to 1C.9.
 /// - 1C.2: CacheEntry Codable round-trip + the bounds-check method.
+/// - 1C.9: L3 capability — CacheIOContext construction + IO/cancellation surface +
+///   getContext AVIO bridge (functional read/cancel is FFmpeg-monolithic → P2).
 final class Phase1FoundationTest: XCTestCase {
 
     // MARK: 1C.1 — IOInterrupt
@@ -90,5 +93,32 @@ final class Phase1FoundationTest: XCTestCase {
         let w = DirectoryWatcher()
         let watching = await w.isWatching          // actor-isolated → await
         XCTAssertFalse(watching)                    // source == nil at init
+    }
+
+    // MARK: 1C.9 — L3 capability (CacheIOContext construct + IO/cancellation surface)
+
+    /// Phase-1 L3 capability test (REDUCED scope, forced by the binary). CacheIOContext's
+    /// `read` is FFmpeg-monolithic in Forward 1.3.17 (the cache-read is not separable from
+    /// the stripped-FFmpeg download branch) → UNRESOLVED→P2, so FUNCTIONAL read/cancel is
+    /// deferred. This asserts the reconstructed Phase-1 surface: the cache context
+    /// CONSTRUCTS, its fields init to the binary defaults, the cancellation field
+    /// (`interrupt: AVIOInterruptCB?` — NOT the plan's draft `interruptContext.makeToken()`)
+    /// is present, and the inherited `getContext()` bridges to an FFmpeg AVIOContext without
+    /// crashing. Functional read-returns->0 / cancel-returns--1 → P2.
+    func testCacheIOContextConstructsAndBridges() {
+        let ctx = CacheIOContext(cacheKey: "phase1-l3",
+                                 formatContextOptions: nil,
+                                 interrupt: nil,
+                                 saveFile: false,
+                                 isReadComplete: false)
+        XCTAssertEqual(ctx.bytesRead, 0)        // init default (UInt64)
+        XCTAssertTrue(ctx.entryList.isEmpty)     // init default [] ([CacheFileEntry])
+        XCTAssertNil(ctx.interrupt)              // cancellation surface present, nil as passed
+        XCTAssertFalse(ctx.isReadComplete)       // init param
+        // getContext() (inherited AbstractAVIOContext, 1C.4) allocs an FFmpeg AVIOContext
+        // wrapping this context's IO callbacks — the L3 IO-bridge capability. Calling it
+        // without crashing is the assertion (reading THROUGH it is the P2 functional path).
+        // (One-time AVIOContext alloc; intentionally not freed — test-process-scoped.)
+        _ = ctx.getContext()
     }
 }
