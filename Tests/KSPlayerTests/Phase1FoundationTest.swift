@@ -80,4 +80,15 @@ final class Phase1FoundationTest: XCTestCase {
         XCTAssertFalse(CacheEntry(logicalPos: 0, physicalPos: 0,
                                   size: 100, maxSize: 150).isExceeded(40))  // 140 <= 150
     }
+
+    // MARK: 1C.3 — DirectoryWatcher
+
+    /// `DirectoryWatcher` is an `actor` whose only field `source` starts nil, so
+    /// `isWatching` is false right after init (binary: init sets *(self+0x70)=0;
+    /// isWatching returns *(self+0x70) != 0). Actor-isolated → `await`.
+    func testDirectoryWatcherInitialState() async {
+        let w = DirectoryWatcher()
+        let watching = await w.isWatching          // actor-isolated → await
+        XCTAssertFalse(watching)                    // source == nil at init
+    }
 }
