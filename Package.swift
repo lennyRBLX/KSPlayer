@@ -51,6 +51,7 @@ let package = Package(
             name: "PreLoadIOContext",
             dependencies: [
                 "KSPlayer",
+                .product(name: "FFmpegKit", package: "FFmpegKit"),
                 .product(name: "Libavformat", package: "FFmpegKit"),
             ],
             path: "Sources/PreLoadIOContext"

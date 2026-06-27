@@ -1,5 +1,6 @@
 import Foundation
 import KSPlayer
+import FFmpegKit   // URLContext (FFmpeg private libavformat type) is declared in FFmpegKit's avformat_shim.h
 import Libavformat
 
 // URLContextDownload — an AbstractAVIOContext that downloads through an FFmpeg
@@ -17,12 +18,12 @@ import Libavformat
 // UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
 //   the binary (no readable body) → inherited, NOT reconstructed. — P2
 //
-// NOTE/CONCERN: `URLContext` is FFmpeg's libavformat *private* type (url.h is not
-//   installed in the public Libavformat module → `cannot find type 'URLContext'
-//   in scope` when this target is compiled in isolation). The mandated build gate
-//   (validate_build.sh ios → KSPlayer scheme) does not compile PreLoadIOContext,
-//   so it passes; declared verbatim per the brief's v4 concrete type (not retyped
-//   to satisfy a tool). Surfacing the module-wiring gap to the orchestrator. — P2
+// URLContext is FFmpeg's libavformat *private* type — declared in FFmpegKit's
+//   avformat_shim.h, so it resolves via `import FFmpegKit` (added to this target's
+//   dependencies in Package.swift). PreLoadIOContext builds green via
+//   `swift build --target PreLoadIOContext`. NOTE: the KSPlayer xcodebuild scheme
+//   (validate_build.sh ios) does NOT compile PreLoadIOContext → verify this module
+//   with `swift build`.
 public class URLContextDownload: AbstractAVIOContext {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // context: the FFmpeg URLContext driving the download. v4 concrete.
