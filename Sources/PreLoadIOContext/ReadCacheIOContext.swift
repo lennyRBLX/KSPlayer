@@ -1,0 +1,56 @@
+import Foundation
+import KSPlayer
+
+// ReadCacheIOContext — an AbstractAVIOContext that reads through a cache, backed by
+// a single CacheFileEntry + an optional URLContextDownload, with a tmp staging URL.
+//
+// STRUCTURE-ONLY this wave (forced by the binary, not a scope choice):
+//   fields  — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative;
+//             double-run deterministic). Concrete types from field-records; the ⚑
+//             ones are unmapped (stdlib ints / Foundation / in-module class) →
+//             best-effort + flagged.
+//   inits   — the DESIGNATED field-store init is DEVIRTUALIZED (descriptor slot 16 =
+//             new-unresolved, addr=null, NO readable body). The two readable inits
+//             (s15 @101bacb8c, s17 @101bacd64) are CONVENIENCE thunks that build the
+//             `download` (via the shared URLContextDownload init FUN_101b90c58) then
+//             DELEGATE to the devirt slot-16 — so the 8-field store has no readable
+//             body to reconstruct. → all real inits UNRESOLVED→P2 (cardinal: no body,
+//             never fabricate). `init(bufferSize:)` is the inherited compilable spine.
+//   method  — slot 18 @101bad730 is a single 576-instr method (the cache-read engine;
+//             the lone AbstractAVIOContext override) → deep IO → UNRESOLVED→P2.
+//
+// NOT exercised by the 1C.9 L3 capability test (that uses CacheIOContext) → structure
+// -only is sufficient for Phase 1 (OutputStreamInfo 1C.6 precedent). Full inits +
+// read body deferred to P2 (devirt recovery + the FFmpeg oracle).
+public class ReadCacheIOContext: AbstractAVIOContext {
+    // --- stored fields (binary __swift5_fieldmd order) ---
+    // download: the URLContextDownload the convenience inits build (FUN_101b90c58).
+    var download: URLContextDownload? // type inferred — ⚑ (built via the shared URLContextDownload init)
+    // tmpURL: staging URL for the cache write.
+    var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped in field-records)
+    // onlyCache: serve strictly from cache (no network). v4 concrete.
+    var onlyCache: Bool = false
+    // eof: whether the cached stream is at end. v4 concrete.
+    var eof: Bool = false
+    // end: logical end offset of the cached stream.
+    var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
+    // logicalPos: current logical read cursor.
+    var logicalPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped; matches CacheOnlyIOContext.logicalPos)
+    // urlPos: current position within the backing download.
+    var urlPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped)
+    // entryCache: the single backing cache entry. v4 concrete (references CacheFileEntry).
+    var entryCache: CacheFileEntry? // field-record concrete
+
+    // UNRESOLVED: real inits → P2. Designated field-store init = descriptor slot 16
+    //   DEVIRTUALIZED (addr=null, no body). Convenience inits s15 @101bacb8c + s17
+    //   @101bacd64 build `download` then delegate to the devirt slot-16 (vtable+0x180)
+    //   → the 8-field store has no readable body. Not reconstructed; init(bufferSize:)
+    //   is the inherited compilable spine. — P2
+    public override init(bufferSize: Int32 = 32 * 1024) {
+        super.init(bufferSize: bufferSize)
+    }
+
+    // UNRESOLVED: slot 18 @101bad730 — the 576-instr cache-read engine (the lone
+    //   AbstractAVIOContext override; deep IO calling stripped FFmpeg/Foundation) →
+    //   NOT reconstructed; named only by the P2 oracle. — P2
+}
