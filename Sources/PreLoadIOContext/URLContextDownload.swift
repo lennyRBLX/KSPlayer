@@ -32,15 +32,14 @@ public class URLContextDownload: AbstractAVIOContext {
     var keepAlive: Bool = false
     // isReadComplete: whether the download has reached completion. v4 concrete.
     var isReadComplete: Bool = false
-    // url: the source URL string of the download.
-    var url: String? // type inferred — ⚑ (String vs URL not resolvable from s3 thunk; confirm via l2)
+    // url: the source URL of the download. Inner init copies it via Foundation::URL
+    //   type-metadata + value-witness (dispositive → URL, not String).
+    var url: URL? // type URL; optionality inferred — ⚑
 
-    // s3 @101b90bc0 — designated init (7 inner args in the thunk).
-    //   Outer thunk: _swift_allocObject → FUN_101b90c58(param_1..param_7) → return.
-    // UNRESOLVED: inner init FUN_101b90c58 (field-store sequence + the exact param
-    //   set / decomposition — a String is 2 words, param_7 is a 1-byte Bool) is
-    //   NOT in the cached decompiles — faithful spine only. super.init() with
-    //   AbstractAVIOContext's default bufferSize.
+    // UNRESOLVED: real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (7 args; also reused by
+    //   CacheIOContext/ReadCacheIOContext to build their `download`). Opens an FFmpeg URLContext
+    //   (multiple_requests option, avio open) — deep FFmpeg IO whose stripped calls only the P2 oracle names.
+    //   Not reconstructed; inherited init(bufferSize:) is the compilable spine. — P2
     public override init(bufferSize: Int32 = 32 * 1024) {
         super.init(bufferSize: bufferSize)
     }
