@@ -5,11 +5,12 @@ import Foundation
 //
 // Reconstructed A+ structure-faithful from the Forward 1.3.17 binary:
 //   fields  — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative).
-//   inits   — s9 (101b881f8) + s10 (101b900c4): both cached decompiles are the
-//             outer *allocating* thunks (_swift_allocObject → inner init FUN);
-//             the inner field-store bodies (FUN_101b8fb0c / FUN_101b90114) are
-//             NOT in the cached decompile set → init bodies are faithful spine
-//             + UNRESOLVED for the exact field-assignment sequence.
+//   inits   — s10 (101b900c4): inner FUN_101b90114 has explicit param→field stores
+//             (url=param_1, position=param_2; saveFile=true) → GROUNDED framing,
+//             with the Foundation file-open/size-read detail UNRESOLVED→P2.
+//             s9 (101b881f8): the DESIGNATED init, inner FUN_101b8fb0c — its
+//             param_1 (url-derivation base) type is not deterministically
+//             resolvable → left UNRESOLVED, no fabricated signature. — P2.
 //   methods — s12/s13/s14 (101b90620 / 101b906c8 / 101b9089c): CacheFileEntry's
 //             own logic; symbols devirtualized → method NAMES inferred from the
 //             readable body shape (marked `name inferred`). Faithful spine; the
@@ -41,27 +42,23 @@ final class CacheFileEntry {
     var maxSize: UInt32? // type inferred — ⚑ (brief said Int64; l2 gate + decompile → UInt32?)
 
     // --- inits ---
-    // s9 @101b881f8 — outer allocating thunk: _swift_allocObject then
-    //   FUN_101b8fb0c(param_1, param_2, param_3 & 0xffffffffff). Three args; the
-    //   third masked to 40 bits (a small int / flag). Likely the designated init.
-    // UNRESOLVED: inner init FUN_101b8fb0c (field-store sequence) not in cached
-    //   decompiles — exact param→field mapping unconfirmed; spine only.
-    init(file: FileHandle?, url: URL?, position: UInt64, saveFile: Bool, size: UInt32, maxSize: UInt32?) {
-        self.file = file
+    // s10 @101b900c4 → inner FUN_101b90114 (2 args; explicit field stores url=param_1, position=param_2).
+    // Arity inferred (no mangled init symbol exists); param→field stores are explicit in the inner init.
+    // Body opens the EXISTING cache file + reads its NSURLFileSizeKey size → faithful spine; the
+    // NSFileManager/URLResourceValues marshalling detail is UNRESOLVED.
+    init(url: URL?, position: UInt64) {
         self.url = url
         self.position = position
-        self.saveFile = saveFile
-        self.size = size
-        self.maxSize = maxSize
+        self.saveFile = true                  // binary sets saveFile=true on this path
+        // UNRESOLVED: open existing file (NSFileManager.fileExists) + read NSURLFileSizeKey → size/maxSize,
+        //   then open FileHandle → file. Foundation spine in FUN_101b90114; detail deferred. — P2
     }
 
-    // s10 @101b900c4 — outer allocating thunk: _swift_allocObject then
-    //   FUN_101b90114(param_1, param_2). Two args; likely a convenience init.
-    // UNRESOLVED: inner init FUN_101b90114 (field-store sequence) not in cached
-    //   decompiles — exact param→field mapping unconfirmed; spine only.
-    convenience init(url: URL?, maxSize: UInt32?) {
-        self.init(file: nil, url: url, position: 0, saveFile: false, size: 0, maxSize: maxSize)
-    }
+    // UNRESOLVED: s9 @101b881f8 → inner FUN_101b8fb0c — the DESIGNATED init (3 args: param_1 = a
+    //   url-derivation base [1-word, CustomStringConvertible; TYPE NOT deterministically resolvable],
+    //   position: UInt64 = param_2, maxSize: UInt32? = param_3 packed). Derives url via
+    //   appendingPathComponent + creates a new FileHandle (deep Foundation IO). param_1 type unpinnable
+    //   without guessing → do NOT declare. Real designated init deferred. — P2
 
     // --- methods (CacheFileEntry's own; names devirtualized → inferred) ---
 
