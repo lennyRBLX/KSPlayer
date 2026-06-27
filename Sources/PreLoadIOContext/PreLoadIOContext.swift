@@ -102,7 +102,14 @@ public class PreLoadIOContext: CacheIOContext {
     //   only, NOT fabricated.
     func interpolateTime(_ time: Double, position: UInt64, total: UInt64) -> Double { // name inferred (devirt)
         var result = 0.0
-        guard total != 0, !(time.isNaN || time.isInfinite) else { return result }
+        // Binary gate (FUN_101ba80e8): total != 0 && finite && time > 0. The decompile
+        // enters the lock body only when `-1 < (long)param_1` (sign bit clear = non-negative)
+        // AND finite-exponent, or the positive-subnormal clause — net strictly-positive-finite.
+        // The `time > 0` requirement was OMITTED in the original reconstruction; RECOVERED by
+        // the orchestrator re-walk of the M1C audit. NB the audit itself FALSE-PASSED this unit
+        // (rationalized the sign term as isFinite inlining — the same trap s31's compare agent
+        // hit). Counterexample time=-1.0,total=10,pos=5: binary -> 0.0 (gate fails); pre-fix -> -1.0.
+        guard total != 0, !(time.isNaN || time.isInfinite), time > 0 else { return result }
         _timeIndexLock.lock()
         // UNRESOLVED → P2: lVar1 = FUN_101bac458(time, _timeIndex, total) — an unnamed
         //   time-index lookup over _timeIndex returning a found-entry marker (0 == miss).
@@ -141,6 +148,10 @@ public class PreLoadIOContext: CacheIOContext {
         //   UNRECOVERED JUMPTABLE; the else-branch passes (a, 0.0, 1) through the same
         //   slot. The devirt branch target + the unnamed FUN_101ba7dc8 have no readable
         //   body → not reconstructed. — P2
+        //   NB (M1C audit): the validity-gate here is the SAME family as s31/s33. When
+        //   P2 reconstructs it, the gate MUST include the sign / `> 0` term (binary
+        //   rejects non-positive time), not just isNaN/isInfinite — s31 AND s33 both
+        //   omitted it. Do not repeat the omission.
     }
 
     // s55 @101ba6bb8 — `func bufferedBytesAvailable() -> UInt32` (name inferred,
