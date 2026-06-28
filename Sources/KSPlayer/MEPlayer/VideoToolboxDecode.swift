@@ -11,16 +11,30 @@ import Libavformat
 import VideoToolbox
 
 class VideoToolboxDecode: DecodeProtocol {
+    // P2 Task 3 field delta (reflection ORDER = layout; −lastPosition, +9 new). ⚑ = inferred/opaque → P3.
+    private var maxFrameCount: Int = 0 // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private var codecID: AVCodecID = AV_CODEC_ID_NONE // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private let options: KSOptions
+    private var flags: VTDecodeFrameFlags = [] // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private var startTime: Int64 = 0
+    private var maxTimestamp: Int64 = 0
+    private var lastTimestamp: Int64 = -1
+    private var needReconfig: Bool = false
+    // ⚑ UNRESOLVED→P3: binary type KSDOVIMetadata? (3008-byte inline, @+0x50) not buildable → held opaque
+    private var doviData: Data? = nil
+    // ⚑ UNRESOLVED→P3: binary type DOVIContext (224-byte inline opaque C struct, @+0xc10) not buildable → held opaque
+    private var doviContext: Data? = nil
+    private var frames: [VideoVTBFrame] = []
     private var session: DecompressionSession {
         didSet {
             VTDecompressionSessionInvalidate(oldValue.decompressionSession)
+            // Forward divergence (slot22 setter): the didSet also resets the timestamp state.
+            startTime = 0
+            maxTimestamp = 0
+            lastTimestamp = -1
         }
     }
-
-    private let options: KSOptions
-    private var startTime = Int64(0)
-    private var lastPosition = Int64(0)
-    private var needReconfig = false
+    private var formatDescriptionOut: CMFormatDescription? = nil // set in the deferred decodeFrame → P3
 
     init(options: KSOptions, session: DecompressionSession) {
         self.options = options
@@ -28,6 +42,11 @@ class VideoToolboxDecode: DecodeProtocol {
     }
 
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+        // UNRESOLVED→P3: Forward diverged this into the 572-instr DV decode loop @0x101a6ce44
+        // (ff_dovi_rpu_parse→ff_dovi_get_metadata→convertAVDOVIToKSDOVIMetadata) = THE Dolby-Vision crash site.
+        // Kept the upstream pre-DV body to compile; each `maxTimestamp` below marked ⚑P3 is an UNVERIFIED
+        // lastPosition→maxTimestamp placeholder (the removed field). P3 reconstructs the real loop + the exact
+        // maxTimestamp/lastTimestamp semantics with the crash arbiter. Cached: VTBox_slot29_101a6ce44.txt.
         if needReconfig {
             // 解决从后台切换到前台，解码失败的问题
             session = DecompressionSession(assetTrack: session.assetTrack, options: options)!
@@ -65,15 +84,15 @@ class VideoToolboxDecode: DecodeProtocol {
                 let frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
                 frame.corePixelBuffer = imageBuffer
                 frame.timebase = session.assetTrack.timebase
-                if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.lastPosition > 0 {
-                    self.startTime = self.lastPosition - timestamp
+                if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.maxTimestamp > 0 { // ⚑P3 lastPosition→maxTimestamp
+                    self.startTime = self.maxTimestamp - timestamp // ⚑P3 lastPosition→maxTimestamp
                 }
-                self.lastPosition = max(self.lastPosition, timestamp)
+                self.maxTimestamp = max(self.maxTimestamp, timestamp) // ⚑P3 lastPosition→maxTimestamp
                 frame.position = packet.position
                 frame.timestamp = self.startTime + timestamp
                 frame.duration = duration
                 frame.size = size
-                self.lastPosition += frame.duration
+                self.maxTimestamp += frame.duration // ⚑P3 lastPosition→maxTimestamp
                 completionHandler(.success(frame))
             }
             if status == noErr {
@@ -94,17 +113,30 @@ class VideoToolboxDecode: DecodeProtocol {
     }
 
     func doFlushCodec() {
-        lastPosition = 0
         startTime = 0
+        maxTimestamp = 0
+        lastTimestamp = -1
+        VTDecompressionSessionFinishDelayedFrames(session.decompressionSession)
+        VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
+        frames = []
+        if session.assetTrack.codecpar.codec_id == AV_CODEC_ID_H264 {
+            needReconfig = true
+        }
     }
 
     func shutdown() {
+        VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
         VTDecompressionSessionInvalidate(session.decompressionSession)
+        frames = []
+        // UNRESOLVED→P3: Forward also frees the DV decode context here —
+        // ff_dovi_ctx_unref(&doviContext) @ slot31 0x101a6ec80 (FUN_102a3b4e0). Blocked: doviContext is the
+        // un-buildable opaque DOVIContext (held opaque). P3 reconstructs the real type + this free.
     }
 
     func decode() {
-        lastPosition = 0
         startTime = 0
+        maxTimestamp = 0
+        lastTimestamp = -1
     }
 }
 
