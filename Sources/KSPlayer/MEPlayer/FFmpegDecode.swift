@@ -13,13 +13,16 @@ class FFmpegDecode: DecodeProtocol {
     private let options: KSOptions
     private var coreFrame: UnsafeMutablePointer<AVFrame>? = av_frame_alloc()
     private var codecContext: UnsafeMutablePointer<AVCodecContext>?
-    private var bestEffortTimestamp = Int64(0)
+    private var bestEffortTimestamp: Int64 = 0
     private let frameChange: FrameChange
     private let filter: MEFilter
-    private let seekByBytes: Bool
+    private var hasDecodeSuccess: Bool = false
+    private let isVideo: Bool
+    private let assetTrack: FFmpegAssetTrack
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.options = options
-        seekByBytes = assetTrack.seekByBytes
+        self.assetTrack = assetTrack
+        isVideo = assetTrack.mediaType == .video
         do {
             codecContext = try assetTrack.createContext(options: options)
         } catch {
@@ -35,6 +38,9 @@ class FFmpegDecode: DecodeProtocol {
     }
 
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+        // UNRESOLVED→P3: Forward diverged this (slot13 0x101a2220c, 677 instr; CC-create extracted to slot18 0x101a23404).
+        // The DV side-data extraction (DOVI RPU/METADATA, HDR→EDRMetaData) + the receive/filter closure are the P3 decode crux
+        // — reconstruct in P3 with the DV-crash behavioral arbiter. Cached: FFmpegDecode_slot13/slot18.
         guard let codecContext, avcodec_send_packet(codecContext, packet.corePacket) == 0 else {
             return
         }
@@ -188,7 +194,9 @@ class FFmpegDecode: DecodeProtocol {
     func doFlushCodec() {
         bestEffortTimestamp = Int64(0)
         // seek之后要清空下，不然解码可能还会有缓存，导致返回的数据是之前seek的。
-        avcodec_flush_buffers(codecContext)
+        if codecContext != nil {
+            avcodec_flush_buffers(codecContext)
+        }
     }
 
     func shutdown() {
