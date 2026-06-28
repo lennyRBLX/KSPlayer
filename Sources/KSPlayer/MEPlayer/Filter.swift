@@ -15,96 +15,70 @@ class MEFilter {
     private var bufferSinkContext: UnsafeMutablePointer<AVFilterContext>?
     private var filters: String?
     let timebase: Timebase
-    private let isAudio: Bool
-    private var params = AVBufferSrcParameters()
+    // ⚑ inferred (§7-walled, no concrete field-record) — type from arg-shape; do not "improve"
+    // order = binary field-descriptor order (height before width — reflection-authoritative)
+    private var format: AVPixelFormat = AV_PIX_FMT_NONE
+    private var height: Int32 = 0
+    private var width: Int32 = 0
     private let nominalFrameRate: Float
     deinit {
         graph?.pointee.opaque = nil
         avfilter_graph_free(&graph)
     }
 
+    // UNRESOLVED→P3: init devirt; isAudio not stored (field removed), threading to setup is caller-side
     public init(timebase: Timebase, isAudio: Bool, nominalFrameRate: Float, options: KSOptions) {
         graph = avfilter_graph_alloc()
         graph?.pointee.opaque = Unmanaged.passUnretained(options).toOpaque()
         self.timebase = timebase
-        self.isAudio = isAudio
         self.nominalFrameRate = nominalFrameRate
     }
 
-    private func setup(filters: String) -> Bool {
+    // Forward-faithful (slot22 @ 0x101a3b660). Divergences from upstream setup():
+    //   1. isAudio + params are PARAMETERS (param_4 low-bit, param_3) — not self.isAudio/self.params.
+    //   2. hw_frames_ctx block DROPPED — avfilter_link → avfilter_graph_config directly.
+    //   3. setup()-shape only (no setup2 swap logic).
+    private func setup(filters: String, params: UnsafeMutablePointer<AVBufferSrcParameters>, isAudio: Bool) -> Bool {
         var inputs = avfilter_inout_alloc()
         var outputs = avfilter_inout_alloc()
-        var ret = avfilter_graph_parse2(graph, filters, &inputs, &outputs)
-        guard ret >= 0, let graph, let inputs, let outputs else {
+        // Divergence 4 (vs upstream): free both inout lists on ALL exit paths via `defer`
+        // (upstream frees only inside the first guard-fail).
+        defer {
             avfilter_inout_free(&inputs)
             avfilter_inout_free(&outputs)
+        }
+        var ret = avfilter_graph_parse2(graph, filters, &inputs, &outputs)
+        guard ret >= 0, let graph, let inputs, let outputs else {
             return false
         }
-        let bufferSink = avfilter_get_by_name(isAudio ? "abuffersink" : "buffersink")
+        // Divergence 5: filter-name selection is inverted vs upstream (per the slot22 decompile).
+        // ⚑ POLARITY UNRESOLVED→P3: this isAudio→name mapping is opposite upstream's; the canonical
+        // polarity is set by the (devirt) caller filter() — reconcile in P3.
+        let bufferSink = avfilter_get_by_name(isAudio ? "buffersink" : "abuffersink")
         ret = avfilter_graph_create_filter(&bufferSinkContext, bufferSink, "out", nil, nil, graph)
         guard ret >= 0 else { return false }
         ret = avfilter_link(outputs.pointee.filter_ctx, UInt32(outputs.pointee.pad_idx), bufferSinkContext, 0)
         guard ret >= 0 else { return false }
-        let buffer = avfilter_get_by_name(isAudio ? "abuffer" : "buffer")
+        let buffer = avfilter_get_by_name(isAudio ? "buffer" : "abuffer")
         bufferSrcContext = avfilter_graph_alloc_filter(graph, buffer, "in")
         guard bufferSrcContext != nil else { return false }
-        av_buffersrc_parameters_set(bufferSrcContext, &params)
+        av_buffersrc_parameters_set(bufferSrcContext, params)
         ret = avfilter_init_str(bufferSrcContext, nil)
         guard ret >= 0 else { return false }
         ret = avfilter_link(bufferSrcContext, 0, inputs.pointee.filter_ctx, UInt32(inputs.pointee.pad_idx))
         guard ret >= 0 else { return false }
-        if let ctx = params.hw_frames_ctx {
-            let framesCtxData = UnsafeMutableRawPointer(ctx.pointee.data).bindMemory(to: AVHWFramesContext.self, capacity: 1)
-            inputs.pointee.filter_ctx.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-//                    outputs.pointee.filter_ctx.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-//                    bufferSrcContext?.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-//                    bufferSinkContext?.pointee.hw_device_ctx = framesCtxData.pointee.device_ref
-        }
         ret = avfilter_graph_config(graph, nil)
         guard ret >= 0 else { return false }
         return true
     }
 
-    private func setup2(filters: String) -> Bool {
-        guard let graph else {
-            return false
-        }
-        let bufferName = isAudio ? "abuffer" : "buffer"
-        let bufferSrc = avfilter_get_by_name(bufferName)
-        var ret = avfilter_graph_create_filter(&bufferSrcContext, bufferSrc, "ksplayer_\(bufferName)", params.arg, nil, graph)
-        av_buffersrc_parameters_set(bufferSrcContext, &params)
-        let bufferSink = avfilter_get_by_name(bufferName + "sink")
-        ret = avfilter_graph_create_filter(&bufferSinkContext, bufferSink, "ksplayer_\(bufferName)sink", nil, nil, graph)
-        guard ret >= 0 else { return false }
-        //        av_opt_set_int_list(bufferSinkContext, "pix_fmts", [AV_PIX_FMT_GRAY8, AV_PIX_FMT_NONE] AV_PIX_FMT_NONE,AV_OPT_SEARCH_CHILDREN)
-        var inputs = avfilter_inout_alloc()
-        var outputs = avfilter_inout_alloc()
-        outputs?.pointee.name = strdup("in")
-        outputs?.pointee.filter_ctx = bufferSrcContext
-        outputs?.pointee.pad_idx = 0
-        outputs?.pointee.next = nil
-        inputs?.pointee.name = strdup("out")
-        inputs?.pointee.filter_ctx = bufferSinkContext
-        inputs?.pointee.pad_idx = 0
-        inputs?.pointee.next = nil
-        let filterNb = Int(graph.pointee.nb_filters)
-        ret = avfilter_graph_parse_ptr(graph, filters, &inputs, &outputs, nil)
-        guard ret >= 0 else {
-            avfilter_inout_free(&inputs)
-            avfilter_inout_free(&outputs)
-            return false
-        }
-        for i in 0 ..< Int(graph.pointee.nb_filters) - filterNb {
-            swap(&graph.pointee.filters[i], &graph.pointee.filters[i + filterNb])
-        }
-        ret = avfilter_graph_config(graph, nil)
-        guard ret >= 0 else { return false }
-        return true
-    }
-
+    // UNRESOLVED→P3: filter() devirt — not binary-anchored; isAudio source + exact dedup unverified
     public func filter(options: KSOptions, inputFrame: UnsafeMutablePointer<AVFrame>, completionHandler: (UnsafeMutablePointer<AVFrame>) -> Void) {
+        // FLAGGED placeholder — isAudio unrecoverable here (devirt). Named `audioFlag`
+        // to avoid re-introducing the removed `isAudio` member.
+        let audioFlag = false
         let filters: String
-        if isAudio {
+        if audioFlag {
             filters = options.audioFilters.joined(separator: ",")
         } else {
             if options.autoDeInterlace, !options.videoFilters.contains("idet") {
@@ -116,22 +90,25 @@ class MEFilter {
             completionHandler(inputFrame)
             return
         }
-        var params = AVBufferSrcParameters()
-        params.format = inputFrame.pointee.format
-        params.time_base = timebase.rational
-        params.width = inputFrame.pointee.width
-        params.height = inputFrame.pointee.height
-        params.sample_aspect_ratio = inputFrame.pointee.sample_aspect_ratio
-        params.frame_rate = AVRational(num: 1, den: Int32(nominalFrameRate))
+        // Local builder; named `srcParams` to avoid re-introducing the removed `params` member.
+        var srcParams = AVBufferSrcParameters()
+        srcParams.format = inputFrame.pointee.format
+        srcParams.time_base = timebase.rational
+        srcParams.width = inputFrame.pointee.width
+        srcParams.height = inputFrame.pointee.height
+        srcParams.sample_aspect_ratio = inputFrame.pointee.sample_aspect_ratio
+        srcParams.frame_rate = AVRational(num: 1, den: Int32(nominalFrameRate))
         if let ctx = inputFrame.pointee.hw_frames_ctx {
-            params.hw_frames_ctx = av_buffer_ref(ctx)
+            srcParams.hw_frames_ctx = av_buffer_ref(ctx)
         }
-        params.sample_rate = inputFrame.pointee.sample_rate
-        params.ch_layout = inputFrame.pointee.ch_layout
-        if self.params != params || self.filters != filters {
-            self.params = params
+        srcParams.sample_rate = inputFrame.pointee.sample_rate
+        srcParams.ch_layout = inputFrame.pointee.ch_layout
+        if format != AVPixelFormat(srcParams.format) || width != srcParams.width || height != srcParams.height || self.filters != filters {
+            format = AVPixelFormat(srcParams.format)
+            width = srcParams.width
+            height = srcParams.height
             self.filters = filters
-            if !setup(filters: filters) {
+            if !setup(filters: filters, params: &srcParams, isAudio: audioFlag) {
                 completionHandler(inputFrame)
                 return
             }
@@ -141,10 +118,10 @@ class MEFilter {
             return
         }
         while av_buffersink_get_frame_flags(bufferSinkContext, inputFrame, 0) >= 0 {
-//                timebase = Timebase(av_buffersink_get_time_base(bufferSinkContext))
             completionHandler(inputFrame)
             // 一定要加av_frame_unref，不然会内存泄漏。
             av_frame_unref(inputFrame)
         }
     }
+    // setup2 removed — no binary witness, dead in Forward (referenced removed `params`, no vtable/unresolved slot).
 }
