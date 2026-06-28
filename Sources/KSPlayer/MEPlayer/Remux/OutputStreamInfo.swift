@@ -10,17 +10,21 @@
 //
 //  The per-output-stream config the Phase-2 Remuxer writes packets through.
 //
+import FFmpegKit
+import Libavcodec
 import Libavformat
 
 public final class OutputStreamInfo {       // `final` not binary-pinned (no library evolution) — M2 vtable_anchor_diff verifies; matches 1C.5 choice
     // Types from the class's own __swift5_fieldmd field-records (authoritative). Reflection order.
-    public var assetTrackMap: [Int: FFmpegAssetTrack] = [:]      // +0x10  ⚑ key unmapped (non-Si→Int inferred); var (accessor triple, confirmed)
-    public var transcodeMap:  [Int: any TranscodeProtocol] = [:] // +0x18  ⚑ key inferred Int; value = P2 skeleton; var (accessor triple, confirmed)
-    public var timeBaseMap:   [Int: AVRational] = [:]            // ⚑ key inferred Int; AVRational = FFmpeg C
+    // Map KEYS are Int32 (faithfulness correction, 3 signals: subscript hashes 4 bytes; key = AVPacket
+    // stream_index which is C `int`; field-record key = stdlib symref, libswiftCore-walled).
+    public var assetTrackMap: [Int32: FFmpegAssetTrack] = [:]      // +0x10  key Int32 (stream_index) ⚑ value confirmed
+    public var transcodeMap:  [Int32: any TranscodeProtocol] = [:] // +0x18
+    public var timeBaseMap:   [Int32: AVRational] = [:]            // +0x20
     public var frameRate:     Int = 0                            // v4 concrete `Si`
     public var url:           String = ""                        // v4 concrete `SS`
-    public var streamMapping: [Int: Int] = [:]                   // ⚑ key+value inferred Int (binary AA back-ref)
-    public var lastDTSMap:    [Int: Int64] = [:]                 // ⚑ key inferred Int; value Int64 (DTS)
+    public var streamMapping: [Int32: Int32] = [:]                 // +0x40  ⚑ value width inferred (verify)
+    public var lastDTSMap:    [Int32: Int64] = [:]                 // +0x48  key Int32; value Int64 (DTS)
     public var hasWriteTrailer: Bool = false                     // v4 concrete `Sb`
     public let formatCtx:     UnsafeMutablePointer<AVFormatContext>  // v4 concrete (non-optional → init param)
     public var outPacket:     UnsafeMutablePointer<AVPacket>? = nil  // v4 concrete (optional)
@@ -30,18 +34,115 @@ public final class OutputStreamInfo {       // `final` not binary-pinned (no lib
     // init: binary slot 12 is DEVIRTUALIZED (no body) → signature UNRESOLVED. Minimal inferred init:
     // formatCtx is non-optional (must be supplied); all other fields default. Real init signature
     // (params/order) is unrecoverable from the binary → P2 refines.
+    // builder sets assetTrackMap/lastDTSMap=[:], others from params; signature devirt-unrecoverable → minimal init retained (P3 may refine).
     public init(formatCtx: UnsafeMutablePointer<AVFormatContext>) {  // inferred — devirt slot 12, no body
         self.formatCtx = formatCtx
     }
 
-    // ── UNRESOLVED — Phase-2 Remuxer (do NOT reconstruct here; structure-only scope) ──────────────
-    // The binary has 3 substantive methods (vtable slots 13/14/15), all DEVIRTUALIZED (names + exact
-    // signatures unrecoverable). Each is a ~170-line per-stream remux op (Dictionary lookups over the
-    // maps + codec-id/`aac_adts` checks + closure dispatch) = Phase-2 Remuxer logic:
-    //   • slot 13 @0x101a1ab5c  — per-stream packet op (ADTS handling; reads removeADTS/maps)
-    //   • slot 14 @0x101a1b8d4  — Dictionary/field op over the stream maps
-    //   • slot 15 @0x101a1bb5c  — Dictionary/field op over the stream maps
-    // Also devirt: accessor triples for 2 further `var` fields (slots 6-11) + the init (slot 12).
-    // P2 reconstructs these against the FFmpeg oracle + the real Remuxer call-sites. (Tracked in the
-    // ledger "1C.6 → P2 follow-ups".)
+    // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────
+    // ⚑ method name `buildTranscodeContext` INFERRED (devirt; not in binary). Called by Remuxer.write
+    // as s13(packet, completion). NOT just a builder: it ensures a per-stream Copy/BSF context exists
+    // (dispatch AAC/ADTS → BSF, else Copy) AND invokes `ctx.transcode(packet, output: outPacket, completion:)`
+    // — the terminal witness call (L161) is the function's PRIMARY effect [body-audit re-walk fix].
+    // param_1 = AVPacket* (data@+0x18, size@+0x20, stream_index@+0x24 — header-verified).
+    //
+    // Decompile outer shape (FUN_101a1ab5c) — the outer branch keys on assetTrackMap[idx] (OSI+0x10),
+    // NOT transcodeMap [orchestrator re-walk fix]:
+    //   if (assetTrackMap.count==0 || assetTrackMap[idx] miss)  → BUILD the context (this faithful path)
+    //   else (assetTrackMap[idx] present)                       → FUN_101a1ae90 = steady-state per-packet
+    //                                                             copy/enqueue (UNRESOLVED, flagged below).
+    // BUILD is further guarded by outPacket(+0x60) live + streamMapping[idx] + timeBaseMap[idx] + a live
+    // output AVStream (formatCtx->streams[mapped]); then decide Copy vs BSF and store transcodeMap[idx].
+    // (Which branch dominates at runtime is binary-UNVERIFIED — assetTrackMap's populator was not located.)
+    func buildTranscodeContext(_ packet: UnsafeMutablePointer<AVPacket>,           // ⚑ name inferred (devirt slot13)
+                               completion: (UnsafeMutablePointer<AVPacket>?) -> Void) {  // forwarded to ctx.transcode (binary: callback FUN_101a660d0 + closure box, adapted by the compiler reabstraction thunk FUN_101a1f1a8 — not source-level)
+        let idx = packet.pointee.stream_index                                     // *(uint*)(packet+0x24)
+
+        // Outer branch keys on assetTrackMap[idx] (self+0x10) — track ABSENT → BUILD; PRESENT → steady-state.
+        guard assetTrackMap[idx] == nil else {                                    // self+0x10 (FUN_1019c10ec)
+            // ── STEADY-STATE per-packet path (assetTrackMap[idx] EXISTS) = FUN_101a1ae90 (64 instr) ──
+            // ⚑ UNRESOLVED → own follow-up unit: alloc queued-packet (FUN_101a65be4) + packet-copy
+            //   (FUN_102d622ec, sidecar-flagged UNRESOLVED) + enqueue @+0x100. The packet-copy core + the
+            //   queue type are unresolved → NOT invented (cardinal). The body-audit + M3 packet-harness are
+            //   the arbiters; the M3 test drives the BUILD path below to arbitrate the dispatch.
+            //   Cached decompile: reconstruction/decompiles/OutputStreamInfo_s13else_101a1ae90.txt
+            return  // UNRESOLVED — steady-state enqueue (FUN_101a1ae90), reconstruct as its own unit
+        }
+
+        // ── BUILD path (assetTrackMap[idx] absent): set up the per-stream transcode context ──
+        // Build-guards faithful to the nested binary conditions: a live outPacket, the input→output stream
+        // mapping, a timebase entry, and a live output AVStream before constructing a context.
+        guard outPacket != nil,                                                   // self+0x60 (binary's first build-guard)
+              !streamMapping.isEmpty, let mapped = streamMapping[idx],            // self+0x40 (FUN_1019c10ec)
+              !timeBaseMap.isEmpty, timeBaseMap[idx] != nil,                      // self+0x20 (timebase must exist)
+              let outStream = formatCtx.pointee.streams[Int(mapped)]              // formatCtx->streams[mapped] (self+0x58 → +0x30 → *8)
+        else { return }
+        // Get-or-create the per-stream context (binary INNER branch @L94 on transcodeMap[idx]):
+        //   present → reuse the existing context (FUN_1001263e0 COW, L146-150);
+        //   absent  → build by the dispatch below (BSF stored; Copy is a transient static singleton).
+        let ctx: any TranscodeProtocol
+        if let existing = transcodeMap[idx] {                                     // self+0x18 present → reuse
+            ctx = existing
+        } else {
+            let codecpar = outStream.pointee.codecpar                             // *(outStream+0x10) — AVCodecParameters*
+            // DISPATCH (grounded + deterministic): AAC + ADTS-syncword + removeADTS → aac_adts BSF; else Copy.
+            let useBSF = removeADTS                                               // self+0x78 == 1
+                && codecpar?.pointee.codec_id == AV_CODEC_ID_AAC                  // codec_id == 0x15002 (header-verified)
+                && packet.pointee.size > 2                                        // packet+0x20
+                && packet.pointee.data[0] == 0xFF                                 // packet.data[0] == -1
+                && (packet.pointee.data[1] & 0xF0) == 0xF0                        // (byte)data[1] > 0xEF
+            // BSF only when useBSF AND the filter builds. On BSF-alloc FAILURE the binary FALLS THROUGH to
+            // Copy (L115 `if (lVar13 != 0)` has no else/no return) → degrade to unfiltered Copy, do NOT drop
+            // the packet [re-audit fix]. The `else` covers both non-AAC/non-ADTS and BSF-alloc-failed.
+            if useBSF, let bsf = makeADTSBitstreamFilter() {                      // FUN_101a08744 (BSF accessor FUN_101a1f1bc)
+                transcodeMap[idx] = bsf                                           // STORE per-stream BSF (FUN_1019b3c2c, L131)
+                ctx = bsf
+            } else {
+                // Copy: binary uses a static singleton (initStaticObject, L138) and does NOT store it in
+                // transcodeMap. ⚑ modeled as a fresh stateless instance (CopyTranscodeContext = 0 fields →
+                // observationally equivalent); a `static let shared` would be byte-faithful (refinement).
+                ctx = CopyTranscodeContext()                                      // FUN_101a1f188
+            }
+        }
+
+        // PRIMARY EFFECT (binary terminal witness call @L161 `(*ctx.witness[1])(packet, outPacket, …)`):
+        // run the context on the packet, FORWARDING the completion (the compiler reabstraction thunk
+        // FUN_101a1f1a8 is not source-level → the completion is passed through, not constructed here).
+        ctx.transcode(packet, output: outPacket, completion: completion)
+    }
+
+    // aac_adts BSF allocation (FUN_101a08744 — the 0x737364615f636161 = "aac_adts" branch). A Forward
+    // helper that creates the bitstream filter. av_bsf_* names are ORACLE-CONFIRMED → used directly.
+    // Confirmed sequence: av_bsf_get_by_name("aac_adts") → av_bsf_alloc(filter,&ctx) → <UNRESOLVED
+    // par-setup> → av_bsf_init(ctx) → BSFTranscodeContext(bsfContext: ctx); on non-zero return,
+    // av_bsf_free(&ctx) + the error is logged. ⚑ name `makeADTSBitstreamFilter` INFERRED.
+    private func makeADTSBitstreamFilter() -> BSFTranscodeContext? {
+        guard let filter = av_bsf_get_by_name("aac_adts") else {                  // FUN_102957ca0 (oracle-CONFIRMED)
+            print("bsf aac_adts not found")  // [audit fix] binary logs on the filter-null path (was silent). ⚑ message text audit-decoded ("bsf <name> not found")
+            return nil
+        }
+        var ctx: UnsafeMutablePointer<AVBSFContext>?
+        guard av_bsf_alloc(filter, &ctx) >= 0 else {                              // FUN_10295b0d4 (oracle-CONFIRMED)
+            // [audit fix] NO av_bsf_free here — the binary does NOT free on the alloc-failure path (alloc-fail
+            //   leaves ctx nil; only the par-setup-fail and init-fail branches call av_bsf_free).
+            print("av_bsf_alloc failed for aac_adts")                            // Swift._print (⚑ message text approximate)
+            return nil
+        }
+        // ⚑ UNRESOLVED FUN_1029f5584 — par setup between av_bsf_alloc and av_bsf_init (no fingerprint
+        //   match; par/codecpar-setup role unclear). Do NOT invent its name. Spine preserved by omission.
+        guard av_bsf_init(ctx) >= 0 else {                                        // FUN_10295b198 (oracle-CONFIRMED)
+            av_bsf_free(&ctx)                                                     // FUN_10295b040 (oracle-CONFIRMED) — error path
+            print("av_bsf_init failed for aac_adts")                             // Swift._print on the error path
+            return nil
+        }
+        return BSFTranscodeContext(bsfContext: ctx)                              // Wave-1 type (1 field)
+    }
+
+    // ── UNRESOLVED → P3 (driven only by the P3 remux driver 0x101a483d4 + 4 consumers; off the Wave-2 write path) ──
+    //  • slot14 @0x101a1b8d4 (162 instr) — drive-all-transcode: iterate transcodeMap → each ctx.transcode (cb FUN_101a1f1dc);
+    //    set done-flag (self+0x50); clear map (self+0x48). Cached: decompiles/OutputStreamInfo#14.txt
+    //  • slot15 @0x101a1bb5c (181 instr) — close-all: iterate transcodeMap → each ctx.close; iterate assetTrackMap
+    //    (stride 0x200, obj@+0x100, vtable@+0x1c0); FFmpeg frees FUN_102d618b8 / FUN_103194e1c / FUN_101a39028 (oracle-name in P3).
+    //    Cached: decompiles/OutputStreamInfo#15.txt
+    //  Reconstruct in P3 with the driver (behaviorally testable there). Names devirt-unrecoverable.
 }
