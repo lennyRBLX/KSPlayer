@@ -65,6 +65,8 @@ class VideoSwscale: FrameTransfer {
 }
 
 class VideoSwresample: FrameChange {
+    // Field layout = reflection ORDER (Forward 1.3.17). The 5 DV/HDR fields below
+    // (dovi…rpuBuffer) are Forward-NEW vs upstream; `isDovi: Bool` was REMOVED.
     private var imgConvertCtx: UnsafeMutablePointer<SwsContext>?
     private var format: AVPixelFormat = AV_PIX_FMT_NONE
     private var height: Int32 = 0
@@ -74,17 +76,28 @@ class VideoSwresample: FrameChange {
     private var dstWidth: Int32?
     private let dstFormat: AVPixelFormat?
     private let fps: Float
-    private let isDovi: Bool
-    init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, isDovi: Bool) {
+    // Forward-NEW DV/HDR fields (declared in reflection order after `fps`).
+    private var dovi: DOVIDecoderConfigurationRecord?
+    // UNRESOLVED→P3: brief field-table type is `KSDOVIMetadata?` (the 3008-byte C-bridged
+    // GPU buffer from convertAVDOVIToKSDOVIMetadata @0x101b31c6c) — that type is NOT yet
+    // defined/imported in the KSPlayer module, so it is held as opaque `Data?` here to keep
+    // the build green and the field at its layout-order slot; retype when KSDOVIMetadata lands.
+    private var doviData: Data?
+    private var edrMetaData: EDRMetaData?
+    private var hdr10PlusData: Data? // ⚑ §7-walled → type inferred
+    private var rpuBuffer: Data? // ⚑ §7-walled → the ~104-byte +0xc20 inline buffer; layout NOT guessed
+    // UNRESOLVED→P3: init devirt; isDovi not stored (field removed); DV-field init is caller/decoder-side.
+    init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, isDovi _: Bool) {
         self.dstWidth = dstWidth
         self.dstHeight = dstHeight
         self.dstFormat = dstFormat
         self.fps = fps
-        self.isDovi = isDovi
     }
 
+    // UNRESOLVED→P3: change devirged for DV (slot28 @0x101a660dc; reads the +0xc20 DV buffer);
+    // reconstruct in P3 with the DV arbiter. Kept upstream with isDovi → `dovi != nil` to compile.
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
-        let frame = VideoVTBFrame(fps: fps, isDovi: isDovi)
+        let frame = VideoVTBFrame(fps: fps, isDovi: dovi != nil)
         if avframe.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue {
             frame.corePixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
         } else {
@@ -93,6 +106,10 @@ class VideoSwresample: FrameChange {
         return frame
     }
 
+    // T2 — slot29 @0x101a662e8. sws spine FAITHFUL (body-audited). ONE deferred divergence:
+    // UNRESOLVED→P3: Forward adds a 2nd early-return (decompile L57-62) — when dstWidth==nil &&
+    // dstHeight==nil && format.rawValue ∈ {26,62,64,68} (passthrough/hardware-class formats) it
+    // SKIPS pool = CVPixelBufferPool.create. Belongs with the P3 VideoToolbox/hardware-format path.
     private func setup(format: AVPixelFormat, width: Int32, height: Int32, linesize: Int32) {
         if self.format == format, self.width == width, self.height == height {
             return
@@ -117,6 +134,8 @@ class VideoSwresample: FrameChange {
         pool = CVPixelBufferPool.create(width: dstWidth, height: dstHeight, bytesPerRowAlignment: linesize, pixelFormatType: pixelFormatType)
     }
 
+    // UNRESOLVED→P3: Forward's slot30 @0x101a666f8 also builds edrMetaData / DV-HDR metadata
+    // (not in upstream) — reconstruct in P3. Kept upstream (color attributes only; no isDovi).
     func transfer(frame: AVFrame) -> PixelBufferProtocol? {
         let format = AVPixelFormat(rawValue: frame.format)
         let width = frame.width
@@ -143,6 +162,8 @@ class VideoSwresample: FrameChange {
         return pbuf
     }
 
+    // RECONSTRUCT FAITHFUL (T2) — slot31 @0x101a66c6c, PURE-sws (field-offset-verified DV-free):
+    // sws_scale path + manual plane pixel-copy (CVPixelBuffer plane ops + memmove).
     func transfer(format: AVPixelFormat, width: Int32, height: Int32, data: [UnsafeMutablePointer<UInt8>?], linesize: [Int32]) -> CVPixelBuffer? {
         setup(format: format, width: width, height: height, linesize: linesize[1] == 0 ? linesize[0] : linesize[1])
         guard let pool else {
@@ -205,6 +226,11 @@ class VideoSwresample: FrameChange {
         }
     }
 
+    // UNRESOLVED→P3: Forward-new DV serialization method (slot32 @0x101a67274, calls
+    // dovi_serializer @0x101b31c6c) — the DV/HDR processing core; cached VideoSwresample_slot32.
+    // Reconstruct in P3 with the DV crash arbiter. Not declared (internal, no recoverable signature).
+
+    // UNRESOLVED→P3: Forward may also free the DV buffer/rpuBuffer (devirt; not verifiable here).
     func shutdown() {
         sws_freeContext(imgConvertCtx)
         imgConvertCtx = nil
