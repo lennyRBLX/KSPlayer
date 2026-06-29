@@ -25,6 +25,15 @@
 #include "dovi_rpu_shim.h"
 #include <stdlib.h>
 
+// ── Inline-size guards (deterministic, compile-time) ──
+// The reconstructed Swift fields embed these types BY VALUE; their sizes MUST equal the
+// binary's inline reservations (VideoToolboxDecode: doviData@+0x50 = 3008 B; doviContext@
+// +0xc10 = 224 B, i.e. the span to the next field `frames`@+0xcf0). If a future FFmpegKit
+// bump changes the real sizeof(DOVIContext), guard (2) fires at build time, before any
+// silent class-layout drift.
+_Static_assert(sizeof(KSDOVIMetadata) == 3008, "KSDOVIMetadata must be 3008 B (binary inline 0xBC0)");
+_Static_assert(sizeof(DOVIContext) == 224,     "DOVIContext must be 224 B (binary inline 0xE0; dovi_rpu.h sizeof)");
+
 // ── Private FFmpeg API declarations ──
 // Defined in libavcodec/dovi_rpu.h (not shipped in FFmpegKit public headers);
 // the symbols exist in the Libavcodec/Libavutil static archives (verified via

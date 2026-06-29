@@ -30,9 +30,26 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// Forward-declare the opaque DOVIContext used by FFmpeg's private DV parser.
-// The actual struct definition is in libavcodec/dovi_rpu.h (not public).
-typedef struct DOVIContext DOVIContext;
+// DOVIContext: FFmpeg's private DV parser context (real def: libavcodec/dovi_rpu.h).
+// The binary embeds it BY VALUE inline — 224 B at VideoToolboxDecode's +0xc10
+// (frames@+0xcf0 − doviContext@+0xc10 = 0xe0 = 224). sizeof(DOVIContext) == 224 in this
+// FFmpeg 8.1.1 build, confirmed three ways: (1) the binary inline span; (2) the real
+// dovi_rpu.h via a self-contained sizeof compile (vdr[DOVI_MAX_DM_ID+1] = 16 ptrs = 128 B
+// dominates → 224); (3) the _Static_assert in dovi_rpu_shim.c. Held OPAQUE (real fields
+// private) — we mirror only the SIZE so the Swift field is a faithful 224 B inline value;
+// the extern ff_dovi_*(DOVIContext*) calls stay ABI-compatible (same size).
+typedef struct DOVIContext { uint8_t _opaque[224]; } DOVIContext;
+
+// KSDOVIMetadata: the KS-side flattened DV-metadata GPU buffer the serializer
+// convertAVDOVIToKSDOVIMetadata (@0x101b31c6c) produces. The binary embeds it BY VALUE
+// inline — 3008 B (= 0xBC0) at the class's +0x50; confirmed by the serializer's
+// memcpy(…, 0xBC0) at all 5 decode-body call sites. Held OPAQUE: its field layout is
+// consumed only by the DV-render path (ThumbnailDoviDisplayModel + Metal) and is
+// reconstructed THERE (deferred → DV-render). We mirror only the SIZE here for a faithful
+// inline field. NOTE: the binary field type is `KSDOVIMetadata?` (optional); an opaque
+// byte-blob has no extra inhabitant for the nil tag within 3008 B, so the Swift field is
+// reconstructed NON-optional with the optionality flagged → DV-render (Step 2 body work).
+typedef struct KSDOVIMetadata { uint8_t _opaque[3008]; } KSDOVIMetadata;
 
 // AVDOVIMetadata from libavutil/dovi_meta.h (public).
 // Try framework-style include first, fall back to bare header.
