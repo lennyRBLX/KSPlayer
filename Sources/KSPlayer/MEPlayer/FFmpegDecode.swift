@@ -104,7 +104,7 @@ class FFmpegDecode: DecodeProtocol {
                                 let header = av_dovi_get_header(data)
                                 let mapping = av_dovi_get_mapping(data)
                                 let color = av_dovi_get_color(data)
-//                                frame.corePixelBuffer?.transferFunction = kCVImageBufferTransferFunction_ITU_R_2020
+//                                frame.pixelBuffer?.transferFunction = kCVImageBufferTransferFunction_ITU_R_2020
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_PLUS { // AVDynamicHDRPlus
                                 let data = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { $0 }.pointee
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_VIVID { // AVDynamicHDRVivid
@@ -143,7 +143,7 @@ class FFmpegDecode: DecodeProtocol {
                 filter.filter(options: options, inputFrame: inputFrame) { avframe in
                     do {
                         var frame = try frameChange.change(avframe: avframe)
-                        if let videoFrame = frame as? VideoVTBFrame, let pixelBuffer = videoFrame.corePixelBuffer {
+                        if let videoFrame = frame as? VideoVTBFrame, let pixelBuffer = videoFrame.pixelBuffer {
                             if let pixelBuffer = pixelBuffer as? PixelBuffer {
                                 pixelBuffer.formatDescription = packet.assetTrack.formatDescription
                             }

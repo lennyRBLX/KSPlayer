@@ -173,7 +173,7 @@ extension MetalPlayView {
             guard let frame = renderSource?.getVideoOutputRender(force: force) else {
                 return
             }
-            pixelBuffer = frame.corePixelBuffer
+            pixelBuffer = frame.pixelBuffer
             guard let pixelBuffer else {
                 return
             }

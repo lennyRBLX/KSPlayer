@@ -8,6 +8,7 @@
 import AVFoundation
 import CoreGraphics
 import CoreMedia
+import DOVIRPUShim
 import Libavcodec
 import Libswresample
 import Libswscale
@@ -78,11 +79,11 @@ class VideoSwresample: FrameChange {
     private let fps: Float
     // Forward-NEW DV/HDR fields (declared in reflection order after `fps`).
     private var dovi: DOVIDecoderConfigurationRecord?
-    // UNRESOLVED→P3: brief field-table type is `KSDOVIMetadata?` (the 3008-byte C-bridged
-    // GPU buffer from convertAVDOVIToKSDOVIMetadata @0x101b31c6c) — that type is NOT yet
-    // defined/imported in the KSPlayer module, so it is held as opaque `Data?` here to keep
-    // the build green and the field at its layout-order slot; retype when KSDOVIMetadata lands.
-    private var doviData: Data?
+    // P3a: KSDOVIMetadata = the serializer's flattened 3008-byte DV GPU buffer (DOVIRPUShim,
+    // opaque). Binary +0x60 is EXACTLY 3008 B (=0xBC0), leaving no room for a nil tag in an
+    // opaque blob → field reconstructed NON-optional (field-record name is `KSDOVIMetadata?`;
+    // optionality flagged → DV-render, where the real layout may expose a spare-bit inhabitant).
+    private var doviData = KSDOVIMetadata()
     private var edrMetaData: EDRMetaData?
     private var hdr10PlusData: Data? // ⚑ §7-walled → type inferred
     private var rpuBuffer: Data? // ⚑ §7-walled → the ~104-byte +0xc20 inline buffer; layout NOT guessed
@@ -99,9 +100,9 @@ class VideoSwresample: FrameChange {
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
         let frame = VideoVTBFrame(fps: fps, isDovi: dovi != nil)
         if avframe.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue {
-            frame.corePixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
+            frame.pixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
         } else {
-            frame.corePixelBuffer = transfer(frame: avframe.pointee)
+            frame.pixelBuffer = transfer(frame: avframe.pointee)
         }
         return frame
     }

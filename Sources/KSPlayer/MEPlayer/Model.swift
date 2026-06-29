@@ -7,7 +7,9 @@
 
 import AVFoundation
 import CoreMedia
+import DOVIRPUShim
 import Libavcodec
+import Metal
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -418,16 +420,26 @@ public final class AudioFrame: MEFrame {
 }
 
 public final class VideoVTBFrame: MEFrame {
-    public var timebase = Timebase.defaultValue
+    // Field layout = reflection ORDER (Forward 1.3.17; desc 0x1039f0120, size 0xc60=3168 B).
+    // Forward-NEW vs upstream: pixelBuffer (RENAMED from corePixelBuffer), adjustBuffer,
+    // isKeyFrame, dovi, doviData, rpuBuffer. Types reflection/field-record-resolved.
+    public var timebase: Timebase = Timebase.defaultValue
+    var pixelBuffer: PixelBufferProtocol? // @+0x18 (was corePixelBuffer)
     // 交叉视频的duration会不准，直接减半了
     public var duration: Int64 = 0
     public var position: Int64 = 0
     public var timestamp: Int64 = 0
-    public var size: Int32 = 0
     public let fps: Float
-    public let isDovi: Bool
+    public var size: Int32 = 0
+    var adjustBuffer: MTLBuffer? // @+0x48, field-record So9MTLBuffer_pSg; render-side, nil here
     public var edrMetaData: EDRMetaData? = nil
-    var corePixelBuffer: PixelBufferProtocol?
+    var isKeyFrame: Bool = false
+    var dovi: DOVIDecoderConfigurationRecord?
+    public let isDovi: Bool
+    // KSDOVIMetadata = opaque 3008 B inline (DOVIRPUShim). Field-record name `KSDOVIMetadata?`;
+    // an opaque blob has no nil-tag inhabitant in 3008 B → NON-optional + optionality flagged → DV-render.
+    var doviData: KSDOVIMetadata = KSDOVIMetadata()
+    var rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
     init(fps: Float, isDovi: Bool) {
         self.fps = fps
         self.isDovi = isDovi
@@ -451,9 +463,9 @@ extension VideoVTBFrame {
                 return CAEDRMetadata.hlg
             }
         }
-        if corePixelBuffer?.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+        if pixelBuffer?.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
             return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
-        } else if corePixelBuffer?.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+        } else if pixelBuffer?.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
             return CAEDRMetadata.hlg
         }
         return nil
