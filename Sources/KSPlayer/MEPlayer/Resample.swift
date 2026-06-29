@@ -106,10 +106,13 @@ class VideoSwresample: FrameChange {
         return frame
     }
 
-    // T2 — slot29 @0x101a662e8. sws spine FAITHFUL (body-audited). ONE deferred divergence:
-    // UNRESOLVED→P3: Forward adds a 2nd early-return (decompile L57-62) — when dstWidth==nil &&
-    // dstHeight==nil && format.rawValue ∈ {26,62,64,68} (passthrough/hardware-class formats) it
-    // SKIPS pool = CVPixelBufferPool.create. Belongs with the P3 VideoToolbox/hardware-format path.
+    // T2 — slot29 @0x101a662e8. sws spine FAITHFUL (body-audited).
+    // P3a (2026-06-29): RECONSTRUCTED the deferred 2nd early-return (decompile L57-62, NEON umaxv 4-way
+    // test → goto epilogue, a pure early-return that skips CVPixelBufferPool.create). Fires when
+    // dstWidth==nil && dstHeight==nil && format ∈ {RGBA, YUV420P10LE, YUV422P10LE, YUV444P10LE}
+    // — compile-confirmed AV_PIX_FMT_{RGBA=26, YUV420P10LE=62, YUV422P10LE=64, YUV444P10LE=68}. NOTE:
+    // the earlier "passthrough/hardware-class formats" label (P2 deferral prose) was WRONG; these are
+    // RGBA + 10-bit planar YUV. For these direct-use formats with no scaling requested, no pool is made.
     private func setup(format: AVPixelFormat, width: Int32, height: Int32, linesize: Int32) {
         if self.format == format, self.width == width, self.height == height {
             return
@@ -117,6 +120,11 @@ class VideoSwresample: FrameChange {
         self.format = format
         self.height = height
         self.width = width
+        if self.dstWidth == nil, self.dstHeight == nil,
+           format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_YUV420P10LE
+               || format == AV_PIX_FMT_YUV422P10LE || format == AV_PIX_FMT_YUV444P10LE {
+            return
+        }
         let dstWidth = dstWidth ?? width
         let dstHeight = dstHeight ?? height
         let pixelFormatType: OSType
