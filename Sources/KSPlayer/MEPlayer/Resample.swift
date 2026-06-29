@@ -95,8 +95,12 @@ class VideoSwresample: FrameChange {
         self.fps = fps
     }
 
-    // UNRESOLVED→P3: change devirged for DV (slot28 @0x101a660dc; reads the +0xc20 DV buffer);
-    // reconstruct in P3 with the DV arbiter. Kept upstream with isDovi → `dovi != nil` to compile.
+    // UNRESOLVED → DV-render/HDR-pixelBuffer-decoration: Forward's change (slot28 @0x101a660dc) copies the
+    // DV/HDR state into the VideoVTBFrame AND decorates the pixelBuffer via Forward-NEW infra: the shared
+    // FUN_101a88b68 colorspace helper (PQ/HLG from dovi.dv_bl_signal_compatibility_id) + a PixelBufferProtocol
+    // HDR-attachment EXPANSION (binary 40 reqs vs source 28; the Data→CVBufferSetAttachment cluster FUN_101a8a180).
+    // That ~12-requirement protocol layer is unverifiable with current tools (no witness-table verifier) →
+    // DEFERRED as a unit with transfer (slot30). Kept upstream with isDovi → `dovi != nil` to compile.
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
         let frame = VideoVTBFrame(fps: fps, isDovi: dovi != nil)
         if avframe.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue {
@@ -143,8 +147,10 @@ class VideoSwresample: FrameChange {
         pool = CVPixelBufferPool.create(width: dstWidth, height: dstHeight, bytesPerRowAlignment: linesize, pixelFormatType: pixelFormatType)
     }
 
-    // UNRESOLVED→P3: Forward's slot30 @0x101a666f8 also builds edrMetaData / DV-HDR metadata
-    // (not in upstream) — reconstruct in P3. Kept upstream (color attributes only; no isDovi).
+    // UNRESOLVED → DV-render/HDR-pixelBuffer-decoration: Forward's transfer(frame:) (slot30 @0x101a666f8) adds a
+    // DV-format branch (FUN_101a8a318 builds a 224B DV pixel-buffer type) + the shared FUN_101a88b68 colorspace
+    // helper — the same Forward-NEW HDR-pixelBuffer-decoration layer as change (deferred together; see change()).
+    // Kept upstream (color attributes only; no isDovi).
     func transfer(frame: AVFrame) -> PixelBufferProtocol? {
         let format = AVPixelFormat(rawValue: frame.format)
         let width = frame.width
