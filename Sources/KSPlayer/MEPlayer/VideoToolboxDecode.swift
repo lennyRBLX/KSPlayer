@@ -5,6 +5,7 @@
 //  Created by kintan on 2018/3/10.
 //
 
+import DOVIRPUShim
 import FFmpegKit
 import Libavformat
 #if canImport(VideoToolbox)
@@ -20,10 +21,12 @@ class VideoToolboxDecode: DecodeProtocol {
     private var maxTimestamp: Int64 = 0
     private var lastTimestamp: Int64 = -1
     private var needReconfig: Bool = false
-    // ⚑ UNRESOLVED→P3: binary type KSDOVIMetadata? (3008-byte inline, @+0x50) not buildable → held opaque
-    private var doviData: Data? = nil
-    // ⚑ UNRESOLVED→P3: binary type DOVIContext (224-byte inline opaque C struct, @+0xc10) not buildable → held opaque
-    private var doviContext: Data? = nil
+    // P3a (Phase A): KSDOVIMetadata = opaque 3008-byte inline DV buffer (DOVIRPUShim). Field-record name
+    // `KSDOVIMetadata?`; an opaque blob has no nil-tag inhabitant in 3008B → NON-optional + optionality flagged → DV-render.
+    private var doviData: KSDOVIMetadata = KSDOVIMetadata()
+    // P3a (Phase A): DOVIContext = FFmpeg's private DV parser context, opaque 224-byte inline @+0xc10 (DOVIRPUShim).
+    // Caller-owned inline value that the raw ff_dovi_*(&doviContext) calls populate/release (decodeFrame crash-loop → Phase B).
+    private var doviContext: DOVIContext = DOVIContext()
     private var frames: [VideoVTBFrame] = []
     private var session: DecompressionSession {
         didSet {
