@@ -18,13 +18,13 @@ import FFmpegKit  // FFmpeg C types reachable through the CacheIOContext chain
 //             init FUN_101b86d38. Arity/param-order inferred (no mangled init symbol);
 //             the field stores + super-delegation are explicit in the decompile.
 //           — s21 init is devirtualized (`new-unresolved`, no readable body) →
-//             UNRESOLVED→P2, NOT reconstructed.
+//             UNRESOLVED→P8 (IO-completion), NOT reconstructed.
 //   methods — s27 @101ba4bd0 (cached, 109 instr; name devirt→inferred): a locked,
 //             sorted insert-or-update into _timeIndex keyed by position. Faithful
 //             spine; the Swift-synthesized stdlib Array internals (COW / insert /
 //             grow) are noted as UNRESOLVED rather than transcribed by FUN-address.
 //           — the deep separate-download / limit IO engine (s29/s30/s31) is stripped
-//             FFmpeg → UNRESOLVED→P2, NOT reconstructed. s28 (1-instr stdlib stub) is
+//             FFmpeg → UNRESOLVED→P8 (IO-completion), NOT reconstructed. s28 (1-instr stdlib stub) is
 //             skipped.
 //
 // CacheIOContext / URLContextDownload / TimeIndexEntry are in-module (already
@@ -88,7 +88,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
                    saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38
     }
 
-    // UNRESOLVED → P2: s21 init — devirtualized (`new-unresolved`); the binary has no
+    // UNRESOLVED → P8 (IO-completion): s21 init — devirtualized (`new-unresolved`); the binary has no
     //   readable body for it (the designated reconstructed above is s22). No body to
     //   reconstruct → not fabricated. — P2
 
@@ -113,7 +113,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // 8-byte value stored into the entry's time slot (+0x28); `position` is the UInt64
     // search key (+0x20).
     //
-    // UNRESOLVED → P2: the exact COW/grow sequencing (FUN_101b94710 array-grow,
+    // UNRESOLVED → P8 (IO-completion): the exact COW/grow sequencing (FUN_101b94710 array-grow,
     //   FUN_101bac23c, FUN_101babf50 insert, _swift_isUniquelyReferenced uniqueness
     //   checks) is Swift-synthesized stdlib Array machinery — reproduced here via the
     //   equivalent Array operations rather than transcribed by FUN-address; the
@@ -135,7 +135,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
 
     // s28 — 1-instruction stdlib stub → skipped (no reconstructable body).
 
-    // UNRESOLVED → P2 (deep separate-download / limit IO engine — NOT reconstructed;
+    // UNRESOLVED → P8 (IO-completion) (deep separate-download / limit IO engine — NOT reconstructed;
     //   their symbols are devirt and their calls are stripped FFmpeg the P2 oracle
     //   names; declare nothing beyond these markers):
     //   • s29 @ (346 instr) — separate-download IO

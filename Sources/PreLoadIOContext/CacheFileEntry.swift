@@ -7,7 +7,7 @@ import Foundation
 //   fields  — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative).
 //   inits   — s10 (101b900c4): inner FUN_101b90114 has explicit param→field stores
 //             (url=param_1, position=param_2; saveFile=true) → GROUNDED framing,
-//             with the Foundation file-open/size-read detail UNRESOLVED→P2.
+//             with the Foundation file-open/size-read detail UNRESOLVED→P8 (IO-completion).
 //             s9 (101b881f8): the DESIGNATED init, inner FUN_101b8fb0c — its
 //             param_1 (url-derivation base) type is not deterministically
 //             resolvable → left UNRESOLVED, no fabricated signature. — P2.

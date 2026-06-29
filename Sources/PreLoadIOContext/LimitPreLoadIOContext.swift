@@ -13,7 +13,7 @@ import FFmpegKit  // AVIOInterruptCB (inherited interrupt chain — FFmpeg C str
 //             transcribed verbatim from the brief, NOT re-derived from the decompiles.
 //             The ⚑ ones are best-effort (composite/width-inferred) → l2_field_gate
 //             UNCHECKs them (expected 0 FLAG). CachedDistribution is an EMPTY
-//             placeholder (its ~40-byte layout is UNRESOLVED → P2).
+//             placeholder (its ~40-byte layout is UNRESOLVED → P8 (IO-completion)).
 //   init    — the designated init (s37 @101b9d748, READABLE) sets LimitPreLoad's 14
 //             own fields (all but the two caps carry the field defaults below) and
 //             delegates to CacheIOContext's designated init (inherited through
@@ -122,7 +122,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         playbackBytePosition = 0
         playbackBytePositionIsExact = false      // binary: byte = 0
         _lastSyncedTime = -1.0                    // binary const 0xbff0000000000000
-        // UNRESOLVED → P2 (s21 tail @101b9d4dc): the binary then locks PreLoadIOContext's
+        // UNRESOLVED → P8 (IO-completion) (s21 tail @101b9d4dc): the binary then locks PreLoadIOContext's
         //   inherited _playbackSnapshotLock (objc_stub::lock(self._playbackSnapshotLock)),
         //   nils _playbackSnapshot (*p=0; p[1]=0; tag byte=1), and unlocks. Those are
         //   INHERITED PreLoadIOContext fields owned by 1C.7 (not in this class's

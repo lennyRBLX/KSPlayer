@@ -128,8 +128,11 @@ public final class OutputStreamInfo {       // `final` not binary-pinned (no lib
             print("av_bsf_alloc failed for aac_adts")                            // Swift._print (⚑ message text approximate)
             return nil
         }
-        // ⚑ UNRESOLVED FUN_1029f5584 — par setup between av_bsf_alloc and av_bsf_init (no fingerprint
-        //   match; par/codecpar-setup role unclear). Do NOT invent its name. Spine preserved by omission.
+        // UNRESOLVED → P3 (remux driver): FUN_1029f5584 = avcodec_parameters_copy (oracle CONFIRMED, exact
+        //   cross-binary size 436==436). The call is avcodec_parameters_copy(ctx.pointee.par_in, <src codecpar>);
+        //   src = caller-supplied (makeADTS true binary sig is 4-param, not no-arg — src is threaded from the
+        //   OSI slot13/14/15 op FUN_101a1ab5c, itself deferred). Reconstruct with the OSI remux ops in P3 — do
+        //   NOT fabricate the src here. Spine preserved by omission. See reports/task-P2-task4-deferred-io-bodies.md §1.
         guard av_bsf_init(ctx) >= 0 else {                                        // FUN_10295b198 (oracle-CONFIRMED)
             av_bsf_free(&ctx)                                                     // FUN_10295b040 (oracle-CONFIRMED) — error path
             print("av_bsf_init failed for aac_adts")                             // Swift._print on the error path

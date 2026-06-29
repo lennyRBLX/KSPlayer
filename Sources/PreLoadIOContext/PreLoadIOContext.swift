@@ -111,7 +111,7 @@ public class PreLoadIOContext: CacheIOContext {
         // hit). Counterexample time=-1.0,total=10,pos=5: binary -> 0.0 (gate fails); pre-fix -> -1.0.
         guard total != 0, !(time.isNaN || time.isInfinite), time > 0 else { return result }
         _timeIndexLock.lock()
-        // UNRESOLVED → P2: lVar1 = FUN_101bac458(time, _timeIndex, total) — an unnamed
+        // UNRESOLVED → P8 (IO-completion): lVar1 = FUN_101bac458(time, _timeIndex, total) — an unnamed
         //   time-index lookup over _timeIndex returning a found-entry marker (0 == miss).
         //   On a HIT the binary then computes result = FUN_101bac70c(time, position,
         //   total, <entry>) and _swift_bridgeObjectRelease(<entry>) — a second unnamed
@@ -131,7 +131,7 @@ public class PreLoadIOContext: CacheIOContext {
     }
 
     // s36 @101bab2d8 — `func reportThumbnailProgress(_:_:)` (name inferred, devirt).
-    //   FAITHFUL SPINE + UNRESOLVED → P2 (the tail is a devirtualized indirect call
+    //   FAITHFUL SPINE + UNRESOLVED → P8 (IO-completion) (the tail is a devirtualized indirect call
     //   through an UNRECOVERED JUMPTABLE — "Could not recover jumptable … too many
     //   branches"). The decompile gates two doubles through the NaN/inf validity check,
     //   reads CacheIOContext.eof (== true) and a duration-like double field, and on the
@@ -142,7 +142,7 @@ public class PreLoadIOContext: CacheIOContext {
     func reportThumbnailProgress(_ a: Double, _ b: Double) { // name inferred (devirt)
         _ = a
         _ = b
-        // UNRESOLVED → P2 (s36 @101bab2d8): validity-gate(a,b) && eof==true &&
+        // UNRESOLVED → P8 (IO-completion) (s36 @101bab2d8): validity-gate(a,b) && eof==true &&
         //   <duration-double> != 0 → dVar = FUN_101ba7dc8(a, b, <duration>), then the
         //   indirect tail-call (*(self.vtable + 0x590))(a, dVar, flag) through an
         //   UNRECOVERED JUMPTABLE; the else-branch passes (a, 0.0, 1) through the same
@@ -170,7 +170,7 @@ public class PreLoadIOContext: CacheIOContext {
         if isPreloadPaused {
             return 0
         }
-        // UNRESOLVED → P2: the eof / fully-buffered branch reads INHERITED CacheIOContext
+        // UNRESOLVED → P8 (IO-completion): the eof / fully-buffered branch reads INHERITED CacheIOContext
         //   + AbstractAVIOContext fields by offset (+0x14 buffer-size, +0x48/+0x50
         //   position pair, +0x80) with an overflow-checked &+; those property names are
         //   owned by 1C.4/1C.7 and not re-derived here → the available-bytes arithmetic

@@ -14,7 +14,7 @@ import KSPlayer
 //            1-arg source init that stores source WEAK into sourceContext + builds 3
 //            closures (entryListProvider/endProvider/eofProvider) weakly capturing it.
 //            Source param type + closure bodies not deterministically resolvable →
-//            UNRESOLVED→P2; inherited init(bufferSize:) is the compilable spine.
+//            UNRESOLVED→P8 (IO-completion); inherited init(bufferSize:) is the compilable spine.
 //
 // UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
 //   the binary (no readable body) → NOT reconstructed here; inherited from the

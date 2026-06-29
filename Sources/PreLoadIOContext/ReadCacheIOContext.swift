@@ -14,10 +14,10 @@ import KSPlayer
 //             (s15 @101bacb8c, s17 @101bacd64) are CONVENIENCE thunks that build the
 //             `download` (via the shared URLContextDownload init FUN_101b90c58) then
 //             DELEGATE to the devirt slot-16 — so the 8-field store has no readable
-//             body to reconstruct. → all real inits UNRESOLVED→P2 (cardinal: no body,
+//             body to reconstruct. → all real inits UNRESOLVED→P8 (IO-completion) (cardinal: no body,
 //             never fabricate). `init(bufferSize:)` is the inherited compilable spine.
 //   method  — slot 18 @101bad730 is a single 576-instr method (the cache-read engine;
-//             the lone AbstractAVIOContext override) → deep IO → UNRESOLVED→P2.
+//             the lone AbstractAVIOContext override) → deep IO → UNRESOLVED→P8 (IO-completion).
 //
 // NOT exercised by the 1C.9 L3 capability test (that uses CacheIOContext) → structure
 // -only is sufficient for Phase 1 (OutputStreamInfo 1C.6 precedent). Full inits +

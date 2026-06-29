@@ -18,7 +18,7 @@ import FFmpegKit   // AVIOInterruptCB (FFmpeg C struct — the L3 cancel field)
 //             isReadComplete as explicit param→field stores. The Foundation
 //             cache-directory scan (enumerate videoCache dir → build entryList →
 //             sum fetchedSize) is deep Foundation with unnamed helpers → its body
-//             is UNRESOLVED→P2 (the defaults + explicit param stores are faithful).
+//             is UNRESOLVED→P8 (IO-completion) (the defaults + explicit param stores are faithful).
 //           — convenience s60 @101b8668c (cached): builds `download` via the SHARED
 //             URLContextDownload inner init FUN_101b90c58, delegates to designated,
 //             then sets formatContextOptions + interrupt. The URLContext-open
@@ -27,11 +27,11 @@ import FFmpegKit   // AVIOInterruptCB (FFmpeg C struct — the L3 cancel field)
 //   methods — read (slot 66) is the L3-critical override; its body is driven
 //             through `download.read` + the AVIOInterruptCB callback and is NOT
 //             cleanly separable from the FFmpeg-download branch → faithful spine +
-//             UNRESOLVED→P2 (see the method note). The small methods 22/23/64/67
+//             UNRESOLVED→P8 (IO-completion) (see the method note). The small methods 22/23/64/67
 //             are reconstructed faithfully; 63 is a devirtualized forwarder
 //             (jumptable unrecovered) → spine + UNRESOLVED. The deep IO engine
 //             (slots 80/82/83/84 — URL open/download/speed-sampling, 162–380 instr,
-//             stripped-FFmpeg saturated) is UNRESOLVED→P2, NOT reconstructed.
+//             stripped-FFmpeg saturated) is UNRESOLVED→P8 (IO-completion), NOT reconstructed.
 //
 // AVIOInterruptCB is FFmpeg's C cancellation struct (callback + opaque) — declared
 //   in FFmpegKit's headers, so it resolves via `import FFmpegKit`. CacheFileEntry +
@@ -144,7 +144,7 @@ public class CacheIOContext: AbstractAVIOContext {
         self.isReadComplete = isReadComplete // binary: explicit param_6 store
         super.init(bufferSize: bufferSize) // binary: *(self+0x14) = param_4
         _ = cacheKey
-        // UNRESOLVED → P2: the Foundation cache-directory scan in FUN_101b86d38 —
+        // UNRESOLVED → P8 (IO-completion): the Foundation cache-directory scan in FUN_101b86d38 —
         //   NSTemporaryDirectory()/appendingPathComponent("videoCache")/<cacheKey>,
         //   fileExists + createDirectory, contentsOfDirectory enumeration building
         //   the entryList CacheFileEntry segments (via unnamed helpers FUN_101b87a48
@@ -161,13 +161,13 @@ public class CacheIOContext: AbstractAVIOContext {
     // left as the delegated `download`-build call, NOT reconstructed. Arity/param
     // roles beyond formatContextOptions + interrupt are inferred.
     //
-    // UNRESOLVED → P2: the real convenience init's full signature (the URL + options
+    // UNRESOLVED → P8 (IO-completion): the real convenience init's full signature (the URL + options
     //   that FUN_101b90c58 opens an FFmpeg URLContext from) is deep FFmpeg whose
     //   stripped calls only the P2 oracle names. The determinable post-delegation
     //   field stores (formatContextOptions, interrupt) are shown here as the faithful
     //   spine; the download-build is the delegated call, not fabricated.
     public convenience init(cacheKey: String, formatContextOptions: [String: Any]?, interrupt: AVIOInterruptCB?, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
-        // UNRESOLVED → P2: download = URLContextDownload(<FFmpeg URLContext open via
+        // UNRESOLVED → P8 (IO-completion): download = URLContextDownload(<FFmpeg URLContext open via
         //   FUN_101b90c58>) — the shared inner init opens the libavformat URLContext;
         //   deep FFmpeg, not reconstructed. Delegated as nil here (compilable spine).
         self.init(download: nil, cacheKey: cacheKey, bufferSize: bufferSize, saveFile: saveFile, isReadComplete: isReadComplete)
@@ -178,7 +178,7 @@ public class CacheIOContext: AbstractAVIOContext {
     // --- methods ---
 
     // read (L3-critical) — slot 66 @101b8a0f8 (the lone reconstructed
-    // AbstractAVIOContext override). FAITHFUL SPINE + UNRESOLVED → P2.
+    // AbstractAVIOContext override). FAITHFUL SPINE + UNRESOLVED → P8 (IO-completion).
     //
     // The cached decompile drives the read entirely through `download.read`
     // (vtable+0x28 on the download value loaded from +0x20) and the AVIOInterruptCB
@@ -194,7 +194,7 @@ public class CacheIOContext: AbstractAVIOContext {
     // separable from the FFmpeg branch. Per the brief's deferral rule the WHOLE
     // method is left as a faithful-spine marker rather than a guessed body.
     //
-    // UNRESOLVED → P2: read(buffer:size:) — the download-driven body (download.read +
+    // UNRESOLVED → P8 (IO-completion): read(buffer:size:) — the download-driven body (download.read +
     //   interrupt-poll + bytesRead/fetchedSize bookkeeping + speed-sample/log calls)
     //   calls stripped FFmpeg the P2 oracle names; not separable from the cache path
     //   → not reconstructed. Inherited AbstractAVIOContext.read is the compilable
@@ -238,7 +238,7 @@ public class CacheIOContext: AbstractAVIOContext {
         lastSpeedSamplePos = pos
     }
 
-    // UNRESOLVED → P2: s63 @101b885ac — a devirtualized forwarder: its only body is
+    // UNRESOLVED → P8 (IO-completion): s63 @101b885ac — a devirtualized forwarder: its only body is
     //   an indirect call through vtable+0x388 ("Could not recover jumptable … too many
     //   branches"). The target slot is devirt and the branch table is unrecovered →
     //   no readable body to reconstruct (name + body both unresolved). — P2
@@ -255,7 +255,7 @@ public class CacheIOContext: AbstractAVIOContext {
         isReadComplete = true
     }
 
-    // UNRESOLVED → P2 (deep IO engine — NOT reconstructed; declare nothing beyond
+    // UNRESOLVED → P8 (IO-completion) (deep IO engine — NOT reconstructed; declare nothing beyond
     //   these markers; their symbols are devirt and their calls are stripped FFmpeg
     //   the P2 oracle names):
     //   • slot 80 @101b8ccac — URL/open
@@ -264,7 +264,7 @@ public class CacheIOContext: AbstractAVIOContext {
     //   • slot 84 @101b8eed0 — speed-sampling engine
     //   162–380 instr, FFmpeg/download saturated. — P2
 
-    // UNRESOLVED → P2: the remaining AbstractAVIOContext overrides (write/seek/close/
+    // UNRESOLVED → P8 (IO-completion): the remaining AbstractAVIOContext overrides (write/seek/close/
     //   fileSize) are not cleanly readable Foundation/Swift in the binary (devirt /
     //   FFmpeg-adjacent) → inherited from AbstractAVIOContext, NOT reconstructed. — P2
 }

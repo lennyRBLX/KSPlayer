@@ -13,7 +13,7 @@ import Libavformat
 //   init   — real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (cached;
 //            7-arg, also reused by CacheIOContext/ReadCacheIOContext to build their
 //            `download`). Opens an FFmpeg URLContext (deep IO; stripped calls named
-//            only by the P2 oracle) → UNRESOLVED→P2; inherited init(bufferSize:) is
+//            only by the P2 oracle) → UNRESOLVED→P8 (IO-completion); inherited init(bufferSize:) is
 //            the compilable spine.
 //
 // UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
