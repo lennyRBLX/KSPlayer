@@ -46,11 +46,11 @@ class VideoToolboxDecode: DecodeProtocol {
     }
 
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
-        // UNRESOLVED→P3: Forward diverged this into the 572-instr DV decode loop @0x101a6ce44
-        // (ff_dovi_rpu_parse→ff_dovi_get_metadata→convertAVDOVIToKSDOVIMetadata) = THE Dolby-Vision crash site.
-        // Kept the upstream pre-DV body to compile; each `maxTimestamp` below marked ⚑P3 is an UNVERIFIED
-        // lastPosition→maxTimestamp placeholder (the removed field). P3 reconstructs the real loop + the exact
-        // maxTimestamp/lastTimestamp semantics with the crash arbiter. Cached: VTBox_slot29_101a6ce44.txt.
+        // P3a DONE: the DV RPU-extraction loop below (after the guard) reconstructs Forward's hardware-path
+        // DV decode (binary L120-236 @0x101a6ce44; ff_dovi_rpu_parse→get_metadata→convertAVDOVIToKSDOVIMetadata),
+        // body-audited FAITHFUL (commits c203481 + the 489b6a5 shutdown tail). STILL DEFERRED: each `maxTimestamp`
+        // below marked ⚑P3 is an UNVERIFIED lastPosition→maxTimestamp placeholder (the removed field) — the
+        // VTDecode output-handler timestamp semantics are a separate unit. Structural-diff → P8. Cached: VTBox_slot29_101a6ce44.txt.
         if needReconfig {
             // 解决从后台切换到前台，解码失败的问题
             session = DecompressionSession(assetTrack: session.assetTrack, options: options)!
