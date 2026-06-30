@@ -8,6 +8,7 @@
 import DOVIRPUShim
 import FFmpegKit
 import Libavformat
+import Libavutil
 #if canImport(VideoToolbox)
 import VideoToolbox
 
@@ -58,6 +59,56 @@ class VideoToolboxDecode: DecodeProtocol {
         }
         guard let corePacket = packet.corePacket?.pointee, let data = corePacket.data else {
             return
+        }
+        // P3a Phase B Step 2 — Dolby-Vision RPU extraction (binary L120-236 @0x101a6ce44, ADDITIVE).
+        let nalUnits = parseNALUnits(data: data, size: Int(corePacket.size), codecID: codecID)
+        for nalUnit in nalUnits {
+            // L155: HEVC (kind 1) DV-RPU NAL (type 0x3e = 62).
+            guard nalUnit.kind == 1, nalUnit.type == 62 else { continue }
+            // EPB-strip — H.265 emulation-prevention removal (decompile L162-214, transcribed).
+            // allocLen = nalUnit.length - 2 (the 2-byte HEVC NAL header is skipped). src = data + offset + 2.
+            let allocLen = Int(nalUnit.length) - 2
+            let stripped = UnsafeMutablePointer<UInt8>.allocate(capacity: allocLen)
+            let src = data + Int(nalUnit.offset) + 2
+            var strippedLen = 0
+            if allocLen != 0 {
+                var outPos = 0
+                var zeroRun = 0
+                var readIdx = 0
+                while true {
+                    var nextIdx = readIdx + 1
+                    var byte = src[readIdx]
+                    if zeroRun == 2, byte == 0x03 {
+                        strippedLen = outPos
+                        if nextIdx == allocLen { break }
+                        zeroRun = 0
+                        byte = src[nextIdx]
+                        nextIdx = readIdx + 2
+                    }
+                    stripped[outPos] = byte
+                    strippedLen = outPos + 1
+                    if byte == 0 {
+                        zeroRun += 1
+                        if nextIdx == allocLen { break }
+                    } else {
+                        if nextIdx == allocLen { break }
+                        zeroRun = 0
+                    }
+                    outPos += 1
+                    readIdx = nextIdx
+                }
+            } else {
+                strippedLen = 0
+            }
+            // &doviContext ⇒ the compiler emits the exclusive begin/endAccess (decompile L216/218).
+            ff_dovi_rpu_parse(&doviContext, stripped, strippedLen, 0)
+            stripped.deallocate()
+            var out: UnsafeMutablePointer<AVDOVIMetadata>? = nil
+            ff_dovi_get_metadata(&doviContext, &out)
+            if let out {
+                doviData = convertAVDOVIToKSDOVIMetadata(out)
+                av_free(out)
+            }
         }
         do {
             let sampleBuffer = try session.formatDescription.getSampleBuffer(isConvertNALSize: session.assetTrack.isConvertNALSize, data: data, size: Int(corePacket.size))
