@@ -11,8 +11,9 @@ import Foundation
 import KSPlayer
 
 /// Drives demuxing of the source for the HLS conversion (reads the FormatContext, runs seek/state).
-/// Forward-new (ProAVPlayer module).
-final class DemuxerIO {
+/// Forward-new (ProAVPlayer module). Binary-confirmed `actor` (init calls
+/// `_swift_defaultActor_initialize` + a `$defaultActor` field record present; actors are implicitly final).
+actor DemuxerIO {
     /// Demuxer state machine — nested (descriptor parent = DemuxerIO). 7 cases (field-record reflection).
     enum State {
         case ready, reading, seeking, paused, endOfStream, closed, failed
