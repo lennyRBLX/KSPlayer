@@ -66,7 +66,7 @@ public final class KSAVPlayerView: UIView {
 }
 
 @MainActor
-public class KSAVPlayer {
+open class KSAVPlayer {
     private var cancellable: AnyCancellable?
     private var options: KSOptions {
         didSet {
