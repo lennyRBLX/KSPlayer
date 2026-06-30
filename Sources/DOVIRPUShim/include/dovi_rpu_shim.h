@@ -61,6 +61,17 @@ typedef struct KSDOVIMetadata { uint8_t _opaque[3008]; } KSDOVIMetadata;
 #include <dovi_meta.h>
 #endif
 
+// ── Raw private FFmpeg DV RPU APIs (Swift-callable) ──
+// The 1.3.17 binary calls these DIRECTLY on the inline DOVIContext (NOT the ks_dovi_* heap
+// wrappers): VTBox.decodeFrame @0x101a6ce44 does
+//   ff_dovi_rpu_parse(&doviContext, rpu, sz, 0) -> ff_dovi_get_metadata(&doviContext, &out)
+// and the shutdown DV-tail does ff_dovi_ctx_unref(&doviContext). Declared here (not just in the
+// .c) so the Swift decode loop can invoke them with `&doviContext` (inout -> the exclusive
+// begin/endAccess). Linker resolves them from the static Libavcodec (nm: T). Sigs: libavcodec/dovi_rpu.h.
+int ff_dovi_rpu_parse(DOVIContext *ctx, const uint8_t *rpu, size_t rpu_size, int err_recognition);
+int ff_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata);
+void ff_dovi_ctx_unref(DOVIContext *ctx);
+
 /// Allocate and zero-initialize a caller-owned DOVIContext.
 /// FFmpeg 8.x removed the heap-owning `ff_dovi_ctx_alloc` / `ff_dovi_ctx_free`
 /// lifecycle; the modern contract is a caller-provided zeroed buffer that
