@@ -182,9 +182,9 @@ class VideoToolboxDecode: DecodeProtocol {
         VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
         VTDecompressionSessionInvalidate(session.decompressionSession)
         frames = []
-        // UNRESOLVED→P3: Forward also frees the DV decode context here —
-        // ff_dovi_ctx_unref(&doviContext) @ slot31 0x101a6ec80 (FUN_102a3b4e0). Blocked: doviContext is the
-        // un-buildable opaque DOVIContext (held opaque). P3 reconstructs the real type + this free.
+        // P3a: free the DV parser context (slot31 0x101a6ec80, FUN_102a3b4e0 = ff_dovi_ctx_unref).
+        // &doviContext ⇒ the compiler emits the exclusive begin/endAccess (decompile L30/32).
+        ff_dovi_ctx_unref(&doviContext)
     }
 
     func decode() {
