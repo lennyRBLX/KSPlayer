@@ -38,7 +38,11 @@ import Foundation
 /// `actor` (binary: init calls `_swift_defaultActor_initialize`). Mangled
 /// `_TtC8KSPlayer16DirectoryWatcher`. Method names below are INFERRED — the
 /// vtable is devirtualized so no symbol survives.
-actor DirectoryWatcher {
+// P3b: `public` — the Forward-new ProAVPlayer module (a separate SPM target) references this type
+// cross-module (RemuxerIOAction/ConversionInfo hold a `directoryWatcher: DirectoryWatcher` field;
+// field-record symref → KSPlayer.DirectoryWatcher desc 0x1039ee53c). A separate target can only see a
+// public type, so Forward made it public. Type-level public suffices (members stay internal until M2).
+public actor DirectoryWatcher {
     // FAITHFUL field (binary __swift5_fieldmd @ +0x70). Built by
     // `DispatchSource.makeFileSystemObjectSource(...)` in slots 5/6, whose static
     // return type is `any DispatchSourceFileSystemObject` → declared as such.
