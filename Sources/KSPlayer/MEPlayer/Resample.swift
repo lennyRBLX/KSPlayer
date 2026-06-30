@@ -87,7 +87,8 @@ class VideoSwresample: FrameChange {
     private var edrMetaData: EDRMetaData?
     private var hdr10PlusData: Data? // ⚑ §7-walled → type inferred
     private var rpuBuffer: Data? // ⚑ §7-walled → the ~104-byte +0xc20 inline buffer; layout NOT guessed
-    // UNRESOLVED→P3: init devirt; isDovi not stored (field removed); DV-field init is caller/decoder-side.
+    // UNRESOLVED → DV-render: init devirt; isDovi not stored (field removed); the DV/HDR fields are populated
+    // decoder-side by s32 (see below), not in init.
     init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, isDovi _: Bool) {
         self.dstWidth = dstWidth
         self.dstHeight = dstHeight
@@ -241,11 +242,14 @@ class VideoSwresample: FrameChange {
         }
     }
 
-    // UNRESOLVED→P3: Forward-new DV serialization method (slot32 @0x101a67274, calls
-    // dovi_serializer @0x101b31c6c) — the DV/HDR processing core; cached VideoSwresample_slot32.
-    // Reconstruct in P3 with the DV crash arbiter. Not declared (internal, no recoverable signature).
+    // DEFERRED → DV-render/HDR-pixelBuffer phase (COUPLED unit): s32 (slot32 @0x101a67274, serializer @0x101b31c6c)
+    // = the side-data loop Forward moved out of FFmpegDecode.decodeFrame (sole caller @decompile-L182). It WRITES this
+    // class's DV/HDR fields (doviData +0x60, rpuBuffer +0xc50, hdr10PlusData +0xc60, EDRMetaData +0xc20..) that change
+    // s28 CONSUMES → VideoVTBFrame (grep-confirmed). Cannot land standalone (regresses edrMetaData) → reconstructs as
+    // ONE unit with change s28 + transfer s30 + the decodeFrame loop-removal, gated on the protocol-witness verifier.
+    // Cached: VideoSwresample_slot32.
 
-    // UNRESOLVED→P3: Forward may also free the DV buffer/rpuBuffer (devirt; not verifiable here).
+    // UNRESOLVED → DV-render: Forward may also free the DV buffer/rpuBuffer (devirt; not verifiable here).
     func shutdown() {
         sws_freeContext(imgConvertCtx)
         imgConvertCtx = nil

@@ -38,9 +38,11 @@ class FFmpegDecode: DecodeProtocol {
     }
 
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
-        // UNRESOLVED→P3: Forward diverged this (slot13 0x101a2220c, 677 instr; CC-create extracted to slot18 0x101a23404).
-        // The DV side-data extraction (DOVI RPU/METADATA, HDR→EDRMetaData) + the receive/filter closure are the P3 decode crux
-        // — reconstruct in P3 with the DV-crash behavioral arbiter. Cached: FFmpegDecode_slot13/slot18.
+        // DEFERRED → DV-render/HDR-pixelBuffer phase (COUPLED unit): Forward moved this inline side-data loop (L71-142)
+        // into VideoSwresample.s32 (0x101a67274; sole caller = this method @decompile-L182). s32 writes VideoSwresample's
+        // DV/HDR fields that change s28 CONSUMES → frame, so loop-removal + s32 + change + transfer reconstruct as ONE unit
+        // (landing s32 + removing this loop without change REGRESSES the edrMetaData path — change s28 grep-confirmed reads
+        // +0x60/+0xc20../+0xc50/+0xc60). Gated on the protocol-witness verifier. Cached: FFmpegDecode_slot13/slot18.
         guard let codecContext, avcodec_send_packet(codecContext, packet.corePacket) == 0 else {
             return
         }
