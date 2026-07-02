@@ -242,14 +242,14 @@ final class LocalHLSServer {
             sendRetryResponse(connection: connection, url: fileURL)
             return
         }
-        _ = fileData
-        // DEFERRED → commit ②: serve `fileData` on `connection` with a 200 response.
-        //   For a .m3u8 that is neither `master.m3u8` nor already `#EXT-X-ENDLIST`-terminated, the binary
-        //   first gates on freshness — age = Date().timeIntervalSince1970 − contentModificationDate; a
-        //   threshold (26.0 default, else a Scanner-parsed `n*1.5 + 20.0`); when stale it invokes
-        //   keepAliveBlockMap[…] (key = String, confirmed via the String.hash witness FUN_100020444) —
-        //   then serves. Serve leaf = FUN_101b75edc; content-type = FUN_101b73388 (extension→MIME).
-        //   The staleness constants must be read from disasm (P28/P30), not the decompile floats.
+        let mimeType = contentType(for: fileURL)
+        // ⚑ DEFERRED → commit ②b: for an incomplete .m3u8 (neither `master.m3u8` nor already
+        //   `#EXT-X-ENDLIST`-terminated), the binary first gates on freshness — age =
+        //   Date().timeIntervalSince1970 − contentModificationDate vs a threshold (26.0 default, else a
+        //   Scanner-parsed `n*1.5 + 20.0`; constants disasm-confirmed 1.5/20.0/26.0) — and when stale
+        //   invokes keepAliveBlockMap[<dir>]?() before serving. That freshness side-logic is deferred;
+        //   the serve below is universal (master / #EXT-X-ENDLIST / fresh / stale all reach it).
+        sendFileResponse(connection: connection, data: fileData, contentType: mimeType)
     }
 
     /// Binary: FUN_101b75aec (slot13 helper). ⚑ name inferred. Builds a CFHTTP request message from the
@@ -265,8 +265,43 @@ final class LocalHLSServer {
         return CFHTTPMessageIsHeaderComplete(message) ? message : nil
     }
 
-    // Deferred (→ later LocalHLSServer commits): commit ②'s serve/freshness region above (serve
-    // FUN_101b75edc, content-type FUN_101b73388, staleness/keepAlive); the slot7/startListen state-handler
-    // closures + slot19's serve block FUN_101b74760. Slot-ORDER faithfulness across all 20 slots → the P21
-    // vtable_anchor_diff structural gate at LocalHLSServer M2-complete.
+    /// Binary: FUN_101b73388 (slot13 helper). ⚑ name inferred. Maps a file extension to the HTTP
+    /// Content-Type used when serving it. Map extracted DETERMINISTICALLY by
+    /// `scripts/decode_string_switch.py` (--selfcheck golden, P29) — NOT hand-read (an earlier manual
+    /// read mis-partitioned the two catch-all strings; see later·40). `.m3u8`→the HLS playlist type;
+    /// `key`→octet-stream; default→octet-stream. ⚑ m4a→audio/mp4 width-inferred (shared "…/mp4" tail).
+    private func contentType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "ts":                return "video/mp2t"
+        case "mp4", "m4s", "m4v": return "video/mp4"
+        case "m4a":               return "audio/mp4"
+        case "aac":               return "audio/aac"
+        case "vtt":               return "text/vtt"
+        case "key":               return "application/octet-stream"
+        case "m3u8":              return "application/vnd.apple.mpegurl"
+        default:                  return "application/octet-stream"
+        }
+    }
+
+    /// Binary: FUN_101b75edc (slot13 helper). ⚑ name inferred. Sends `data` as an HTTP/1.1 200 response
+    /// on `connection` (Content-Type + `Cache-Control: no-store` + `Connection: keep-alive` +
+    /// Content-Length, then the bytes as one payload). Keep-alive → the connection is NOT cancelled
+    /// after the write (contrast sendErrorResponse). ⚑ completion (FUN_101b76190 → FUN_101b736e0): on a
+    /// send error it KSLogs the error (bridged to NSError, log-level-gated — KSLog form UNRESOLVED); no cancel.
+    private func sendFileResponse(connection: NWConnection, data: Data, contentType: String) {
+        var response = "HTTP/1.1 200 OK\r\nContent-Type: "
+        response.append(contentType)
+        response.append("\r\nCache-Control: no-store\r\nConnection: keep-alive\r\nContent-Length: ")
+        response.append("\(data.count)")
+        response.append("\r\n\r\n")
+        // ⚑ binary: response.data(using: .utf8) then Data.append(data) → one combined payload.
+        var payload = Data(response.utf8)
+        payload.append(data)
+        connection.send(content: payload, completion: .contentProcessed { _ in })
+    }
+
+    // Deferred (→ later LocalHLSServer commits): commit ②b (processRequest's .m3u8 freshness/staleness
+    // gate + keepAliveBlockMap invoke); the slot7/startListen state-handler closures + slot19's serve
+    // block FUN_101b74760. Slot-ORDER faithfulness across all 20 slots → the P21 vtable_anchor_diff
+    // structural gate at LocalHLSServer M2-complete.
 }
