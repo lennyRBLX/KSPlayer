@@ -13,7 +13,7 @@ import KSPlayer
 
 /// Coordinates the convert-to-HLS pipeline (demuxer ↔ remuxer ↔ local server ↔ directory watcher) and
 /// surfaces playback timing/duration. Forward-new (ProAVPlayer module).
-final class ConversionInfo {
+final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // binary conformances (conf@0x1035711a8/0x103571198); reqs → M2
     // 11 reflection fields (order = layout). Types: field-record mangle token-walk (Sg/Xw/_p suffix
     // authoritative for optionality); refs are non-optional (single symref, no Sg) → IUO M1 stand-ins.
     private var assetTracks: [FFmpegAssetTrack] = []

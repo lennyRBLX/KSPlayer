@@ -14,7 +14,7 @@ import KSPlayer
 
 /// The ProAVPlayer module's player: a KSAVPlayer subclass that plays the locally-served HLS conversion.
 /// Forward-new (ProAVPlayer module).
-final class ProAVPlayer: KSAVPlayer {
+final class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDelegate (binary conf@0x1035715a0); reqs → M2
     // 4 reflection fields (order = layout). Optionality from the mangle Sg.
     // task's Failure = Error PROVEN (known-answer control: KSAVPlayer.error `Error?` symref → the
     // same protocol descriptor 0x10536d100); Success = AVPlayerItem (So-mangle). Access level is not

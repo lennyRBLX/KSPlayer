@@ -13,7 +13,7 @@ import FFmpegKit
 
 /// Demuxes the source and writes HLS segments + the master M3U8 that LocalHLSServer serves.
 /// Forward-new (ProAVPlayer module).
-final class RemuxerIOAction {
+final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x103571970, witness-validated); DemuxerIOAction reqs → M2
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     private var startPlayTime: Double? = nil
     private var outputStreamInfo: OutputStreamInfo! = nil        // ⚑ binary non-optional; IUO M1 stand-in → M2
