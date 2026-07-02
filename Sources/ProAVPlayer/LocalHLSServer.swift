@@ -150,6 +150,40 @@ final class LocalHLSServer {
         return toComponents[i...].joined(separator: "/")
     }
 
-    // Remaining vtable methods (slots 13/15/19 — serve-file/status) → later LocalHLSServer commits
-    // (per-method pre-flight + body-audit).
+    /// Binary: FUN_101b7395c (vtable slot15). Name RECOVERED (deterministic — `recover_swift_function_name.py`):
+    /// slot15 materializes a KSLog `#function` String literal of count 49 + a `#file` of count 32.
+    /// Applying Swift's `_StringObject.nativeBias` (0x20) to the stored `_object` pointers yields the exact
+    /// bytes — "sendErrorResponse(connection:statusCode:message:)" (@0x103d3e680) and
+    /// "ProAVPlayer/LocalHLSServer.swift" (@0x103d3e3b0), each length-verified against its disasm count.
+    /// The #function's arity (3 labels) matches the ABI (x0=NWConnection, x1=Int, x2/x3=String) → P28-clean.
+    /// (Contrast slot7: the tool finds no #function literal → UNRESOLVED; "probeListener(block:)" is a
+    /// slot13 literal, not slot7's name.)
+    /// Writes a minimal HTML error page as an HTTP/1.1 response on the connection.
+    /// ⚑ private: called only by slot13 (the request dispatcher).
+    private func sendErrorResponse(connection: NWConnection, statusCode: Int, message: String) {
+        let statusText = statusMessages[statusCode] ?? "Error"
+        // ⚑ log-level-gated KSLog debug (the #file/#function source) omitted — KSLog form UNRESOLVED
+        //   (consistent with stop()/startListen()).
+        let body = "<html><body><h1>\(statusCode) \(statusText)</h1><p>\(message)</p></body></html>"
+        // ⚑ Content-Length uses String.count (binary calls Swift.String.count on `body`); equals the
+        //   UTF-8 byte count for this ASCII HTML.
+        let response = "HTTP/1.1 \(statusCode) \(statusText)\r\n"
+            + "Content-Type: text/html\r\nConnection: close\r\nContent-Length: \(body.count)\r\n\r\n"
+            + body
+        // send(content:contentContext:isComplete:completion:). DISASM @0x101b73df0–e08 (self=x20=connection):
+        //   x0/x1 = content (Data?)  ·  x2 = .defaultMessage  ·  w3 = isComplete = 1 (TRUE; byte 23008052
+        //   = MOVZ w3,#1)  ·  x4 = completion. `.defaultMessage` and `isComplete: true` are both the API
+        // defaults, so omitting them is equivalent (writing them explicitly emits the same call). content
+        // is Optional → no force-unwrap.  [NB: the decompile mis-casts these args; the disasm is authoritative.]
+        // Completion (FUN_101b761e8 → FUN_101b73e58): on a send error it KSLogs the error (bridged to
+        // NSError, log-level-gated — omitted, KSLog form UNRESOLVED), then ALWAYS cancels the
+        // connection (Connection: close — close after the response is written).
+        connection.send(content: response.data(using: .utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    // Remaining vtable methods (slots 13/19 — request-dispatch/serve-file + deferred) → later
+    // LocalHLSServer commits (per-method pre-flight + body-audit). Slot-ORDER faithfulness across all
+    // slots deferred to the P21 vtable_anchor_diff structural gate at LocalHLSServer M2-complete.
 }
