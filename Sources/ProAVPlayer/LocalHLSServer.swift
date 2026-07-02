@@ -12,6 +12,7 @@
 //
 
 import Foundation
+import KSPlayer
 import Network
 
 /// Serves the locally-converted HLS (master M3U8 + segments) over HTTP so AVFoundation can play it.
@@ -96,6 +97,59 @@ final class LocalHLSServer {
         // ⚑ trailing debug log ("stop HLS Server" / "stop()") omitted — KSLog form UNRESOLVED.
     }
 
-    // Remaining vtable methods (slots 9/13/15/19 — serve-URL [FUN_101b70ed4]/serve-file/status) →
-    // later LocalHLSServer commits (per-method pre-flight + body-audit).
+    /// Binary: FUN_101b70ed4 (vtable slot9), `throws`. ⚑ name/param-labels inferred (stripped).
+    /// Builds the local-server URL for a file in the HLS output directory:
+    ///   http://<host>:<port>/<fileURL's path relative to rootDirectory>
+    /// host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1"). Throws Forward's
+    /// `KSPlayerError` (descriptor 0x1039edbd4) on an invalid URL — the binary boxes {code = .unknown
+    /// (0), message = "can not get url "} via `_swift_allocError`, matching `KSPlayerError(description:)`.
+    /// ⚑ internal: a cross-class caller (FUN_101b69880) invokes it via the vtable; widen if needed.
+    func url(for fileURL: URL, local: Bool) throws -> URL {
+        let host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1")
+        let path = relativePath(from: rootDirectory, to: fileURL)
+        guard let url = URL(string: "http://\(host):\(port)/\(path)") else {
+            throw KSPlayerError(description: "can not get url ")
+        }
+        return url
+    }
+
+    /// Binary: FUN_101b71134 (slot9-private helper). ⚑ name inferred. The device's Wi-Fi (en0/en1)
+    /// IPv4 address, or nil: getifaddrs → first AF_INET interface named "en0"/"en1" →
+    /// getnameinfo(NI_NUMERICHOST). (en0/en1 are the "en0"/"en1" small-string literals in the binary.)
+    private func localIPAddress() -> String? {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let interface = ptr.pointee
+            guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let name = String(cString: interface.ifa_name)
+            guard name == "en0" || name == "en1" else { continue }
+            var addr = interface.ifa_addr.pointee
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(&addr, socklen_t(addr.sa_len),
+                        &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
+            return String(cString: hostname)
+        }
+        return nil
+    }
+
+    /// Binary: FUN_1019f501c (slot9-private helper — new; not an existing KSPlayer URL ext). ⚑ names
+    /// inferred. `to`'s path relative to `from`: when they share scheme + host, drop the common leading
+    /// standardized path components and join the remainder with "/"; otherwise `to.path`.
+    private func relativePath(from: URL, to: URL) -> String {
+        guard from.scheme == to.scheme, from.host == to.host else {
+            return to.path
+        }
+        let fromComponents = from.standardized.pathComponents
+        let toComponents = to.standardized.pathComponents
+        var i = 0
+        while i < fromComponents.count, i < toComponents.count, fromComponents[i] == toComponents[i] {
+            i += 1
+        }
+        return toComponents[i...].joined(separator: "/")
+    }
+
+    // Remaining vtable methods (slots 13/15/19 — serve-file/status) → later LocalHLSServer commits
+    // (per-method pre-flight + body-audit).
 }

@@ -267,6 +267,30 @@ extension KSPlayerErrorCode: CustomStringConvertible {
     }
 }
 
+/// Forward-new error type. The shipped 1.3.17 binary replaces the upstream `extension NSError` error
+/// model with this struct — descriptor 0x1039edbd4 (kind=struct), ~70+ uses app-wide (KSPlayer core +
+/// FFmpeg wrappers + ProAVPlayer). Binary-confirmed fields: `code: KSPlayerErrorCode` (a symbolic-ref
+/// nominal — corrects the prior recon's `Int32`; stdlib Int32 would use standard mangling, not a
+/// symbolic ref), `message: String?` (mangle `SSSg`). ⚑ the initializers are inferred: the binary
+/// inlines construction (`_swift_allocError` + store {code, message}), so no distinct init survives to
+/// decompile. ⚑ base-regression: the reconstruction base still carries the upstream `extension NSError`
+/// (below); migrating its call sites to this struct is a tracked structural gap.
+public struct KSPlayerError: Error {
+    public let code: KSPlayerErrorCode
+    public let message: String?
+
+    public init(code: KSPlayerErrorCode, message: String? = nil) {
+        self.code = code
+        self.message = message
+    }
+
+    /// ⚑ inferred convenience: matches the binary's throw payload {code = .unknown (0), message}.
+    public init(description: String) {
+        code = .unknown
+        message = description
+    }
+}
+
 extension NSError {
     convenience init(errorCode: KSPlayerErrorCode, userInfo: [String: Any] = [:]) {
         var userInfo = userInfo
