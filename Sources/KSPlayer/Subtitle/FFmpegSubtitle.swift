@@ -11,5 +11,7 @@ import Foundation
 //   → reconstruction/dataflow_FFmpegSubtitle.json
 // Stored-property TYPES + method bodies recovered in Phase 4; declaring them now
 // without resolved field-symbols would be fabrication (P17). Surface only.
-class FFmpegSubtitle {
+// Binary-confirmed `actor` (descriptor 0x1039f1718 carries a $defaultActor field record;
+// type_kind_gate.py). Was `class` — faithfulness fix (RECONSTRUCTION_FAITHFULNESS_MANUAL §1).
+actor FFmpegSubtitle {
 }
