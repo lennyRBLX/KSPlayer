@@ -22,8 +22,9 @@ final class LocalHLSServer {
     // 7 reflection fields (order = layout). Mutability kept `var` (M1 under-claim; l2 mutability partial).
     private var port: UInt16                          // init param; self+0x10 (__uint16)
     private var listener: NWListener                  // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
-    // ⚑ UNRES inner → later body: [String:(UNRES)->()]. Keep-alive block per connection key (self+0x20).
-    private var keepAliveBlockMap: [String: () -> Void] = [:]
+    // ⚑ [String: (URL) -> Void] — value CORRECTED from M1's ()->Void: slot13 invokes the block with the
+    // request's file URL (blr, x0 = fileURL; context in x20). Keep-alive block per directory-path key (self+0x20).
+    private var keepAliveBlockMap: [String: (URL) -> Void] = [:]
     private var rootDirectory: URL                    // ⚑ init param (URL value-witness copy) — was temporaryDirectory (M1 bug)
     private var queue: DispatchQueue = DispatchQueue(label: "com.localhlsserver.queue")  // label @0x103d3df80
     // HTTP status table — 6 pairs recovered from the static dict literal (keys read as Int; values
@@ -243,12 +244,31 @@ final class LocalHLSServer {
             return
         }
         let mimeType = contentType(for: fileURL)
-        // ⚑ DEFERRED → commit ②b: for an incomplete .m3u8 (neither `master.m3u8` nor already
-        //   `#EXT-X-ENDLIST`-terminated), the binary first gates on freshness — age =
-        //   Date().timeIntervalSince1970 − contentModificationDate vs a threshold (26.0 default, else a
-        //   Scanner-parsed `n*1.5 + 20.0`; constants disasm-confirmed 1.5/20.0/26.0) — and when stale
-        //   invokes keepAliveBlockMap[<dir>]?() before serving. That freshness side-logic is deferred;
-        //   the serve below is universal (master / #EXT-X-ENDLIST / fresh / stale all reach it).
+        // For an incomplete media playlist (.m3u8, not master.m3u8, not yet #EXT-X-ENDLIST-terminated):
+        // reset the retry backoff (the file now exists), and when it is stale relative to its own
+        // target-duration budget, nudge the directory's keep-alive block before serving. (Binary: the
+        // .m3u8 branch of slot13; a compiler value-witness `initializeWithCopy` in this path is omitted
+        // as non-source. Threshold comparison `threshold <= age` = fcmp d0,d8; b.ls.)
+        if fileURL.pathExtension == "m3u8", fileURL.lastPathComponent != "master.m3u8" {
+            retryDelayMap.removeValue(forKey: fileURL)            // FUN_101b7e1a0(op=1) = remove key
+            if let content = String(data: fileData, encoding: .utf8),
+               !content.hasSuffix("#EXT-X-ENDLIST\n") {
+                if let modDate = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate {
+                    let age = Date().timeIntervalSince1970 - modDate.timeIntervalSince1970
+                    // Threshold = the playlist's #EXT-X-TARGETDURATION × 1.5 + 20s, else 26s.
+                    let scanner = Scanner(string: content)
+                    scanner.scanUpToString("#EXT-X-TARGETDURATION:")
+                    let threshold = (scanner.scanString("#EXT-X-TARGETDURATION:") != nil
+                                     ? scanner.scanDouble().map { $0 * 1.5 + 20.0 } : nil) ?? 26.0
+                    if threshold <= age {
+                        // ⚑ gated KSLog (level-gated; emits "…\(fileURL.lastPathComponent),diff=\(age)")
+                        //   omitted — KSLog form UNRESOLVED (as elsewhere in the class).
+                        keepAliveBlockMap[fileURL.deletingLastPathComponent().path]?(fileURL)
+                    }
+                }
+            }
+        }
         sendFileResponse(connection: connection, data: fileData, contentType: mimeType)
     }
 
