@@ -31,8 +31,9 @@ final class LocalHLSServer {
         400: "Bad Request", 403: "Forbidden", 404: "Not Found",
         405: "Method Not Allowed", 500: "Internal Server Error", 503: "Service Unavailable",
     ]
-    // ⚑ UNRES inner → later body: [UNRES:UNRES]. Per-key retry delay (self, retryDelayMap field).
-    private var retryDelayMap: [String: Int] = [:]
+    // ⚑ [URL: Int] — CORRECTED from the M1 [String: Int] guess: slot19 (sendRetryResponse) hashes the
+    // key via URL:Hashable (FUN_101b835bc → Hashable._rawHashValue on a URL). Per-URL backoff delay.
+    private var retryDelayMap: [URL: Int] = [:]
 
     /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).
     /// ⚑ param labels inferred (stripped). URL param + `throws` are binary facts (URL value-witness copy
@@ -183,7 +184,25 @@ final class LocalHLSServer {
         })
     }
 
-    // Remaining vtable methods (slots 13/19 — request-dispatch/serve-file + deferred) → later
-    // LocalHLSServer commits (per-method pre-flight + body-audit). Slot-ORDER faithfulness across all
-    // slots deferred to the P21 vtable_anchor_diff structural gate at LocalHLSServer M2-complete.
+    /// Binary: FUN_101b740d4 (vtable slot19). Name RECOVERED (recover_swift_function_name.py: in-body
+    /// `#function` "sendRetryResponse(connection:url:)" @0x103d3e400, count-34 length-verified; arity 2 =
+    /// ABI). Reschedules a file-serve for `url` on `connection` with per-URL exponential backoff.
+    /// ⚑ private: called only by slot13 (processRequest).
+    private func sendRetryResponse(connection: NWConnection, url: URL) {
+        let delay = retryDelayMap[url] ?? 1
+        if delay <= 4 { retryDelayMap[url] = delay * 2 }   // exp backoff; >4 stops doubling (cap 8)
+        // ⚑ gated KSLog omitted (the #file/#function source; KSLog form UNRESOLVED, as stop()/startListen()).
+        queue.asyncAfter(deadline: .now() + Double(delay)) { [weak self] in
+            _ = self
+            // ⚑ DEFERRED → later unit: serve `url` on `connection` (FUN_101b75a84 → FUN_101b74760:
+            //   [weak self] guard → connection.state == .ready → Data(contentsOf: url) → send 200 / error).
+            //   Binary block captures [weak self] + connection + url + delay; body + full captures deferred
+            //   (strict-concurrency @Sendable work-item vs non-Sendable self — as slot7/startListen).
+        }
+    }
+
+    // Remaining vtable method (slot13 processRequest — the request dispatcher) + the deferred closures
+    // (slot7/startListen state handlers, slot19's serve block FUN_101b74760) → later LocalHLSServer
+    // commits. Slot-ORDER faithfulness across all slots deferred to the P21 vtable_anchor_diff structural
+    // gate at LocalHLSServer M2-complete.
 }
