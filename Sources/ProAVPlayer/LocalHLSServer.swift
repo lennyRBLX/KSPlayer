@@ -60,6 +60,15 @@ final class LocalHLSServer {
         // ⚑ trailing debug log ("startListen()") omitted — KSLog form UNRESOLVED.
     }
 
-    // Remaining vtable methods (slots 7/8/9/10-internals/13/15/19 — accept/serve-file/keep-alive/status)
-    // → later LocalHLSServer commits (per-method pre-flight + body-audit).
+    /// Binary: FUN_101b70d3c (vtable slot8). ⚑ name from the debug-log string "stop()".
+    /// Cancels the listener and clears the retry / keep-alive maps.
+    func stop() {
+        listener.cancel()
+        retryDelayMap = [:]
+        keepAliveBlockMap = [:]
+        // ⚑ trailing debug log ("stop HLS Server" / "stop()") omitted — KSLog form UNRESOLVED.
+    }
+
+    // Remaining vtable methods (slots 7/9/13/15/19 — keep-alive-open [FUN_101b753e8]/serve-URL/serve-file/
+    // status) → later LocalHLSServer commits (per-method pre-flight + body-audit).
 }
