@@ -11,6 +11,7 @@
 //  constructed non-optional NWListener. statusMessages/queue-label recovered from static data.
 //
 
+import CFNetwork
 import Foundation
 import KSPlayer
 import Network
@@ -201,8 +202,71 @@ final class LocalHLSServer {
         }
     }
 
-    // Remaining vtable method (slot13 processRequest — the request dispatcher) + the deferred closures
-    // (slot7/startListen state handlers, slot19's serve block FUN_101b74760) → later LocalHLSServer
-    // commits. Slot-ORDER faithfulness across all slots deferred to the P21 vtable_anchor_diff structural
-    // gate at LocalHLSServer M2-complete.
+    /// Binary: FUN_101b7248c (vtable slot13, 959i). Name RECOVERED (recover_swift_function_name.py:
+    /// in-body `#function` "processRequest(data:connection:)" @0x103d3e6c0 count-32 length-verified;
+    /// #file "ProAVPlayer/LocalHLSServer.swift"; 2 labels == ABI (disasm prologue: x0/x1=data, x2=connection,
+    /// x20=self) → P28-clean). ⚑ private (get_xrefs_to 0x101b7248c = 1 code caller, FUN_101b72150 — inferred).
+    ///
+    /// The HTTP request dispatcher: parse the request → resolve the file within `rootDirectory` (path-traversal
+    /// guarded) → serve it, ask the client to retry if it isn't ready, or reject it.
+    ///
+    /// SPINE (commit ①): the request-parse + dispatch decisions (400 malformed / 403 traversal / retry-when-
+    /// absent-or-unreadable). The serve path + the .m3u8 freshness gate are a flagged DEFERRED region below →
+    /// commit ② (serve FUN_101b75edc + content-type map FUN_101b73388 + the contentModificationDate staleness
+    /// / keepAliveBlockMap invoke). Callees slot15/slot19 already FAITHFUL.
+    private func processRequest(data: Data, connection: NWConnection) {
+        // Parse the HTTP request bytes; a malformed request (no complete header / no request URL) → 400.
+        guard let message = parseRequest(data),
+              let requestURL = CFHTTPMessageCopyRequestURL(message)?.takeRetainedValue() as URL?
+        else {
+            sendErrorResponse(connection: connection, statusCode: 400, message: "Bad Request")
+            return
+        }
+        // Map the request path (percent-decoded) into the served directory.
+        let requestPath = requestURL.path.removingPercentEncoding ?? requestURL.path
+        let fileURL = rootDirectory.appendingPathComponent(requestPath)
+        // Path-traversal guard: the resolved file must stay under rootDirectory → else 403.
+        // ⚑ prefix check on `.path` (binary: String.hasPrefix on the two URL paths).
+        guard fileURL.path.hasPrefix(rootDirectory.path) else {
+            sendErrorResponse(connection: connection, statusCode: 403, message: "Forbidden")
+            return
+        }
+        // Not yet produced by the converter → tell the client to back off and retry.
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            sendRetryResponse(connection: connection, url: fileURL)
+            return
+        }
+        // Read the file; an unreadable/empty file is also "not ready yet" → retry.
+        // ⚑ empty-check is the faithful intent of the binary's Data-representation length test.
+        guard let fileData = try? Data(contentsOf: fileURL), !fileData.isEmpty else {
+            sendRetryResponse(connection: connection, url: fileURL)
+            return
+        }
+        _ = fileData
+        // DEFERRED → commit ②: serve `fileData` on `connection` with a 200 response.
+        //   For a .m3u8 that is neither `master.m3u8` nor already `#EXT-X-ENDLIST`-terminated, the binary
+        //   first gates on freshness — age = Date().timeIntervalSince1970 − contentModificationDate; a
+        //   threshold (26.0 default, else a Scanner-parsed `n*1.5 + 20.0`); when stale it invokes
+        //   keepAliveBlockMap[…] (key = String, confirmed via the String.hash witness FUN_100020444) —
+        //   then serves. Serve leaf = FUN_101b75edc; content-type = FUN_101b73388 (extension→MIME).
+        //   The staleness constants must be read from disasm (P28/P30), not the decompile floats.
+    }
+
+    /// Binary: FUN_101b75aec (slot13 helper). ⚑ name inferred. Builds a CFHTTP request message from the
+    /// received bytes (CFHTTPMessageCreateEmpty(isRequest: true) + append the Data via withUnsafeBytes),
+    /// returning it once the header is complete. ⚑ the exact incomplete-header return path → own later unit.
+    private func parseRequest(_ data: Data) -> CFHTTPMessage? {
+        let message = CFHTTPMessageCreateEmpty(kCFAllocatorDefault, true).takeRetainedValue()
+        data.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                CFHTTPMessageAppendBytes(message, base.assumingMemoryBound(to: UInt8.self), data.count)
+            }
+        }
+        return CFHTTPMessageIsHeaderComplete(message) ? message : nil
+    }
+
+    // Deferred (→ later LocalHLSServer commits): commit ②'s serve/freshness region above (serve
+    // FUN_101b75edc, content-type FUN_101b73388, staleness/keepAlive); the slot7/startListen state-handler
+    // closures + slot19's serve block FUN_101b74760. Slot-ORDER faithfulness across all 20 slots → the P21
+    // vtable_anchor_diff structural gate at LocalHLSServer M2-complete.
 }
