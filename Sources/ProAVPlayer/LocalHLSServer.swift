@@ -50,18 +50,48 @@ final class LocalHLSServer {
         startListen()
     }
 
-    /// Binary: FUN_101b7138c (vtable slot10). ⚑ name from the trailing debug-log string "startListen()".
-    /// SPINE reconstructed (wire both handlers + start on the queue); the handler closure BODIES
-    /// (connection accept/serve + listener-state handling) are UNRESOLVED → next LocalHLSServer commit.
+    /// Binary: FUN_101b7138c (vtable slot10). ⚑ name from the debug-log string "startListen()". Accepts
+    /// each connection, drives it to `.ready`, receives the HTTP request, and dispatches it. The `[weak self]`
+    /// captures in these `@Sendable` handlers are faithful to the binary (weakInit/weakLoadStrong); they
+    /// compile because ProAVPlayer is built in Swift 5 language mode (Package.swift — Forward's own mode,
+    /// since LocalHLSServer has no Sendable conformance). Per-state KSLog forms UNRESOLVED (as elsewhere).
     private func startListen() {
-        listener.newConnectionHandler = { connection in
-            _ = connection   // UNRESOLVED → next commit: accept + serve HLS. ⚑ binary captures [weak self]
-        }                    //   (deferred: strict-concurrency rejects weak-self in this @Sendable handler
-        listener.stateUpdateHandler = { state in            //   for a non-Sendable class; no binary Sendable conf)
-            _ = state        // UNRESOLVED → next commit: listener state handling. ⚑ binary captures [weak self]
+        listener.newConnectionHandler = { [weak self] connection in            // accept: FUN_101b71590
+            guard let self else { return }
+            connection.stateUpdateHandler = { [weak self] state in             // conn state: FUN_101b71644
+                guard let self else { return }
+                switch state {
+                case .failed:
+                    // ⚑ gated KSLog("startListen() … connection failed") omitted — KSLog form UNRESOLVED.
+                    connection.cancel()
+                case .ready:
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+                        [weak self] data, _, isComplete, error in              // receive: FUN_101b72150
+                        guard let self else { return }
+                        if error != nil {
+                            // ⚑ gated KSLog("Connection failed: \(error)") omitted — KSLog form UNRESOLVED.
+                            connection.cancel()
+                            return
+                        }
+                        if let data {
+                            self.processRequest(data: data, connection: connection)
+                        }
+                        if isComplete {   // peer closed the stream (EOF) → close the connection
+                            connection.cancel()
+                        }
+                    }
+                default:
+                    break
+                }
+            }
+            connection.start(queue: self.queue)
+        }
+        listener.stateUpdateHandler = { [weak self] state in                   // listener state: FUN_101b71958
+            guard let self else { return }
+            _ = state
+            // ⚑ per-state gated KSLog (startListen() … .failed / .ready / .cancelled) omitted — KSLog form UNRESOLVED.
         }
         listener.start(queue: queue)
-        // ⚑ trailing debug log ("startListen()") omitted — KSLog form UNRESOLVED.
     }
 
     /// Binary: FUN_101b70b64 (vtable slot7) → outlined body FUN_101b753e8.
