@@ -60,6 +60,33 @@ final class LocalHLSServer {
         // ⚑ trailing debug log ("startListen()") omitted — KSLog form UNRESOLVED.
     }
 
+    /// Binary: FUN_101b70b64 (vtable slot7) → outlined body FUN_101b753e8.
+    /// ⚑ name UNRESOLVED — the ABI proves this method takes no params (disasm: x0..x7 unread on
+    /// entry, self in x20), which rules out the only nearby name-string "probeListener(block:)"
+    /// (@0x103d3e750, takes a `block:`) as this method's name; that string names the sibling
+    /// keepAliveBlock installer, not this method (and get_xrefs_to that string = none). No clean
+    /// #function anchor exists → the name below is a flagged SEMANTIC placeholder describing
+    /// behaviour, not a recovered symbol.
+    /// SPINE: probe the listener; when ready, open a keep-alive NWConnection to self
+    /// (127.0.0.1:port) and start it. Deferred → next commit (strict-concurrency block; no binary
+    /// Sendable conf): the [weak self] stateUpdateHandler closure (FUN_101b76230 → FUN_101b70bb0
+    /// retry/recreate-listener) + the "listener not ready" debug log.
+    private func openKeepAliveConnection() {   // ⚑ semantic placeholder name (UNRESOLVED)
+        if listener.state == .ready {
+            let connection = NWConnection(
+                to: .hostPort(host: "127.0.0.1",
+                              port: NWEndpoint.Port(rawValue: port)!),  // ⚑ force-unwrap (binary ==1 trap)
+                using: .tcp)
+            connection.stateUpdateHandler = { state in
+                _ = state   // UNRESOLVED → next commit: [weak self] retry (FUN_101b76230 → FUN_101b70bb0)
+            }
+            connection.start(queue: queue)
+        } else {
+            // UNRESOLVED → next commit: KSLog("listener not ready … keepAliveBlock url=…")
+            //   + retry/recreate listener (FUN_101b70bb0, [weak self] guard → self.listener = NWListener(…))
+        }
+    }
+
     /// Binary: FUN_101b70d3c (vtable slot8). ⚑ name from the debug-log string "stop()".
     /// Cancels the listener and clears the retry / keep-alive maps.
     func stop() {
@@ -69,6 +96,6 @@ final class LocalHLSServer {
         // ⚑ trailing debug log ("stop HLS Server" / "stop()") omitted — KSLog form UNRESOLVED.
     }
 
-    // Remaining vtable methods (slots 7/9/13/15/19 — keep-alive-open [FUN_101b753e8]/serve-URL/serve-file/
-    // status) → later LocalHLSServer commits (per-method pre-flight + body-audit).
+    // Remaining vtable methods (slots 9/13/15/19 — serve-URL [FUN_101b70ed4]/serve-file/status) →
+    // later LocalHLSServer commits (per-method pre-flight + body-audit).
 }
