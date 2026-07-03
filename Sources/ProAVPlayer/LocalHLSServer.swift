@@ -246,11 +246,29 @@ final class LocalHLSServer {
         if delay <= 4 { retryDelayMap[url] = delay * 2 }   // exp backoff; >4 stops doubling (cap 8)
         // ⚑ gated KSLog omitted (the #file/#function source; KSLog form UNRESOLVED, as stop()/startListen()).
         queue.asyncAfter(deadline: .now() + Double(delay)) { [weak self] in
-            _ = self
-            // ⚑ DEFERRED → later unit: serve `url` on `connection` (FUN_101b75a84 → FUN_101b74760:
-            //   [weak self] guard → connection.state == .ready → Data(contentsOf: url) → send 200 / error).
-            //   Binary block captures [weak self] + connection + url + delay; body + full captures deferred
-            //   (strict-concurrency @Sendable work-item vs non-Sendable self — as slot7/startListen).
+            // Serve `url` on `connection` once it's ready (FUN_101b75a84 -> FUN_101b74760). The block
+            // captures [weak self] + connection + url + delay (`delay` = param_4, pinned via `ucvtf d0,x26`
+            // + the retryDelayMap load in slot19; referenced only by the omitted gated KSLog). Compiles under .v5.
+            guard let self, connection.state == .ready else {
+                // ⚑ gated KSLog("…connection.state=\(connection.state) not ready…") omitted — KSLog form
+                //   UNRESOLVED. self nil (cbz @0x101b74884) OR state != .ready (tbz @0x101b748ec) -> shared log.
+                return
+            }
+            if let data = try? Data(contentsOf: url), !data.isEmpty {   // Data init 0x103452488 (x21 error-slot); !isEmpty @0x101b74a94
+                self.sendFileResponse(connection: connection, data: data, contentType: self.contentType(for: url))  // 200 (FUN_101b75edc)
+            } else {
+                // ⚑ gated KSLog omitted — UNRESOLVED. Inline 503 (throw OR empty data). This completion
+                //   CANCELS the connection (FUN_101b75064: cancel(param_2)) — contrast sendFileResponse keep-alive.
+                //   Append order A -> contentType(url) -> B disasm-confirmed (grow/append @0x101b74efc-f54).
+                var response = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: "  // @0x103d3e470 count 48 (read_mem-verified)
+                response.append(self.contentType(for: url))                         // FUN_101b73388(url)
+                // ⚑ binary-faithful: literal B is 87 bytes (decompile count 0x57) ending "\r\n\r" — Forward's 503
+                //   is MISSING the final "\n" of the header terminator; reproduced verbatim, NOT smoothed to \r\n\r\n.
+                response.append("\r\nRetry-After: 1\r\nCache-Control: no-store\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r")
+                connection.send(content: response.data(using: .utf8), completion: .contentProcessed { _ in
+                    connection.cancel()
+                })
+            }
         }
     }
 
@@ -371,8 +389,7 @@ final class LocalHLSServer {
         connection.send(content: payload, completion: .contentProcessed { _ in })
     }
 
-    // Deferred (→ LocalHLSServer M2-complete): slot19's retry-serve block FUN_101b74760 (c3 —
-    // [weak self] guard → connection.state == .ready → Data(contentsOf: url) → send 200/error).
-    // Slot-ORDER faithfulness across all 20 slots → the P21 vtable_anchor_diff structural gate at
-    // LocalHLSServer M2-complete.
+    // LocalHLSServer M2: all 8 vtable methods + every startListen/slot7/slot19 closure reconstructed.
+    // Remaining M2 arbiter for this class = slot-ORDER faithfulness across all 20 slots → the P21
+    // vtable_anchor_diff STRUCTURAL gate (build a ProAVPlayer classmap-builder → structural diff).
 }
