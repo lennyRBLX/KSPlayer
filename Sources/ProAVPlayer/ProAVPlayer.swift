@@ -30,4 +30,18 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
 
     // Adds no designated init + all 4 stored props defaulted ⇒ inherits KSAVPlayer's
     // `required init(url:options:)`. vtable=16, slot15 impl (+ inherited/devirt) → M2.
+
+    // ── ConversionInfoDelegate conformance (binary conf@0x1035715a0, wt 0x1041e1340). 3 instance-method
+    //    witnesses, devirtualized/stripped → their bodies are ProAVPlayer's OWN M2 unit. Honest stubs so the
+    //    protocol (declared from ConversionInfo's forwards, ConversionInfo.swift) compiles; ⚑ UNRESOLVED →
+    //    ProAVPlayer M2. Names are the inferred ConversionInfoDelegate names (firm up with this conformance).
+    func conversionDidUpdate() {
+        // UNRESOLVED — ProAVPlayer ConversionInfoDelegate witness (wt 0x1041e1340, req0); ProAVPlayer M2.
+    }
+    func conversionDidReachEnd() {
+        // UNRESOLVED — ProAVPlayer ConversionInfoDelegate witness (req1); ProAVPlayer M2.
+    }
+    func conversionDidFail(_ error: any Error) {
+        // UNRESOLVED — ProAVPlayer ConversionInfoDelegate witness (req2); ProAVPlayer M2.
+    }
 }

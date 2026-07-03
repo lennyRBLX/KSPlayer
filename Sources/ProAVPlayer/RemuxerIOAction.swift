@@ -16,7 +16,7 @@ import FFmpegKit
 /// Forward-new (ProAVPlayer module).
 final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x103571970, witness-validated); DemuxerIOAction reqs → M2
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
-    private var startPlayTime: Double? = nil
+    var startPlayTime: Double? = nil   // internal (was `private`): ConversionInfo.didUpdateCurrentTime reads it directly (FUN_101b6a40c @remuxerIOAction+0x10/+0x18) — cross-file same-module access is binary-arbitrated; modifier under-included (§1/P34-style)
     private var outputStreamInfo: OutputStreamInfo! = nil        // ⚑ binary non-optional; IUO M1 stand-in → M2
     private var formatContext: FormatContext! = nil             // ⚑ binary non-optional; IUO M1 stand-in → M2
     private var dir: URL! = nil                                 // ⚑ binary non-optional (symref); decompile: URL; IUO M1 stand-in → M2
@@ -220,7 +220,11 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.
 }
 
-/// Remux action delegate — weak-referenced ⇒ `AnyObject`. 1 requirement (protocol desc 0x1039f55f0) → M2.
+/// Remux action delegate — weak-referenced ⇒ `AnyObject`. 1 instance-method requirement (protocol desc
+/// 0x1039f55f0), witness-anchored via ConversionInfo's conformance (wt 0x1041e0b80 → FUN_101b6aca8; kind
+/// Method per conformance_walker). ⚑ req NAME + arg TYPE INFERRED — no `#function`, and no ProAVPlayer enum
+/// for the arg (build_module_classmap: only State/Event, both DemuxerIO-parented) → primitive `Int` (the
+/// binary reads a byte; `reconstruct(completion:)` signals `2`, the witness special-cases `2` vs an odd value).
 protocol RemuxerIOActionDelegate: AnyObject {
-    // 1 requirement → M2.
+    func remuxerDidChangeState(_ state: Int)
 }

@@ -30,29 +30,77 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private var server: LocalHLSServer! = nil
     private var directoryWatcher: DirectoryWatcher! = nil  // KSPlayer (now public, fe13053)
 
-    /// `DemuxerIODelegate` req0 witness — binary `FUN_101b6a40c` (`void f(double)`): stores the demuxer time
-    /// (self@0x38, a `>=1.0`s-change throttle) then spawns a throttled progress `Task` (FUN_101b76920). The
-    /// body couples to ConversionInfo's field layout (@0x38/0x40/0x48/0x50) + the Task machinery, both
-    /// structure-only here → reconstruct with ConversionInfo's M2. ⚑ UNRESOLVED → ConversionInfo M2.
-    /// Declared now so `DemuxerIO.readPacket()` (slot29) can call the req; witness slot is binary-present.
+    // ── DemuxerIODelegate conformance (wt 0x1041e0b90). 4 instance-method reqs (conformance_walker):
+    //    ConversionInfo observes the demuxer and forwards lifecycle to its own `delegate`
+    //    (ConversionInfoDelegate). Witness bodies binary-read (prefetch verbatim, P27).
+
+    /// `FUN_101b6a40c`. Throttled progress: act only on a forward move of ≥ 1.0s
+    /// (`abs(demuxerTime - value) >= 1.0`), record the new demuxer time, then spawn the progress `Task`
+    /// only when the un-drained lead `(value - remuxerIOAction.startPlayTime) - currentPlaybackTime`
+    /// exceeds `maxBufferDuration`. Disasm-verified: the `demuxerTime` store is guard-scoped
+    /// (`str d8,[x20,#0x38]` @0x101b6a47c, inside the ≥1.0s guard) — NOT hoisted (P42). The Task's async
+    /// body is deep → deferred (see the marker below).
     func didUpdateCurrentTime(_ value: Double) {
-        // UNRESOLVED — FUN_101b6a40c body; reconstruct with ConversionInfo M2 (field offsets + Task spawn).
+        guard value > 0, abs(demuxerTime - value) >= 1.0 else { return }   // [fcmp/b.ls @0x460; fcmp/b.mi @0x478]
+        demuxerTime = value                                                // [str d8,[x20,#0x38] @0x47c — guard-scoped]
+        var start = 0.0
+        if let sp = remuxerIOAction.startPlayTime { start = sp }           // [remuxerIOAction@0x50; startPlayTime payload@+0x10/tag@+0x18]
+        if maxBufferDuration < (value - start) - currentPlaybackTime {     // [fsub;fsub;fcmp d2,d0;b.pl @0x498-4a8]
+            Task { [self] in                                               // [swift_retain self @0x4f4; swift_task_create via FUN_101b76920 @0x510]
+                // ⚑ UNRESOLVED — deep-async body: FUN_101b6a530 (READ, P43) sets URL-typed task-locals then
+                //   `_swift_task_switch`es to the continuation FUN_101b6a59c — a continuation-split coroutine
+                //   chain (genuinely deep-async, verified not assumed). The spawn + strong self-capture are
+                //   faithful; the closure internals = the "ConversionInfo deep-async closures" sub-unit
+                //   (P36, sibling of DemuxerIO's slot28/30).
+                _ = self
+            }
+        }
     }
+
+    /// `FUN_101b6abf8` — forward to the coordinator's own delegate (witness +0x10 = ConversionInfoDelegate req1).
     func demuxerDidReachEnd() {
-        // UNRESOLVED — FUN_101b6abf8 (forwards to ConversionInfo's own delegate, wt+0x10); ConversionInfo M2.
+        delegate?.conversionDidReachEnd()
     }
+
+    /// `FUN_101b6ac44` — forward the error (witness +0x18 = ConversionInfoDelegate req2).
     func demuxerDidFail(_ error: any Error) {
-        // UNRESOLVED — FUN_101b6ac44 (forwards the error to ConversionInfo's own delegate, wt+0x18); ConversionInfo M2.
+        delegate?.conversionDidFail(error)
     }
+
+    /// `FUN_10000e52c` — empty in the binary (an outlined no-op in the low `__text` segment; segment
+    /// pre-flighted — it is a bona-fide witness-table entry, not a mis-attribution).
     func demuxerDidClose() {
-        // UNRESOLVED — DemuxerIODelegate req3 witness (wt+0x20, forwards to ConversionInfo's own delegate); ConversionInfo M2.
+    }
+
+    // ── RemuxerIOActionDelegate conformance (wt 0x1041e0b80). 1 instance-method req; witness FUN_101b6aca8.
+
+    /// `FUN_101b6aca8` — dispatch on the remux signal: `== 2` spawns the async handler Task; an odd value
+    /// (`(state & 1) != 0`, i.e. 1/3) forwards to the coordinator delegate (witness +0x8 =
+    /// ConversionInfoDelegate req0); any other value is ignored. ⚑ req NAME + arg TYPE inferred (protocol decl).
+    func remuxerDidChangeState(_ state: Int) {
+        if state == 2 {                                                    // [cmp/b.eq case 2 @FUN_101b6aca8]
+            Task { [self] in                                              // [swift_retain self; swift_task_create via FUN_101b76920]
+                // ⚑ UNRESOLVED — deep-async body: FUN_101b6adc8 (READ, P43) `_swift_task_switch`es to the
+                //   continuation FUN_101b6ade0 — continuation-split (verified deep-async, not assumed). Spawn +
+                //   self-capture faithful; internals = "ConversionInfo deep-async closures" sub-unit (P36).
+                _ = self
+            }
+        } else if (state & 1) != 0 {                                       // [tbz #0 bit-test — P38 partial, hand-read + audit]
+            delegate?.conversionDidUpdate()
+        }
     }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real
     // init. Structure-only here (P15).
 }
 
-/// Coordinator delegate — weak-referenced ⇒ `AnyObject`. 3 requirements (protocol desc 0x1039f4fa0) → M2.
+/// Coordinator delegate — weak-referenced ⇒ `AnyObject`. 3 instance-method requirements (protocol desc
+/// 0x1039f4fa0), witness-anchored via ConversionInfo's forwards (wt 0x1041e0b90 / 0x1041e0b80 call these at
+/// witness +0x8 / +0x10 / +0x18 = requirement index 0 / 1 / 2; kinds = Method per conformance_walker).
+/// ⚑ req NAMES INFERRED — no in-binary `#function`; the sole conformer is ProAVPlayer (wt 0x1041e1340,
+/// stripped) → the names firm up when ProAVPlayer's ConversionInfoDelegate conformance is reconstructed.
 protocol ConversionInfoDelegate: AnyObject {
-    // 3 requirements → M2 (resolve from the conformer / witness table).
+    func conversionDidUpdate()                    // req0 (+0x8)  ⚑ name inferred — from remuxerDidChangeState (odd) forward
+    func conversionDidReachEnd()                  // req1 (+0x10) ⚑ name inferred — from demuxerDidReachEnd forward
+    func conversionDidFail(_ error: any Error)    // req2 (+0x18) ⚑ name inferred — from demuxerDidFail forward (error arg)
 }
