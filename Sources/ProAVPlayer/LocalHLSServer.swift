@@ -18,7 +18,15 @@ import Network
 
 /// Serves the locally-converted HLS (master M3U8 + segments) over HTTP so AVFoundation can play it.
 /// Forward-new (ProAVPlayer module); self-contained (Network + Foundation only).
-final class LocalHLSServer {
+/// P21 (vtable_anchor_diff, later·45): NON-final — the binary vtable (desc 0x1039f5198, 20 slots) carries
+/// method + property-accessor slots, which Swift emits ONLY for a non-final class (a `final class` with no
+/// superclass emits no method vtable slots; the SRC `final` gave vt=1). ⚑ EXACT-LAYOUT = tracked structural
+/// debt (unrecoverable, NOT fabricated): the BIN's 20 < a plain non-final SRC's 34, so Forward marks ~5 stored
+/// props + 2 methods `final` (a final member ⇒ no vtable slot; `private` does NOT trim — empirical), AND has a
+/// COMPUTED property at slots 16-18 (a property-triple after 9 method slots — stored props follow field order,
+/// so it can only be a late computed var; null-impl ⇒ unnameable/untyped, MISSING here). Which members are
+/// `final` + prop_c's identity/type are not deterministically recoverable.
+class LocalHLSServer {
     // 7 reflection fields (order = layout). Mutability kept `var` (M1 under-claim; l2 mutability partial).
     private var port: UInt16                          // init param; self+0x10 (__uint16)
     private var listener: NWListener                  // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)

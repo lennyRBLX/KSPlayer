@@ -14,7 +14,11 @@ import KSPlayer
 
 /// The ProAVPlayer module's player: a KSAVPlayer subclass that plays the locally-served HLS conversion.
 /// Forward-new (ProAVPlayer module).
-final class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDelegate (binary conf@0x1035715a0); reqs → M2
+/// P21 (vtable_anchor_diff, later·45): NON-final — the binary gives ProAVPlayer its OWN 16-slot vtable
+/// (overrides + new methods on KSAVPlayer), which a `final` subclass would not emit (the SRC `final` gave
+/// no own vtable). ⚑ EXACT-LAYOUT = tracked structural debt: matching the 16 own slots needs member-level
+/// `final`/override reconstruction not yet done (same class as the LocalHLSServer residual).
+class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDelegate (binary conf@0x1035715a0); reqs → M2
     // 4 reflection fields (order = layout). Optionality from the mangle Sg.
     // task's Failure = Error PROVEN (known-answer control: KSAVPlayer.error `Error?` symref → the
     // same protocol descriptor 0x10536d100); Success = AVPlayerItem (So-mangle). Access level is not
