@@ -19,8 +19,15 @@ actor DemuxerIO {
         case ready, reading, seeking, paused, endOfStream, closed, failed
     }
 
+    /// slot0 vtable getter (get-only computed): `state == .endOfStream` (FUN_101b7e6b8 — reads state, cmp == 4).
+    /// ⚑ NAME INFERRED — the getter carries no #function literal (`recover_swift_function_name` = None); declared
+    /// first to occupy vtable slot0 (declaration order inferred from the slot position). Access level not
+    /// binary-recoverable (manual §1 — under-include; `var` = internal).
+    var isAtEndOfStream: Bool { state == .endOfStream }
+
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
-    private var formatContext: FormatContext! = nil               // ⚑ binary non-optional; IUO M1 stand-in (init-constructed) → M2
+    // formatContext: binary NON-optional (l2 IUO_STANDIN discharged this pass); set in init from FUN_101b6b184 param_1 (@0x70).
+    private var formatContext: FormatContext
     private var currentTime: Double = 0
     // ⚑ Failure type UNRES (libswiftCore wall) → M2. decode_composite = Task<(), UNRES>? (optional confirmed).
     private var ioTask: Task<Void, Never>? = nil
@@ -34,7 +41,23 @@ actor DemuxerIO {
     private var retryCount: Int = 0                              // ⚑ type symref-unresolved (likely Swift.Int, non-opt) → M2
     private weak var delegate: DemuxerIODelegate? = nil          // weak optional (mangle _pSgXw)
 
-    // 31-slot vtable / 6 impl bodies + the real init → M2 (per-method pre-flight + body-audit).
+    /// Designated init — `FUN_101b6b184` (actor ⇒ the compiler emits `_swift_defaultActor_initialize`).
+    /// formatContext ← param_1 (@0x70); ioAction ← param_2 boxed as a `DemuxerIOAction` existential
+    /// (5-word copy via FUN_100018cdc; witness `0x1041e1788` = RemuxerIOAction's DemuxerIOAction conformance);
+    /// delegate ← param_3/param_4 (weak existential {obj, witness}). state = .ready; the rest take their
+    /// stored-property defaults (currentTime/seekTime/retryCount = 0; ioTask/ioWaiter/seekingCompletionHandler = nil).
+    /// ioAction param = CONCRETE `RemuxerIOAction` — DISASM-CONFIRMED (P28): the init ABI is x0..x4 =
+    /// formatContext / ioAction / delegate-obj / delegate-witness / self, with NO generic type-metadata or
+    /// witness-table param (a `some DemuxerIOAction` would pass both in registers, as delegate's witness is in x3);
+    /// the witness `0x1041e1788` + RemuxerIOAction metadata are hardcoded inside the init. `some DemuxerIOAction` disproven.
+    init(formatContext: FormatContext, ioAction: RemuxerIOAction, delegate: DemuxerIODelegate?) {
+        self.formatContext = formatContext
+        self.ioAction = ioAction
+        self.delegate = delegate
+    }
+
+    // Remaining M2 (per A″): slot26 (async state-machine) / slot27 (delegate setter) / slot29 (throws(Int32)) methods;
+    // slot28/30 out-of-text; `extension Int32: Error`; the DemuxerIOAction req signature; structural kind-seq (8-vs-10 accessor residual).
 }
 
 /// Action sink the demuxer drives. 3 requirements (protocol desc 0x1039f55c0) — signatures → M2.
