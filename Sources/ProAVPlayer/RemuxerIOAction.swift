@@ -27,6 +27,31 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     private var packet: UnsafeMutablePointer<AVPacket>? = nil
     private var directoryWatcher: DirectoryWatcher! = nil       // ⚑ binary non-optional; KSPlayer (now public); IUO M1 stand-in → M2
 
+    // ── Designated init VERIFIED (FUN_101b81b18, 351i, cached + disasm-read) — reachable via the alloc site
+    //    FUN_101b6e31c (swift_allocObject(RemuxerIOAction metadata) → self=x21 → bl 0x101b81b18). `throws`
+    //    (the outputStreamInfo build can throw → the error path `_swift_deallocPartialClassInstance`).
+    //    ABI: self=x20; x0..x5 = param_1..param_6. Verified field construction:
+    //      formatContext (@0x28) ← param_1 (retained)                         [clean, grounded]
+    //      dir           ← URL(param_2)  (URL value-witness init-copy)         [clean, grounded]
+    //      formatContextOptions ← param_4  ([String:Any], bridged)            [clean, grounded]
+    //      masterM3U8Context    ← String(param_5, param_6)                    [clean, grounded]
+    //      packet        ← av_packet_alloc()  (FUN_102d61878)                 [clean, grounded]
+    //      startPlayTime = nil (str xzr@+0x10 + tag=1@+0x18) ; delegate = nil (weak init)   [clean, grounded]
+    //      directoryWatcher ← FUN_101a04e20(…)  (KSPlayer DirectoryWatcher construction)    [args UNRESOLVED]
+    //      outputStreamInfo ← FUN_101b8559c(formatContext, dir, options, master)  ⚑ OutputStreamInfo
+    //          factory — OWNER-PHASE devirt API (blocked; not fabricated, P32/P23)
+    //      subtitles ← flatMap over param_3's tracks (FUN_101a36488 + keyPath + Sequence.flatMap +
+    //          outputStreamInfo.<+0xb8>)  ⚑ complex — deferred
+    //    COMPILING reconstruction BLOCKED on 3 verified residuals → deferred:
+    //      1. param_3 TYPE — a deep up-chain field `*(coordinator+0x420)` (FUN_101b6e31c ← FUN_101b6e2d0);
+    //         the subtitles/track source. Un-named without further up-chain tracing.
+    //      2. outputStreamInfo factory (FUN_101b8559c) = OutputStreamInfo devirt API — unblocks when
+    //         OutputStreamInfo (1C.6) is reconstructed.
+    //      3. subtitles flatMap (complex).
+    //    ⇒ the 4 IUO stand-ins (outputStreamInfo/formatContext/dir/directoryWatcher) stay IUO until the
+    //    compiling init lands (needs param_3's type + OutputStreamInfo's API). NAME/param-LABELS inferred
+    //    (recover_swift_function_name = jel/None, labels=0).
+
     /// Result of `performRead(formatCtx:)`. Layout compile-oracle-CONFIRMED (16 bytes): `value` @0 (8B),
     /// `isEnd` @8, `isError` @9. The binary assembles the status half-word as `isEnd | (isError << 8)`
     /// (FUN_101b823b8 L385: `auVar24._8_4_ = uVar18 & 0xff | iVar12 << 8`), so byte 8 = isEnd (`uVar18`),
