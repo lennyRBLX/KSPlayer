@@ -181,9 +181,67 @@ actor DemuxerIO {
         }
     }
 
-    // Remaining M2 (per A″): slot28 (FUN_101b7fef4) + slot30 (FUN_101b813e4) async method bodies + the
-    // process(_:) Task closures (async read/seek loops) → deep-async sub-units; DemuxerIOAction reqs 2-3;
-    // structural kind-seq (8-vs-10 accessor + method-order, class-M2 gate).
+    /// slot28 vtable async method — `FUN_101b7fef4` (async sync-entry: stores self into the async frame
+    /// [@0x248] then `_swift_task_switch` to the continuation `FUN_101b7ff0c`; async-func-ptr vtable record,
+    /// P41). The read-drive body the demuxer's `ioTask = Task { }` runs (spawned by `process`).
+    /// ⚑ NAME INFERRED — `recover_swift_function_name` @0x101b7fef4/0x101b7ff0c = None (async, no #function);
+    ///   `readLoop` inferred from role (the ioTask read/seek/park driver).
+    /// State-dispatched — `decode_int_switch.py --addr 0x101b7ff0c --reg w8 --start 0x101b7ff58` (golden-gated):
+    ///   `{1 .reading → 0x101b80150, 2 .seeking → 0x101b800b8, 3 .paused → 0x101b7ff74, else → return}`.
+    ///   Per-state actions decompile-grounded (continuation glossary):
+    ///     • `.reading` → `do { try readPacket() (slot29); retryCount = 0 } catch {…}` — retryCount=0 is
+    ///       success-ONLY (swifterror cbz @0x101b80160 → 0x101b8051c); the throw path (0x101b80164) is deep-async
+    ///     • `.seeking` → settle `seekingCompletionHandler` (async completion continuation)
+    ///     • `.paused`  → park via `withCheckedContinuation` storing `ioWaiter` (pre-park formatContext check)
+    /// ⚑ UNRESOLVED (honest-deferral P36 — genuinely unrecoverable async internals): the continuation
+    ///   linearization — resumption partials `FUN_101b80e88/80f54/809e0/80c38/80a28/80c80` + 2 unrecovered
+    ///   jumptables ("Too many branches") + 32 pruned unreachable blocks + the `.paused` pre-park
+    ///   formatContext dynamic-cast/witness; the exact while/await interleaving across suspension points is
+    ///   not faithfully recoverable. The loop is the Task/continuation re-entry, NOT a `while` in this body.
+    func readLoop() async {
+        switch state {
+        case .reading:
+            do {
+                try readPacket()    // slot29 FUN_101b812b0
+                retryCount = 0      // success-ONLY — swifterror cbz @0x101b80160 → success block 0x101b8051c (str xzr → retryCount); NOT on the throw path
+            } catch {
+                // ⚑ UNRESOLVED — throw path (0x101b80164): error-retain + dynamicCast + deep-async handling/retry
+            }
+        case .seeking:
+            break               // ⚑ UNRESOLVED — settle seekingCompletionHandler (FUN_101b80e88/80f54)
+        case .paused:
+            break               // ⚑ UNRESOLVED — park: withCheckedContinuation → ioWaiter (formatContext pre-check FUN_101b809e0/80c38)
+        default:
+            break
+        }
+    }
+
+    /// slot30 vtable async method — `FUN_101b813e4` (async sync-entry: stores self [@0x10] then
+    /// `_swift_task_switch` to `FUN_101b813fc`; async-func-ptr vtable record, P41). Cancels + drains the
+    /// in-flight read task, tears down, and notifies the delegate.
+    /// ⚑ NAME INFERRED — `recover_swift_function_name` = None; `cancelReading` from role (cancel-drain-close).
+    /// Spine decompile-grounded (`FUN_101b813fc`): `if let t = ioTask { t.cancel(); await t.value }`
+    ///   (ioTask @0x80) → `ioTask = nil` → teardown → `delegate?.<req3>()` (weak-load, witness wt+0x20 = the
+    ///   4th DemuxerIODelegate requirement, no-arg ABI-confirmed).
+    /// ⚑ UNRESOLVED (honest-deferral P36): the `await t.value` resumption (continuation `FUN_101b814f8`) +
+    ///   the tail jumptable ("Too many branches") + the teardown callees (release ioAction `FUN_10002abb8`;
+    ///   `FUN_101b82c04` module-new / `FUN_101a3302c` base).
+    func cancelReading() async {
+        if let task = ioTask {
+            task.cancel()
+            _ = await task.value
+        }
+        ioTask = nil
+        // ⚑ UNRESOLVED — teardown: release ioAction (FUN_10002abb8) + FUN_101b82c04 / FUN_101a3302c cleanup
+        delegate?.demuxerDidClose()
+    }
+
+    // Remaining M2 (per A″): the process(_:) `Task { }` closures are SEPARATE deep-async impls, NOT thin
+    //   `await self.readLoop()` wrappers — decoded the async-func records: read &DAT_1035719d0→FUN_101b7df4c /
+    //   &DAT_1035719d8→FUN_101b85db4; seek-settle &DAT_103571690/16a0→FUN_101b7dfc4 (none call slot28/30 in-head).
+    //   Faithful wiring ⇒ reconstruct those closures = their own deep-async unit (deferred, P36).
+    // Also deferred: the readLoop .seeking/.paused + .reading-catch + cancelReading await-value continuation
+    //   internals (deep-async); DemuxerIOAction reqs 2-3; structural kind-seq (8-vs-10 accessor + method-order, class-M2 gate).
 }
 
 /// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
@@ -217,5 +275,9 @@ protocol DemuxerIODelegate: AnyObject {
     /// req2 (witness+0x18, FUN_101b6ac44) — the demuxer failed. Called by `process(.failed(error))`.
     /// Impl = ConversionInfo witness (forwards param_1). ⚑ NAME INFERRED; param = `any Error` (getErrorValue).
     func demuxerDidFail(_ error: any Error)
-    // 1 further requirement → M2.
+    /// req3 (witness table +0x20, no-arg) — the demuxer cancelled/closed its in-flight read task. Called by
+    /// the cancel-drain async method (slot30 `FUN_101b813fc`: weak-load `delegate` → witness `wt+0x20`).
+    /// Impl = ConversionInfo witness (forwards to its own delegate). ⚑ NAME INFERRED
+    /// (`recover_swift_function_name` = None); no-arg ABI-confirmed (the witness call site passes no args).
+    func demuxerDidClose()
 }

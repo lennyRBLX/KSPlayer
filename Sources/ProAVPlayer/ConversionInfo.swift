@@ -44,6 +44,9 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     func demuxerDidFail(_ error: any Error) {
         // UNRESOLVED — FUN_101b6ac44 (forwards the error to ConversionInfo's own delegate, wt+0x18); ConversionInfo M2.
     }
+    func demuxerDidClose() {
+        // UNRESOLVED — DemuxerIODelegate req3 witness (wt+0x20, forwards to ConversionInfo's own delegate); ConversionInfo M2.
+    }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real
     // init. Structure-only here (P15).
