@@ -176,7 +176,20 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     ///   drives outputStreamInfo vtable slots +0xb0/+0xb8/+0x128, re-creates @0x20 via FUN_101b8559c, notifies
     ///   the delegate). ⚑ completion type + access level UNRESOLVED (own unit); performRead passes a nil closure.
     private func reconstruct(completion: (() -> Void)?) {
-        // UNRESOLVED body — FUN_101b7e2f4; reconstruct as its own unit.
+        // ── Body DEFERRED to owner-phase (blocked on OutputStreamInfo's devirt API + RemuxerIOActionDelegate).
+        //    Grounded control flow from FUN_101b7e2f4 (239i; prefetch-cached + disasm-verified — NOT live code, to
+        //    avoid fabricating the OutputStreamInfo interface / mis-placing the swifterror-guarded resets, P32/P36):
+        //    1. [KSLog debug gate: `if logLevel > 2` (FUN_1019b4074) — form UNRESOLVED, class-wide]
+        //    2. Tear down the current output — THROWING devirt calls on self.outputStreamInfo (@0x20):
+        //       `<+0xb0>()` ; `<+0xb8>([])` ; `<+0x128>()`  (OutputStreamInfo vtable; owner-phase API — not fabricated).
+        //    3. Rebuild: `let new = <OutputStreamInfo build>(formatContext@0x28, dir, formatContextOptions,
+        //       masterM3U8Context)` via FUN_101b8559c — throwing.
+        //    4. guard(no swifterror from 2–3 — `cbz x21` @0x101b7e4ec) else early-out (bridgeObjectRelease). No-error path:
+        //         `self.outputStreamInfo = new` (release old) ; `new.<+0xb8>(old)`
+        //         `for track in subtitles { <per-element FUN_101a20fb0> }`   // iteration recoverable; per-element UNRESOLVED
+        //         `startPlayTime = nil`                                       // str xzr@+0x10 + tag=1@+0x18 (disasm-confirmed; no-error path ONLY)
+        //         `if completion == nil { delegate?.<notify>(2) }`           // weak RemuxerIOActionDelegate req (undeclared) — UNRESOLVED
+        //         `Task { completion?() }`                                   // async completion spawn (FUN_101b76920, &DAT_103571988) — UNRESOLVED
     }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.
