@@ -79,8 +79,20 @@ actor DemuxerIO {
         }
     }
 
-    // Remaining M2 (per A″): slot26 (async state-machine) / slot27 (delegate setter) methods;
-    // slot28/30 out-of-text; the DemuxerIOAction reqs 2-3; structural kind-seq (8-vs-10 accessor residual).
+    /// slot27 vtable method — `FUN_101b7fed8` (7i, sync actor-isolated, method-kind).
+    /// Weak delegate setter: stores the witness (delegate+8) then tail-calls `_swift_unknownObjectWeakAssign`
+    /// for the object — i.e. `self.delegate = <existential>`. Kind=Method (NOT a synthesized Setter — delegate
+    /// skips an accessor triple, later·49); dispatched via vtable only (3 DATA xrefs, no code caller).
+    /// ⚑ NAME INFERRED — no #function (recover_swift_function_name @0x101b7fed8 = None; vtable-only dispatch
+    ///   ⇒ no caller-recovery path). ⚑ param optionality inferred `DemuxerIODelegate?` (existential-ness
+    ///   ABI-confirmed: prologue x0=object / x1=witness dynamic; only nil-vs-non-nil not binary-recoverable).
+    func setDelegate(_ delegate: DemuxerIODelegate?) {
+        self.delegate = delegate
+    }
+
+    // Remaining M2 (per A″): slot26 + slot28 (FUN_101b7fef4) + slot30 (FUN_101b813e4) = the async cluster
+    // (async-func-ptr vtable entries; shared harness); the DemuxerIOAction reqs 2-3; structural kind-seq
+    // (8-vs-10 accessor residual, class-M2 gate).
 }
 
 /// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
