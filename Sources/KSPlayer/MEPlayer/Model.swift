@@ -182,7 +182,7 @@ public struct Timebase: Sendable {
     public let den: Int32
     func getPosition(from seconds: TimeInterval) -> Int64 { Int64(seconds * TimeInterval(den) / TimeInterval(num)) }
 
-    func cmtime(for timestamp: Int64) -> CMTime { CMTime(value: timestamp * Int64(num), timescale: den) }
+    package func cmtime(for timestamp: Int64) -> CMTime { CMTime(value: timestamp * Int64(num), timescale: den) }  // ⚑ package: RemuxerIOAction reads cross-module (binary-arbitrated §1)
 }
 
 extension Timebase {

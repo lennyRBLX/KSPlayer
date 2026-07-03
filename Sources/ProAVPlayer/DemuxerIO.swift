@@ -9,6 +9,7 @@
 
 import Foundation
 import KSPlayer
+import FFmpegKit   // AVFormatContext for the performRead(formatCtx:) req (matches RemuxerIOAction's import)
 
 /// Drives demuxing of the source for the HLS conversion (reads the FormatContext, runs seek/state).
 /// Forward-new (ProAVPlayer module). Binary-confirmed `actor` (init calls
@@ -62,7 +63,15 @@ actor DemuxerIO {
 
 /// Action sink the demuxer drives. 3 requirements (protocol desc 0x1039f55c0) — signatures → M2.
 protocol DemuxerIOAction {
-    // 3 requirements → M2 (resolve from the conformer / witness table).
+    /// Demux-read requirement — impl = `RemuxerIOAction.performRead(formatCtx:)` (binary FUN_101b823b8).
+    /// NON-throwing (0 throw machinery in the impl; the actor-side `DemuxerIO.slot29` is the `throws(Int32)`
+    /// wrapper). Returns a 3-field status struct (see `RemuxerIOAction.ReadResult`).
+    /// ⚑ `formatCtx` param type INFERRED = `UnsafeMutablePointer<AVFormatContext>`: the impl passes x0 straight
+    ///   to `av_read_frame` (FUN_1030e6e78), which dereferences it as a raw C `AVFormatContext*` (fields
+    ///   +0x10/+0x3d/+0x08…), NOT as the Swift `FormatContext` wrapper. Caller-side confirmation (what
+    ///   `DemuxerIO.slot29` forwards) is walled → M2. The other 2 reqs remain → M2.
+    func performRead(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> RemuxerIOAction.ReadResult
+    // 2 further requirements → M2 (resolve from the conformer / witness table).
 }
 
 /// Demuxer delegate — weak-referenced ⇒ `AnyObject`. 4 requirements (protocol desc 0x1039f540c) → M2.

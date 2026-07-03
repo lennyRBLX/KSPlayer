@@ -22,9 +22,9 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     public let formatName: String?
     public let bitDepth: Int32
     private var stream: UnsafeMutablePointer<AVStream>?
-    var startTime = CMTime.zero
+    package var startTime = CMTime.zero        // ⚑ package (Forward-fidelity): RemuxerIOAction (ProAVPlayer module) reads this cross-module — binary-arbitrated; exact modifier under-included §1 (could be public)
     var codecpar: AVCodecParameters
-    var timebase: Timebase = .defaultValue
+    package var timebase: Timebase = .defaultValue  // ⚑ package: see startTime — cross-module read by RemuxerIOAction.performRead/ptsToSeconds (FUN_101a32e28)
     let bitsPerRawSample: Int32
     // audio
     public let audioDescriptor: AudioDescriptor?
