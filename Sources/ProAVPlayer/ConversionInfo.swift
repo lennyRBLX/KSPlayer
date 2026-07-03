@@ -38,6 +38,12 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     func didUpdateCurrentTime(_ value: Double) {
         // UNRESOLVED — FUN_101b6a40c body; reconstruct with ConversionInfo M2 (field offsets + Task spawn).
     }
+    func demuxerDidReachEnd() {
+        // UNRESOLVED — FUN_101b6abf8 (forwards to ConversionInfo's own delegate, wt+0x10); ConversionInfo M2.
+    }
+    func demuxerDidFail(_ error: any Error) {
+        // UNRESOLVED — FUN_101b6ac44 (forwards the error to ConversionInfo's own delegate, wt+0x18); ConversionInfo M2.
+    }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real
     // init. Structure-only here (P15).

@@ -113,9 +113,77 @@ actor DemuxerIO {
         self.delegate = delegate
     }
 
-    // Remaining M2 (per A″): slot26 + slot28 (FUN_101b7fef4) + slot30 (FUN_101b813e4) = the async cluster
-    // (async-func-ptr vtable entries; shared harness); the DemuxerIOAction reqs 2-3; structural kind-seq
-    // (8-vs-10 accessor residual, class-M2 gate).
+    /// slot26 vtable method — `FUN_101b7e9d0` (721i, sync actor-isolated) — the demuxer's Event dispatcher /
+    /// state machine: an `Event` → state transition + delegate notify + async Task spawn.
+    /// ⚑ NAME INFERRED — recover_swift_function_name = `rcl` labels=0 vs the 4-arg ABI ⇒ MISMATCH → UNRESOLVED
+    ///   (P28); `process` inferred from role. ⚑ access-level not binary-recoverable (§1) — internal (vtable slot).
+    /// Dispatch map DETERMINISTIC (`decode_int_switch.py`, golden-gated): tag w8 {2→control,1→failed,0→seek};
+    /// control x23 {0→startReading,1→pause,2→resume,3→endOfStream,else→close} (state-stores →3/→1/→4/→5 confirmed);
+    /// seek state-set = `DAT_1044f3418` {ready,reading,seeking,paused} (read). `switch event` (by case name) is
+    /// faithful by construction — Event's gold declaration order emits exactly this dispatch.
+    /// ⚑ DEFERRED (UNRESOLVED, honest-deferral P36): the `Task { }` closure bodies (async read/seek loops →
+    ///   slot28 `FUN_101b7ff0c` / slot30 `FUN_101b813fc` + taskspawn `FUN_101b7f678`/`101b76bbc`); the `ioAction`
+    ///   vtbl +0x120 call (devirt OutputStreamInfo/DemuxerIOAction method); KSLog forms (class-wide).
+    func process(_ event: Event) {
+        switch event {
+        case .startReading:                                              // control x23==0
+            guard state == .ready || state == .seeking else { return }   // state & 0xfd == 0
+            ioTask?.cancel()
+            if state == .ready { state = .reading }
+            ioTask = Task { /* UNRESOLVED — async read loop (slot28 FUN_101b7ff0c) */ }
+        case .pause:                                                     // x23==1 → state 3
+            guard state == .reading else { return }
+            state = .paused
+        case .resume:                                                    // x23==2 → state 1
+            guard state == .paused else { return }
+            state = .reading
+            ioWaiter?.resume(); ioWaiter = nil
+            ioTask = Task { /* UNRESOLVED — async read loop */ }
+        case .endOfStream:                                               // x23==3 → state 4
+            guard state == .reading || state == .paused else { return }  // state | 2 == 3
+            state = .endOfStream
+            // ⚑ UNRESOLVED: ioAction vtbl +0x120 (devirt); not emitted
+            delegate?.demuxerDidReachEnd()
+        case .close:                                                     // x23 default → state 5
+            guard state != .closed else { return }
+            state = .closed
+            ioWaiter?.resume(); ioWaiter = nil
+            ioTask = Task { /* UNRESOLVED */ }
+        case .failed(let error):                                         // tag==1
+            // ⚑ KSLog error form UNRESOLVED (class-wide)
+            delegate?.demuxerDidFail(error)
+            if state != .closed { state = .failed }
+        case .seek(let to, let completion):                             // tag==0
+            // ⚑ seekTime is written PER-BRANCH (not hoisted): the binary stores it only in the branches
+            //   that reach it (endOfStream L268 / failed L285 / active-set L295) and returns before any
+            //   store on .closed (L282-283). Hoisting it above the switch was an (inert) DIVERGENCE — fixed.
+            switch state {
+            case .endOfStream:
+                seekTime = to
+                state = .seeking
+                seekingCompletionHandler = completion
+                process(.startReading)                                   // recursive [FUN_101b7e9d0(0,0,0,2)]
+            case .failed:
+                seekTime = to
+                seekingCompletionHandler = completion
+            case .ready, .reading, .seeking, .paused:                    // DAT_1044f3418 set
+                seekTime = to
+                if state == .seeking, seekingCompletionHandler != nil {
+                    Task { /* UNRESOLVED — settle the superseded in-flight seek (FUN_101b76bbc) */ }
+                }
+                let wasPaused = (state == .paused)
+                seekingCompletionHandler = completion
+                state = .seeking
+                if wasPaused { ioWaiter?.resume(); ioWaiter = nil }
+            case .closed:
+                break
+            }
+        }
+    }
+
+    // Remaining M2 (per A″): slot28 (FUN_101b7fef4) + slot30 (FUN_101b813e4) async method bodies + the
+    // process(_:) Task closures (async read/seek loops) → deep-async sub-units; DemuxerIOAction reqs 2-3;
+    // structural kind-seq (8-vs-10 accessor + method-order, class-M2 gate).
 }
 
 /// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
@@ -143,5 +211,11 @@ protocol DemuxerIODelegate: AnyObject {
     /// (`void f(double)` — single `Double`, `Void` return, synchronous; ABI-confirmed, P28).
     /// ⚑ NAME INFERRED (`recover_swift_function_name` = None on all 4 req witnesses); param type/arity ABI-confirmed.
     func didUpdateCurrentTime(_ value: Double)
-    // 3 further requirements → M2.
+    /// req1 (witness+0x10, FUN_101b6abf8) — the demuxer reached end of stream (no args). Called by
+    /// `process(.endOfStream)`. Impl = ConversionInfo witness (forwards to its own delegate). ⚑ NAME INFERRED.
+    func demuxerDidReachEnd()
+    /// req2 (witness+0x18, FUN_101b6ac44) — the demuxer failed. Called by `process(.failed(error))`.
+    /// Impl = ConversionInfo witness (forwards param_1). ⚑ NAME INFERRED; param = `any Error` (getErrorValue).
+    func demuxerDidFail(_ error: any Error)
+    // 1 further requirement → M2.
 }
