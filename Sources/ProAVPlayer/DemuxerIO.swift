@@ -15,9 +15,32 @@ import FFmpegKit   // AVFormatContext for the performRead(formatCtx:) req (match
 /// Forward-new (ProAVPlayer module). Binary-confirmed `actor` (init calls
 /// `_swift_defaultActor_initialize` + a `$defaultActor` field record present; actors are implicitly final).
 actor DemuxerIO {
-    /// Demuxer state machine — nested (descriptor parent = DemuxerIO). 7 cases (field-record reflection).
+    /// Demuxer state machine — nested (descriptor parent = DemuxerIO, 0x1039f5588). 7 cases; the case ORDER is
+    /// GOLD-CONFIRMED (field-record reflection: ready0/reading1/seeking2/paused3/endOfStream4/closed5/failed6),
+    /// corroborated by slot0 `state == .endOfStream` compiling to `cmp state==4` (audited FAITHFUL).
     enum State {
         case ready, reading, seeking, paused, endOfStream, closed, failed
+    }
+
+    /// Demux command events processed by the actor's dispatcher (slot26). Nested in DemuxerIO
+    /// (descriptor parent = DemuxerIO, 0x1039f55a4). 7 cases, ORDER field-record-confirmed:
+    /// seek(0)/failed(1)/startReading(2)/pause(3)/resume(4)/endOfStream(5)/close(6). `seek`/`failed` carry payloads.
+    /// RESTORED — Event is present in ProAVPlayer's `__swift5_types` (build_module_classmap; parent DemuxerIO),
+    /// though an earlier M1 note dropped it. Payloads + LABELS are field-record/symref-CONFIRMED (not inferred):
+    ///   • `seek` mangling `Sd2to_ySbYaYbKcSg10completiont` → labels `to`/`completion`, `Sd`=Double, `Sg`=Optional
+    ///     closure identical to the `seekingCompletionHandler` field type.
+    ///   • `failed` payload = an indirect symbolic ref → descriptor `0x10536d100` = Swift `Error`
+    ///     (the known-answer control, proven prior sessions) ⇒ `any Error`.
+    /// The 5 no-payload cases carry no associated values (field-record). ⚑ Only the closure `-> Void` return
+    /// (mangling `y…`) is spelling-inferred.
+    enum Event {
+        case seek(to: Double, completion: (@Sendable (Bool) async throws -> Void)?)
+        case failed(any Error)
+        case startReading
+        case pause
+        case resume
+        case endOfStream
+        case close
     }
 
     /// slot0 vtable getter (get-only computed): `state == .endOfStream` (FUN_101b7e6b8 — reads state, cmp == 4).
@@ -34,7 +57,7 @@ actor DemuxerIO {
     private var ioTask: Task<Void, Never>? = nil
     // ⚑ Failure type UNRES → M2. decode_composite = CheckedContinuation<(), UNRES>? (optional confirmed).
     private var ioWaiter: CheckedContinuation<Void, Error>? = nil
-    private var state: State = .ready                             // ⚑ initial case inferred (first case) → M2 confirms
+    private var state: State = .ready                             // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
     private var seekTime: Double = 0
     private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)? = nil
     // ⚑ optionality UNRES (decode_composite=None, mangle truncated) → M2. symref → DemuxerIOAction.
