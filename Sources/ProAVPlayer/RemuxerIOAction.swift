@@ -217,6 +217,23 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //         `Task { completion?() }`                                   // async completion spawn (FUN_101b76920, &DAT_103571988) — UNRESOLVED
     }
 
+    /// `DemuxerIOAction.cancel()` requirement impl — binary `FUN_101b82c04`. self=RemuxerIOAction is
+    /// FIELD-ACCESS-confirmed (reads `outputStreamInfo`@0x20 + the literal `RemuxerIOAction.packet` offset);
+    /// the #file `RemuxerIO.swift` is SHARED with DemuxerIO, so it does NOT attribute the method. Driven by
+    /// `DemuxerIO.cancelReading` on `ioAction` (a DemuxerIOAction req; the witness is deleted → devirt).
+    /// No-arg, `Void`, non-throwing (P44: epilogue plain `ret`; the FileManager error is caught internally).
+    /// Body DEFERRED (OSI-devirt-coupled, like `reconstruct`/`performRead`'s write) — grounded control flow
+    /// from FUN_101b82c04:
+    ///   1. `outputStreamInfo.<+0x120>()` ; `outputStreamInfo.<+0x128>()`  (OSI vtable teardown/close-all; owner-phase API — not fabricated)
+    ///   2. `av_packet_unref(packet)`  (FUN_102d618b8 — ⚑ FFmpeg id inferred; `av_packet_free(&packet)`-shaped, takes the field address)
+    ///   3. `do { try FileManager.default.removeItem(at: dir) } catch { /* KSLog */ }`  (removes the output; error swallowed)
+    func cancel() {
+        // ── Body DEFERRED to RemuxerIOAction M2 (blocked on OutputStreamInfo's devirt +0x120/+0x128 API).
+        //    A partial that emitted only steps 2–3 would DROP the OSI teardown (the method's primary effect)
+        //    and misrepresent it → honest-defer the whole body (P36; the OSI calls are unrecoverable here),
+        //    matching reconstruct(completion:). NAME `cancel()` inferred (recover_swift_function_name = None).
+    }
+
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.
 }
 

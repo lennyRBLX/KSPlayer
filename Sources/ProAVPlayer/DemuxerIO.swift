@@ -256,7 +256,15 @@ actor DemuxerIO {
 /// metadata), which requires `Int32: Error` in the module. ⚑ Placement inferred (Forward-new, ProAVPlayer).
 extension Int32: Error {}
 
-/// Action sink the demuxer drives. 3 requirements (protocol desc 0x1039f55c0) — signatures → M2.
+/// Action sink the demuxer drives. 3 requirements (protocol desc 0x1039f55c0); **2/3 impls located +
+/// field-access-confirmed** (performRead + cancel), the 3rd deep-async-deferred (below).
+/// ⚑ ALL 3 witnesses are `_swift_deletedMethodError` (wt 0x1041e1788) → every call is devirtualized to a
+///   direct `RemuxerIOAction` method. DemuxerIO stores `ioAction` as THIS protocol type (`ioAction:
+///   DemuxerIOAction?`), so any method it invokes on `ioAction` IS a requirement. Consequence: the witness
+///   table is never dispatched ⇒ the requirement ORDER is binary-UNOBSERVABLE — the declaration order here
+///   is a FREE choice, NOT binary-pinned (contrast the offset-pinned `ConversionInfoDelegate`).
+/// ⚑ `#file` does NOT attribute a method to a class here: DemuxerIO + RemuxerIOAction SHARE the source file
+///   `RemuxerIO.swift`, so methods are attributed by SELF-FIELD ACCESS, not #file.
 protocol DemuxerIOAction {
     /// Demux-read requirement — impl = `RemuxerIOAction.performRead(formatCtx:)` (binary FUN_101b823b8).
     /// NON-throwing (0 throw machinery in the impl; the actor-side `DemuxerIO.slot29` is the `throws(Int32)`
@@ -264,9 +272,24 @@ protocol DemuxerIOAction {
     /// ⚑ `formatCtx` param type INFERRED = `UnsafeMutablePointer<AVFormatContext>`: the impl passes x0 straight
     ///   to `av_read_frame` (FUN_1030e6e78), which dereferences it as a raw C `AVFormatContext*` (fields
     ///   +0x10/+0x3d/+0x08…), NOT as the Swift `FormatContext` wrapper. Caller-side confirmation (what
-    ///   `DemuxerIO.slot29` forwards) is walled → M2. The other 2 reqs remain → M2.
+    ///   `DemuxerIO.slot29` forwards) is walled → M2.
     func performRead(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> RemuxerIOAction.ReadResult
-    // 2 further requirements → M2 (resolve from the conformer / witness table).
+
+    /// Teardown/cancel requirement — impl = `RemuxerIOAction` method binary `FUN_101b82c04`
+    /// (self=RemuxerIOAction, FIELD-ACCESS-confirmed: reads `outputStreamInfo`@0x20 + the literal
+    /// `RemuxerIOAction.packet` offset — NOT #file, which is the shared `RemuxerIO.swift`). Driven by
+    /// `DemuxerIO.cancelReading` on `ioAction`. No args, `Void`, non-throwing (P44: epilogue plain `ret`;
+    /// removeItem's error is `do/catch`-swallowed). Body = close `outputStreamInfo` (devirt vtable
+    /// +0x120/+0x128) + `av_packet_unref` + `FileManager.default.removeItem(at: dir)` — OSI-devirt-coupled,
+    /// so the impl is a grounded doc-stub (→ RemuxerIOAction M2). ⚑ NAME `cancel()` INFERRED
+    /// (`recover_swift_function_name` = None; no #function).
+    func cancel()
+
+    // ⚑ 3rd requirement — DEFERRED WITH EVIDENCE (P43, searched not assumed): walked DemuxerIO's reachable
+    //   async graph (process/readLoop/cancelReading + `_swift_task_switch` continuations, depth 7 / 11 funcs)
+    //   — NO 3rd `ioAction` call found. Either a rarely-/un-invoked protocol req or beyond the core-loop
+    //   graph → the DemuxerIO deep-async wiring unit. Count stays honest at 2/3 declared (req COUNT=3 is
+    //   descriptor-confirmed; the missing impl is not fabricated).
 }
 
 /// Demuxer delegate — weak-referenced ⇒ `AnyObject`. 4 requirements (protocol desc 0x1039f540c).
