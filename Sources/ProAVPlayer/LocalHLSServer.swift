@@ -101,23 +101,44 @@ final class LocalHLSServer {
     /// keepAliveBlock installer, not this method (and get_xrefs_to that string = none). No clean
     /// #function anchor exists → the name below is a flagged SEMANTIC placeholder describing
     /// behaviour, not a recovered symbol.
-    /// SPINE: probe the listener; when ready, open a keep-alive NWConnection to self
-    /// (127.0.0.1:port) and start it. Deferred → next commit (strict-concurrency block; no binary
-    /// Sendable conf): the [weak self] stateUpdateHandler closure (FUN_101b76230 → FUN_101b70bb0
-    /// retry/recreate-listener) + the "listener not ready" debug log.
+    /// Probe the listener; when it's ready, open a keep-alive NWConnection to self (127.0.0.1:port)
+    /// and start it, recreating the listener on any connection state change; when it isn't ready,
+    /// recreate the listener immediately. `recreateListener` is the shared [weak self] rebuild closure
+    /// (FUN_101b70bb0): it stands up a fresh NWListener bound to the same port (try? — the throw is
+    /// swallowed), cancels the old one, and re-arms startListen() 0.01s later (FUN_101b70330).
     private func openKeepAliveConnection() {   // ⚑ semantic placeholder name (UNRESOLVED)
+        // Shared listener-rebuild — a [weak self] CLOSURE (binary FUN_101b70bb0 weak-loads self inside;
+        // NOT a method — corrects the earlier "private recreateListener() method" plan). try? swallows the
+        // NWListener throw (disasm: mov x21,#0; bl _init; cbz x21 @0x101b70cac → skip on error), then cancel
+        // the old listener and re-arm startListen() after 0.01s (FUN_101b70330: NWListener.cancel + queue
+        // .asyncAfter(.now()+0.01){startListen}; delay Double @0x103487958 = 0.01; strong-self block FUN_100004aec).
+        let recreateListener: () -> Void = { [weak self] in
+            guard let self else { return }
+            let params = NWParameters.tcp
+            params.allowLocalEndpointReuse = true
+            if let newListener = try? NWListener(using: params,
+                                                 on: NWEndpoint.Port(rawValue: self.port)!) {  // Port! trap @0x101b70d3c
+                let oldListener = self.listener
+                self.listener = newListener
+                oldListener.cancel()
+                self.queue.asyncAfter(deadline: .now() + 0.01) { self.startListen() }
+            }
+        }
         if listener.state == .ready {
             let connection = NWConnection(
                 to: .hostPort(host: "127.0.0.1",
                               port: NWEndpoint.Port(rawValue: port)!),  // ⚑ force-unwrap (binary ==1 trap)
                 using: .tcp)
-            connection.stateUpdateHandler = { state in
-                _ = state   // UNRESOLVED → next commit: [weak self] retry (FUN_101b76230 → FUN_101b70bb0)
-            }
+            // Keep-alive probe: any state change → recreate the listener. Binary forwards via a reabstraction
+            // thunk (FUN_101b76230 = `mov x1,x20; b recreate`); recreate's (arg & 1)==0 guard is VESTIGIAL —
+            // NWConnection.State is address-only (non-@frozen resilient) so the arg is a pointer (bit0=0) and
+            // recreate never inspects the state (no getEnumTag/VWT; contrast the VWT-decoding sibling
+            // FUN_101b71644). So: recreate on every callback, state ignored.
+            connection.stateUpdateHandler = { _ in recreateListener() }
             connection.start(queue: queue)
         } else {
-            // UNRESOLVED → next commit: KSLog("listener not ready … keepAliveBlock url=…")
-            //   + retry/recreate listener (FUN_101b70bb0, [weak self] guard → self.listener = NWListener(…))
+            // ⚑ KSLog("listener not ready …") omitted — KSLog form UNRESOLVED (as elsewhere in the class).
+            recreateListener()   // force rebuild (binary: recreate called with flag 0 → (0&1)==0)
         }
     }
 
@@ -350,8 +371,8 @@ final class LocalHLSServer {
         connection.send(content: payload, completion: .contentProcessed { _ in })
     }
 
-    // Deferred (→ later LocalHLSServer commits): commit ②b (processRequest's .m3u8 freshness/staleness
-    // gate + keepAliveBlockMap invoke); the slot7/startListen state-handler closures + slot19's serve
-    // block FUN_101b74760. Slot-ORDER faithfulness across all 20 slots → the P21 vtable_anchor_diff
-    // structural gate at LocalHLSServer M2-complete.
+    // Deferred (→ LocalHLSServer M2-complete): slot19's retry-serve block FUN_101b74760 (c3 —
+    // [weak self] guard → connection.state == .ready → Data(contentsOf: url) → send 200/error).
+    // Slot-ORDER faithfulness across all 20 slots → the P21 vtable_anchor_diff structural gate at
+    // LocalHLSServer M2-complete.
 }
