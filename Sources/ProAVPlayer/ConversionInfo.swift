@@ -30,6 +30,15 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private var server: LocalHLSServer! = nil
     private var directoryWatcher: DirectoryWatcher! = nil  // KSPlayer (now public, fe13053)
 
+    /// `DemuxerIODelegate` req0 witness — binary `FUN_101b6a40c` (`void f(double)`): stores the demuxer time
+    /// (self@0x38, a `>=1.0`s-change throttle) then spawns a throttled progress `Task` (FUN_101b76920). The
+    /// body couples to ConversionInfo's field layout (@0x38/0x40/0x48/0x50) + the Task machinery, both
+    /// structure-only here → reconstruct with ConversionInfo's M2. ⚑ UNRESOLVED → ConversionInfo M2.
+    /// Declared now so `DemuxerIO.readPacket()` (slot29) can call the req; witness slot is binary-present.
+    func didUpdateCurrentTime(_ value: Double) {
+        // UNRESOLVED — FUN_101b6a40c body; reconstruct with ConversionInfo M2 (field offsets + Task spawn).
+    }
+
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real
     // init. Structure-only here (P15).
 }

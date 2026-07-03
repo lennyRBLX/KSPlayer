@@ -57,9 +57,36 @@ actor DemuxerIO {
         self.delegate = delegate
     }
 
-    // Remaining M2 (per A″): slot26 (async state-machine) / slot27 (delegate setter) / slot29 (throws(Int32)) methods;
-    // slot28/30 out-of-text; `extension Int32: Error`; the DemuxerIOAction req signature; structural kind-seq (8-vs-10 accessor residual).
+    /// slot29 vtable method — `FUN_101b812b0` (77i, sync actor-isolated, `throws(Int32)`).
+    /// Drives one demux read through the action, records currentTime, notifies the delegate; on a
+    /// read error throws the FFmpeg status as a typed `Int32`.
+    /// ⚑ NAME INFERRED — no #function literal (`recover_swift_function_name` @0x101b812b0 = None); the
+    ///   demuxer's per-call read-drive wrapper (identifier inferred from role + call target `performRead`).
+    /// ⚑ `ioAction!` force-unwrap — the binary copies+calls `ioAction` with NO null-check (field optionality
+    ///   UNRES, l2 mangle-truncated); modeled as a force-unwrap of the `DemuxerIOAction?` field.
+    /// ⚑ PUNNED throw — on error, `ReadResult.value` (Double) carries the Int32 av_read_frame status in its
+    ///   low 32 bits (performRead packs `Double(bitPattern: UInt64(UInt32(bitPattern: status)))`); the binary
+    ///   reads value's low 4 bytes as the Int32 (auVar5._0_4_ → `_swift_allocError`/`_swift_willThrowTypedImpl`
+    ///   on the Swift.Int32 metadata). currentTime write = `_swift_beginAccess`(self+0x78); delegate notify
+    ///   = weak-load + witness `(*(wt+8))(value)`.
+    func readPacket() throws(Int32) {
+        let r = ioAction!.performRead(formatCtx: formatContext.formatCtx)
+        if r.isError {
+            throw Int32(bitPattern: UInt32(truncatingIfNeeded: r.value.bitPattern))
+        } else if !r.isEnd {
+            currentTime = r.value
+            delegate?.didUpdateCurrentTime(r.value)
+        }
+    }
+
+    // Remaining M2 (per A″): slot26 (async state-machine) / slot27 (delegate setter) methods;
+    // slot28/30 out-of-text; the DemuxerIOAction reqs 2-3; structural kind-seq (8-vs-10 accessor residual).
 }
+
+/// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
+/// boxes an `Int32` as an `Error` (`_swift_allocError`/`_swift_willThrowTypedImpl` on the Swift.Int32
+/// metadata), which requires `Int32: Error` in the module. ⚑ Placement inferred (Forward-new, ProAVPlayer).
+extension Int32: Error {}
 
 /// Action sink the demuxer drives. 3 requirements (protocol desc 0x1039f55c0) — signatures → M2.
 protocol DemuxerIOAction {
@@ -74,7 +101,12 @@ protocol DemuxerIOAction {
     // 2 further requirements → M2 (resolve from the conformer / witness table).
 }
 
-/// Demuxer delegate — weak-referenced ⇒ `AnyObject`. 4 requirements (protocol desc 0x1039f540c) → M2.
+/// Demuxer delegate — weak-referenced ⇒ `AnyObject`. 4 requirements (protocol desc 0x1039f540c).
 protocol DemuxerIODelegate: AnyObject {
-    // 4 requirements → M2.
+    /// req0 (witness table +8) — notified with the current demux time (seconds) after a non-EOF read,
+    /// from `DemuxerIO.readPacket()` (slot29). Impl = ConversionInfo witness `FUN_101b6a40c`
+    /// (`void f(double)` — single `Double`, `Void` return, synchronous; ABI-confirmed, P28).
+    /// ⚑ NAME INFERRED (`recover_swift_function_name` = None on all 4 req witnesses); param type/arity ABI-confirmed.
+    func didUpdateCurrentTime(_ value: Double)
+    // 3 further requirements → M2.
 }
