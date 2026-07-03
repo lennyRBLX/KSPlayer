@@ -241,7 +241,14 @@ actor DemuxerIO {
     //   &DAT_1035719d8→FUN_101b85db4; seek-settle &DAT_103571690/16a0→FUN_101b7dfc4 (none call slot28/30 in-head).
     //   Faithful wiring ⇒ reconstruct those closures = their own deep-async unit (deferred, P36).
     // Also deferred: the readLoop .seeking/.paused + .reading-catch + cancelReading await-value continuation
-    //   internals (deep-async); DemuxerIOAction reqs 2-3; structural kind-seq (8-vs-10 accessor + method-order, class-M2 gate).
+    //   internals (deep-async); DemuxerIOAction reqs 2-3.
+    // ── Structural class-M2 gate DONE (vtable_anchor_diff s7-rebuild vs Forward; verdict DemuxerIO_structural_M2):
+    //   the computed getter (isAtEndOfStream) + Init + 5-method (26 process/27 setDelegate/28 readLoop/29 readPacket/
+    //   30 cancelReading) kind-sequence ALIGNS. Residual = src 10 vs bin 8 accessor-triples (2 stored props lack vtable
+    //   accessors in the binary = library-evolution/resilience emission artifact; the 10 fields are l2-confirmed
+    //   REAL_FLAG 0 — NOT fabricated, P33/P23). Method declaration-order ≠ binary slot-order, but the slot→method
+    //   identity is M2-map-confirmed + the accessor residual already offsets absolute method slots by +6, so a relative
+    //   reorder is unverifiable-by-gate and cannot restore absolute slot identity → documented, not reordered (P23/P29).
 }
 
 /// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
