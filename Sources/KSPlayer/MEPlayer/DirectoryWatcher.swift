@@ -54,7 +54,7 @@ public actor DirectoryWatcher {
     /// Parameter-less designated init. Body sets `source = nil` only; the
     /// `_swift_defaultActor_initialize()` the binary emits here is the
     /// compiler-synthesized actor executor setup — NOT written by hand.
-    init() {
+    public init() {                              // public (was internal, P34): ConversionInfo (ProAVPlayer) constructs it cross-module
         source = nil                              // *(self+0x70) = 0
     }
 

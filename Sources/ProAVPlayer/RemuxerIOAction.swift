@@ -18,10 +18,10 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     var startPlayTime: Double? = nil   // internal (was `private`): ConversionInfo.didUpdateCurrentTime reads it directly (FUN_101b6a40c @remuxerIOAction+0x10/+0x18) — cross-file same-module access is binary-arbitrated; modifier under-included (§1/P34-style)
     private var outputStreamInfo: OutputStreamInfo             // binary non-optional — RETIRED from IUO (init assigns via Self.write; reconstruct() reassigns)
-    private var formatContext: FormatContext                  // binary non-optional — RETIRED from IUO (init assigns = param_1)
+    var formatContext: FormatContext                          // internal (was private, P34): ConversionInfo.init reads it cross-file for assetTracks/duration/DemuxerIO; binary non-optional — RETIRED from IUO (init assigns = param_1)
     private var dir: URL                                      // binary non-optional (symref; decompile: URL) — RETIRED from IUO (init assigns = param_2)
-    private var subtitles: [FFmpegAssetTrack] = []
-    private weak var delegate: RemuxerIOActionDelegate? = nil   // weak optional (mangle _pSgXw)
+    var subtitles: [FFmpegAssetTrack] = []                    // internal (was private, P34): ConversionInfo.init maps it → its own subtitles
+    weak var delegate: RemuxerIOActionDelegate? = nil          // internal (was private, P34): ConversionInfo.init sets it = self; weak optional (mangle _pSgXw)
     private var formatContextOptions: [String: Any] = [:]
     private var masterM3U8Context: String = ""
     private var packet: UnsafeMutablePointer<AVPacket>? = nil

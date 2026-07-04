@@ -24,11 +24,44 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private var demuxerTime: Double = 0
     private var currentPlaybackTime: Double = 0
     private var maxBufferDuration: Double = 0
-    // ⚑ binary NON-optional refs (single symref, no Sg); IUO M1 stand-ins — real construction → M2.
-    private var remuxerIOAction: RemuxerIOAction! = nil
-    private var demuxerIO: DemuxerIO! = nil
-    private var server: LocalHLSServer! = nil
-    private var directoryWatcher: DirectoryWatcher! = nil  // KSPlayer (now public, fe13053)
+    // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
+    private var remuxerIOAction: RemuxerIOAction
+    private var demuxerIO: DemuxerIO
+    private var server: LocalHLSServer
+    private var directoryWatcher: DirectoryWatcher  // KSPlayer (public type fe13053; init→public this pass, P34)
+
+    // MARK: Designated init — `FUN_101b6b2a4` (M2)
+
+    /// `init(server:remuxerIOAction:maxBufferDuration:)` — the coordinator's real designated init
+    /// (#function verbatim @0x103d3e0b0; recover_swift_function_name crashes on this addr — a tool bug,
+    /// the name is the string literal). Field→offset map disasm/FOV-verified: `delegate` is a 2-word weak
+    /// @0x28 (weakInit + `str xzr,[+0x30]`) ⇒ demuxerTime@0x38 … directoryWatcher@0x68, total 0x70 = the
+    /// alloc size. Retires the 4 IUO M1 stand-ins with real construction. `formatContext`/`assetTracks`/
+    /// `duration` derive from the injected `remuxerIOAction.formatContext` — the binary reads those cross-file
+    /// (P34: `formatContext`/`subtitles`/`delegate` broadened `private`→`internal` on RemuxerIOAction, precedent
+    /// `startPlayTime`; `DirectoryWatcher.init` `internal`→`public`, cross-module). Field VALUES chased not
+    /// flagged (P36/P43 — the "deep" defers were recoverable): assetTracks/duration/subtitles are real reads.
+    init(server: LocalHLSServer, remuxerIOAction: RemuxerIOAction, maxBufferDuration: Double) {
+        let formatContext = remuxerIOAction.formatContext                          // [ldr x20,[x22,#0x28]]
+        self.assetTracks = formatContext.assetTracks                              // *(fc+0x40)   @0x10
+        self.duration = formatContext.duration                                    // *(fc+0x28)   @0x18
+        self.subtitles = remuxerIOAction.subtitles.map { $0 as MediaPlayerTrack }  // FUN_101b762a0 (per-elem _swift_dynamicCast) @0x20
+        self.delegate = nil                                                       // weakInit     @0x28 (2-word weak)
+        self.demuxerTime = 0                                                      // @0x38
+        self.currentPlaybackTime = 0                                              // @0x40
+        self.maxBufferDuration = maxBufferDuration                                // d8           @0x48
+        self.remuxerIOAction = remuxerIOAction                                    // @0x50
+        self.demuxerIO = DemuxerIO(formatContext: formatContext,                  // FUN_101b6b184 (actor) @0x58
+                                   ioAction: remuxerIOAction, delegate: nil)      //   delegate=nil: binary passes x2/x3=0
+        self.server = server                                                      // @0x60
+        self.directoryWatcher = DirectoryWatcher()                               // FUN_101a04e20 (KSPlayer actor) @0x68
+        remuxerIOAction.delegate = self                                          // weak; RemuxerIOActionDelegate wt 0x1041e0b80
+        // ⚑ server route install — DEFERRED (owner-phase, decompile-verified not assumed): the binary registers
+        //   a connection handler on `server` under exclusive access (FUN_101b831f0), closure FUN_101b6ba5c captures
+        //   self+server → routes to the request processor FUN_101b68b38. The exact LocalHLSServer route-API + the
+        //   handler body are LocalHLSServer M2. Shape captured; body NOT fabricated.
+        //   ⚑[tool=prefetch_decompiles ref=FUN_101b68b38:0x101b68b38 result=LOCATED]
+    }
 
     // ── DemuxerIODelegate conformance (wt 0x1041e0b90). 4 instance-method reqs (conformance_walker):
     //    ConversionInfo observes the demuxer and forwards lifecycle to its own `delegate`
