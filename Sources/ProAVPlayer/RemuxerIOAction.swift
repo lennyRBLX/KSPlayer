@@ -17,9 +17,9 @@ import FFmpegKit
 final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x103571970, witness-validated); DemuxerIOAction reqs → M2
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     var startPlayTime: Double? = nil   // internal (was `private`): ConversionInfo.didUpdateCurrentTime reads it directly (FUN_101b6a40c @remuxerIOAction+0x10/+0x18) — cross-file same-module access is binary-arbitrated; modifier under-included (§1/P34-style)
-    private var outputStreamInfo: OutputStreamInfo! = nil        // ⚑ binary non-optional; IUO M1 stand-in → M2
-    private var formatContext: FormatContext! = nil             // ⚑ binary non-optional; IUO M1 stand-in → M2
-    private var dir: URL! = nil                                 // ⚑ binary non-optional (symref); decompile: URL; IUO M1 stand-in → M2
+    private var outputStreamInfo: OutputStreamInfo             // binary non-optional — RETIRED from IUO (init assigns via Self.write; reconstruct() reassigns)
+    private var formatContext: FormatContext                  // binary non-optional — RETIRED from IUO (init assigns = param_1)
+    private var dir: URL                                      // binary non-optional (symref; decompile: URL) — RETIRED from IUO (init assigns = param_2)
     private var subtitles: [FFmpegAssetTrack] = []
     private weak var delegate: RemuxerIOActionDelegate? = nil   // weak optional (mangle _pSgXw)
     private var formatContextOptions: [String: Any] = [:]
@@ -49,9 +49,9 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         self.dir = dir                                        // L78-81 (URL value-witness init-copy of param_2)
         self.formatContextOptions = formatContextOptions      // L82-83 (param_4)
         self.masterM3U8Context = masterM3U8Context            // L84-86 ({param_5, param_6})
-        self.outputStreamInfo = try write(formatContext: formatContext, dir: dir,   // L92 (throws → dealloc on throw)
-                                          formatContextOptions: formatContextOptions,
-                                          masterM3U8Context: masterM3U8Context)
+        self.outputStreamInfo = try Self.write(formatContext: formatContext, dir: dir,   // L92 (throws → dealloc on throw)
+                                               formatContextOptions: formatContextOptions,
+                                               masterM3U8Context: masterM3U8Context)
         // ⚑ DEFERRED — subtitles flatMap + the post-write source/OSI interactions (L97-203); source uses deferred.
         _ = source
     }
@@ -254,8 +254,10 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     /// (approximated as dir/playlist_%v.m3u8); the factory's p9 = a static `[AVCodecID]` allowlist
     /// (&DAT_1044f3788) passed `[]` here; the exact options-dict threading is decompiler-plumbing-approximate;
     /// KSLog debug (L194-214) omitted (class-wide UNRESOLVED).
-    func write(formatContext: FormatContext, dir: URL, formatContextOptions: [String: Any],
-               masterM3U8Context: String) throws -> OutputStreamInfo {
+    /// `static` — FUN_101b8559c reads NO self (0 `unaff_x20` / swiftself field-loads; all 5 inputs are params),
+    /// so it is a type method the init + reconstruct() call as `Self.write(…)`.
+    static func write(formatContext: FormatContext, dir: URL, formatContextOptions: [String: Any],
+                      masterM3U8Context: String) throws -> OutputStreamInfo {
         // 1. remove any existing output dir — error SWALLOWED (willThrow→errorRelease→swifterror cleared ⇒ try?) [L126-133]
         try? FileManager.default.removeItem(at: dir)
         // 2. create the output dir — error PROPAGATES (convertNSError→willThrow, NO errorRelease ⇒ throws) [L139-145]
