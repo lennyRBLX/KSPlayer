@@ -242,36 +242,46 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         }
     }
 
-    // ── write(formatContext:dir:formatContextOptions:masterM3U8Context:) — binary FUN_101b8559c ─────────
-    //    (recover_swift_function_name HIGH, 4 labels, #file ProAVPlayer/RemuxerIO.swift). The OSI-PRODUCING
-    //    method both the designated init and reconstruct() call to build `outputStreamInfo`: sets up the HLS
-    //    output dir, writes the master playlist, configures the HLS muxer options, then BUILDS + returns the
-    //    OutputStreamInfo. `throws -> OutputStreamInfo` — P44 disasm-confirmed: reconstruct() does
-    //    `str x0,[x23,#0x20]` (store the return into outputStreamInfo@0x20) then reads its vtable +0xb8.
-    //    NO FFmpeg calls (verified: 0 `bl` in the 0x1029–0x1031 FFmpeg range).
-    //    NOT emitted as a compiling method — it returns an OSI it can only build via the deferred factory
-    //    (step 7), so a live body would fabricate that API (P32/P36). Grounded control flow (FUN_101b8559c,
-    //    prefetch-cached + disasm-verified — NOT live code):
-    //      1. `try? FileManager.default.removeItem(at: dir)` — remove any existing output dir; error
-    //         SWALLOWED (disasm: willThrow → errorRelease → swifterror cleared ⇒ `try?`).
-    //      2. `try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)` — error
-    //         PROPAGATES (disasm: convertNSError → willThrow, NO errorRelease ⇒ `throws`).
-    //      3. `var base = dir.path; if !base.hasSuffix("/") { base += "/" }` — dir path, trailing-slash-normalized.
-    //      4. Prepare the FFmpeg HLS muxer options (String keys read_mem-decoded; the decompile's own string
-    //         counts were mis-bound, P30). ⚑ the exact SINK — the `formatContextOptions` dict vs the OSI
-    //         builder args — is threaded into the OSI construction (step 7, deferred), so it is not asserted here:
-    //           `hls_segment_filename` = base + "playlist_%v.m3u8"   (key @0x103d3e9f0, value @0x103d3e9d0)
-    //           `hls_segment_type`     = <value UNRESOLVED — not surfaced in the cache>   (key @0x103d35790)
-    //      5. `try masterM3U8Context.write(to: dir.appendingPathComponent("master.m3u8"), atomically: true,
-    //         encoding: .utf8)` — write the master playlist ("master.m3u8" small-string, disasm-decoded).
-    //      6. KSLog debug gate (`logLevel > 2`, FUN_1019b4074) — form UNRESOLVED (class-wide).
-    //      7. Build + return the OutputStreamInfo — DEFERRED to the OSI owner-phase. write calls the compiler
-    //         thunk FUN_101a19724 (ldr;str;bl;ret — not source-level) → the SOLE OSI construction site
-    //         FUN_101a1d014 (KSPlayer, ~6KB, devirt; locate_class_init init_in_module=false, alloc @0x101a1e828).
-    //         Blocked on that factory ⚑[tool=locate_class_init ref=FUN_101a1d014 result=LOCATED].
-    //    Unblock chain (bottom-up): FUN_101a1d014 (OSI factory, owner-phase) → write() → reconstruct()/init.
-    //    Reconstruct FUN_101a1d014 in the OutputStreamInfo owner-phase; then write() + the compiling init +
-    //    reconstruct() can all land as live bodies.
+    /// `write(formatContext:dir:formatContextOptions:masterM3U8Context:)` — binary `FUN_101b8559c`
+    /// (recover_swift_function_name HIGH, 4 labels, #file ProAVPlayer/RemuxerIO.swift). The OSI-PRODUCING
+    /// method both the designated init and reconstruct() call: sets up the HLS output dir, writes the master
+    /// playlist, configures the HLS segment-filename muxer option, then builds + returns the OutputStreamInfo
+    /// via its real designated init (thunk FUN_101a19724 → factory FUN_101a1d014). `throws -> OutputStreamInfo`
+    /// — P44 disasm-confirmed (reconstruct() does `str x0,[x23,#0x20]` = store the return into
+    /// outputStreamInfo@0x20). No FFmpeg calls (verified: 0 `bl` in the FFmpeg range). NOW LIVE (the OSI init
+    /// landed 21c9d6a). ⚑ flagged-compiling residuals: the OSI filename is `FUN_1019f59c4`-computed
+    /// (approximated as dir/playlist_%v.m3u8); the factory's p9 = a static `[AVCodecID]` allowlist
+    /// (&DAT_1044f3788) passed `[]` here; the exact options-dict threading is decompiler-plumbing-approximate;
+    /// KSLog debug (L194-214) omitted (class-wide UNRESOLVED).
+    func write(formatContext: FormatContext, dir: URL, formatContextOptions: [String: Any],
+               masterM3U8Context: String) throws -> OutputStreamInfo {
+        // 1. remove any existing output dir — error SWALLOWED (willThrow→errorRelease→swifterror cleared ⇒ try?) [L126-133]
+        try? FileManager.default.removeItem(at: dir)
+        // 2. create the output dir — error PROPAGATES (convertNSError→willThrow, NO errorRelease ⇒ throws) [L139-145]
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // 3. base = dir path, trailing-slash-normalized [L150-163]
+        var base = dir.path
+        if !base.hasSuffix("/") { base += "/" }
+        // 4. HLS segment-filename muxer option (key "hls_segment_filename" @0x103d3e9f0, value = base + the .ts
+        //    segment pattern @0x103d3ea10) [L168-179]. ⚑ the exact dict threaded into the OSI (the mutated copy
+        //    vs the original param_3) is decompiler-plumbing-ambiguous; reconstructed as the augmented options
+        //    (HLS muxing needs the segment pattern). The formatContextOptions["hls_segment_type"]=="fmp4" check
+        //    [L217-239] feeds the OSI's removeADTS, not write() itself.
+        var options = formatContextOptions
+        options["hls_segment_filename"] = base + "segment_%v_%05d.ts"
+        // 5. write the master playlist ("master.m3u8" @0x103d3ea?, atomically, .utf8) [L183-190]
+        try masterM3U8Context.write(to: dir.appendingPathComponent("master.m3u8"), atomically: true, encoding: .utf8)
+        // 6. KSLog debug gate (logLevel > 2, FUN_1019b4074) — form UNRESOLVED (class-wide) [L194-214]
+        // 7. build + return the OSI via its real designated init [L244-247]
+        let filename = dir.appendingPathComponent("playlist_%v.m3u8").path   // ⚑ FUN_1019f59c4-computed (approximated)
+        return try OutputStreamInfo(formatContext: formatContext,
+                                    filename: filename,
+                                    forceTranscode: false,                  // p4 = 0
+                                    formatContextOptions: options,
+                                    formatName: "hls",                      // p6+p7 = "hls" (0x736c68)
+                                    flag: 0,                                // p8 = 0
+                                    transcodeCodecIDs: [])                  // ⚑ p9 = static [AVCodecID] &DAT_1044f3788 — passed [] (flagged)
+    }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.
 }
