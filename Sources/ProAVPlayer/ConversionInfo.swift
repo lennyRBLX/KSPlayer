@@ -25,7 +25,7 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private var currentPlaybackTime: Double = 0
     private var maxBufferDuration: Double = 0
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
-    private var remuxerIOAction: RemuxerIOAction
+    var remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
     private var demuxerIO: DemuxerIO
     private var server: LocalHLSServer
     private var directoryWatcher: DirectoryWatcher  // KSPlayer (public type fe13053; init→public this pass, P34)

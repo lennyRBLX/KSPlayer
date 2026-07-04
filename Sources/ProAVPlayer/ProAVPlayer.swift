@@ -29,7 +29,46 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     private var seekToTime: CMTime? = nil
 
     // Adds no designated init + all 4 stored props defaulted ⇒ inherits KSAVPlayer's
-    // `required init(url:options:)`. vtable=16, slot15 impl (+ inherited/devirt) → M2.
+    // `required init(url:options:)`. vtable=16; slot15 (replaceCurrentItem) reconstructed below.
+
+    // MARK: slot15 @0x101b7c164 — replaceCurrentItem(needSeek:) (M2)
+
+    /// `FUN_101b7c164`. Name RECOVERED (`recover_swift_function_name` high, 1 label; #file ProAVPlayer.swift;
+    /// `param_1 & 1` ⇒ `needSeek: Bool`, P28-clean). ProAVPlayer's own vtable slot15. On `needSeek`: snapshot
+    /// `player.currentTime` → `seekToTime` + advance the remuxer live-window `startPlayTime` by the last seekable
+    /// range; then, on the main thread, rebuild the `ProPlayerItem` from the current asset and install it.
+    /// Disasm-confirmed: needSeek block is `tbz w21,#0`-guarded (@0x101b7c260); `self.player` = KSAVPlayer's
+    /// public accessor (FUN_1019a1730); the item-swap runs via `runOnMainThread` (FUN_101a03e88).
+    func replaceCurrentItem(needSeek: Bool) {
+        // ⚑ leading gated KSLog (base playback state > 2, FUN_1019b4074/c0094) omitted — KSLog form UNRESOLVED (class convention)
+        if needSeek {                                                        // [tbz w21,#0 @0x101b7c260]
+            seekToTime = player.currentTime()                               // self.player.currentTime() → seekToTime (CMTime?)
+            if let lastRange = player.currentItem?.seekableTimeRanges.last?.timeRangeValue,
+               let m3u8Info {                                               // self.m3u8Info != nil
+                // `.start` (vs .end/.duration) — DISASM-CONFIRMED: CMTimeRangeValue writes the range @sp+0x60,
+                // get_seconds loads x0,x1=[sp+0x60]/x2=[sp+0x70] = the CMTime @offset 0 (.start; .duration = sp+0x78)
+                m3u8Info.remuxerIOAction.startPlayTime =
+                    (m3u8Info.remuxerIOAction.startPlayTime ?? 0) + lastRange.start.seconds  // *(remux+0x10); tag=0 (.some)
+            }
+        }
+        runOnMainThread { [weak self] in                                    // FUN_101a03e88 = Utility.runOnMainThread; weak-self capture (0x1041e1198)
+            guard let self,
+                  let asset = player.currentItem?.asset as? AVURLAsset else { return }  // currentItem.asset as? AVURLAsset
+            let item: ProPlayerItem
+            if hasEndOfStream {                                             // self.hasEndOfStream
+                item = ProPlayerItem(url: asset.url)                       // initWithURL: (inherited AVPlayerItem init)
+                hasEndOfStream = false
+            } else {
+                item = ProPlayerItem(asset: asset)                        // initWithAsset:
+            }
+            item.m3u8Info = m3u8Info                                       // ProPlayerItem.m3u8Info = self.m3u8Info
+            // ⚑ UNRESOLVED (omitted) — FUN_101b69fc4(m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0)):
+            //   71i time-offset method (name unrecovered, self+0x40 store), gated `if m3u8Info != nil` → ProAVPlayer M2 sub-helper.
+            //   ⚑[tool=disassemble_function ref=FUN_101b69fc4:0x101b69fc4 result=LOCATED]
+            player.automaticallyWaitsToMinimizeStalling = false
+            (self as KSAVPlayer).replaceCurrentItem(playerItem: item)     // KSAVPlayer.replaceCurrentItem(playerItem:) — FUN_1019a563c (P34: private→internal). Upcast resolves the base-name shadow from the needSeek: overload (super-in-closure unsupported); ProAVPlayer doesn't override it ⇒ same dispatch as the binary.
+        }
+    }
 
     // ── ConversionInfoDelegate conformance (binary conf@0x1035715a0, wt 0x1041e1340). 3 instance-method
     //    witnesses, devirtualized/stripped → their bodies are ProAVPlayer's OWN M2 unit. Honest stubs so the

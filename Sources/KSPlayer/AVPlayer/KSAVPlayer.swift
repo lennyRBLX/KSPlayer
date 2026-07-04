@@ -297,7 +297,7 @@ extension KSAVPlayer {
         delegate?.changeLoadState(player: self)
     }
 
-    private func replaceCurrentItem(playerItem: AVPlayerItem?) {
+    public func replaceCurrentItem(playerItem: AVPlayerItem?) {   // public (was private, P34): ProAVPlayer (separate module) slot15 item-swap closure installs its ProPlayerItem via this cross-module call (FUN_1019a563c)
         player.currentItem?.cancelPendingSeeks()
         if options.isLoopPlay {
             loopCountObservation?.invalidate()
