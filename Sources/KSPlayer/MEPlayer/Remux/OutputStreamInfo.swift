@@ -14,7 +14,10 @@ import FFmpegKit
 import Libavcodec
 import Libavformat
 
-public final class OutputStreamInfo {       // `final` not binary-pinned (no library evolution) — M2 vtable_anchor_diff verifies; matches 1C.5 choice
+public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor gives OSI a 16-slot method vtable (slots 0-15,
+                                      // incl. slot13/14/15 dispatched by RemuxerIOAction via +0x118/+0x120/+0x128) — a `final class`
+                                      // emits NO method vtable, so `final` was the structural bug (as LocalHLSServer/ProAVPlayer/ProPlayerItem).
+                                      // ⚑ EXACT 16-slot layout = tracked structural debt (member-level finality/order — vtable_anchor_diff, not fabricated).
     // Types from the class's own __swift5_fieldmd field-records (authoritative). Reflection order.
     // Map KEYS are Int32 (faithfulness correction, 3 signals: subscript hashes 4 bytes; key = AVPacket
     // stream_index which is C `int`; field-record key = stdlib symref, libswiftCore-walled).
@@ -141,11 +144,43 @@ public final class OutputStreamInfo {       // `final` not binary-pinned (no lib
         return BSFTranscodeContext(bsfContext: ctx)                              // Wave-1 type (1 field)
     }
 
-    // ── UNRESOLVED → P3 (driven only by the P3 remux driver 0x101a483d4 + 4 consumers; off the Wave-2 write path) ──
-    //  • slot14 @0x101a1b8d4 (162 instr) — drive-all-transcode: iterate transcodeMap → each ctx.transcode (cb FUN_101a1f1dc);
-    //    set done-flag (self+0x50); clear map (self+0x48). Cached: decompiles/OutputStreamInfo#14.txt
-    //  • slot15 @0x101a1bb5c (181 instr) — close-all: iterate transcodeMap → each ctx.close; iterate assetTrackMap
-    //    (stride 0x200, obj@+0x100, vtable@+0x1c0); FFmpeg frees FUN_102d618b8 / FUN_103194e1c / FUN_101a39028 (oracle-name in P3).
-    //    Cached: decompiles/OutputStreamInfo#15.txt
-    //  Reconstruct in P3 with the driver (behaviorally testable there). Names devirt-unrecoverable.
+    // ── slot14 @0x101a1b8d4 (162 instr) — drain-all + write the container trailer, run-once. Void (P44:
+    //    plain-ret epilogue). ⚑ method NAME `finishWriting()` INFERRED (devirt; recover_swift_function_name
+    //    = None). Called by RemuxerIOAction.cancel (OSI vtable +0x120). The FFmpeg call is
+    //    ffmpeg_name_oracle-CONFIRMED (not eyeballed). Cache: decompiles/OutputStreamInfo#14.txt.
+    func finishWriting() {
+        guard !hasWriteTrailer else { return }              // self+0x50 (& 1) — run-once guard [0x101a1b904]
+        hasWriteTrailer = true                              // self+0x50 = 1
+        for (_, ctx) in transcodeMap {                      // self+0x18 iteration (Swift Dictionary bucket-walk)
+            // ⚑ the drain is GATED per-entry on stream-mapping state (outPacket present + assetTrackMap[idx] +
+            //   streamMapping[idx], @0x101a1b9f8-a2c) — the exact gate + the completion body (FUN_101a1f1dc,
+            //   per-packet write-out) are DEFERRED to P3 (behaviorally testable with the remux driver). The
+            //   drain CALL (witness +0x10) is faithful; its guard is modeled as unconditional here — ⚑ flagged.
+            ctx.drain { _ in
+                // ⚑ UNRESOLVED — completion body FUN_101a1f1dc; reconstruct with the P3 remux driver.
+            }
+        }
+        av_write_trailer(formatCtx)                         // FUN_103194e1c — ffmpeg_name_oracle CONFIRMED (117/468 exact) [0x101a1b9f0]
+        lastDTSMap = [:]                                    // self+0x48 cleared [0x101a1ba0c]
+    }
+
+    // ── slot15 @0x101a1bb5c (181 instr) — close-all: close every transcode ctx + asset track, free the
+    //    out-packet and the format context. Void (P44). ⚑ method NAME `close()` INFERRED (devirt). Called by
+    //    RemuxerIOAction.cancel (+0x128) + reconstruct. Cache: decompiles/OutputStreamInfo#15.txt.
+    func close() {
+        for (_, ctx) in transcodeMap {                      // self+0x18
+            ctx.close()                                     // TranscodeProtocol.close (witness +0x18) [0x101a1bce8]
+        }
+        for (_, track) in assetTrackMap {                   // self+0x10 (stride 0x200)
+            // ⚑ UNRESOLVED — per-track teardown: the track value's `obj@+0x100 . vtable+0x1c0()`
+            //   (FFmpegAssetTrack-internal codec/context close) — DEFERRED to P3 (FFmpegAssetTrack layout).
+            _ = track
+        }
+        av_packet_free(&outPacket)                          // FUN_102d618b8 — ffmpeg_name_oracle CONFIRMED (46/184 exact) [0x101a1be1c]
+        // ⚑ formatCtx cleanup — FUN_101a39028: a KSPlayer Swift wrapper (0x101a3 range, NOT FFmpeg —
+        //   ffmpeg_name_oracle REFUTED avformat_free_context: fwd 101/404 ≠ lib 131/524) around FFmpeg
+        //   FUN_1030e632c = av_formatCloseInput (ffmpeg_name_oracle CONFIRMED avformat_close_input, 38/152 exact).
+        //   The Swift wrapper's own NAME is devirt-unrecoverable (recover = None) → NOT emitted as a fabricated
+        //   call; DEFERRED to P3 (the wrapper likely does `avformat_close_input(&formatCtx)`). [0x101a1be28]
+    }
 }
