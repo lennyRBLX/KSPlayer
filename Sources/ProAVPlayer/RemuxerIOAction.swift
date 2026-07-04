@@ -38,15 +38,18 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     //      packet        ← av_packet_alloc()  (FUN_102d61878)                 [clean, grounded]
     //      startPlayTime = nil (str xzr@+0x10 + tag=1@+0x18) ; delegate = nil (weak init)   [clean, grounded]
     //      directoryWatcher ← FUN_101a04e20(…)  (KSPlayer DirectoryWatcher construction)    [args UNRESOLVED]
-    //      outputStreamInfo ← FUN_101b8559c(formatContext, dir, options, master)  ⚑ OutputStreamInfo
-    //          factory — OWNER-PHASE devirt API (blocked; not fabricated, P32/P23)
+    //      outputStreamInfo ← self.write(formatContext:dir:formatContextOptions:masterM3U8Context:)
+    //          [FUN_101b8559c] — the OSI-PRODUCING method (recover_swift_function_name HIGH); it builds the
+    //          OSI via the real factory FUN_101a1d014 (KSPlayer, ~6KB devirt). See the write() grounded-doc
+    //          at the end of the class. (CORRECTED: prior note mislabeled FUN_101b8559c as "the OSI factory".)
     //      subtitles ← flatMap over param_3's tracks (FUN_101a36488 + keyPath + Sequence.flatMap +
     //          outputStreamInfo.<+0xb8>)  ⚑ complex — deferred
     //    COMPILING reconstruction BLOCKED on 3 verified residuals → deferred:
     //      1. param_3 TYPE — a deep up-chain field `*(coordinator+0x420)` (FUN_101b6e31c ← FUN_101b6e2d0);
     //         the subtitles/track source. Un-named without further up-chain tracing.
-    //      2. outputStreamInfo factory (FUN_101b8559c) = OutputStreamInfo devirt API — unblocks when
-    //         OutputStreamInfo (1C.6) is reconstructed.
+    //      2. OSI construction — self.write(...) [FUN_101b8559c] builds the OSI via the real factory
+    //         FUN_101a1d014 (OSI owner-phase, ~6KB devirt); blocked on that
+    //         ⚑[tool=locate_class_init ref=FUN_101a1d014 result=LOCATED].
     //      3. subtitles flatMap (complex).
     //    ⇒ the 4 IUO stand-ins (outputStreamInfo/formatContext/dir/directoryWatcher) stay IUO until the
     //    compiling init lands (needs param_3's type + OutputStreamInfo's API). NAME/param-LABELS inferred
@@ -198,7 +201,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     /// (recover_swift_function_name, high conf, #file ProAVPlayer/RemuxerIO.swift); the agent's earlier
     /// `performReadErrorRecovery` was a FABRICATED name (P28/P30) — corrected here. Body UNRESOLVED (own unit):
     ///   rebuilds/resets state (subtitles/dir/formatContextOptions/masterM3U8Context, resets startPlayTime,
-    ///   drives outputStreamInfo vtable slots +0xb0/+0xb8/+0x128, re-creates @0x20 via FUN_101b8559c, notifies
+    ///   drives outputStreamInfo vtable slots +0xb0/+0xb8/+0x128, re-creates @0x20 via self.write() [FUN_101b8559c], notifies
     ///   the delegate). ⚑ completion type + access level UNRESOLVED (own unit); performRead passes a nil closure.
     private func reconstruct(completion: (() -> Void)?) {
         // ── Body DEFERRED to owner-phase (blocked on OutputStreamInfo's devirt API + RemuxerIOActionDelegate).
@@ -207,8 +210,10 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //    1. [KSLog debug gate: `if logLevel > 2` (FUN_1019b4074) — form UNRESOLVED, class-wide]
         //    2. Tear down the current output — THROWING devirt calls on self.outputStreamInfo (@0x20):
         //       `<+0xb0>()` ; `<+0xb8>([])` ; `<+0x128>()`  (OutputStreamInfo vtable; owner-phase API — not fabricated).
-        //    3. Rebuild: `let new = <OutputStreamInfo build>(formatContext@0x28, dir, formatContextOptions,
-        //       masterM3U8Context)` via FUN_101b8559c — throwing.
+        //    3. Rebuild: `let new = try self.write(formatContext:dir:formatContextOptions:masterM3U8Context:)`
+        //       [FUN_101b8559c] — throwing; write() sets up the HLS output + builds the OSI via the real
+        //       factory FUN_101a1d014 (see the write() grounded-doc at the end of the class). NOT a raw
+        //       "OutputStreamInfo build" — same mislabel, CORRECTED.
         //    4. guard(no swifterror from 2–3 — `cbz x21` @0x101b7e4ec) else early-out (bridgeObjectRelease). No-error path:
         //         `self.outputStreamInfo = new` (release old) ; `new.<+0xb8>(old)`
         //         `for track in subtitles { <per-element FUN_101a20fb0> }`   // iteration recoverable; per-element UNRESOLVED
@@ -236,6 +241,37 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
             //   releases the error) — KSLog form UNRESOLVED (class-wide); the error is caught + swallowed (cancel does NOT throw).
         }
     }
+
+    // ── write(formatContext:dir:formatContextOptions:masterM3U8Context:) — binary FUN_101b8559c ─────────
+    //    (recover_swift_function_name HIGH, 4 labels, #file ProAVPlayer/RemuxerIO.swift). The OSI-PRODUCING
+    //    method both the designated init and reconstruct() call to build `outputStreamInfo`: sets up the HLS
+    //    output dir, writes the master playlist, configures the HLS muxer options, then BUILDS + returns the
+    //    OutputStreamInfo. `throws -> OutputStreamInfo` — P44 disasm-confirmed: reconstruct() does
+    //    `str x0,[x23,#0x20]` (store the return into outputStreamInfo@0x20) then reads its vtable +0xb8.
+    //    NO FFmpeg calls (verified: 0 `bl` in the 0x1029–0x1031 FFmpeg range).
+    //    NOT emitted as a compiling method — it returns an OSI it can only build via the deferred factory
+    //    (step 7), so a live body would fabricate that API (P32/P36). Grounded control flow (FUN_101b8559c,
+    //    prefetch-cached + disasm-verified — NOT live code):
+    //      1. `try? FileManager.default.removeItem(at: dir)` — remove any existing output dir; error
+    //         SWALLOWED (disasm: willThrow → errorRelease → swifterror cleared ⇒ `try?`).
+    //      2. `try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)` — error
+    //         PROPAGATES (disasm: convertNSError → willThrow, NO errorRelease ⇒ `throws`).
+    //      3. `var base = dir.path; if !base.hasSuffix("/") { base += "/" }` — dir path, trailing-slash-normalized.
+    //      4. Prepare the FFmpeg HLS muxer options (String keys read_mem-decoded; the decompile's own string
+    //         counts were mis-bound, P30). ⚑ the exact SINK — the `formatContextOptions` dict vs the OSI
+    //         builder args — is threaded into the OSI construction (step 7, deferred), so it is not asserted here:
+    //           `hls_segment_filename` = base + "playlist_%v.m3u8"   (key @0x103d3e9f0, value @0x103d3e9d0)
+    //           `hls_segment_type`     = <value UNRESOLVED — not surfaced in the cache>   (key @0x103d35790)
+    //      5. `try masterM3U8Context.write(to: dir.appendingPathComponent("master.m3u8"), atomically: true,
+    //         encoding: .utf8)` — write the master playlist ("master.m3u8" small-string, disasm-decoded).
+    //      6. KSLog debug gate (`logLevel > 2`, FUN_1019b4074) — form UNRESOLVED (class-wide).
+    //      7. Build + return the OutputStreamInfo — DEFERRED to the OSI owner-phase. write calls the compiler
+    //         thunk FUN_101a19724 (ldr;str;bl;ret — not source-level) → the SOLE OSI construction site
+    //         FUN_101a1d014 (KSPlayer, ~6KB, devirt; locate_class_init init_in_module=false, alloc @0x101a1e828).
+    //         Blocked on that factory ⚑[tool=locate_class_init ref=FUN_101a1d014 result=LOCATED].
+    //    Unblock chain (bottom-up): FUN_101a1d014 (OSI factory, owner-phase) → write() → reconstruct()/init.
+    //    Reconstruct FUN_101a1d014 in the OutputStreamInfo owner-phase; then write() + the compiling init +
+    //    reconstruct() can all land as live bodies.
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.
 }
