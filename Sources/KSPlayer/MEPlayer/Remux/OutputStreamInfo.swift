@@ -148,7 +148,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     //    plain-ret epilogue). ⚑ method NAME `finishWriting()` INFERRED (devirt; recover_swift_function_name
     //    = None). Called by RemuxerIOAction.cancel (OSI vtable +0x120). The FFmpeg call is
     //    ffmpeg_name_oracle-CONFIRMED (not eyeballed). Cache: decompiles/OutputStreamInfo#14.txt.
-    func finishWriting() {
+    public func finishWriting() {                           // public (was internal): RemuxerIOAction (ProAVPlayer) calls it cross-module via the OSI vtable +0x120 — binary-arbitrated cross-module access (P34/§1; `open`/override NOT proven → `public` under-included)
         guard !hasWriteTrailer else { return }              // self+0x50 (& 1) — run-once guard [0x101a1b904]
         hasWriteTrailer = true                              // self+0x50 = 1
         for (_, ctx) in transcodeMap {                      // self+0x18 iteration (Swift Dictionary bucket-walk)
@@ -167,7 +167,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // ── slot15 @0x101a1bb5c (181 instr) — close-all: close every transcode ctx + asset track, free the
     //    out-packet and the format context. Void (P44). ⚑ method NAME `close()` INFERRED (devirt). Called by
     //    RemuxerIOAction.cancel (+0x128) + reconstruct. Cache: decompiles/OutputStreamInfo#15.txt.
-    func close() {
+    public func close() {                                   // public (was internal): RemuxerIOAction calls it cross-module via the OSI vtable +0x128 (P34/§1; `open` not proven → `public` under-included)
         for (_, ctx) in transcodeMap {                      // self+0x18
             ctx.close()                                     // TranscodeProtocol.close (witness +0x18) [0x101a1bce8]
         }

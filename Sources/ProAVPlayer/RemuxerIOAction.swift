@@ -217,21 +217,24 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //         `Task { completion?() }`                                   // async completion spawn (FUN_101b76920, &DAT_103571988) — UNRESOLVED
     }
 
-    /// `DemuxerIOAction.cancel()` requirement impl — binary `FUN_101b82c04`. self=RemuxerIOAction is
-    /// FIELD-ACCESS-confirmed (reads `outputStreamInfo`@0x20 + the literal `RemuxerIOAction.packet` offset);
-    /// the #file `RemuxerIO.swift` is SHARED with DemuxerIO, so it does NOT attribute the method. Driven by
-    /// `DemuxerIO.cancelReading` on `ioAction` (a DemuxerIOAction req; the witness is deleted → devirt).
-    /// No-arg, `Void`, non-throwing (P44: epilogue plain `ret`; the FileManager error is caught internally).
-    /// Body DEFERRED (OSI-devirt-coupled, like `reconstruct`/`performRead`'s write) — grounded control flow
-    /// from FUN_101b82c04:
-    ///   1. `outputStreamInfo.<+0x120>()` ; `outputStreamInfo.<+0x128>()`  (OSI vtable teardown/close-all; owner-phase API — not fabricated)
-    ///   2. `av_packet_unref(packet)`  (FUN_102d618b8 — ⚑ FFmpeg id inferred; `av_packet_free(&packet)`-shaped, takes the field address)
-    ///   3. `do { try FileManager.default.removeItem(at: dir) } catch { /* KSLog */ }`  (removes the output; error swallowed)
+    /// `DemuxerIOAction.cancel()` requirement impl — binary `FUN_101b82c04` (self=RemuxerIOAction,
+    /// field-access-confirmed: `outputStreamInfo`@0x20 + the `RemuxerIOAction.packet` offset). Driven by
+    /// `DemuxerIO.cancelReading` on `ioAction` (witness deleted → devirt). No-arg, `Void`, non-throwing (P44:
+    /// plain-`ret` epilogue; the FileManager error is caught + logged internally). ⚑ NAME `cancel()` inferred
+    /// (recover_swift_function_name = None). RECONSTRUCTED (later·62): OutputStreamInfo's slot14/15
+    /// (finishWriting/close) are now reconstructed + OSI is non-final, so they dispatch through the OSI vtable
+    /// (+0x120/+0x128) exactly as the binary does.
     func cancel() {
-        // ── Body DEFERRED to RemuxerIOAction M2 (blocked on OutputStreamInfo's devirt +0x120/+0x128 API).
-        //    A partial that emitted only steps 2–3 would DROP the OSI teardown (the method's primary effect)
-        //    and misrepresent it → honest-defer the whole body (P36; the OSI calls are unrecoverable here),
-        //    matching reconstruct(completion:). NAME `cancel()` inferred (recover_swift_function_name = None).
+        outputStreamInfo.finishWriting()             // OSI vtable +0x120 = slot14 (drain + av_write_trailer) [retain/call/release]
+        outputStreamInfo.close()                     // OSI vtable +0x128 = slot15 (close-all)
+        var p = packet                               // binary loads self.packet into a local (local_50)…
+        av_packet_free(&p)                           // …and frees the LOCAL — FUN_102d618b8, ffmpeg_name_oracle CONFIRMED av_packet_free (46/184 exact). ⚑ self.packet is NOT nulled (no writeback) — faithful to the binary's local-copy free.
+        do {
+            try FileManager.default.removeItem(at: dir)   // NSFileManager.removeItemAtURL(dir._bridgeToObjectiveC()) — removes the output
+        } catch {
+            // ⚑ on failure: KSLog(error) gated `logLevel > 1` (FUN_1019b4074 → `*level < 2` skips the log, just
+            //   releases the error) — KSLog form UNRESOLVED (class-wide); the error is caught + swallowed (cancel does NOT throw).
+        }
     }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.
