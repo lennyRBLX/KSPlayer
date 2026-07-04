@@ -27,33 +27,34 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     private var packet: UnsafeMutablePointer<AVPacket>? = nil
     private var directoryWatcher: DirectoryWatcher! = nil       // ⚑ binary non-optional; KSPlayer (now public); IUO M1 stand-in → M2
 
-    // ── Designated init VERIFIED (FUN_101b81b18, 351i, cached + disasm-read) — reachable via the alloc site
-    //    FUN_101b6e31c (swift_allocObject(RemuxerIOAction metadata) → self=x21 → bl 0x101b81b18). `throws`
-    //    (the outputStreamInfo build can throw → the error path `_swift_deallocPartialClassInstance`).
-    //    ABI: self=x20; x0..x5 = param_1..param_6. Verified field construction:
-    //      formatContext (@0x28) ← param_1 (retained)                         [clean, grounded]
-    //      dir           ← URL(param_2)  (URL value-witness init-copy)         [clean, grounded]
-    //      formatContextOptions ← param_4  ([String:Any], bridged)            [clean, grounded]
-    //      masterM3U8Context    ← String(param_5, param_6)                    [clean, grounded]
-    //      packet        ← av_packet_alloc()  (FUN_102d61878)                 [clean, grounded]
-    //      startPlayTime = nil (str xzr@+0x10 + tag=1@+0x18) ; delegate = nil (weak init)   [clean, grounded]
-    //      directoryWatcher ← FUN_101a04e20(…)  (KSPlayer DirectoryWatcher construction)    [args UNRESOLVED]
-    //      outputStreamInfo ← self.write(formatContext:dir:formatContextOptions:masterM3U8Context:)
-    //          [FUN_101b8559c] — the OSI-PRODUCING method (recover_swift_function_name HIGH); it builds the
-    //          OSI via the real factory FUN_101a1d014 (KSPlayer, ~6KB devirt). See the write() grounded-doc
-    //          at the end of the class. (CORRECTED: prior note mislabeled FUN_101b8559c as "the OSI factory".)
-    //      subtitles ← flatMap over param_3's tracks (FUN_101a36488 + keyPath + Sequence.flatMap +
-    //          outputStreamInfo.<+0xb8>)  ⚑ complex — deferred
-    //    COMPILING reconstruction BLOCKED on 3 verified residuals → deferred:
-    //      1. param_3 TYPE — a deep up-chain field `*(coordinator+0x420)` (FUN_101b6e31c ← FUN_101b6e2d0);
-    //         the subtitles/track source. Un-named without further up-chain tracing.
-    //      2. OSI construction — self.write(...) [FUN_101b8559c] builds the OSI via the real factory
-    //         FUN_101a1d014 (OSI owner-phase, ~6KB devirt); blocked on that
-    //         ⚑[tool=locate_class_init ref=FUN_101a1d014 result=LOCATED].
-    //      3. subtitles flatMap (complex).
-    //    ⇒ the 4 IUO stand-ins (outputStreamInfo/formatContext/dir/directoryWatcher) stay IUO until the
-    //    compiling init lands (needs param_3's type + OutputStreamInfo's API). NAME/param-LABELS inferred
-    //    (recover_swift_function_name = jel/None, labels=0).
+    /// Designated init — binary `FUN_101b81b18` (351i, cached + disasm-read; reachable via the alloc site
+    /// FUN_101b6e31c → swift_allocObject → bl 0x101b81b18). Constructs the fields then builds
+    /// `outputStreamInfo` via `write()` (NOW LIVE — the OSI init landed 21c9d6a). `throws` — write() can
+    /// throw → the binary's error path is `_swift_deallocPartialClassInstance` (L205-219).
+    /// ⚑ signature devirt-inferred (recover = jel/None, labels=0): param_1=formatContext, param_2=dir,
+    ///   param_4=formatContextOptions, {param_5,param_6}=masterM3U8Context — GROUNDED. `source` = param_3 is
+    ///   the subtitles/track source — an up-chain-UN-TYPED class (`*(coordinator+0x420)`; it has a `+0x768`
+    ///   vtable method + a tracks keyPath) → typed `AnyObject` (under-included, §1) + its uses DEFERRED.
+    /// ⚑ DEFERRED (L97-203, own follow-up unit): `subtitles` = flatMap over `source`'s tracks (keyPath +
+    ///   Sequence.flatMap); the post-write `outputStreamInfo.<slot1 +0xb8>(FUN_101a36488(source))` +
+    ///   `source.<+0x768>()` + the subtitles iteration. `directoryWatcher` construction (FUN_101a06ce0 /
+    ///   FUN_101a04e20 args UNRESOLVED) → stays IUO default. `subtitles` stays [].
+    init(formatContext: FormatContext, dir: URL, source: AnyObject,
+         formatContextOptions: [String: Any], masterM3U8Context: String) throws {
+        self.startPlayTime = nil                              // L64-65 (payload 0, tag 1 = nil)
+        // delegate stays nil (weak init, L66-69); directoryWatcher stays nil IUO (L73-76 ctor args UNRESOLVED)
+        // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
+        self.packet = av_packet_alloc()                       // L70-72 — FUN_102d61878
+        self.formatContext = formatContext                    // L77 (@0x28 = param_1, retained)
+        self.dir = dir                                        // L78-81 (URL value-witness init-copy of param_2)
+        self.formatContextOptions = formatContextOptions      // L82-83 (param_4)
+        self.masterM3U8Context = masterM3U8Context            // L84-86 ({param_5, param_6})
+        self.outputStreamInfo = try write(formatContext: formatContext, dir: dir,   // L92 (throws → dealloc on throw)
+                                          formatContextOptions: formatContextOptions,
+                                          masterM3U8Context: masterM3U8Context)
+        // ⚑ DEFERRED — subtitles flatMap + the post-write source/OSI interactions (L97-203); source uses deferred.
+        _ = source
+    }
 
     /// Result of `performRead(formatCtx:)`. Layout compile-oracle-CONFIRMED (16 bytes): `value` @0 (8B),
     /// `isEnd` @8, `isError` @9. The binary assembles the status half-word as `isEnd | (isError << 8)`
