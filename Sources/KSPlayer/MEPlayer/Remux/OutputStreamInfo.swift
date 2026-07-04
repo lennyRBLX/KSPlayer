@@ -34,11 +34,123 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     public var formatName:    String = ""                        // v4 concrete `SS`
     public var removeADTS:    Bool = false                       // v4 concrete `Sb`
 
-    // init: binary slot 12 is DEVIRTUALIZED (no body) → signature UNRESOLVED. Minimal inferred init:
-    // formatCtx is non-optional (must be supplied); all other fields default. Real init signature
-    // (params/order) is unrecoverable from the binary → P2 refines.
-    // builder sets assetTrackMap/lastDTSMap=[:], others from params; signature devirt-unrecoverable → minimal init retained (P3 may refine).
-    public init(formatCtx: UnsafeMutablePointer<AVFormatContext>) {  // inferred — devirt slot 12, no body
+    // ── The REAL designated init (= FUN_101a1d014, the SOLE OSI construction site; ~1382-line devirt
+    //    decompile: reconstruction/decompiles/OSI_factory_101a1d014.txt). Reconstructed C1-C4. ────────
+    //  GROUNDED: the avformat_alloc_output_context2 prologue + KSPlayerError throw (C1); the
+    //    avio_open / avformat_write_header epilogue + throws (C3); the 12-field assembly + return, incl.
+    //    av_packet_alloc / formatName-from-oformat / removeADTS (C4). All FFmpeg calls oracle-CONFIRMED
+    //    (reconstruction/osi_factory_ffmpeg_map.json).
+    //  SPINE + honest-deferred (user-gated scope): the per-track loop reconstructs the COPY path + the
+    //    maps (timeBaseMap/streamMapping) + frameRate + avformat_new_stream; the codec-specific TRANSCODE
+    //    ARMS (AAC-ADTS-BSF / subtitle WEBVTT=0x17012·MOV_TEXT=0x17005 / HEVC=0xad extradata — constants
+    //    compile-oracle-decoded) build a per-codec ctx via devirt ctor helpers (recover_swift_function_name
+    //    = None) → reconstructed as named per-arm units (P36/P43). FFmpegAssetTrack field reads are
+    //    offset-grounded, field-name-INFERRED (the shared +0x40 / 18-vs-37 layout debt, P34/§1).
+    //  ⚑ signature (P28, devirt-inferred names): formatContext/filename/formatContextOptions/formatName
+    //    GROUNDED; `forceTranscode` = p4 (tested `& 1`, write→false; CORRECTS the pinned "String?");
+    //    `flag`:Int = p8 (write→0); `transcodeCodecIDs` = p9 (a codec-id list: count@+0x10, elems@+0x20).
+    //  FFmpeg provenance — every symbol below is ffmpeg_name_oracle result=CONFIRMED (instr/size fp vs the
+    //  symbolicated FFmpegKit static libs; reconstruction/osi_factory_ffmpeg_map.json):
+    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_output_context2:0x103193858 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_new_stream:0x1031b8714 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_from_context:0x1029f5738 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
+    //   (avio_open @0x1030c0914 CONFIRMED too — not FFMPEG_RE-scanned)
+    public init(formatContext: FormatContext,
+                filename: String,
+                forceTranscode: Bool = false,          // ⚑ p4 name INFERRED
+                formatContextOptions: [String: Any],
+                formatName: String,
+                flag: Int = 0,                         // ⚑ p8 name INFERRED
+                transcodeCodecIDs: [AVCodecID] = []) throws {   // ⚑ p9 name/type INFERRED
+        // ── C1: resolve muxer name → avformat_alloc_output_context2 → throw on failure ──────────────
+        // ⚑ DEFERRED general-path (L196-381, dead for write() which passes "hls"): empty formatName →
+        //   derive the muxer name from filename.pathExtension via a runtime format-registry match; the
+        //   loop internals are not deterministically recoverable (P36/P43 — no static-switch fit).
+        let resolvedFormatName = formatName
+        var contextPointer: UnsafeMutablePointer<AVFormatContext>?
+        // ⚑[tool=ffmpeg_name_oracle ref=0x103193858 result=CONFIRMED] avformat_alloc_output_context2 (79/316)
+        let allocResult = avformat_alloc_output_context2(&contextPointer, nil, resolvedFormatName, filename)
+        guard let outputContext = contextPointer else {          // L398 guards on ctx == nil
+            _ = allocResult   // ⚑ binary embeds this AVERROR in the KSPlayerError box (code@0); the exact
+                              //   code-field mechanics (enum-vs-Int) = KSPlayerError-owner/P8 (throwing bodies throw KSPlayerError)
+            throw KSPlayerError(code: .formatOutputCreate, message: KSPlayerErrorCode.formatOutputCreate.description)
+        }
+        // ⚑ binary also sets an AVFormatContext numeric field (+0x80 = 0x200000 / 2 MiB tuning, L410) —
+        //   which field UNRESOLVED → omitted (non-load-bearing for stream/map setup).
+
+        // ── C2: per-track loop → output streams + maps (SPINE; transcode arms deferred) ─────────────
+        var timeBaseMap:   [Int32: AVRational]            = [:]
+        var streamMapping: [Int32: Int32]                 = [:]
+        let transcodeMap:  [Int32: any TranscodeProtocol] = [:]   // ⚑ populated by the deferred transcode arms
+        var accumulatedFrameRate = 0
+        var outputStreamIndex: Int32 = 0
+        let isHLS = (resolvedFormatName == "hls")                 // local_20c
+        for track in formatContext.assetTracks {                  // formatContext+0x40
+            let trackID = track.trackID                           // +0x10 (map key)
+            timeBaseMap[trackID] = track.timebase.rational        // ⚑ +0xc0 field-inferred (layout debt); Timebase.rational
+            accumulatedFrameRate += Int(track.nominalFrameRate)   // ⚑ +0x58 field-inferred; exact per-branch gating spine-approx
+            streamMapping[trackID] = outputStreamIndex            // ⚑ value = output-stream counter (per-branch selection spine-approx)
+            // ⚑[tool=ffmpeg_name_oracle ref=0x1031b8714 result=CONFIRMED] avformat_new_stream (105/420)
+            guard let outputStream = avformat_new_stream(outputContext, nil) else { continue }
+            // Codec dispatch — SPINE reconstructs the COPY arm (default; oracle-CONFIRMED). The transcode
+            //   arms (gated on transcodeCodecIDs + track.mediaType + codec_id) build a per-codec transcode
+            //   context via the devirt ctor helpers then avcodec_parameters_from_context [ref=0x1029f5738
+            //   CONFIRMED] + transcodeMap[trackID]=ctx — DEFERRED to the OSI-transcode-arm unit (P36/P43).
+            withUnsafePointer(to: track.codecpar) { sourceParameters in    // ⚑ FFmpegAssetTrack.codecpar (+0xb8)
+                // ⚑[tool=ffmpeg_name_oracle ref=0x1029f5584 result=CONFIRMED] avcodec_parameters_copy (109/436)
+                _ = avcodec_parameters_copy(outputStream.pointee.codecpar, sourceParameters)
+            }
+            if outputStream.pointee.codecpar.pointee.sample_rate == 0 {     // L754
+                outputStream.pointee.codecpar.pointee.sample_rate = 48000
+            }
+            outputStreamIndex += 1
+        }
+
+        // ── C3: avio_open → avformat_write_header → av_dict_free ─────────────────────────────────────
+        // ⚑[tool=ffmpeg_name_oracle ref=0x1030c0914 result=CONFIRMED] avio_open (32/128)
+        guard avio_open(&outputContext.pointee.pb, filename, AVIO_FLAG_WRITE) >= 0 else {   // L1246/1249
+            throw KSPlayerError(description: "avio_open fail")   // code=.unknown; ⚑ binary embeds the AVERROR (P8)
+        }
+        // ⚑ DEFERRED — build `options` (AVDictionary) from formatContextOptions (FUN_101a322c0, L1262:
+        //   [String:Any] → per-entry AVDictionary inserts, e.g. hls_segment_filename/hls_segment_type). Reconstruct
+        //   as the options-dict unit; spine passes an empty dict (muxer defaults).
+        var options: OpaquePointer?
+        // ⚑[tool=ffmpeg_name_oracle ref=0x1031941d8 result=CONFIRMED] avformat_write_header (143/572)
+        let headerResult = avformat_write_header(outputContext, &options)
+        av_dict_free(&options)   // ⚑[tool=ffmpeg_name_oracle ref=0x10323b034 result=CONFIRMED] av_dict_free (27/108)
+        guard headerResult >= 0 else {                          // L1266 / L1356
+            throw KSPlayerError(code: .formatWriteHeader, message: KSPlayerErrorCode.formatWriteHeader.description)
+        }
+
+        // ── C4: assemble the 12 stored fields + return (implicit) — L1311-1380 ───────────────────────
+        //   removeADTS = isHLS && options["hls_segment_type"]=="fmp4"  (fMP4 segments need raw AAC; L1267-1310)
+        let segmentType = formatContextOptions["hls_segment_type"] as? String
+        self.formatCtx       = outputContext                                       // +0x58
+        self.url             = filename                                            // +0x30/+0x38
+        self.timeBaseMap     = timeBaseMap                                         // +0x20
+        self.streamMapping   = streamMapping                                       // +0x40
+        self.transcodeMap    = transcodeMap                                        // +0x18 (local_130)
+        self.frameRate       = accumulatedFrameRate                                // +0x28 (local_178)
+        self.assetTrackMap   = [:]                                                 // +0x10 (binary: empty singleton)
+        self.lastDTSMap      = [:]                                                 // +0x48 (empty singleton)
+        self.hasWriteTrailer = false                                              // +0x50
+        // ⚑[tool=ffmpeg_name_oracle ref=0x102d61878 result=CONFIRMED] av_packet_alloc
+        self.outPacket       = av_packet_alloc()                                   // +0x60 (L1325)
+        self.formatName      = String(cString: outputContext.pointee.oformat.pointee.name)  // +0x68 (L1343; binary preconditions oformat/name non-nil)
+        self.removeADTS      = isHLS && (segmentType == "fmp4")                    // +0x78 (bVar10)
+        _ = flag              // ⚑ p8: mode selector read in the dead extension-switch + the loop's param_8 branches (write→0)
+        _ = forceTranscode    // ⚑ p4: gates frameRate accumulation + a streamMapping-value branch (write→false)
+        _ = transcodeCodecIDs // ⚑ p9: the transcode codec allowlist — consumed by the deferred transcode arms
+    }
+
+    // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots
+    //    13/14/15 in isolation without the full factory. The binary's SOLE construction is the designated
+    //    init above (FUN_101a1d014). Not used in any reconstructed path. ──────────────────────────────
+    init(formatCtx: UnsafeMutablePointer<AVFormatContext>) {   // ⚑ test scaffold, not in binary
         self.formatCtx = formatCtx
     }
 
