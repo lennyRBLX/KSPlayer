@@ -39,7 +39,7 @@ public extension KSParseProtocol {
 
 public class AssParse: KSParseProtocol {
     private var styleMap: [String: ASSStyle]? // §8.3 [String:ASSStyle]? — populated lazily in canParse
-    private var eventKeys = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"]
+    private var eventKeys: [String] = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"]
     private var displaySize: CGSize = .zero
     // ⚑ PARTIAL → P4 M2: canParse (FUN_101a97464 ~1048i) + parsePart (FUN_101a99ef0 ~911i) reconstruct the FAITHFUL
     //   CORE ASS parsing (base-original-derived + binary-structure-confirmed: [Script Info]/PlayResX·Y→displaySize/
@@ -346,13 +346,14 @@ public extension [String: String] {
 // §8.5 corrected: VTTParse superclass = SrtParse (descriptor SuperclassType@+0x14; recon/§8.5 guessed : KSParseProtocol).
 public class VTTParse: SrtParse {
     override public func canParse(scanner: Scanner) -> Bool {
-        let result = scanner.scanString("WEBVTT")
-        if result != nil {
+        // Forward unified canParse into a shared string-contains helper (FUN_101aa1068), parameterized by the
+        // needle — SrtParse `contains(" --> ")`, VTTParse `contains("WEBVTT")` (NOT the base-original
+        // scanString("WEBVTT") anchored check; the binary uses `scanner.string.contains`). audit-confirmed.
+        let result = scanner.string.contains("WEBVTT")
+        if result {
             scanner.charactersToBeSkipped = nil
-            return true
-        } else {
-            return false
         }
+        return result
     }
 
     /**
@@ -364,49 +365,19 @@ public class VTTParse: SrtParse {
     //   components and emit ONE SubtitlePart per component (a cue → multiple parts, which is why the return is
     //   [SubtitlePart]); otherwise emit a single part. Multi-part split = FUN_101a9b838 (vttCueComponents).
     override public func parsePart(scanner: Scanner) -> [SubtitlePart] {
-        var decimal: String?
-        repeat {
-            decimal = scanner.scanUpToCharacters(from: .newlines)
-            _ = scanner.scanCharacters(from: .newlines)
-        } while decimal.flatMap(Int.init) == nil
-        let startString = scanner.scanUpToString("-->")
-        _ = scanner.scanString("-->")
-        guard let startString, let endString = scanner.scanUpToCharacters(from: .newlines) else {
+        guard let cue = scanSubtitleCue(scanner) else {
             return []
         }
-        _ = scanner.scanCharacters(from: .newlines)
-        var text = ""
-        var newLine: String? = nil
-        repeat {
-            if let str = scanner.scanUpToCharacters(from: .newlines) {
-                text += str
-            }
-            newLine = scanner.scanCharacters(from: .newlines)
-            if newLine == "\n" || newLine == "\r\n" {
-                text += "\n"
-            }
-        } while newLine == "\n" || newLine == "\r\n"
-        let start = startString.parseDuration()
-        let end = endString.parseDuration()
-        func makePart(start: Double, end: Double, text: String) -> SubtitlePart {
-            var textPosition = TextPosition()
-            let textInfo = SubtitleTextInfo(
-                text: text.build(textPosition: &textPosition),
-                position: nil, // VTT does not store textPosition — disasm-evidenced (SrtParse audit-confirmed)
-                displaySize: nil,
-                styleRole: .primary,
-                usesForcedPosition: false
-            )
-            return SubtitlePart(start: start, end: end, render: .right(textInfo))
-        }
-        if text.contains("><c>") {
-            return vttCueComponents(text).map { component in
-                makePart(start: component.start.map { $0.parseDuration() } ?? start,
-                         end: component.end.map { $0.parseDuration() } ?? end,
-                         text: component.text)
+        let start = cue.start.parseDuration()
+        let end = cue.end.parseDuration()
+        if cue.text.contains("><c>") {
+            return vttCueComponents(cue.text).map { component in
+                makeTextSubtitlePart(start: component.start.map { $0.parseDuration() } ?? start,
+                                     end: component.end.map { $0.parseDuration() } ?? end,
+                                     text: component.text)
             }
         }
-        return [makePart(start: start, end: end, text: text)]
+        return [makeTextSubtitlePart(start: start, end: end, text: cue.text)]
     }
 
     // FUN_101a9b838 — WebVTT inline-timestamp (karaoke) cue splitter: `<HH:MM:SS.mmm><c>text</c>` segments →
@@ -441,6 +412,50 @@ public class VTTParse: SrtParse {
     }
 }
 
+// FUN_101aa1e6c — the shared SrtParse/VTTParse cue scan. Skips lines until one contains " --> ", splits it
+// `.components(separatedBy: " --> ")` (must be 2 parts), normalizes each comma-decimal to "." and trims the
+// end's first space-token (WebVTT cue settings), then accumulates the following text lines (a `\n` per line
+// break). Returns nil at end-of-input / a non-2-part timing line. Both parsePart bodies call this (one function).
+private func scanSubtitleCue(_ scanner: Scanner) -> (start: String, end: String, text: String)? {
+    var line: String?
+    repeat {
+        line = scanner.scanUpToCharacters(from: .newlines)
+        _ = scanner.scanCharacters(from: .newlines)
+    } while !(line?.contains(" --> ") ?? false) && !scanner.isAtEnd
+    guard let line else { return nil }
+    let timeArray = line.components(separatedBy: " --> ")
+    guard timeArray.count == 2 else { return nil }
+    let startString = timeArray[0].replacingOccurrences(of: ",", with: ".")
+    // binary force-subscripts split[0] (traps on empty per FUN_1019f14c0 / SoftwareBreakpoint 0x101aa237c),
+    // not `.first` — the split of a count==2 timeArray[1] is non-empty in practice.
+    let endString = String(timeArray[1].split(separator: " ")[0]).replacingOccurrences(of: ",", with: ".")
+    var text = ""
+    var newLine: String? = nil
+    repeat {
+        if let str = scanner.scanUpToCharacters(from: .newlines) {
+            text += str
+        }
+        newLine = scanner.scanCharacters(from: .newlines)
+        if newLine == "\n" || newLine == "\r\n" {
+            text += "\n"
+        }
+    } while newLine == "\n" || newLine == "\r\n"
+    return (start: startString, end: endString, text: text)
+}
+
+// Build a text SubtitlePart (.right(SubtitleTextInfo)) — inlined per-body in the binary; a shared helper here.
+private func makeTextSubtitlePart(start: Double, end: Double, text: String) -> SubtitlePart {
+    var textPosition = TextPosition()
+    let textInfo = SubtitleTextInfo(
+        text: text.build(textPosition: &textPosition),
+        position: nil, // SRT/VTT do not store textPosition — disasm-evidenced (SrtParse audit-confirmed)
+        displaySize: nil,
+        styleRole: .primary,
+        usesForcedPosition: false
+    )
+    return SubtitlePart(start: start, end: end, render: .right(textInfo))
+}
+
 public class SrtParse: KSParseProtocol {
     public func canParse(scanner: Scanner) -> Bool {
         let result = scanner.string.contains(" --> ")
@@ -456,39 +471,9 @@ public class SrtParse: KSParseProtocol {
      {\an4}慢慢来
      */
     public func parsePart(scanner: Scanner) -> [SubtitlePart] {
-        var decimal: String?
-        repeat {
-            decimal = scanner.scanUpToCharacters(from: .newlines)
-            _ = scanner.scanCharacters(from: .newlines)
-        } while decimal.flatMap(Int.init) == nil
-        let startString = scanner.scanUpToString("-->")
-        // skip spaces and newlines by default.
-        _ = scanner.scanString("-->")
-        if let startString,
-           let endString = scanner.scanUpToCharacters(from: .newlines)
-        {
-            _ = scanner.scanCharacters(from: .newlines)
-            var text = ""
-            var newLine: String? = nil
-            repeat {
-                if let str = scanner.scanUpToCharacters(from: .newlines) {
-                    text += str
-                }
-                newLine = scanner.scanCharacters(from: .newlines)
-                if newLine == "\n" || newLine == "\r\n" {
-                    text += "\n"
-                }
-            } while newLine == "\n" || newLine == "\r\n"
-            var textPosition = TextPosition()
-            let textInfo = SubtitleTextInfo(
-                text: text.build(textPosition: &textPosition),
-                position: nil, // SRT does not store textPosition (original discarded it) — disasm-evidenced (zeroed region)
-                displaySize: nil,
-                styleRole: .primary,
-                usesForcedPosition: false
-            )
-            return [SubtitlePart(start: startString.parseDuration(), end: endString.parseDuration(), render: .right(textInfo))]
+        guard let cue = scanSubtitleCue(scanner) else {
+            return []
         }
-        return []
+        return [makeTextSubtitlePart(start: cue.start.parseDuration(), end: cue.end.parseDuration(), text: cue.text)]
     }
 }
