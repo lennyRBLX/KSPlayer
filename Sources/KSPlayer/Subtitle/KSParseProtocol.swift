@@ -359,48 +359,85 @@ public class VTTParse: SrtParse {
      00:00.430 --> 00:03.380
      简中封装 by Q66
      */
-    // ⚑ DIVERGENT (audit_workflow CRITICAL, session 17) → P4 M2 Batch 1b: the Forward binary VTTParse.parsePart
-    //   (0x101aa1110, VTTParse metadata+0x58 — anchor confirmed via witness thunk) is a COUNT-DRIVEN MULTI-PART
-    //   WebVTT cue-component parser (a `><c>` cue-tag `_contains` needle + a per-element loop building N SubtitleParts
-    //   — this is WHY parsePart returns [SubtitlePart]). The body below is the KSPlayer base-original SINGLE-part
-    //   approximation (functional for basic cues, NOT faithful) — reconstruct the real multi-part WebVTT parser in
-    //   Batch 1b from the decompile cache VTTParse_parsePart_101aa1110.
+    // Forward 1.3.17 VTTParse.parsePart (0x101aa1110): SAME cue scan as SrtParse (shared FUN_101aa1e6c), then —
+    //   when the text has WebVTT inline-timestamp/class spans (`.contains("><c>")`) — split it into karaoke
+    //   components and emit ONE SubtitlePart per component (a cue → multiple parts, which is why the return is
+    //   [SubtitlePart]); otherwise emit a single part. Multi-part split = FUN_101a9b838 (vttCueComponents).
     override public func parsePart(scanner: Scanner) -> [SubtitlePart] {
-        var timeStrs: String?
+        var decimal: String?
         repeat {
-            timeStrs = scanner.scanUpToCharacters(from: .newlines)
+            decimal = scanner.scanUpToCharacters(from: .newlines)
             _ = scanner.scanCharacters(from: .newlines)
-        } while !(timeStrs?.contains("-->") ?? false) && !scanner.isAtEnd
-        guard let timeStrs else {
+        } while decimal.flatMap(Int.init) == nil
+        let startString = scanner.scanUpToString("-->")
+        _ = scanner.scanString("-->")
+        guard let startString, let endString = scanner.scanUpToCharacters(from: .newlines) else {
             return []
         }
-        let timeArray: [String] = timeStrs.components(separatedBy: "-->")
-        if timeArray.count == 2 {
-            let startString = timeArray[0]
-            let endString = timeArray[1]
-            _ = scanner.scanCharacters(from: .newlines)
-            var text = ""
-            var newLine: String? = nil
-            repeat {
-                if let str = scanner.scanUpToCharacters(from: .newlines) {
-                    text += str
-                }
-                newLine = scanner.scanCharacters(from: .newlines)
-                if newLine == "\n" || newLine == "\r\n" {
-                    text += "\n"
-                }
-            } while newLine == "\n" || newLine == "\r\n"
+        _ = scanner.scanCharacters(from: .newlines)
+        var text = ""
+        var newLine: String? = nil
+        repeat {
+            if let str = scanner.scanUpToCharacters(from: .newlines) {
+                text += str
+            }
+            newLine = scanner.scanCharacters(from: .newlines)
+            if newLine == "\n" || newLine == "\r\n" {
+                text += "\n"
+            }
+        } while newLine == "\n" || newLine == "\r\n"
+        let start = startString.parseDuration()
+        let end = endString.parseDuration()
+        func makePart(start: Double, end: Double, text: String) -> SubtitlePart {
             var textPosition = TextPosition()
             let textInfo = SubtitleTextInfo(
                 text: text.build(textPosition: &textPosition),
-                position: nil, // VTT does not store textPosition (original discarded it) — disasm-evidenced
+                position: nil, // VTT does not store textPosition — disasm-evidenced (SrtParse audit-confirmed)
                 displaySize: nil,
                 styleRole: .primary,
                 usesForcedPosition: false
             )
-            return [SubtitlePart(start: startString.parseDuration(), end: endString.parseDuration(), render: .right(textInfo))]
+            return SubtitlePart(start: start, end: end, render: .right(textInfo))
         }
-        return []
+        if text.contains("><c>") {
+            return vttCueComponents(text).map { component in
+                makePart(start: component.start.map { $0.parseDuration() } ?? start,
+                         end: component.end.map { $0.parseDuration() } ?? end,
+                         text: component.text)
+            }
+        }
+        return [makePart(start: start, end: end, text: text)]
+    }
+
+    // FUN_101a9b838 — WebVTT inline-timestamp (karaoke) cue splitter: `<HH:MM:SS.mmm><c>text</c>` segments →
+    //   timed components; each component's end = the NEXT component's start timestamp (nil for the last).
+    //   audit_workflow FAITHFUL (recheck differential-fuzzed ~1.7M inputs, 0 mismatches). removeLast() is
+    //   UNCONDITIONAL per the binary (scanUpToString never returns a non-nil empty string, so it never traps).
+    private func vttCueComponents(_ text: String) -> [(start: String?, end: String?, text: String)] {
+        let scanner = Scanner(string: text)
+        scanner.charactersToBeSkipped = .newlines
+        var pairs = [(timestamp: String?, text: String)]()
+        while !scanner.isAtEnd {
+            var timestamp: String?
+            while scanner.scanString("<") != nil {
+                if var ts = scanner.scanUpToString("><c>") {
+                    ts.removeLast()
+                    timestamp = ts
+                }
+                _ = scanner.scanString("><c>")
+                if scanner.isAtEnd { break }
+            }
+            guard let segText = scanner.scanUpToString("<") ?? scanner.scanUpToCharacters(from: .newlines) else {
+                continue
+            }
+            pairs.append((timestamp, segText))
+            _ = scanner.scanString("</c>")
+        }
+        return pairs.enumerated().map { index, pair in
+            (start: pair.timestamp,
+             end: index + 1 < pairs.count ? pairs[index + 1].timestamp : nil,
+             text: pair.text)
+        }
     }
 }
 
