@@ -13,7 +13,8 @@ import UIKit
 #endif
 public protocol KSParseProtocol {
     func canParse(scanner: Scanner) -> Bool
-    func parsePart(scanner: Scanner) -> SubtitlePart?
+    func parsePart(scanner: Scanner) -> [SubtitlePart]
+    func parse(scanner: Scanner) -> [SubtitlePart]
 }
 
 public extension KSOptions {
@@ -23,13 +24,13 @@ public extension KSOptions {
 public extension String {}
 
 public extension KSParseProtocol {
+    func parsePart(scanner: Scanner) -> [SubtitlePart] { [] }
+
     func parse(scanner: Scanner) -> [SubtitlePart] {
         var groups = [SubtitlePart]()
 
         while !scanner.isAtEnd {
-            if let group = parsePart(scanner: scanner) {
-                groups.append(group)
-            }
+            groups.append(contentsOf: parsePart(scanner: scanner))
         }
         groups = groups.mergeSortBottomUp { $0 < $1 }
         return groups
@@ -37,14 +38,117 @@ public extension KSParseProtocol {
 }
 
 public class AssParse: KSParseProtocol {
-    private var styleMap: [String: ASSStyle]? // ⚑ §8.3 [String:ASSStyle]? (complex)
-    private var eventKeys: [String] = []
+    private var styleMap: [String: ASSStyle]? // §8.3 [String:ASSStyle]? — populated lazily in canParse
+    private var eventKeys = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"]
     private var displaySize: CGSize = .zero
-    // ⚑ UNRESOLVED → P4 M2: canParse (the [Script Info]/[Events] header parse + styleMap/eventKeys/displaySize population)
-    public func canParse(scanner: Scanner) -> Bool { false }
+    // ⚑ PARTIAL → P4 M2: canParse (FUN_101a97464 ~1048i) + parsePart (FUN_101a99ef0 ~911i) reconstruct the FAITHFUL
+    //   CORE ASS parsing (base-original-derived + binary-structure-confirmed: [Script Info]/PlayResX·Y→displaySize/
+    //   Style:→styleMap/[Events]→eventKeys/Dialogue→SubtitlePart). The Forward binary canParse ALSO references
+    //   _NSTemporaryDirectory + URL/NSURL/initWithString: + helpers (FUN_1019ac888/1019afaf8/1019c2014/101a984c8/
+    //   101a989b0) = a Forward ADDITION (likely ASS embedded-font extraction to a temp dir) NOT yet reconstructed.
+    //   render:Either field values (position/displaySize/styleRole/usesForcedPosition) audit-flagged below.
+    public func canParse(scanner: Scanner) -> Bool {
+        guard scanner.scanString("[Script Info]") != nil else {
+            return false
+        }
+        var playResX = Float(0.0)
+        var playResY = Float(0.0)
+        while scanner.scanString("Format:") == nil {
+            if scanner.scanString("PlayResX:") != nil {
+                playResX = scanner.scanFloat() ?? 0
+            } else if scanner.scanString("PlayResY:") != nil {
+                playResY = scanner.scanFloat() ?? 0
+            } else {
+                _ = scanner.scanUpToCharacters(from: .newlines)
+            }
+        }
+        displaySize = CGSize(width: CGFloat(playResX), height: CGFloat(playResY))
+        guard var keys = scanner.scanUpToCharacters(from: .newlines)?.components(separatedBy: ",") else {
+            return false
+        }
+        keys = keys.map { $0.trimmingCharacters(in: .whitespaces) }
+        var styleMap = [String: ASSStyle]()
+        while scanner.scanString("Style:") != nil {
+            _ = scanner.scanString("Format: ")
+            guard let values = scanner.scanUpToCharacters(from: .newlines)?.components(separatedBy: ",") else {
+                continue
+            }
+            var dic = [String: String]()
+            for i in 1 ..< keys.count {
+                dic[keys[i]] = values[i]
+            }
+            styleMap[values[0]] = dic.parseASSStyle()
+        }
+        self.styleMap = styleMap
+        _ = scanner.scanString("[Events]")
+        if scanner.scanString("Format: ") != nil {
+            guard let keys = scanner.scanUpToCharacters(from: .newlines)?.components(separatedBy: ",") else {
+                return false
+            }
+            eventKeys = keys.map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+        return true
+    }
 
-    // ⚑ UNRESOLVED → P4 M2: parsePart (ASS Dialogue → SubtitlePart via the new render:Either construction)
-    public func parsePart(scanner: Scanner) -> SubtitlePart? { nil }
+    // Dialogue: 0,0:12:37.73,0:12:38.83,Aki Default,,0,0,0,,{\be8}原来如此
+    public func parsePart(scanner: Scanner) -> [SubtitlePart] {
+        let isDialogue = scanner.scanString("Dialogue") != nil
+        var dic = [String: String]()
+        for i in 0 ..< eventKeys.count {
+            if !isDialogue, i == 1 {
+                continue
+            }
+            if i == eventKeys.count - 1 {
+                dic[eventKeys[i]] = scanner.scanUpToCharacters(from: .newlines)
+            } else {
+                dic[eventKeys[i]] = scanner.scanUpToString(",")
+                _ = scanner.scanString(",")
+            }
+        }
+        let start: TimeInterval
+        let end: TimeInterval
+        if let startString = dic["Start"], let endString = dic["End"] {
+            start = startString.parseDuration()
+            end = endString.parseDuration()
+        } else {
+            if isDialogue {
+                return []
+            } else {
+                start = 0
+                end = 0
+            }
+        }
+        var attributes: [NSAttributedString.Key: Any]?
+        var textPosition: TextPosition
+        if let style = dic["Style"], let assStyle = styleMap?[style] {
+            attributes = assStyle.attrs
+            textPosition = assStyle.textPosition
+            if let marginL = dic["MarginL"].flatMap(Double.init), marginL != 0 {
+                textPosition.leftMargin = CGFloat(marginL)
+            }
+            if let marginR = dic["MarginR"].flatMap(Double.init), marginR != 0 {
+                textPosition.rightMargin = CGFloat(marginR)
+            }
+            if let marginV = dic["MarginV"].flatMap(Double.init), marginV != 0 {
+                textPosition.verticalMargin = CGFloat(marginV)
+            }
+        } else {
+            textPosition = TextPosition()
+        }
+        guard var text = dic["Text"] else {
+            return []
+        }
+        text = text.replacingOccurrences(of: "\\N", with: "\n")
+        text = text.replacingOccurrences(of: "\\n", with: "\n")
+        let textInfo = SubtitleTextInfo(
+            text: text.build(textPosition: &textPosition, attributed: attributes),
+            position: textPosition, // ⚑ ASS stores textPosition (original `part.textPosition = textPosition`) → M2 audit-verify
+            displaySize: nil, // ⚑ render:Either field → M2 audit-verify (FUN_101a99ef0)
+            styleRole: .primary, // ⚑ parse produces primary → M2 audit-verify
+            usesForcedPosition: false // ⚑ → M2 audit-verify
+        )
+        return [SubtitlePart(start: start, end: end, render: .right(textInfo))]
+    }
 }
 
 public struct ASSStyle {
@@ -255,8 +359,49 @@ public class VTTParse: SrtParse {
      00:00.430 --> 00:03.380
      简中封装 by Q66
      */
-    // ⚑ UNRESOLVED → P4 M2: parsePart (WEBVTT cue → SubtitlePart via the new render:Either construction)
-    override public func parsePart(scanner: Scanner) -> SubtitlePart? { nil }
+    // ⚑ DIVERGENT (audit_workflow CRITICAL, session 17) → P4 M2 Batch 1b: the Forward binary VTTParse.parsePart
+    //   (0x101aa1110, VTTParse metadata+0x58 — anchor confirmed via witness thunk) is a COUNT-DRIVEN MULTI-PART
+    //   WebVTT cue-component parser (a `><c>` cue-tag `_contains` needle + a per-element loop building N SubtitleParts
+    //   — this is WHY parsePart returns [SubtitlePart]). The body below is the KSPlayer base-original SINGLE-part
+    //   approximation (functional for basic cues, NOT faithful) — reconstruct the real multi-part WebVTT parser in
+    //   Batch 1b from the decompile cache VTTParse_parsePart_101aa1110.
+    override public func parsePart(scanner: Scanner) -> [SubtitlePart] {
+        var timeStrs: String?
+        repeat {
+            timeStrs = scanner.scanUpToCharacters(from: .newlines)
+            _ = scanner.scanCharacters(from: .newlines)
+        } while !(timeStrs?.contains("-->") ?? false) && !scanner.isAtEnd
+        guard let timeStrs else {
+            return []
+        }
+        let timeArray: [String] = timeStrs.components(separatedBy: "-->")
+        if timeArray.count == 2 {
+            let startString = timeArray[0]
+            let endString = timeArray[1]
+            _ = scanner.scanCharacters(from: .newlines)
+            var text = ""
+            var newLine: String? = nil
+            repeat {
+                if let str = scanner.scanUpToCharacters(from: .newlines) {
+                    text += str
+                }
+                newLine = scanner.scanCharacters(from: .newlines)
+                if newLine == "\n" || newLine == "\r\n" {
+                    text += "\n"
+                }
+            } while newLine == "\n" || newLine == "\r\n"
+            var textPosition = TextPosition()
+            let textInfo = SubtitleTextInfo(
+                text: text.build(textPosition: &textPosition),
+                position: nil, // VTT does not store textPosition (original discarded it) — disasm-evidenced
+                displaySize: nil,
+                styleRole: .primary,
+                usesForcedPosition: false
+            )
+            return [SubtitlePart(start: startString.parseDuration(), end: endString.parseDuration(), render: .right(textInfo))]
+        }
+        return []
+    }
 }
 
 public class SrtParse: KSParseProtocol {
@@ -273,6 +418,40 @@ public class SrtParse: KSParseProtocol {
      00:02:52,184 --> 00:02:53,617
      {\an4}慢慢来
      */
-    // ⚑ UNRESOLVED → P4 M2: parsePart (SRT cue → SubtitlePart via the new render:Either construction)
-    public func parsePart(scanner: Scanner) -> SubtitlePart? { nil }
+    public func parsePart(scanner: Scanner) -> [SubtitlePart] {
+        var decimal: String?
+        repeat {
+            decimal = scanner.scanUpToCharacters(from: .newlines)
+            _ = scanner.scanCharacters(from: .newlines)
+        } while decimal.flatMap(Int.init) == nil
+        let startString = scanner.scanUpToString("-->")
+        // skip spaces and newlines by default.
+        _ = scanner.scanString("-->")
+        if let startString,
+           let endString = scanner.scanUpToCharacters(from: .newlines)
+        {
+            _ = scanner.scanCharacters(from: .newlines)
+            var text = ""
+            var newLine: String? = nil
+            repeat {
+                if let str = scanner.scanUpToCharacters(from: .newlines) {
+                    text += str
+                }
+                newLine = scanner.scanCharacters(from: .newlines)
+                if newLine == "\n" || newLine == "\r\n" {
+                    text += "\n"
+                }
+            } while newLine == "\n" || newLine == "\r\n"
+            var textPosition = TextPosition()
+            let textInfo = SubtitleTextInfo(
+                text: text.build(textPosition: &textPosition),
+                position: nil, // SRT does not store textPosition (original discarded it) — disasm-evidenced (zeroed region)
+                displaySize: nil,
+                styleRole: .primary,
+                usesForcedPosition: false
+            )
+            return [SubtitlePart(start: startString.parseDuration(), end: endString.parseDuration(), render: .right(textInfo))]
+        }
+        return []
+    }
 }

@@ -7,9 +7,10 @@
 import Foundation
 
 // FFmpegSubtitleParse @0x1039f16c4 — stateless parser (:KSParseProtocol, §8.5).
+// canParse = `{ true }` (witness 0x10002c740 = `return 1`); parsePart INHERITS the KSParseProtocol
+// extension default `{ [] }` (witness 0x10002d9dc, shared with AssImageParse) — FFmpeg subtitles are
+// decoded via the FFmpeg subtitle pipeline, not the Scanner text-parse path.
 public class FFmpegSubtitleParse: KSParseProtocol {
     public init() {}
-    // ⚑ UNRESOLVED → P4 M2: canParse / parsePart bodies
-    public func canParse(scanner: Scanner) -> Bool { false }
-    public func parsePart(scanner: Scanner) -> SubtitlePart? { nil }
+    public func canParse(scanner: Scanner) -> Bool { true }
 }
