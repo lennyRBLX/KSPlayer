@@ -70,17 +70,42 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
         }
     }
 
-    // ── ConversionInfoDelegate conformance (binary conf@0x1035715a0, wt 0x1041e1340). 3 instance-method
-    //    witnesses, devirtualized/stripped → their bodies are ProAVPlayer's OWN M2 unit. Honest stubs so the
-    //    protocol (declared from ConversionInfo's forwards, ConversionInfo.swift) compiles; ⚑ UNRESOLVED →
-    //    ProAVPlayer M2. Names are the inferred ConversionInfoDelegate names (firm up with this conformance).
+    // ── ConversionInfoDelegate conformance (binary conf@0x1035715a0, wt 0x1041e1340 → req0 101b7cc78 /
+    //    req1 101b7cc80 / req2 101b7d3b4). ProAVPlayer receives the coordinator's lifecycle callbacks.
+    //    Names inferred from ConversionInfo's forwards; behaviors reconstructed from the witness bodies.
+
+    /// req0 witness `FUN_101b7cc78` = `FUN_101b7c164(0)` — refresh the current item without seeking.
     func conversionDidUpdate() {
-        // UNRESOLVED — ProAVPlayer ConversionInfoDelegate witness (wt 0x1041e1340, req0); ProAVPlayer M2.
+        replaceCurrentItem(needSeek: false)
     }
+
+    /// req1 witness `FUN_101b7cc80` — mark end-of-stream; if the un-drained lead
+    /// (`currentItem.duration - remuxerIOAction.startPlayTime`) exceeds `maxBufferDuration`, schedule the
+    /// end-of-stream item work on the main actor.
     func conversionDidReachEnd() {
-        // UNRESOLVED — ProAVPlayer ConversionInfoDelegate witness (req1); ProAVPlayer M2.
+        hasEndOfStream = true                                            // [*(self+hasEndOfStream)=1]
+        guard let currentItem = player.currentItem else { return }       // [player=FUN_1019a1730; currentItem==0 -> return]
+        if let m3u8Info {                                                // self.m3u8Info != nil
+            if m3u8Info.maxBufferDuration < currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) {  // [+0x48 < duration.seconds - startPlayTime]
+                Task { @MainActor in                                    // [true: MainActor Task; alloc 0x38 @0x1041e1328]
+                    // ⚑ UNRESOLVED — reach-end true-branch async body (FUN_101b78394, captures currentItem + m3u8Info):
+                    //   ProAVPlayer M2 deep-async sub-unit (deferred, shape captured).
+                    //   ⚑[tool=prefetch_decompiles ref=FUN_101b78394:0x101b78394 result=LOCATED]
+                }
+            } else {                                                    // [false path — audit-caught: NOT omitted]
+                runOnMainThread {                                       // [false: runOnMainThread; weak-self ctx @0x1041e1198 + currentItem @0x1041e1300]
+                    // ⚑ UNRESOLVED — reach-end false-branch closure (FUN_101b7d628, weak self + captures currentItem):
+                    //   ProAVPlayer M2 sub-unit (deferred, shape captured).
+                    //   ⚑[tool=prefetch_decompiles ref=FUN_101b7d628:0x101b7d628 result=LOCATED]
+                }
+            }
+        }
     }
+
+    /// req2 witness `FUN_101b7d3b4` = a thunk to `KSAVPlayer.prepareToPlay()` (FUN_1019a9e20) — on conversion
+    /// failure, re-prepare the player. `error` is received by the protocol req but unused (the witness thunk
+    /// drops it; `prepareToPlay()` takes no args).
     func conversionDidFail(_ error: any Error) {
-        // UNRESOLVED — ProAVPlayer ConversionInfoDelegate witness (req2); ProAVPlayer M2.
+        prepareToPlay()
     }
 }

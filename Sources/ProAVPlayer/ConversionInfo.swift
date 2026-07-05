@@ -23,7 +23,7 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private weak var delegate: ConversionInfoDelegate? = nil
     private var demuxerTime: Double = 0
     private var currentPlaybackTime: Double = 0
-    private var maxBufferDuration: Double = 0
+    var maxBufferDuration: Double = 0   // internal (was private, P34): ProAVPlayer.conversionDidReachEnd reads m3u8Info.maxBufferDuration cross-file
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
     var remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
     private var demuxerIO: DemuxerIO
