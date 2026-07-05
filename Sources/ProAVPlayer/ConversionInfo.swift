@@ -21,7 +21,7 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private var subtitles: [MediaPlayerTrack] = []        // existential array (mangle Say…_pG; non-optional)
     // weak optional existential (mangle _pSgXw) → ConversionInfoDelegate (AnyObject). 3 reqs → M2.
     private weak var delegate: ConversionInfoDelegate? = nil
-    private var demuxerTime: Double = 0
+    var demuxerTime: Double = 0   // internal (was private, P34): ProAVPlayer.replaceCurrentItem's item-swap closure reads m3u8Info.demuxerTime cross-file
     private var currentPlaybackTime: Double = 0
     var maxBufferDuration: Double = 0   // internal (was private, P34): ProAVPlayer.conversionDidReachEnd reads m3u8Info.maxBufferDuration cross-file
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
@@ -85,6 +85,31 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
                 //   chain (genuinely deep-async, verified not assumed). The spawn + strong self-capture are
                 //   faithful; the closure internals = the "ConversionInfo deep-async closures" sub-unit
                 //   (P36, sibling of DemuxerIO's slot28/30).
+                _ = self
+            }
+        }
+    }
+
+    /// `FUN_101b69fc4`. The PLAYER-side counterpart to `didUpdateCurrentTime(_:)` — ProAVPlayer's item-swap
+    /// closure (`FUN_101b7c460`) + progress method (`FUN_101b7b7e8`) call this with the current playback
+    /// position. Symmetric to the demuxer side but stores `currentPlaybackTime` (@0x40) and spawns the progress
+    /// `Task` only when the un-drained lead `(demuxerTime - remuxerIOAction.startPlayTime) - time` drops BELOW
+    /// `maxBufferDuration` (the consumer catching up — the INVERSE of `didUpdateCurrentTime`'s producer test).
+    /// Disasm-verified: no `> 0` pre-guard (unlike the demuxer side); the `currentPlaybackTime` store is
+    /// guard-scoped (`str d8,[x20,#0x40]` @0x101b6a02c). ⚑ method NAME inferred (P28: `recover_swift_function_name`
+    /// = "rcl" KSLog-category red-herring, unrecovered; #file None). The Task's async body is deep → deferred.
+    func updateCurrentPlaybackTime(_ time: Double) {
+        guard abs(currentPlaybackTime - time) >= 1.0 else { return }   // [ldr d0,[x20,#0x40]; fabd; fcmp #1.0; b.mi @0x101b6a028]
+        currentPlaybackTime = time                                     // [str d8,[x20,#0x40] @0x101b6a02c — guard-scoped]
+        var start = 0.0
+        if let sp = remuxerIOAction.startPlayTime { start = sp }       // [remuxerIOAction@0x50; startPlayTime payload@+0x10/tag@+0x18]
+        if (demuxerTime - start) - time < maxBufferDuration {          // [fsub;fsub;fcmp d0,d1(maxBuf);b.pl @0x101b6a05c — Task iff lead < buffer]
+            Task { [self] in                                           // [swift_retain self @0x101b6a0a8; swift_task_create via FUN_101b76920 @0x101b6a0c4]
+                // ⚑ UNRESOLVED — deep-async body: FUN_101b6b968 (async-fn-ptr @DAT_103571210) trampolines
+                //   (`swift_task_alloc` + async-frame) to the continuation FUN_101b6a0e4 — a continuation-split
+                //   coroutine (genuinely deep-async). The spawn + strong self-capture are faithful; internals =
+                //   the ConversionInfo deep-async closures sub-unit (P36, sibling of didUpdateCurrentTime's FUN_101b6a530).
+                //   ⚑[tool=disassemble_function ref=FUN_101b6b968:0x101b6b968 result=LOCATED]
                 _ = self
             }
         }

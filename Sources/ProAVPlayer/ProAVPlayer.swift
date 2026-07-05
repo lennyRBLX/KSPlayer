@@ -62,9 +62,11 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                 item = ProPlayerItem(asset: asset)                        // initWithAsset:
             }
             item.m3u8Info = m3u8Info                                       // ProPlayerItem.m3u8Info = self.m3u8Info
-            // ⚑ UNRESOLVED (omitted) — FUN_101b69fc4(m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0)):
-            //   71i time-offset method (name unrecovered, self+0x40 store), gated `if m3u8Info != nil` → ProAVPlayer M2 sub-helper.
-            //   ⚑[tool=disassemble_function ref=FUN_101b69fc4:0x101b69fc4 result=LOCATED]
+            if let m3u8Info {                                             // [cbz x20 @0x101b7c640 — guard the ConversionInfo]
+                // FUN_101b69fc4 = ConversionInfo.updateCurrentPlaybackTime (receiver x20=m3u8Info; arg d8 =
+                // demuxerTime - (startPlayTime ?? 0) computed here @0x101b7c644-660). NOT a ProAVPlayer method.
+                m3u8Info.updateCurrentPlaybackTime(m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0))
+            }
             player.automaticallyWaitsToMinimizeStalling = false
             (self as KSAVPlayer).replaceCurrentItem(playerItem: item)     // KSAVPlayer.replaceCurrentItem(playerItem:) — FUN_1019a563c (P34: private→internal). Upcast resolves the base-name shadow from the needSeek: overload (super-in-closure unsupported); ProAVPlayer doesn't override it ⇒ same dispatch as the binary.
         }
