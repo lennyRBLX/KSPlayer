@@ -30,12 +30,24 @@ enum MESourceState {
 
 // MARK: delegate
 
-public protocol OutputRenderSourceDelegate: AnyObject {
-    func getVideoOutputRender(force: Bool) -> VideoVTBFrame?
+// Forward 1.3.17 SPLIT the render-source delegate into two protocols (audio / video); the binary has NO combined
+// (search_strings: only `AudioOutputRenderSourceDelegate` @0x1039ef… + `VideoOutputRenderSourceDelegate` @0x1039efe1c,
+// each 2 instance methods, `: AnyObject`). MEPlayerItem conforms BOTH (superclass_conformance-confirmed).
+public protocol AudioOutputRenderSourceDelegate: AnyObject {
     func getAudioOutputRender() -> AudioFrame?
     func setAudio(time: CMTime, position: Int64)
+}
+
+public protocol VideoOutputRenderSourceDelegate: AnyObject {
+    func getVideoOutputRender(force: Bool) -> VideoVTBFrame?
     func setVideo(time: CMTime, position: Int64)
 }
+
+// ⚑ BRIDGE (session 16b): the recon's combined `OutputRenderSourceDelegate` is kept as a refinement of the two REAL
+//   protocols so the Phase-N render-output hierarchy (FrameOutput.renderSource, AudioOutput/VideoOutput, the 5 renderers'
+//   renderSource fields) need not be retyped now — FrameOutput.renderSource couples the full retyping into a render-output
+//   subsystem reconstruction (a follow-on). The binary has NO combined ⇒ this is a source-extra bridge (P51, not flagged).
+public protocol OutputRenderSourceDelegate: AudioOutputRenderSourceDelegate, VideoOutputRenderSourceDelegate {}
 
 protocol CodecCapacityDelegate: AnyObject {
     func codecDidFinished(track: some CapacityProtocol)

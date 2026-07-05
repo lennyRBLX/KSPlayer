@@ -48,7 +48,7 @@ public final class MEPlayerItem {
     private var seekTime = TimeInterval(0)
     private var startTime = CMTime.zero
     public private(set) var duration: TimeInterval = 0
-    public private(set) var fileSize: Double = 0
+    public private(set) var fileSize: Int64 = 0 // MediaPlayback.fileSize migrated Double→Int64 (session 16b; known-answer 0x10536e600)
     public private(set) var naturalSize = CGSize.zero
     private var error: NSError? {
         didSet {
@@ -241,7 +241,7 @@ extension MEPlayerItem {
             audioClock.time = startTime
         }
         duration = TimeInterval(max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE))
-        fileSize = Double(formatCtx.pointee.bit_rate) * duration / 8
+        fileSize = Int64(Double(formatCtx.pointee.bit_rate) * duration / 8) // ⚑ exact integer arithmetic → M2; recon byte-estimate retyped Int64
         createCodec(formatCtx: formatCtx)
         if formatCtx.pointee.nb_chapters > 0 {
             chapters.removeAll()
@@ -769,7 +769,7 @@ extension MEPlayerItem: CodecCapacityDelegate {
     }
 }
 
-extension MEPlayerItem: OutputRenderSourceDelegate {
+extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (session 16b); satisfies both binary conformances + stays assignable to the Phase-N renderers' renderSource
     func mainClock() -> KSClock {
         isAudioStalled ? videoClock : audioClock
     }

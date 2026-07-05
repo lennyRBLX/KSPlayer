@@ -88,11 +88,9 @@ open class KSAVPlayer {
     public private(set) var pipController: KSPictureInPictureController?
     public weak var delegate: MediaPlayerDelegate?
     public private(set) var duration: TimeInterval = 0
-    // ⚑ DIVERGENCE-DEFERRED (user-gated s16): binary `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via
-    //   Foundation.Progress / Alamofire byte-count fields; NOT the handoff's `Int?` — that was l2's unscoped cross-match, P50).
-    //   Kept `Double` to preserve MediaPlayback.fileSize:Double conformance + build; l2 UNCHECKED (GOT-external field-record).
-    //   → MediaPlayback fileSize:Int64 protocol-version follow-on.
-    public private(set) var fileSize: Double = 0
+    // Forward 1.3.17: `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via Foundation.Progress / Alamofire
+    //   byte-count fields). MediaPlayback.fileSize migrated Double→Int64 (session 16b); l2 UNCHECKED (GOT-external field-record).
+    public private(set) var fileSize: Int64 = 0
     public private(set) var playableTime: TimeInterval = 0
     public let chapters: [Chapter] = []
     public var naturalSize: CGSize = .zero
