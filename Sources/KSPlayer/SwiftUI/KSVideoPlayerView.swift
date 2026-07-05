@@ -11,7 +11,7 @@ import SwiftUI
 @available(iOS 16.0, macOS 13.0, tvOS 16.0, *)
 @MainActor
 public struct KSVideoPlayerView: View {
-    private let subtitleDataSouce: SubtitleDataSouce?
+    private let subtitleDataSource: (any SubtitleDataSource)?
     @State
     private var title: String
     @StateObject
@@ -40,14 +40,14 @@ public struct KSVideoPlayerView: View {
     }
 
     public init(url: URL, options: KSOptions, title: String? = nil) {
-        self.init(coordinator: KSVideoPlayer.Coordinator(), url: url, options: options, title: title, subtitleDataSouce: nil)
+        self.init(coordinator: KSVideoPlayer.Coordinator(), url: url, options: options, title: title, subtitleDataSource: nil)
     }
 
-    public init(coordinator: KSVideoPlayer.Coordinator, url: URL, options: KSOptions, title: String? = nil, subtitleDataSouce: SubtitleDataSouce? = nil) {
-        self.init(coordinator: coordinator, url: .init(wrappedValue: url), options: options, title: .init(wrappedValue: title ?? url.lastPathComponent), subtitleDataSouce: subtitleDataSouce)
+    public init(coordinator: KSVideoPlayer.Coordinator, url: URL, options: KSOptions, title: String? = nil, subtitleDataSource: (any SubtitleDataSource)? = nil) {
+        self.init(coordinator: coordinator, url: .init(wrappedValue: url), options: options, title: .init(wrappedValue: title ?? url.lastPathComponent), subtitleDataSource: subtitleDataSource)
     }
 
-    public init(coordinator: KSVideoPlayer.Coordinator, url: State<URL>, options: KSOptions, title: State<String>, subtitleDataSouce: SubtitleDataSouce?) {
+    public init(coordinator: KSVideoPlayer.Coordinator, url: State<URL>, options: KSOptions, title: State<String>, subtitleDataSource: (any SubtitleDataSource)?) {
         _url = url
         _playerCoordinator = .init(wrappedValue: coordinator)
         _title = title
@@ -55,7 +55,7 @@ public struct KSVideoPlayerView: View {
         NSDocumentController.shared.noteNewRecentDocumentURL(url.wrappedValue)
         #endif
         self.options = options
-        self.subtitleDataSouce = subtitleDataSouce
+        self.subtitleDataSource = subtitleDataSource
     }
 
     public var body: some View {
@@ -128,8 +128,9 @@ public struct KSVideoPlayerView: View {
             .ignoresSafeArea()
             .onAppear {
                 focusableField = .play
-                if let subtitleDataSouce {
-                    playerCoordinator.subtitleModel.addSubtitle(dataSouce: subtitleDataSouce)
+                if let subtitleDataSource {
+                    // ⚑ → P4 M2: addSubtitle(dataSouce:) removed; subtitle attach is M2 (§5.1)
+                    _ = subtitleDataSource
                 }
                 // 不要加这个，不然playerCoordinator无法释放，也可以在onDisappear调用removeMonitor释放
                 //                    #if os(macOS)
@@ -621,45 +622,9 @@ private extension SubtitlePart {
     @available(iOS 16, tvOS 16, macOS 13, *)
     @MainActor
     var subtitleView: some View {
-        VStack {
-            if let image {
-                Spacer()
-                GeometryReader { geometry in
-                    let fitRect = image.fitRect(geometry.size)
-                    VideoSubtitleView.imageView(image)
-                        .offset(CGSize(width: fitRect.origin.x, height: fitRect.origin.y))
-                        .frame(width: fitRect.size.width, height: fitRect.size.height)
-                }
-                // 不能加scaledToFit。不然的话图片的缩放比率会有问题。
-//                .scaledToFit()
-                .padding()
-            } else if let text {
-                let textPosition = textPosition ?? SubtitleModel.textPosition
-                if textPosition.verticalAlign == .bottom || textPosition.verticalAlign == .center {
-                    Spacer()
-                }
-                Text(AttributedString(text))
-                    .font(Font(SubtitleModel.textFont))
-                    .shadow(color: .black.opacity(0.9), radius: 1, x: 1, y: 1)
-                    .foregroundColor(SubtitleModel.textColor)
-                    .italic(SubtitleModel.textItalic)
-                    .background(SubtitleModel.textBackgroundColor)
-                    .multilineTextAlignment(.center)
-                    .alignmentGuide(textPosition.horizontalAlign) {
-                        $0[.leading]
-                    }
-                    .padding(textPosition.edgeInsets)
-                #if !os(tvOS)
-                    .textSelection(.enabled)
-                #endif
-                if textPosition.verticalAlign == .top || textPosition.verticalAlign == .center {
-                    Spacer()
-                }
-            } else {
-                // 需要加这个，不然图片无法清空。感觉是 swiftUI的bug。
-                Text("")
-            }
-        }
+        // ⚑ UNRESOLVED → P4 M2: render `render` (Either<SubtitleImageInfo,SubtitleTextInfo>) —
+        //   recon image/text/textPosition removed (payload consolidated into render, §8.6).
+        Text("")
     }
 }
 

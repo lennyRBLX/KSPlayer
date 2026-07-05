@@ -1,17 +1,22 @@
 import Foundation
 
-// FFmpegSubtitle — Forward 1.3.17 reconstruction skeleton. Bodies: Phase 4.
-//
-// No-anchor class: vtable size 13 (corroborated), slots null-in-descriptor →
-// methods are direct-dispatch/final, recovered by instantiation-site dataflow.
-// Binary provenance (Forward-1.3.17):
-//   descriptor 0x1039f1718 · metadata accessor 0x101a9f0ac · vtable 13 · stored fields 8
-//   init (allocating)  @ 0x101a9f27c   (alloc size 0xa8 / 168 bytes)
-//   dataflow_recover.py: 1 corroborated (init) · 29 flagged shared-helpers
-//   → reconstruction/dataflow_FFmpegSubtitle.json
-// Stored-property TYPES + method bodies recovered in Phase 4; declaring them now
-// without resolved field-symbols would be fabrication (P17). Surface only.
-// Binary-confirmed `actor` (descriptor 0x1039f1718 carries a $defaultActor field record;
-// type_kind_gate.py). Was `class` — faithfulness fix (RECONSTRUCTION_FAITHFULNESS_MANUAL §1).
-actor FFmpegSubtitle {
+// FFmpegSubtitle @0x1039f1718 — Forward 1.3.17 `actor` ($defaultActor field record; type_kind_gate).
+// §8.3 fields (7, reflection-authoritative: formatContext/decode/subtitleStreamIndex/preTime/startTime/
+// endTime/parts) + §8.5 conforms KSSubtitleProtocol directly. Was an empty Phase-1 skeleton. Bodies → P4 M2.
+actor FFmpegSubtitle: KSSubtitleProtocol {
+    private let formatContext: FormatContext
+    private let decode: SubtitleDecode
+    private var subtitleStreamIndex: Int32 = 0 // ⚑ Int32 inferred (§8.6)
+    private var preTime: Double = 0
+    private var startTime: Double = 0
+    private var endTime: Double = 0
+    private var parts: [SubtitlePart] = []
+    // ⚑ init shape inferred → M2 witness-verify (init @0x101a9f27c, alloc 168B)
+    init(formatContext: FormatContext, decode: SubtitleDecode) {
+        self.formatContext = formatContext
+        self.decode = decode
+    }
+
+    // ⚑ UNRESOLVED → P4 M2: subtitle(currentTime:) async + the parts search
+    nonisolated public func search(for _: TimeInterval) -> [SubtitlePart] { [] }
 }

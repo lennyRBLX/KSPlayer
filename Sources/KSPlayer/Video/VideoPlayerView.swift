@@ -57,8 +57,9 @@ open class VideoPlayerView: PlayerView {
     public private(set) var resource: KSPlayerResource? {
         didSet {
             if let resource, oldValue != resource {
-                if let subtitleDataSouce = resource.subtitleDataSouce {
-                    srtControl.addSubtitle(dataSouce: subtitleDataSouce)
+                if let subtitleDataSource = resource.subtitleDataSource {
+                    // ⚑ UNRESOLVED → P4 M2: attach the resource datasource (addSubtitle(dataSouce:) removed, §5.1).
+                    _ = subtitleDataSource
                 }
                 subtitleBackView.isHidden = true
                 subtitleBackView.image = nil
@@ -263,8 +264,9 @@ open class VideoPlayerView: PlayerView {
         super.player(layer: layer, currentTime: currentTime, totalTime: totalTime)
         if srtControl.subtitle(currentTime: currentTime) {
             if let part = srtControl.parts.first {
-                subtitleBackView.image = part.image
-                subtitleLabel.attributedText = part.text
+                // ⚑ UNRESOLVED → P4 M2: render `part.render` (Either<SubtitleImageInfo,SubtitleTextInfo>) —
+                //   recon part.image/part.text removed (payload consolidated into render, §8.6).
+                _ = part
                 subtitleBackView.isHidden = false
             } else {
                 subtitleBackView.image = nil
@@ -284,11 +286,11 @@ open class VideoPlayerView: PlayerView {
             if #available(iOS 14.0, tvOS 15.0, *) {
                 buildMenusForButtons()
             }
-            if let subtitleDataSouce = layer.player.subtitleDataSouce {
+            if let subtitleDataSource = layer.player.subtitleDataSource {
                 // 要延后增加内嵌字幕。因为有些内嵌字幕是放在视频流的。所以会比readyToPlay回调晚。
                 DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 1) { [weak self] in
                     guard let self else { return }
-                    self.srtControl.addSubtitle(dataSouce: subtitleDataSouce)
+                    _ = subtitleDataSource // ⚑ → P4 M2: addSubtitle(dataSouce:) removed; subtitle attach is M2 (§5.1)
                     if self.srtControl.selectedSubtitleInfo == nil, layer.options.autoSelectEmbedSubtitle {
                         self.srtControl.selectedSubtitleInfo = self.srtControl.subtitleInfos.first { $0.isEnabled }
                     }

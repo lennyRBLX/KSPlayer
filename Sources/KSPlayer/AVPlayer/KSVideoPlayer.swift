@@ -222,15 +222,10 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
         onStateChanged?(layer, state)
         if state == .readyToPlay {
             playbackRate = layer.player.playbackRate
-            if let subtitleDataSouce = layer.player.subtitleDataSouce {
-                // 要延后增加内嵌字幕。因为有些内嵌字幕是放在视频流的。所以会比readyToPlay回调晚。
-                DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 1) { [weak self] in
-                    guard let self else { return }
-                    self.subtitleModel.addSubtitle(dataSouce: subtitleDataSouce)
-                    if self.subtitleModel.selectedSubtitleInfo == nil, layer.options.autoSelectEmbedSubtitle {
-                        self.subtitleModel.selectedSubtitleInfo = subtitleDataSouce.infos.first { $0.isEnabled }
-                    }
-                }
+            if let subtitleDataSource = layer.player.subtitleDataSource {
+                // ⚑ UNRESOLVED → P4 M2: attach embedded subtitles — recon addSubtitle(dataSouce:)/.infos removed;
+                //   the new model collects via searchSubtitle / the async pipeline (§5.1).
+                _ = subtitleDataSource
             }
         } else if state == .bufferFinished {
             isMaskShow = false

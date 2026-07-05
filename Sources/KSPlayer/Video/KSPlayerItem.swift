@@ -18,7 +18,7 @@ public class KSPlayerResource: Equatable, Hashable {
     public let name: String
     public let definitions: [KSPlayerResourceDefinition]
     public let cover: URL?
-    public let subtitleDataSouce: SubtitleDataSouce?
+    public let subtitleDataSource: (any SubtitleDataSource)?
     public var nowPlayingInfo: KSNowPlayableMetadata?
     public let extinf: [String: String]?
     /**
@@ -31,14 +31,15 @@ public class KSPlayerResource: Equatable, Hashable {
      */
     public convenience init(url: URL, options: KSOptions = KSOptions(), name: String = "", cover: URL? = nil, subtitleURLs: [URL]? = nil, extinf: [String: String]? = nil) {
         let definition = KSPlayerResourceDefinition(url: url, definition: "", options: options)
-        let subtitleDataSouce: URLSubtitleDataSouce?
-        if let subtitleURLs {
-            subtitleDataSouce = URLSubtitleDataSouce(urls: subtitleURLs)
+        let subtitleDataSource: ConstantURLSubtitleDataSource?
+        if let subtitleURLs, let first = subtitleURLs.first {
+            // ⚑ init shape → P4 M2 (recon URLSubtitleDataSouce(urls:) → ConstantURLSubtitleDataSource(url:infos:))
+            subtitleDataSource = ConstantURLSubtitleDataSource(url: first, infos: subtitleURLs.map { URLSubtitleInfo(url: $0) })
         } else {
-            subtitleDataSouce = nil
+            subtitleDataSource = nil
         }
 
-        self.init(name: name, definitions: [definition], cover: cover, subtitleDataSouce: subtitleDataSouce, extinf: extinf)
+        self.init(name: name, definitions: [definition], cover: cover, subtitleDataSource: subtitleDataSource, extinf: extinf)
     }
 
     /**
@@ -49,10 +50,10 @@ public class KSPlayerResource: Equatable, Hashable {
      - parameter cover:       video cover
      - parameter subtitle:   video subtitle
      */
-    public init(name: String, definitions: [KSPlayerResourceDefinition], cover: URL? = nil, subtitleDataSouce: SubtitleDataSouce? = nil, extinf: [String: String]? = nil) {
+    public init(name: String, definitions: [KSPlayerResourceDefinition], cover: URL? = nil, subtitleDataSource: (any SubtitleDataSource)? = nil, extinf: [String: String]? = nil) {
         self.name = name
         self.cover = cover
-        self.subtitleDataSouce = subtitleDataSouce
+        self.subtitleDataSource = subtitleDataSource
         self.definitions = definitions
         self.extinf = extinf
         nowPlayingInfo = KSNowPlayableMetadata(title: name)

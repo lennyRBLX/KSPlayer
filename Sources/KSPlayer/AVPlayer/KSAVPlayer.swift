@@ -67,7 +67,36 @@ public final class KSAVPlayerView: UIView {
 
 @MainActor
 open class KSAVPlayer {
+    // Forward 1.3.17 stored fields — reflection order (desc 0x1039ec148); reconstructed session 16 (KSAVPlayer M1 fields).
+    // Recon KVO NSKeyValueObservations → Combine observer cancellables; `urlAsset` → `io: Either<URL, AVAsset>`.
+    // Every stored field carries an explicit `: Type` annotation. Method bodies that used the removed fields are
+    // grounded `⚑ UNRESOLVED → KSAVPlayer M2` stubs (the AVPlayer-wrapper bodies are M2).
     private var cancellable: AnyCancellable?
+    private var periodicTimeObserver: Any?
+    private let playerView: KSAVPlayerView = KSAVPlayerView()
+    private var io: Either<URL, AVAsset>
+    private var shouldSeekTo: Double?
+    private var playerLooper: AVPlayerLooper?
+    private var mediaPlayerTracks: [any MediaPlayerTrack] = []
+    private var subtitleTracks: [any MediaPlayerTrack] = []
+    private var observerCancellables: Set<AnyCancellable> = []
+    private var observerPlayerItemCancellables: Set<AnyCancellable> = []
+    private var observerLoopCancellables: Set<AnyCancellable> = []
+    // ⚑ DIVERGENCE-DEFERRED (user-gated s16): binary field 11 `pipController` is `(any KSPictureInPictureProtocol)?`
+    //   — a NEW protocol absent from recon (field-record `KSPictureInPictureProtocol_pSg`). Kept the recon concrete type to
+    //   avoid a MediaPlayerProtocol version-ripple; l2 UNCHECKED (no class-scoped symbol). → MediaPlayerProtocol-version follow-on.
+    public private(set) var pipController: KSPictureInPictureController?
+    public weak var delegate: MediaPlayerDelegate?
+    public private(set) var duration: TimeInterval = 0
+    // ⚑ DIVERGENCE-DEFERRED (user-gated s16): binary `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via
+    //   Foundation.Progress / Alamofire byte-count fields; NOT the handoff's `Int?` — that was l2's unscoped cross-match, P50).
+    //   Kept `Double` to preserve MediaPlayback.fileSize:Double conformance + build; l2 UNCHECKED (GOT-external field-record).
+    //   → MediaPlayback fileSize:Int64 protocol-version follow-on.
+    public private(set) var fileSize: Double = 0
+    public private(set) var playableTime: TimeInterval = 0
+    public let chapters: [Chapter] = []
+    public var naturalSize: CGSize = .zero
+    private var shouldResumePlayback: Bool = false
     private var options: KSOptions {
         didSet {
             player.currentItem?.preferredForwardBufferDuration = options.preferredForwardBufferDuration
@@ -77,19 +106,6 @@ open class KSAVPlayer {
         }
     }
 
-    private let playerView = KSAVPlayerView()
-    private var urlAsset: AVURLAsset
-    private var shouldSeekTo = TimeInterval(0)
-    private var playerLooper: AVPlayerLooper?
-    private var statusObservation: NSKeyValueObservation?
-    private var loadedTimeRangesObservation: NSKeyValueObservation?
-    private var bufferEmptyObservation: NSKeyValueObservation?
-    private var likelyToKeepUpObservation: NSKeyValueObservation?
-    private var bufferFullObservation: NSKeyValueObservation?
-    private var itemObservation: NSKeyValueObservation?
-    private var loopCountObservation: NSKeyValueObservation?
-    private var loopStatusObservation: NSKeyValueObservation?
-    private var mediaPlayerTracks = [AVMediaPlayerTrack]()
     private var error: Error? {
         didSet {
             if let error {
@@ -98,38 +114,16 @@ open class KSAVPlayer {
         }
     }
 
-    private lazy var _pipController: Any? = {
-        if #available(tvOS 14.0, *) {
-            let pip = KSPictureInPictureController(playerLayer: playerView.playerLayer)
-            return pip
-        } else {
-            return nil
-        }
-    }()
+    // binary `$__lazy_storage_$_dynamicInfo` (reflection-filtered lazy backing); recon had `let dynamicInfo = nil`.
+    // ⚑ UNRESOLVED → KSAVPlayer M2: the binary builds a DynamicInfo lazily (metadata/bytesRead/bitrate blocks).
+    public lazy var dynamicInfo: DynamicInfo? = nil
 
-    @available(tvOS 14.0, *)
-    public var pipController: KSPictureInPictureController? {
-        _pipController as? KSPictureInPictureController
-    }
-
-    public var naturalSize: CGSize = .zero
-    public let dynamicInfo: DynamicInfo? = nil
-    @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
-    public var playbackCoordinator: AVPlaybackCoordinator {
-        playerView.player.playbackCoordinator
-    }
-
-    public private(set) var bufferingProgress = 0 {
+    public private(set) var bufferingProgress: UInt8 = 0 {
         didSet {
-            delegate?.changeBuffering(player: self, progress: bufferingProgress)
+            delegate?.changeBuffering(player: self, progress: Int(bufferingProgress))
         }
     }
 
-    public weak var delegate: MediaPlayerDelegate?
-    public private(set) var duration: TimeInterval = 0
-    public private(set) var fileSize: Double = 0
-    public private(set) var playableTime: TimeInterval = 0
-    public let chapters: [Chapter] = []
     public var playbackRate: Float = 1 {
         didSet {
             if playbackState == .playing {
@@ -146,7 +140,7 @@ open class KSAVPlayer {
         }
     }
 
-    public private(set) var loadState = MediaLoadState.idle {
+    public private(set) var loadState: MediaLoadState = .idle {
         didSet {
             if loadState != oldValue {
                 playOrPause()
@@ -157,7 +151,7 @@ open class KSAVPlayer {
         }
     }
 
-    public private(set) var playbackState = MediaPlaybackState.idle {
+    public private(set) var playbackState: MediaPlaybackState = .idle {
         didSet {
             if playbackState != oldValue {
                 playOrPause()
@@ -168,7 +162,7 @@ open class KSAVPlayer {
         }
     }
 
-    public private(set) var isReadyToPlay = false {
+    public private(set) var isReadyToPlay: Bool = false {
         didSet {
             if isReadyToPlay != oldValue {
                 if isReadyToPlay {
@@ -177,6 +171,11 @@ open class KSAVPlayer {
                 }
             }
         }
+    }
+
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
+    public var playbackCoordinator: AVPlaybackCoordinator {
+        playerView.player.playbackCoordinator
     }
 
     #if os(xrOS)
@@ -213,12 +212,9 @@ open class KSAVPlayer {
 
     public required init(url: URL, options: KSOptions) {
         KSOptions.setAudioSession()
-        urlAsset = AVURLAsset(url: url, options: options.avOptions)
+        io = .left(url) // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset; binary stores io:Either<URL,AVAsset>
         self.options = options
-        itemObservation = player.observe(\.currentItem) { [weak self] player, _ in
-            guard let self else { return }
-            self.observer(playerItem: player.currentItem)
-        }
+        // ⚑ UNRESOLVED → KSAVPlayer M2: currentItem observation (was `itemObservation` KVO → observer(playerItem:)) via observerCancellables
     }
 }
 
@@ -246,43 +242,12 @@ extension KSAVPlayer {
     }
 
     private func updateStatus(item: AVPlayerItem) {
-        if item.status == .readyToPlay {
-            options.findTime = CACurrentMediaTime()
-            mediaPlayerTracks = item.tracks.map {
-                AVMediaPlayerTrack(track: $0)
-            }
-            let playableVideo = mediaPlayerTracks.first {
-                $0.mediaType == .video && $0.isPlayable
-            }
-            if let playableVideo {
-                naturalSize = playableVideo.naturalSize
-            } else {
-                error = NSError(errorCode: .videoTracksUnplayable)
-                return
-            }
-            // 默认选择第一个声道
-            item.tracks.filter { $0.assetTrack?.mediaType.rawValue == AVMediaType.audio.rawValue }.dropFirst().forEach { $0.isEnabled = false }
-            duration = item.duration.seconds
-            let estimatedDataRates = item.tracks.compactMap { $0.assetTrack?.estimatedDataRate }
-            fileSize = Double(estimatedDataRates.reduce(0, +)) * duration / 8
-            isReadyToPlay = true
-        } else if item.status == .failed {
-            error = item.error
-        }
+        // ⚑ UNRESOLVED → KSAVPlayer M2: readyToPlay/failed handling rebuilt on the reworked fields
+        //   (mediaPlayerTracks:[any MediaPlayerTrack] / subtitleTracks, naturalSize, duration, fileSize, error).
     }
 
     private func updatePlayableDuration(item: AVPlayerItem) {
-        let first = item.loadedTimeRanges.first { CMTimeRangeContainsTime($0.timeRangeValue, time: item.currentTime()) }
-        if let first {
-            playableTime = first.timeRangeValue.end.seconds
-            guard playableTime > 0 else { return }
-            let loadedTime = playableTime - currentPlaybackTime
-            guard loadedTime > 0 else { return }
-            bufferingProgress = Int(min(loadedTime * 100 / item.preferredForwardBufferDuration, 100))
-            if bufferingProgress >= 100 {
-                loadState = .playable
-            }
-        }
+        // ⚑ UNRESOLVED → KSAVPlayer M2: playableTime / bufferingProgress(UInt8) / loadState buffering computation.
     }
 
     private func playOrPause() {
@@ -300,28 +265,13 @@ extension KSAVPlayer {
     public func replaceCurrentItem(playerItem: AVPlayerItem?) {   // public (was private, P34): ProAVPlayer (separate module) slot15 item-swap closure installs its ProPlayerItem via this cross-module call (FUN_1019a563c)
         player.currentItem?.cancelPendingSeeks()
         if options.isLoopPlay {
-            loopCountObservation?.invalidate()
-            loopStatusObservation?.invalidate()
             playerLooper?.disableLooping()
             guard let playerItem else {
                 playerLooper = nil
                 return
             }
             playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
-            loopCountObservation = playerLooper?.observe(\.loopCount) { [weak self] playerLooper, _ in
-                let loopCount = playerLooper.loopCount
-                nonisolated(unsafe) let weakSelf = self
-                Task { @MainActor in
-                    guard let s = weakSelf else { return }
-                    s.delegate?.playBack(player: s, loopCount: loopCount)
-                }
-            }
-            loopStatusObservation = playerLooper?.observe(\.status) { [weak self] playerLooper, _ in
-                guard let self else { return }
-                if playerLooper.status == .failed {
-                    self.error = playerLooper.error
-                }
-            }
+            // ⚑ UNRESOLVED → KSAVPlayer M2: loopCount/loopStatus observation (was 2 KVO NSKeyValueObservations → observerLoopCancellables)
         } else {
             player.replaceCurrentItem(with: playerItem)
         }
@@ -330,47 +280,22 @@ extension KSAVPlayer {
     private func observer(playerItem: AVPlayerItem?) {
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)
-        statusObservation?.invalidate()
-        loadedTimeRangesObservation?.invalidate()
-        bufferEmptyObservation?.invalidate()
-        likelyToKeepUpObservation?.invalidate()
-        bufferFullObservation?.invalidate()
+        // ⚑ UNRESOLVED → KSAVPlayer M2: the 5 KVO NSKeyValueObservations (status / loadedTimeRanges / bufferEmpty /
+        //   likelyToKeepUp / bufferFull) → observerPlayerItemCancellables Combine sinks (updateStatus/updatePlayableDuration/loadState).
         guard let playerItem else { return }
         NotificationCenter.default.addObserver(self, selector: #selector(moviePlayDidEnd), name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
         NotificationCenter.default.addObserver(self, selector: #selector(playerItemFailedToPlayToEndTime), name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)
-        statusObservation = playerItem.observe(\.status) { [weak self] item, _ in
-            guard let self else { return }
-            self.updateStatus(item: item)
-        }
-        loadedTimeRangesObservation = playerItem.observe(\.loadedTimeRanges) { [weak self] item, _ in
-            guard let self else { return }
-            // 计算缓冲进度
-            self.updatePlayableDuration(item: item)
-        }
-
-        let changeHandler: (AVPlayerItem, NSKeyValueObservedChange<Bool>) -> Void = { [weak self] _, _ in
-            guard let self else { return }
-            // 在主线程更新进度
-            if playerItem.isPlaybackBufferEmpty {
-                self.loadState = .loading
-            } else if playerItem.isPlaybackLikelyToKeepUp || playerItem.isPlaybackBufferFull {
-                self.loadState = .playable
-            }
-        }
-        bufferEmptyObservation = playerItem.observe(\.isPlaybackBufferEmpty, changeHandler: changeHandler)
-        likelyToKeepUpObservation = playerItem.observe(\.isPlaybackLikelyToKeepUp, changeHandler: changeHandler)
-        bufferFullObservation = playerItem.observe(\.isPlaybackBufferFull, changeHandler: changeHandler)
     }
 }
 
 extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
-    public var subtitleDataSouce: SubtitleDataSouce? { nil }
+    public var subtitleDataSource: (any SubtitleDataSource)? { nil }
     public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
     public var view: UIView? { playerView }
     public var currentPlaybackTime: TimeInterval {
         get {
-            if shouldSeekTo > 0 {
-                return TimeInterval(shouldSeekTo)
+            if let shouldSeekTo, shouldSeekTo > 0 {
+                return shouldSeekTo
             } else {
                 // 防止卡主
                 return isReadyToPlay ? player.currentTime().seconds : 0
@@ -390,14 +315,8 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func thumbnailImageAtCurrentTime() async -> CGImage? {
-        guard let playerItem = player.currentItem, isReadyToPlay else {
-            return nil
-        }
-        return await withCheckedContinuation { continuation in
-            urlAsset.thumbnailImage(currentTime: playerItem.currentTime()) { result in
-                continuation.resume(returning: result)
-            }
-        }
+        // ⚑ UNRESOLVED → KSAVPlayer M2: thumbnail from the `io` asset (was urlAsset.thumbnailImage(currentTime:))
+        nil
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
@@ -419,15 +338,8 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     public func prepareToPlay() {
         KSLog("prepareToPlay \(self)")
         options.prepareTime = CACurrentMediaTime()
-        runOnMainThread { [weak self] in
-            guard let self else { return }
-            self.bufferingProgress = 0
-            let playerItem = AVPlayerItem(asset: self.urlAsset)
-            self.options.openTime = CACurrentMediaTime()
-            self.replaceCurrentItem(playerItem: playerItem)
-            self.player.actionAtItemEnd = .pause
-            self.player.volume = self.playbackVolume
-        }
+        // ⚑ UNRESOLVED → KSAVPlayer M2: build AVPlayerItem from `io` (was AVPlayerItem(asset: urlAsset)) on the main thread,
+        //   install via replaceCurrentItem, set openTime / actionAtItemEnd / volume / bufferingProgress.
     }
 
     public func play() {
@@ -445,14 +357,14 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         isReadyToPlay = false
         playbackState = .stopped
         loadState = .idle
-        urlAsset.cancelLoading()
+        // ⚑ M2: cancelLoading on the `io` asset (was urlAsset.cancelLoading())
         replaceCurrentItem(playerItem: nil)
     }
 
     public func replace(url: URL, options: KSOptions) {
         KSLog("replaceUrl \(self)")
         shutdown()
-        urlAsset = AVURLAsset(url: url, options: options.avOptions)
+        io = .left(url) // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset
         self.options = options
     }
 
@@ -593,4 +505,14 @@ public extension AVAsset {
             }
         }
     }
+}
+
+// §1/§7.2 — KSAVPlayer conforms SubtitleDataSource (empty marker) + ConstantSubtitleDataSource
+// (method-bearing, CORRECTED s14). The refinement-aware superclass_conformance_gate resolves both
+// from the binary's conformance records (the original task_e5456ff6 target).
+extension KSAVPlayer: SubtitleDataSource {}
+
+extension KSAVPlayer: ConstantSubtitleDataSource {
+    // ⚑ the async method re-homes the witness 0x1019aba18 (near-empty async trampoline, §1). UNRESOLVED → P4 M2.
+    public nonisolated func searchSubtitle() async throws -> [any SubtitleInfo] { [] }
 }

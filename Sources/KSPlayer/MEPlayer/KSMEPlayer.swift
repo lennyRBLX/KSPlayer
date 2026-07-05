@@ -293,7 +293,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         playerItem.chapters
     }
 
-    public var subtitleDataSouce: SubtitleDataSouce? { self }
+    public var subtitleDataSource: (any SubtitleDataSource)? { self }
     public var playbackVolume: Float {
         get {
             audioOutput.volume

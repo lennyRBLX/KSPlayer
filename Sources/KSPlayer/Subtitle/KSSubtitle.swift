@@ -11,29 +11,28 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 
-public class SubtitlePart: CustomStringConvertible, Identifiable {
-    public var start: TimeInterval
-    public var end: TimeInterval
-    public var origin: CGPoint = .zero
-    public let text: NSAttributedString?
-    public var image: UIImage?
-    public var textPosition: TextPosition?
-    public var description: String {
-        "Subtile Group ==========\nstart: \(start)\nend:\(end)\ntext:\(String(describing: text))"
-    }
+// SubtitlePart @0x1039f21e8 — STRUCT (was class); payload consolidated into `render: Either` (§8.6).
+// Conformances carried from the recon (reverse-walk confirms NumericComparable; the 4 stdlib ones are
+// GOT-indirect-blind but xref-count-corroborated — ~5 conformance descriptors). The Comparable +
+// NumericComparable extensions (below, unchanged) use only start/end → they transfer faithfully.
+public struct SubtitlePart: CustomStringConvertible, Identifiable {
+    public var start: Double
+    public var end: Double
+    public var render: Either<SubtitleImageInfo, SubtitleTextInfo>
+    // ⚑ Identifiable.id inferred: the recon CLASS used the synthesized ObjectIdentifier; a struct needs
+    //   an explicit id, and the binary has NO stored `id` (3 fields: start/end/render) → computed. M2 verify.
+    public var id: Double { start }
+    // ⚑ UNRESOLVED → P4 M2: the recon description referenced the removed `text`; the binary body renders
+    //   `render` (image-or-text). Minimal faithful placeholder until the witness decode:
+    public var description: String { "SubtitlePart(start: \(start), end: \(end))" }
 
-    public convenience init(_ start: TimeInterval, _ end: TimeInterval, _ string: String) {
-        var text = string
-        text = text.trimmingCharacters(in: .whitespaces)
-        text = text.replacingOccurrences(of: "\r", with: "")
-        self.init(start, end, attributedString: NSAttributedString(string: text))
-    }
-
-    public init(_ start: TimeInterval, _ end: TimeInterval, attributedString: NSAttributedString?) {
+    public init(start: Double, end: Double, render: Either<SubtitleImageInfo, SubtitleTextInfo>) {
         self.start = start
         self.end = end
-        text = attributedString
+        self.render = render
     }
+    // ⚑ UNRESOLVED → P4 M2: the recon convenience inits [init(_:_:_string:) / init(_:_:attributedString:)]
+    //   built `text`; the binary builds `render` (.left(SubtitleImageInfo) / .right(SubtitleTextInfo)).
 }
 
 public struct TextPosition {
@@ -147,64 +146,8 @@ public extension SubtitleInfo {
     }
 }
 
-public class KSSubtitle {
-    public var parts: [SubtitlePart] = []
-    public init() {}
-}
-
-extension KSSubtitle: KSSubtitleProtocol {
-    /// Search for target group for time
-    public func search(for time: TimeInterval) -> [SubtitlePart] {
-        var result = [SubtitlePart]()
-        for part in parts {
-            if part == time {
-                result.append(part)
-            } else if part.start > time {
-                break
-            }
-        }
-        return result
-    }
-}
-
-public extension KSSubtitle {
-    func parse(url: URL, userAgent: String? = nil, encoding: String.Encoding? = nil) async throws {
-        let data = try await url.data(userAgent: userAgent)
-        try parse(data: data, encoding: encoding)
-    }
-
-    func parse(data: Data, encoding: String.Encoding? = nil) throws {
-        var string: String?
-        let encodes = [encoding ?? String.Encoding.utf8,
-                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.big5.rawValue))),
-                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))),
-                       String.Encoding.unicode]
-        for encode in encodes {
-            string = String(data: data, encoding: encode)
-            if string != nil {
-                break
-            }
-        }
-        guard let subtitle = string else {
-            throw NSError(errorCode: .subtitleUnEncoding)
-        }
-        let scanner = Scanner(string: subtitle)
-        _ = scanner.scanCharacters(from: .controlCharacters)
-        let parse = KSOptions.subtitleParses.first { $0.canParse(scanner: scanner) }
-        if let parse {
-            parts = parse.parse(scanner: scanner)
-            if parts.count == 0 {
-                throw NSError(errorCode: .subtitleUnParse)
-            }
-        } else {
-            throw NSError(errorCode: .subtitleFormatUnSupport)
-        }
-    }
-
-//    public static func == (lhs: KSURLSubtitle, rhs: KSURLSubtitle) -> Bool {
-//        lhs.url == rhs.url
-//    }
-}
+// §8.2 — `class KSSubtitle` REMOVED (confirmed absent from __swift5_types). Its KSSubtitleProtocol
+// conformance moved to the concrete info/actor classes (§8.5); the parse pipeline → the parse classes / P4 M2.
 
 public protocol NumericComparable {
     associatedtype Compare
@@ -288,123 +231,48 @@ open class SubtitleModel: ObservableObject {
     nonisolated(unsafe) public static var textItalic = false
     nonisolated(unsafe) public static var textPosition = TextPosition()
     nonisolated(unsafe) public static var audioRecognizes = [any AudioRecognize]()
-    private var subtitleDataSouces: [SubtitleDataSouce] = KSOptions.subtitleDataSouces
-    @Published
-    public private(set) var subtitleInfos = [any SubtitleInfo]()
-    @Published
-    public private(set) var parts = [SubtitlePart]()
-    public var subtitleDelay = 0.0 // s
-    public var url: URL? {
-        didSet {
-            subtitleInfos.removeAll()
-            searchSubtitle(query: nil, languages: [])
-            if url != nil {
-                subtitleInfos.append(contentsOf: SubtitleModel.audioRecognizes)
-            }
-            for datasouce in subtitleDataSouces {
-                addSubtitle(dataSouce: datasouce)
-            }
-            // 要用async，不能在更新UI的时候，修改Publishe变量
-            nonisolated(unsafe) let strongSelf = self
-            Task { @MainActor in
-                strongSelf.parts = []
-                strongSelf.selectedSubtitleInfo = nil
-            }
-        }
+    // §7.3 — 24 fields in binary reflection order. @Published-backed → `_x` in field metadata;
+    // `_translationSessionConf`/`_translationSession` are manual `_`-backings (computed accessors; the iOS18
+    // TranslationSession is boxed for availability). Method bodies → P4 M2.
+    public var translation: Bool = false
+    private var _translationSessionConf: Any?
+    private var _translationSession: AnyObject?
+    public var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
+    @Published public private(set) var subtitleInfos: [any SubtitleInfo] = []
+    @Published public private(set) var searchedSubtitleInfos: [URLSubtitleInfo] = []
+    @Published public private(set) var parts: [SubtitlePart] = []
+    public var subtitleDelay: Double = 0.0 // s
+    public var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2
+    public var options: KSOptions
+    @Published public var flag: Int = 0
+    @Published public var subtitleTranslateY: Float = 0
+    public var playRatio: Double = 1
+    @Published public var screenSize: CGSize = .zero
+    public var subtitleSearchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
+    public var subtitleSearchSequence: Int = 0 // ⚑ Int store-evidenced (§7.5)
+    public var latestPrimarySubtitleQueryTime: Double?
+    public var latestSecondarySubtitleQueryTime: Double?
+    public var url: URL? // ⚑ §7.5: mangle reads NON-optional; recon URL? w/ search didSet → M2 verify
+    public var firstSubtitleActor: SubtitleActor?
+    public var selectedSubtitleInfo: (any SubtitleInfo)? // ⚑ recon @Published+didSet; binary = plain stored (no `_`) → M2
+    public var secondarySubtitleActor: SubtitleActor?
+    public var secondarySubtitleInfo: (any SubtitleInfo)?
+    public var searchInfos: [URLSubtitleInfo] = []
+    // ⚑ init shape inferred → M2 witness-verify
+    public init(options: KSOptions) {
+        self.options = options
     }
 
-    @Published
-    public var selectedSubtitleInfo: (any SubtitleInfo)? {
-        didSet {
-            oldValue?.isEnabled = false
-            selectedSubtitleInfo?.isEnabled = true
-            if let url, let info = selectedSubtitleInfo as? URLSubtitleInfo, !info.downloadURL.isFileURL, let cache = subtitleDataSouces.first(where: { $0 is CacheSubtitleDataSouce }) as? CacheSubtitleDataSouce {
-                cache.addCache(fileURL: url, downloadURL: info.downloadURL)
-            }
-        }
-    }
+    // ⚑ UNRESOLVED → P4 M2: recon `init()` — the binary added `options`; consumers still construct SubtitleModel().
+    //   Convenience default kept as the consumer-ripple bridge; M2 verifies the real init / options wiring.
+    public convenience init() { self.init(options: KSOptions()) }
 
-    public init() {}
+    // ⚑ UNRESOLVED → P4 M2: addSubtitle(info:) (FUN_101ab3a3c — dedupe-by-subtitleID + replace/append, +bool param)
+    public func addSubtitle(info: any SubtitleInfo) {}
 
-    public func addSubtitle(info: any SubtitleInfo) {
-        if subtitleInfos.first(where: { $0.subtitleID == info.subtitleID }) == nil {
-            subtitleInfos.append(info)
-        }
-    }
+    // ⚑ UNRESOLVED → P4 M2: subtitle(currentTime:) (primary/secondary part lookup via SubtitleActor)
+    public func subtitle(currentTime: TimeInterval) -> Bool { false }
 
-    public func subtitle(currentTime: TimeInterval) -> Bool {
-        var newParts = [SubtitlePart]()
-        if let subtile = selectedSubtitleInfo {
-            let currentTime = currentTime - subtile.delay - subtitleDelay
-            newParts = subtile.search(for: currentTime)
-            if newParts.isEmpty {
-                newParts = parts.filter { part in
-                    part == currentTime
-                }
-            }
-        }
-        // swiftUI不会判断是否相等。所以需要这边判断下。
-        if newParts != parts {
-            for part in newParts {
-                if let text = part.text as? NSMutableAttributedString {
-                    text.addAttributes([.font: SubtitleModel.textFont],
-                                       range: NSRange(location: 0, length: text.length))
-                }
-            }
-            parts = newParts
-            return true
-        } else {
-            return false
-        }
-    }
-
-    public func searchSubtitle(query: String?, languages: [String]) {
-        for dataSouce in subtitleDataSouces {
-            if let dataSouce = dataSouce as? SearchSubtitleDataSouce {
-                subtitleInfos.removeAll { info in
-                    dataSouce.infos.contains {
-                        $0 === info
-                    }
-                }
-                runSearchOnMainActor(dataSouce: dataSouce, query: query, languages: languages)
-            }
-        }
-    }
-
-    private func runSearchOnMainActor(dataSouce: SearchSubtitleDataSouce, query: String?, languages: [String]) {
-        nonisolated(unsafe) let captured = dataSouce
-        nonisolated(unsafe) let strongSelf = self
-        Task { @MainActor in
-            await Self.performSearch(captured, query: query, languages: languages)
-            strongSelf.subtitleInfos.append(contentsOf: captured.infos)
-        }
-    }
-
-    private static func performSearch(_ dataSouce: SearchSubtitleDataSouce, query: String?, languages: [String]) async {
-        nonisolated(unsafe) let captured = dataSouce
-        try? await captured.searchSubtitle(query: query, languages: languages)
-    }
-
-    public func addSubtitle(dataSouce: SubtitleDataSouce) {
-        if let dataSouce = dataSouce as? FileURLSubtitleDataSouce {
-            runFileURLSearchOnMainActor(dataSouce: dataSouce)
-        } else {
-            subtitleInfos.append(contentsOf: dataSouce.infos)
-        }
-    }
-
-    private func runFileURLSearchOnMainActor(dataSouce: FileURLSubtitleDataSouce) {
-        nonisolated(unsafe) let captured = dataSouce
-        let capturedURL = url
-        nonisolated(unsafe) let strongSelf = self
-        Task { @MainActor in
-            await Self.performFileURLSearch(captured, fileURL: capturedURL)
-            strongSelf.subtitleInfos.append(contentsOf: captured.infos)
-        }
-    }
-
-    private static func performFileURLSearch(_ dataSouce: FileURLSubtitleDataSouce, fileURL: URL?) async {
-        nonisolated(unsafe) let captured = dataSouce
-        try? await captured.searchSubtitle(fileURL: fileURL)
-    }
+    // ⚑ UNRESOLVED → P4 M2: searchSubtitle (FUN_101ab68d8 — generation/sequence bump + query-time reset + clear Published + generation-Task)
+    public func searchSubtitle(query: String?, languages: [String]) {}
 }
