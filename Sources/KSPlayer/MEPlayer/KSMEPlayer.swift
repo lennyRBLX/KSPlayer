@@ -14,11 +14,13 @@ import AppKit
 #endif
 
 public final class KSMEPlayer: NSObject {
-    private var loopCount = 1
+    // Forward 1.3.17 stored fields — reflection order (desc 0x1039ef750); reconstructed session 16c (KSMEPlayer M1 fields).
+    // Explicit `: Type` on every field. bufferingCountDownTimer removed (source-extra); seekable computed→stored;
+    // shouldResumePlayback added; _pipController lazy→stored pipController; bufferingProgress Int→UInt8.
+    private var loopCount: Int = 1
     private var playerItem: MEPlayerItem
     public let audioOutput: AudioOutput
     private var options: KSOptions
-    private var bufferingCountDownTimer: Timer?
     public private(set) var videoOutput: (VideoOutput & UIView)? {
         didSet {
             oldValue?.invalidate()
@@ -28,29 +30,19 @@ public final class KSMEPlayer: NSObject {
         }
     }
 
-    public private(set) var bufferingProgress = 0 {
+    public private(set) var bufferingProgress: UInt8 = 0 {
         willSet {
             runOnMainThread { [weak self] in
                 guard let self else { return }
-                delegate?.changeBuffering(player: self, progress: newValue)
+                delegate?.changeBuffering(player: self, progress: Int(newValue))
             }
         }
     }
 
-    private lazy var _pipController: Any? = {
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *), let videoOutput {
-            let contentSource = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: videoOutput.displayLayer, playbackDelegate: self)
-            let pip = KSPictureInPictureController(contentSource: contentSource)
-            return pip
-        } else {
-            return nil
-        }
-    }()
-
-    @available(tvOS 14.0, *)
-    public var pipController: KSPictureInPictureController? {
-        _pipController as? KSPictureInPictureController
-    }
+    // ⚑ DIVERGENCE-DEFERRED (session 16c): binary field 6 `pipController` is `(any KSPictureInPictureProtocol)?` (a NEW 10-req
+    //   protocol — MediaPlayerProtocol-version follow-on). Kept the recon concrete type; l2 UNCHECKED. Was a `_pipController`
+    //   lazy + computed; binary stores it directly. ⚑ M2: the PiP-controller construction from videoOutput's displayLayer.
+    public private(set) var pipController: KSPictureInPictureController?
 
     private lazy var _playbackCoordinator: Any? = {
         if #available(macOS 12.0, iOS 15.0, tvOS 15.0, *) {
@@ -69,11 +61,12 @@ public final class KSMEPlayer: NSObject {
         // swiftlint:enable force_cast
     }
 
-    public private(set) var playableTime = TimeInterval(0)
+    public private(set) var playableTime: TimeInterval = 0
     public weak var delegate: MediaPlayerDelegate?
-    public private(set) var isReadyToPlay = false
+    public private(set) var isReadyToPlay: Bool = false
     public var allowsExternalPlayback: Bool = false
     public var usesExternalPlaybackWhileExternalScreenIsActive: Bool = false
+    public private(set) var seekable: Bool = false // ⚑ M2: binary caches this (recon was computed `playerItem.seekable`)
 
     public var playbackRate: Float = 1 {
         didSet {
@@ -92,7 +85,7 @@ public final class KSMEPlayer: NSObject {
         }
     }
 
-    public private(set) var loadState = MediaLoadState.idle {
+    public private(set) var loadState: MediaLoadState = .idle {
         didSet {
             if loadState != oldValue {
                 playOrPause()
@@ -100,7 +93,7 @@ public final class KSMEPlayer: NSObject {
         }
     }
 
-    public private(set) var playbackState = MediaPlaybackState.idle {
+    public private(set) var playbackState: MediaPlaybackState = .idle {
         didSet {
             if playbackState != oldValue {
                 playOrPause()
@@ -113,6 +106,8 @@ public final class KSMEPlayer: NSObject {
             }
         }
     }
+
+    public private(set) var shouldResumePlayback: Bool = false // ⚑ M2: binary sets this (NEW field, absent from recon)
 
     public required init(url: URL, options: KSOptions) {
         KSOptions.setAudioSession()
@@ -272,7 +267,7 @@ extension KSMEPlayer: MEPlayerDelegate {
             if playbackState == .playing {
                 runOnMainThread { [weak self] in
                     // 在主线程更新进度
-                    self?.bufferingProgress = progress
+                    self?.bufferingProgress = UInt8(progress) // bufferingProgress Int→UInt8 (progress clamped [0,100])
                 }
             }
         }
@@ -345,8 +340,6 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     public var duration: TimeInterval { playerItem.duration }
 
     public var fileSize: Int64 { playerItem.fileSize }
-
-    public var seekable: Bool { playerItem.seekable }
 
     public var dynamicInfo: DynamicInfo? {
         playerItem.dynamicInfo
@@ -560,11 +553,9 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
                 handler()
                 return
             }
-            self.bufferingCountDownTimer?.invalidate()
-            self.bufferingCountDownTimer = nil
-            self.bufferingCountDownTimer = Timer(timeInterval: countDown, repeats: false) { _ in
-                handler()
-            }
+            // ⚑ UNRESOLVED → KSMEPlayer M2: buffering countdown (recon retained a `bufferingCountDownTimer: Timer?`, removed source-extra)
+            _ = countDown
+            handler()
         }
     }
 }
@@ -573,7 +564,7 @@ extension KSMEPlayer: DisplayLayerDelegate {
     public func change(displayLayer: AVSampleBufferDisplayLayer) {
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
             let contentSource = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
-            _pipController = KSPictureInPictureController(contentSource: contentSource)
+            pipController = KSPictureInPictureController(contentSource: contentSource) // stored (was _pipController lazy); binary field 6
             // 更改contentSource会直接crash
 //            pipController?.contentSource = contentSource
         }
