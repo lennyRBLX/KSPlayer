@@ -60,13 +60,15 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
 public protocol SubtitleDataSource: AnyObject {}
 
 public protocol SearchSubtitleDataSource: SubtitleDataSource {
-    // ⚑ sig inferred → M2 witness-verify (return element [URLSubtitleInfo] vs [any SubtitleInfo] — §7.5 P42; WT 0x1041da848)
+    // ⚑ return element → Task 5 witness-verify (sibling URLSubtitleDataSource is PINNED [URLSubtitleInfo] session 19;
+    //   this query: variant likely same but UNPROVEN — verify vs Assrt/Open witnesses (WT 0x1041da848) before rippling, P55/P23)
     func searchSubtitle(query: String?, languages: [String]) async throws -> [any SubtitleInfo]
 }
 
 public protocol URLSubtitleDataSource: SubtitleDataSource { // was recon `FileURLSubtitleDataSouce`
-    // ⚑ sig inferred → M2 witness-verify
-    func searchSubtitle(fileURL: URL?) async throws -> [any SubtitleInfo]
+    // return element PINNED [URLSubtitleInfo] (session 19, P55/§7.5): ConstantURL cont FUN_101aa5b64 returns
+    // self.infos directly with NO existential boxing; corroborated by SubtitleModel [URLSubtitleInfo] collectors (§7.3).
+    func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo]
 }
 
 public protocol CacheSubtitleDataSource: URLSubtitleDataSource {
@@ -74,7 +76,8 @@ public protocol CacheSubtitleDataSource: URLSubtitleDataSource {
 }
 
 public protocol ConstantSubtitleDataSource: SubtitleDataSource {
-    // ⚑ 1 async method (§1 CORRECTED — method-bearing, NOT a marker; conformer KSAVPlayer, witness 0x1019aba18) — sig inferred → M2
+    // ⚑ 1 async method (§1 CORRECTED — method-bearing, NOT a marker; conformer KSAVPlayer, witness 0x1019aba18).
+    //   return element → Task 6 witness-verify (sibling URLSubtitleDataSource PINNED [URLSubtitleInfo] s19; UNPROVEN here, P55/P23)
     func searchSubtitle() async throws -> [any SubtitleInfo]
 }
 
@@ -95,8 +98,8 @@ public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
         srtInfoCaches = [:]
     }
 
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle(fileURL:) (cache lookup → returns URLSubtitleInfos)
-    public func searchSubtitle(fileURL: URL?) async throws -> [any SubtitleInfo] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Task 6): searchSubtitle(fileURL:) (cache lookup → returns URLSubtitleInfos)
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] { [] }
 
     // ⚑ UNRESOLVED → P4 M2: addCache(fileURL:downloadURL:) (plist write)
     public func addCache(fileURL: URL, downloadURL: URL) {}
@@ -112,22 +115,30 @@ public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
         self.infos = infos
     }
 
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle(fileURL:) — constant source (near-empty async trampoline, FUN_101aa5b4c)
-    public func searchSubtitle(fileURL: URL?) async throws -> [any SubtitleInfo] { infos }
+    // FUN_101aa5b4c → cont FUN_101aa5b64 (P42-disasm): returns infos iff url == the requested fileURL, else [].
+    //   Guard = Foundation URL.== on self.url vs fileURL @0x101aa5b88 (tbz w0); true → retain+return self.infos,
+    //   false → __swiftEmptyArrayStorage. Element [URLSubtitleInfo] (self.infos returned directly, no boxing).
+    //   ⚑ optional-compare form (url:URL vs fileURL:URL?) via Swift optional promotion — minor, audit-confirmed.
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] {
+        if url == fileURL {
+            return infos
+        }
+        return []
+    }
 }
 
 // §7.2 — Souce→Source + FileURL→URL. Stateless (dropped the recon's stored `infos`, §5.1).
 public class DirectorySubtitleDataSource: URLSubtitleDataSource {
     public init() {}
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle(fileURL:) (directory scan → returns found infos)
-    public func searchSubtitle(fileURL: URL?) async throws -> [any SubtitleInfo] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Task 4 next): searchSubtitle(fileURL:) — directory scan (FUN_101aa5c5c → FUN_101aac684)
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] { [] }
 }
 
 // §7.2 — Souce→Source + FileURL→URL. Stateless.
 public class ShooterSubtitleDataSource: URLSubtitleDataSource {
     public init() {}
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle(fileURL:) (shooter.cn API → returns found infos)
-    public func searchSubtitle(fileURL: URL?) async throws -> [any SubtitleInfo] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Task 4 next): searchSubtitle(fileURL:) — shooter.cn API (FUN_101aa5cbc → FUN_101aacc04)
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] { [] }
 }
 
 // §7.2 — Souce→Source. token+host (was token+infos; +host = the API base, dropped stored infos §5.1).
