@@ -93,18 +93,55 @@ public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
     private let srtCacheInfoPath: String
     // 因为plist不能保存URL
     private var srtInfoCaches: [String: [String]]
+    // Task 6 (session 20). Base cce7002 P19 cache-dir scan: NSTemporaryDirectory/"KSSubtitleCache" folder (created if
+    // absent) + "KSSrtInfo.plist"; the plist load is a background DispatchQueue.global().async [weak self] read.
     private init() {
-        // ⚑ UNRESOLVED → P4 M2: the cache-dir scan (NSTemporaryDirectory/KSSubtitleCache + plist load).
-        //   minimal faithful init assigns the stored props:
-        srtCacheInfoPath = ""
-        srtInfoCaches = [:]
+        let cacheFolder = (NSTemporaryDirectory() as NSString).appendingPathComponent("KSSubtitleCache")
+        if !FileManager.default.fileExists(atPath: cacheFolder) {
+            try? FileManager.default.createDirectory(atPath: cacheFolder, withIntermediateDirectories: true, attributes: nil)
+        }
+        srtCacheInfoPath = (cacheFolder as NSString).appendingPathComponent("KSSrtInfo.plist")
+        srtInfoCaches = [String: [String]]()
+        DispatchQueue.global().async { [weak self] in
+            guard let self else {
+                return
+            }
+            srtInfoCaches = (NSMutableDictionary(contentsOfFile: srtCacheInfoPath) as? [String: [String]]) ?? [String: [String]]()
+        }
     }
 
-    // ⚑ UNRESOLVED → P4 M2 (Task 6): searchSubtitle(fileURL:) (cache lookup → returns URLSubtitleInfos)
-    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] { [] }
+    // Task 6: cache lookup keyed by fileURL.absoluteString → URLSubtitleInfo(url:) per cached downloadURL, comment "local".
+    // Dropped stored infos → RETURNS [URLSubtitleInfo] (§5.1; the URLSubtitleDataSource req type pinned session 19).
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] {
+        guard let fileURL else {
+            return []
+        }
+        return srtInfoCaches[fileURL.absoluteString]?.compactMap { downloadURL -> URLSubtitleInfo? in
+            guard let url = URL(string: downloadURL) else {
+                return nil
+            }
+            let info = URLSubtitleInfo(url: url)
+            info.comment = "local"
+            return info
+        } ?? []
+    }
 
-    // ⚑ UNRESOLVED → P4 M2: addCache(fileURL:downloadURL:) (plist write)
-    public func addCache(fileURL: URL, downloadURL: URL) {}
+    // Task 6: append downloadURL under fileURL (dedup by ==), persist the dict to plist on a background queue.
+    public func addCache(fileURL: URL, downloadURL: URL) {
+        let file = fileURL.absoluteString
+        let path = downloadURL.absoluteString
+        var array = srtInfoCaches[file] ?? [String]()
+        if !array.contains(where: { $0 == path }) {
+            array.append(path)
+            srtInfoCaches[file] = array
+            DispatchQueue.global().async { [weak self] in
+                guard let self else {
+                    return
+                }
+                (srtInfoCaches as NSDictionary).write(toFile: srtCacheInfoPath, atomically: false)
+            }
+        }
+    }
 }
 
 // §7.2 — recon `URLSubtitleDataSouce` class → ConstantURLSubtitleDataSource (→ URL, now HAS searchSubtitle).
