@@ -148,8 +148,38 @@ public class DirectorySubtitleDataSource: URLSubtitleDataSource {
 // §7.2 — Souce→Source + FileURL→URL. Stateless.
 public class ShooterSubtitleDataSource: URLSubtitleDataSource {
     public init() {}
-    // ⚑ UNRESOLVED → P4 M2 (Task 4 next): searchSubtitle(fileURL:) — shooter.cn API (FUN_101aa5cbc → FUN_101aacc04)
-    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] { [] }
+    // FUN_101aa5cbc → FUN_101aacc04 (setup) → FUN_101aaccfc (URL+request+URLSession.data) → FUN_101aad004 →
+    //   FUN_101aad0c0 (JSON decode + flatMap). base cce7002 P19-adapted to RETURN [URLSubtitleInfo] (§5.1).
+    //   Binary-pinned: URL "https://www.shooter.cn/api/subapi.php" @0x103d3a2f0 (exact), .add(queryItems:)
+    //   (format/pathinfo=fileURL.path/filehash=fileURL.shooterFilehash), URLRequest(url:,cachePolicy:0,timeout:60)
+    //   = URLRequest(url:), httpMethod POST, URLSession.shared.data, JSONSerialization. shooter.cn API keys are
+    //   external-fixed (not divergence-prone). ⚑ delay unit (/1000.0) + name:"" — audit-confirmed.
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] {
+        guard let fileURL, fileURL.isFileURL,
+              let searchApi = URL(string: "https://www.shooter.cn/api/subapi.php")?
+              .add(queryItems: ["format": "json", "pathinfo": fileURL.path, "filehash": fileURL.shooterFilehash])
+        else {
+            return []
+        }
+        var request = URLRequest(url: searchApi)
+        request.httpMethod = "POST"
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return json.flatMap { sub -> [URLSubtitleInfo] in
+            let filesDic = sub["Files"] as? [[String: String]]
+            let delay = TimeInterval(sub["Delay"] as? Int ?? 0) / 1000.0
+            return filesDic?.compactMap { dic in
+                if let string = dic["Link"], let url = URL(string: string) {
+                    let info = URLSubtitleInfo(subtitleID: string, name: "", url: url)
+                    info.delay = delay
+                    return info
+                }
+                return nil
+            } ?? [URLSubtitleInfo]()
+        }
+    }
 }
 
 // §7.2 — Souce→Source. token+host (was token+infos; +host = the API base, dropped stored infos §5.1).
