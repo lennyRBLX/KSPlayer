@@ -268,9 +268,57 @@ open class SubtitleModel: ObservableObject {
     public var latestSecondarySubtitleQueryTime: Double?
     public var url: URL? // ⚑ §7.5: mangle reads NON-optional; recon URL? w/ search didSet → M2 verify
     public var firstSubtitleActor: SubtitleActor?
-    public var selectedSubtitleInfo: (any SubtitleInfo)? // ⚑ recon @Published+didSet; binary = plain stored (no `_`) → M2
+    // FUN_101ab2540 — selectedSubtitleInfo willSet (P67: 11 assign-site callers, call-before-store w/ newValue;
+    // the prior recon guess @Published+didSet was wrong — binary is plain-stored with a willSet).
+    public var selectedSubtitleInfo: (any SubtitleInfo)? {
+        willSet {
+            guard newValue !== selectedSubtitleInfo else { return }
+            subtitleSearchGeneration += 1
+            subtitleSearchSequence += 1
+            latestPrimarySubtitleQueryTime = nil
+            latestSecondarySubtitleQueryTime = nil
+            parts = []                                  // clear @Published parts (keypath d1e8/d210 ≠ subtitleInfos d140/168)
+            selectedSubtitleInfo?.isEnabled = false     // deactivate old (still-old in willSet); witness+0x40 arg=false
+            if let newValue {
+                // launder the non-Sendable info across the actor-isolation boundary (base `nonisolated(unsafe)`
+                // idiom; P62 concurrency escape — under-included per §1, not a logic change).
+                nonisolated(unsafe) let info = newValue
+                firstSubtitleActor = SubtitleActor(info: info)
+                didSelectSubtitle(info)                 // FUN_101ab8250 (shared with secondary); name P28
+                if translation, #available(iOS 18, *) {
+                    // ⚑ UNRESOLVED → P4 M2 Task 8: build+store TranslationSession.Configuration
+                    //   (source/target Locale.Language) via FUN_101aaffa0 updater; availability-boxed
+                    //   (_translationSessionConf/_translationSession). Deferred per user-gated scope (Batch 3).
+                }
+            } else {
+                if #available(iOS 18, *) {
+                    // ⚑ UNRESOLVED → P4 M2 Task 8: clear the TranslationSession configuration (FUN_101aaffa0 nil path).
+                }
+                firstSubtitleActor = nil
+            }
+        }
+    }
     public var secondarySubtitleActor: SubtitleActor?
-    public var secondarySubtitleInfo: (any SubtitleInfo)?
+    // FUN_101ab2de4 — secondarySubtitleInfo willSet (P67: 10 callers). Analogous to the primary minus the
+    // primary-only translation box; targets secondarySubtitleActor.
+    public var secondarySubtitleInfo: (any SubtitleInfo)? {
+        willSet {
+            guard newValue !== secondarySubtitleInfo else { return }
+            subtitleSearchGeneration += 1
+            subtitleSearchSequence += 1
+            latestPrimarySubtitleQueryTime = nil
+            latestSecondarySubtitleQueryTime = nil
+            parts = []
+            secondarySubtitleInfo?.isEnabled = false
+            if let newValue {
+                nonisolated(unsafe) let info = newValue
+                secondarySubtitleActor = SubtitleActor(info: info)
+                didSelectSubtitle(info)
+            } else {
+                secondarySubtitleActor = nil
+            }
+        }
+    }
     public var searchInfos: [URLSubtitleInfo] = []
     // ⚑ init shape inferred → M2 witness-verify
     public init(options: KSOptions) {
@@ -297,6 +345,24 @@ open class SubtitleModel: ObservableObject {
             }
             if let sec = secondarySubtitleInfo, sec.subtitleID == info.subtitleID, sec !== info {
                 secondarySubtitleInfo = info
+            }
+        }
+    }
+
+    // FUN_101ab8250 — shared helper invoked by BOTH select willSets on the newly-selected info (2 call sites).
+    // Activates it, registers it (addSubtitle reselect:false to avoid re-select recursion), and caches a remote /
+    // iCloud-ubiquitous download via a CacheSubtitleDataSource. ⚑ method name unrecoverable (P28).
+    // Forward divergence (P59): base cached only `!isFileURL`; Forward also caches (isFileURL && isUbiquitousItem).
+    private func didSelectSubtitle(_ info: any SubtitleInfo) {
+        info.isEnabled = true
+        addSubtitle(info: info, reselect: false)
+        if let info = info as? URLSubtitleInfo {
+            if info.downloadURL.isFileURL,
+               (try? info.downloadURL.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem != true {
+                return
+            }
+            if let url, let cache = subtitleDataSources.first(where: { $0 is CacheSubtitleDataSource }) as? CacheSubtitleDataSource {
+                cache.addCache(fileURL: url, downloadURL: info.downloadURL)
             }
         }
     }
