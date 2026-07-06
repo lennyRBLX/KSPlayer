@@ -510,7 +510,16 @@ public extension AVAsset {
 // from the binary's conformance records (the original task_e5456ff6 target).
 extension KSAVPlayer: SubtitleDataSource {}
 
-extension KSAVPlayer: ConstantSubtitleDataSource {
-    // ⚑ the async method re-homes the witness 0x1019aba18 (near-empty async trampoline, §1). UNRESOLVED → P4 M2.
-    public nonisolated func searchSubtitle() async throws -> [any SubtitleInfo] { [] }
+// @preconcurrency conformance (KSAVPlayer already uses it for MediaPlayerProtocol): lets the @MainActor witness read the
+// main-actor `subtitleTracks` directly (matching the binary) and satisfy the nonisolated protocol req — it relaxes the
+// non-Sendable [any SubtitleInfo] boundary that strict-concurrency (xcodebuild) rejects for a plain @MainActor witness.
+extension KSAVPlayer: @preconcurrency ConstantSubtitleDataSource {
+    // Task 6 (session 20). Witness 0x1019aba18 (async trampoline) → FUN_1019ab818 (task_switch hop) → FUN_1019ab830:
+    // reads the stored `subtitleTracks: [any MediaPlayerTrack]` (_swift_beginAccess) and collects the SubtitleInfo
+    // conformers (_swift_getObjectType + _swift_conformsToProtocol per element). Return element PROVEN `[any SubtitleInfo]`,
+    // NOT rippled to [URLSubtitleInfo] (P55/P60, opposite of the Search/URL siblings): each element is stored as a 2-word
+    // class-existential {object@+0x20, witnessTable@+0x28} at stride 0x10 (FUN_1019ab830) — boxing PRESENT ⇒ existential.
+    public func searchSubtitle() async throws -> [any SubtitleInfo] {
+        subtitleTracks.compactMap { $0 as? (any SubtitleInfo) }
+    }
 }
