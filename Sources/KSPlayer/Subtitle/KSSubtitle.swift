@@ -22,9 +22,15 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
     // ⚑ Identifiable.id inferred: the recon CLASS used the synthesized ObjectIdentifier; a struct needs
     //   an explicit id, and the binary has NO stored `id` (3 fields: start/end/render) → computed. M2 verify.
     public var id: Double { start }
-    // ⚑ UNRESOLVED → P4 M2: the recon description referenced the removed `text`; the binary body renders
-    //   `render` (image-or-text). Minimal faithful placeholder until the witness decode:
-    public var description: String { "SubtitlePart(start: \(start), end: \(end))" }
+    // description = CustomStringConvertible resilient witness 0x101abbd70 → body 0x101abbc34 (P4 M2, session 21).
+    // Base cce7002 rendered the removed `text`; Forward keeps the interpolation skeleton and renders `render`
+    // via String(describing:). Literals decoded verbatim: "Subtile Group start=" (@0x103d3a390, count 20 — the
+    // base "Subtile" typo is CARRIED, not corrected), " end=" (small-string 0x3d646e6520/count 5), " text="
+    // (0x3d7478657420/count 6 — label kept as "text="). start/end appended via double interpolation; render via
+    // String.init(describing:) + metadata (explicit, matching base's `String(describing: text)`), then appended.
+    public var description: String {
+        "Subtile Group start=\(start) end=\(end) text=\(String(describing: render))"
+    }
 
     public init(start: Double, end: Double, render: Either<SubtitleImageInfo, SubtitleTextInfo>) {
         self.start = start
