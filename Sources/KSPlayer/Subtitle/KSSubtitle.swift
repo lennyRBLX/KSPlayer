@@ -370,6 +370,22 @@ open class SubtitleModel: ObservableObject {
     // ⚑ UNRESOLVED → P4 M2: subtitle(currentTime:) (primary/secondary part lookup via SubtitleActor)
     public func subtitle(currentTime: TimeInterval) -> Bool { false }
 
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle (FUN_101ab68d8 — generation/sequence bump + query-time reset + clear Published + generation-Task)
-    public func searchSubtitle(query: String?, languages: [String]) {}
+    // FUN_101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a
+    // generation-invalidation + actor-reset trigger. The text `query`/`languages` are UNUSED here — the
+    // network search moved into the per-track SubtitleActors (lazy). Bumps the model generation/sequence,
+    // resets both query-times + `parts`, then resets both actors (FUN_101ab6acc→6b5c/6bc4/6c2c chain).
+    // Signature kept (base + consumer KSVideoPlayerView:664); the args are ignored per the binary body.
+    public func searchSubtitle(query _: String?, languages _: [String]) {
+        subtitleSearchGeneration += 1
+        subtitleSearchSequence += 1
+        latestPrimarySubtitleQueryTime = nil
+        latestSecondarySubtitleQueryTime = nil
+        parts = []
+        // base `nonisolated(unsafe) let strongSelf = self` idiom (P62; binary Task ctx retains self@+0x20).
+        nonisolated(unsafe) let strongSelf = self
+        Task {
+            await strongSelf.firstSubtitleActor?.reset()
+            await strongSelf.secondarySubtitleActor?.reset()
+        }
+    }
 }

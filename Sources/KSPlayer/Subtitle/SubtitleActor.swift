@@ -18,6 +18,15 @@ public actor SubtitleActor: KSSubtitleProtocol {
         self.info = info
     }
 
+    // FUN_101ab6b5c/6c2c — inlined into SubtitleModel.searchSubtitle's Task at its single call site
+    // (`await firstSubtitleActor?.reset(); await secondarySubtitleActor?.reset()`). Invalidates this
+    // actor's in-flight search state. ⚑ method name unrecoverable (P28), recon-chosen.
+    func reset() {
+        searchGeneration += 1
+        latestQueryTime = nil
+        parts = []
+    }
+
     // ⚑ UNRESOLVED → P4 M2 (Batch 3): the real search / subtitle(query:) async methods. Signature migrated
     //   to search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
     public nonisolated func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
