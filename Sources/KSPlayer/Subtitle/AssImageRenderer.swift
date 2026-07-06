@@ -17,6 +17,7 @@ class AssImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitleProtocol co
     private var size: CGSize = .zero
     // ⚑ UNRESOLVED → P4 M2: the libass init/render bodies
 
-    // ⚑ UNRESOLVED → P4 M2: search(for:) — serves rendered subtitle parts by time (KSSubtitleProtocol req)
-    func search(for _: TimeInterval) -> [SubtitlePart] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Batch 5): search — serves rendered parts (KSSubtitleProtocol req). Signature migrated
+    //   to search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
+    func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
 }

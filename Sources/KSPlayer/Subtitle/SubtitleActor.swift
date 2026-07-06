@@ -18,6 +18,7 @@ public actor SubtitleActor: KSSubtitleProtocol {
         self.info = info
     }
 
-    // ⚑ UNRESOLVED → P4 M2: the search / subtitle(query:) async methods
-    public nonisolated func search(for _: TimeInterval) -> [SubtitlePart] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Batch 3): the real search / subtitle(query:) async methods. Signature migrated
+    //   to search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
+    public nonisolated func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
 }

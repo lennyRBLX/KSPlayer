@@ -17,6 +17,7 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         self.decode = decode
     }
 
-    // ⚑ UNRESOLVED → P4 M2: subtitle(currentTime:) async + the parts search
-    nonisolated public func search(for _: TimeInterval) -> [SubtitlePart] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Batch 4): subtitle(currentTime:) async + the real parts search. Signature migrated
+    //   to search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
+    nonisolated public func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
 }

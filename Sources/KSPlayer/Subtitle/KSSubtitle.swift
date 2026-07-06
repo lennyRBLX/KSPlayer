@@ -37,8 +37,12 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
         self.end = end
         self.render = render
     }
-    // ⚑ UNRESOLVED → P4 M2: the recon convenience inits [init(_:_:_string:) / init(_:_:attributedString:)]
-    //   built `text`; the binary builds `render` (.left(SubtitleImageInfo) / .right(SubtitleTextInfo)).
+    // No convenience inits — P43 existence-check RAN + FAILED (session 21), so DROPPED not fabricated.
+    // The base class inits init(_:_:_string:)/init(_:_:attributedString:) built the removed `text`.
+    // Evidence Forward has no replacement init: 0 SubtitlePart init reflection symbols (only search(with:));
+    // the type-metadata accessor 0x101abf1e0 has 0 CODE construction xrefs (2 DATA self/stdlib); every caller
+    // (SrtParse/VTTParse/AssParse parsers — Batch-1 audit-confirmed — and SubtitleDecode) builds SubtitlePart
+    // INLINE via the memberwise init + SubtitleTextInfo(.right)/SubtitleImageInfo(.left), no init function.
 }
 
 public struct TextPosition {
@@ -128,7 +132,11 @@ extension SubtitlePart: NumericComparable {
 }
 
 public protocol KSSubtitleProtocol {
-    func search(for time: TimeInterval) -> [SubtitlePart]
+    // The sole requirement (NumRequirements=1, desc 0x1039f18a0). Forward version-changed the base
+    // `search(for time: TimeInterval) -> [SubtitlePart]` (sync) to a query-based ASYNC lookup: the mangled
+    // requirement name is `search…KSSubtitleQueryV_tYaF` and both info-class witnesses are async-fp records.
+    // Rippled to all 6 conformers (P55, session 21) — the conformance gate checks presence, not signature.
+    func search(with query: KSSubtitleQuery) async -> [SubtitlePart]
 }
 
 public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifiable {

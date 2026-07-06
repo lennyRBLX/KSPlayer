@@ -16,8 +16,8 @@ public class EmptySubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     public let name: String = NSLocalizedString("no show subtitle", comment: "")
     public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
     public init() {}
-    // the "no show subtitle" info has no parts — [] is the minimal faithful body.
-    public func search(for _: TimeInterval) -> [SubtitlePart] { [] }
+    // search witness 0x10199fbc4 (async) returns __swiftEmptyArrayStorage — the "no show subtitle" has no parts.
+    public func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
 }
 
 // §8.3 — flattened: the KSSubtitle base is REMOVED (§8.2); fields in binary reflection order.
@@ -48,8 +48,15 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
         self.init(subtitleID: url.absoluteString, name: url.lastPathComponent, url: url)
     }
 
-    // ⚑ UNRESOLVED → P4 M2: search(for:) — no `parts` field after flattening (was inherited from KSSubtitle)
-    public func search(for _: TimeInterval) -> [SubtitlePart] { [] }
+    // search witness 0x101aa3dc0 → real body FUN_101aa3a94 (async): delegate to searchProtocol when set, else [].
+    // The nil-check is the searchProtocol existential's metadata word (self+0x28; searchProtocol = field[0] @0x10,
+    // a 5-word `any KSSubtitleProtocol?`). No stored `parts` after the KSSubtitle-flatten.
+    public func search(with query: KSSubtitleQuery) async -> [SubtitlePart] {
+        if let searchProtocol {
+            return await searchProtocol.search(with: query)
+        }
+        return []
+    }
 }
 
 // §7.1 — correct-spelled datasource hierarchy. The base is a 0-req MARKER (drops the recon's `infos`
