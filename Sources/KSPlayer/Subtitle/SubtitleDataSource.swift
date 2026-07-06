@@ -60,9 +60,11 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
 public protocol SubtitleDataSource: AnyObject {}
 
 public protocol SearchSubtitleDataSource: SubtitleDataSource {
-    // ⚑ return element → Task 5 witness-verify (sibling URLSubtitleDataSource is PINNED [URLSubtitleInfo] session 19;
-    //   this query: variant likely same but UNPROVEN — verify vs Assrt/Open witnesses (WT 0x1041da848) before rippling, P55/P23)
-    func searchSubtitle(query: String?, languages: [String]) async throws -> [any SubtitleInfo]
+    // return element PINNED [URLSubtitleInfo] (Task 5, session 20, P55/P60): the Assrt witness FUN_101aa6c50 →
+    // loadDetails builds concrete URLSubtitleInfo (FUN_101aa7290); result.append(contentsOf:) uses element stride 8
+    // (class refs, FUN_1019c7d88); the result array is returned directly (no array-map / existential boxing);
+    // corroborated by SubtitleModel [URLSubtitleInfo] collectors (§7.3). Same requirement for both conformers (Assrt/Open).
+    func searchSubtitle(query: String?, languages: [String]) async throws -> [URLSubtitleInfo]
 }
 
 public protocol URLSubtitleDataSource: SubtitleDataSource { // was recon `FileURLSubtitleDataSouce`
@@ -192,8 +194,77 @@ public class AssrtSubtitleDataSource: SearchSubtitleDataSource {
         self.host = host
     }
 
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle(query:languages:) (assrt.net API → returns found infos; WT 0x1041da848)
-    public func searchSubtitle(query: String?, languages: [String]) async throws -> [any SubtitleInfo] { [] }
+    // Task 5 (session 20). Witness FUN_101aa6c50 (WT 0x1041da848) → real body FUN_101aad528. Base cce7002
+    // AssrtSubtitleDataSouce.searchSubtitle P19-adapted: host-field URL (not the base hardcode), dropped stored
+    // `infos` → RETURNS [URLSubtitleInfo] (§5.1/§7.5, P60). Internal choices deep-pinned from the binary (P59/P61):
+    //   URL host+"/sub/search" · query ["q":query] · header Authorization: Bearer <token> · JSON status/sub/subs ·
+    //   per-sub sub["fileid"] as? String → Int → .description (base was sub["id"] as? Int; get_description @101aae404:264).
+    public func searchSubtitle(query: String?, languages _: [String]) async throws -> [URLSubtitleInfo] {
+        guard let query else {
+            return []
+        }
+        guard let searchApi = URL(string: host + "/sub/search")?.add(queryItems: ["q": query]) else {
+            return []
+        }
+        var request = URLRequest(url: searchApi)
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+        guard let status = json["status"] as? Int, status == 0 else {
+            return []
+        }
+        guard let subDict = json["sub"] as? [String: Any], let subArray = subDict["subs"] as? [[String: Any]] else {
+            return []
+        }
+        var result = [URLSubtitleInfo]()
+        for sub in subArray {
+            if let fileid = sub["fileid"] as? String, let subID = Int(fileid) {
+                try await result.append(contentsOf: loadDetails(assrtSubID: subID.description))
+            }
+        }
+        return result
+    }
+
+    // loadDetails(assrtSubID:) helper — assrt.net /sub/detail lookup (FUN_101aa6cc0 → build FUN_101aa7290).
+    // filelist[].{url, "f"} → URLSubtitleInfo. Per-site keys deep-pinned (P59, audit-caught): the filelist LOOP uses
+    // the 1-char key dic["f"] (base-retained; 0x66/disc-0xe1 @101aa7290:286); the else-fallback uses sub["filename"]
+    // (full 8-char, 0x656d616e656c6966 @101aa7290:485) — the two sites genuinely use different keys.
+    private func loadDetails(assrtSubID: String) async throws -> [URLSubtitleInfo] {
+        var infos = [URLSubtitleInfo]()
+        guard let detailApi = URL(string: host + "/sub/detail")?.add(queryItems: ["id": assrtSubID]) else {
+            return infos
+        }
+        var request = URLRequest(url: detailApi)
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, _) = try await URLSession.shared.data(for: request)
+        // P42 disasm (FUN_101aa7290:59-74): the JSON-parse error path calls __convertNSErrorToError + _swift_willThrow
+        // ⇒ `try` (propagate), NOT base cce7002's `try?` (swallow) — Forward unified loadDetails with the search body.
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return infos
+        }
+        guard let status = json["status"] as? Int, status == 0 else {
+            return infos
+        }
+        guard let subDict = json["sub"] as? [String: Any], let subArray = subDict["subs"] as? [[String: Any]], let sub = subArray.first else {
+            return infos
+        }
+        if let fileList = sub["filelist"] as? [[String: String]] {
+            for dic in fileList {
+                if let urlString = dic["url"], let filename = dic["f"], let url = URL(string: urlString) {
+                    let info = URLSubtitleInfo(subtitleID: urlString, name: filename, url: url)
+                    infos.append(info)
+                }
+            }
+        } else if let urlString = sub["url"] as? String, let filename = sub["filename"] as? String, let url = URL(string: urlString) {
+            let info = URLSubtitleInfo(subtitleID: urlString, name: filename, url: url)
+            infos.append(info)
+        }
+        return infos
+    }
 }
 
 // §7.2 — Souce→Source. token?/apiKey/host (dropped username/password/infos; +host §5.1).
@@ -207,8 +278,10 @@ public class OpenSubtitleDataSource: SearchSubtitleDataSource {
         self.host = host
     }
 
-    // ⚑ UNRESOLVED → P4 M2: searchSubtitle(query:languages:) (opensubtitles.com API → returns found infos)
-    public func searchSubtitle(query: String?, languages: [String]) async throws -> [any SubtitleInfo] { [] }
+    // ⚑ UNRESOLVED → P4 M2 (Task 5 body 2/2, NEXT commit): searchSubtitle(query:languages:) — opensubtitles.com
+    //   API (host https://api.opensubtitles.com/api/v1 @0x103d34220). Signature return rippled to [URLSubtitleInfo]
+    //   (P55/P60 proven at the shared SearchSubtitleDataSource req via Assrt); body decode pending.
+    public func searchSubtitle(query: String?, languages _: [String]) async throws -> [URLSubtitleInfo] { [] }
 }
 
 extension URL {
