@@ -28,7 +28,12 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     public var isDownloading: Bool = false
     public var languageCode: String? = nil
     public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
-    public var isEnabled: Bool = false // ⚑ UNRESOLVED → P4 M2: the didSet parse-trigger (was on the KSSubtitle base)
+    // Plain stored var (no didSet). P43 existence-check RAN + FAILED (session 21): the base parse-trigger didSet
+    //   `didSet { if isEnabled, parts.isEmpty { Task { try? await parse(url:userAgent:) } } }` is GONE, not deferred —
+    //   `URLSubtitleInfo.parse` has 0 binary symbols (removed), the `parts` field is gone (KSSubtitle-flatten), the
+    //   init (0x101aa3310) never writes isEnabled (default-false zero-init, no observer), and no URLSubtitleInfo
+    //   accessor spawns a parse-Task. The download/search pipeline moved to SubtitleModel (§7.3, Batch 3).
+    public var isEnabled: Bool = false
     public private(set) var downloadURL: URL
     public var delay: TimeInterval = 0
     public private(set) var name: String
