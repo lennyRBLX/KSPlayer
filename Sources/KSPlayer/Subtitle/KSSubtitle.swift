@@ -281,8 +281,25 @@ open class SubtitleModel: ObservableObject {
     //   Convenience default kept as the consumer-ripple bridge; M2 verifies the real init / options wiring.
     public convenience init() { self.init(options: KSOptions()) }
 
-    // ⚑ UNRESOLVED → P4 M2: addSubtitle(info:) (FUN_101ab3a3c — dedupe-by-subtitleID + replace/append, +bool param)
-    public func addSubtitle(info: any SubtitleInfo) {}
+    // FUN_101ab3a3c (public entry FUN_101ab3a34 passes reselect=true). Dedupe-by-subtitleID with REPLACE
+    // (base cce7002 only SKIPPED-if-present — the Forward divergence). `reselect` (default true) gates the
+    // re-point of selected/secondary to the new instance (FUN_101ab3d64, single-call-site helper inlined).
+    // ⚑ `reselect` param name unrecoverable (P28) — recon-chosen for the semantic bool the public entry sets true.
+    public func addSubtitle(info: any SubtitleInfo, reselect: Bool = true) {
+        if let index = subtitleInfos.firstIndex(where: { $0.subtitleID == info.subtitleID }) {
+            subtitleInfos[index] = info
+        } else {
+            subtitleInfos.append(info)
+        }
+        if reselect {
+            if let sel = selectedSubtitleInfo, sel.subtitleID == info.subtitleID, sel !== info {
+                selectedSubtitleInfo = info
+            }
+            if let sec = secondarySubtitleInfo, sec.subtitleID == info.subtitleID, sec !== info {
+                secondarySubtitleInfo = info
+            }
+        }
+    }
 
     // ⚑ UNRESOLVED → P4 M2: subtitle(currentTime:) (primary/secondary part lookup via SubtitleActor)
     public func subtitle(currentTime: TimeInterval) -> Bool { false }
