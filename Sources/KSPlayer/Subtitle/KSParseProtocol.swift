@@ -203,12 +203,13 @@ public class AssParse: KSParseProtocol {
         }
         text = text.replacingOccurrences(of: "\\N", with: "\n")
         text = text.replacingOccurrences(of: "\\n", with: "\n")
+        text = text.replacingOccurrences(of: "\\h", with: " ") // ASS hard-space (FUN_101a99ef0 @472, "\h"->" "; base original lacked it)
         let textInfo = SubtitleTextInfo(
             text: text.build(textPosition: &textPosition, attributed: attributes),
-            position: textPosition, // ⚑ ASS stores textPosition (original `part.textPosition = textPosition`) → M2 audit-verify
-            displaySize: nil, // ⚑ render:Either field → M2 audit-verify (FUN_101a99ef0)
-            styleRole: .primary, // ⚑ parse produces primary → M2 audit-verify
-            usesForcedPosition: false // ⚑ → M2 audit-verify
+            position: textPosition, // ASS textPosition (audit-confirmed)
+            displaySize: displaySize, // = self.displaySize (ASS PlayResX/Y); binary copies self+0x20/+0x28 @FUN_101a99ef0:487-490 (NOT nil)
+            styleRole: .primary, // =0 (audit-confirmed)
+            usesForcedPosition: false // =0 (audit-confirmed)
         )
         return [SubtitlePart(start: start, end: end, render: .right(textInfo))]
     }
