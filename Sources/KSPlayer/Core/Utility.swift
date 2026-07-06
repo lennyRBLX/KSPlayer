@@ -379,7 +379,9 @@ public extension URL {
     }
 
     var isSubtitle: Bool {
-        ["ass", "srt", "ssa", "vtt"].contains(pathExtension.lowercased())
+        // Forward 1.3.17 added "sup" (PGS) — binary static ext-array @0x1044e72c0 = [ass,srt,ssa,vtt,sup]
+        // (session 19; recon base had 4; decoded via the DirectorySubtitleDataSource.searchSubtitle filter).
+        ["ass", "srt", "ssa", "vtt", "sup"].contains(pathExtension.lowercased())
     }
 
     var isPlaylist: Bool {

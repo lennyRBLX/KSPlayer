@@ -130,8 +130,19 @@ public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
 // §7.2 — Souce→Source + FileURL→URL. Stateless (dropped the recon's stored `infos`, §5.1).
 public class DirectorySubtitleDataSource: URLSubtitleDataSource {
     public init() {}
-    // ⚑ UNRESOLVED → P4 M2 (Task 4 next): searchSubtitle(fileURL:) — directory scan (FUN_101aa5c5c → FUN_101aac684)
-    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] { [] }
+    // FUN_101aa5c5c → FUN_101aac684 (setup) → FUN_101aac728 (isFileURL + contentsOfDirectory + filter) → FUN_101aa4844
+    //   (in-place mergeSort by URLSubtitleInfo.name). Binary-pinned: isFileURL guard, contentsOfDirectory(at:
+    //   deletingLastPathComponent, includingPropertiesForKeys:nil) [try?→[]], .filter(\.isSubtitle) (inlined
+    //   FUN_10001e034 = the 5-ext contains incl "sup"), .map { URLSubtitleInfo(url:) }, .sorted { $0.name < $1.name }.
+    //   §5.1: Forward RETURNS the array (base assigned self.infos). map = FUN_101aa3e10 (URLSubtitleInfo init/elem);
+    //   nil-fileURL unwrap folds into setup FUN_101aac684 → returns [] (audit-confirmed, not a divergence).
+    public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] {
+        guard let fileURL, fileURL.isFileURL else { return [] }
+        let subtitleURLs = (try? FileManager.default.contentsOfDirectory(
+            at: fileURL.deletingLastPathComponent(), includingPropertiesForKeys: nil
+        ).filter(\.isSubtitle)) ?? []
+        return subtitleURLs.map { URLSubtitleInfo(url: $0) }.sorted { $0.name < $1.name }
+    }
 }
 
 // §7.2 — Souce→Source + FileURL→URL. Stateless.
