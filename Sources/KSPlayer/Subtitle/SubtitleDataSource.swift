@@ -278,10 +278,88 @@ public class OpenSubtitleDataSource: SearchSubtitleDataSource {
         self.host = host
     }
 
-    // ⚑ UNRESOLVED → P4 M2 (Task 5 body 2/2, NEXT commit): searchSubtitle(query:languages:) — opensubtitles.com
-    //   API (host https://api.opensubtitles.com/api/v1 @0x103d34220). Signature return rippled to [URLSubtitleInfo]
-    //   (P55/P60 proven at the shared SearchSubtitleDataSource req via Assrt); body decode pending.
-    public func searchSubtitle(query: String?, languages _: [String]) async throws -> [URLSubtitleInfo] { [] }
+    // Task 5 body 2/2 (session 20). Witness FUN_101aab81c → FUN_101aa9374 (the imdbID:tmdbID: delegate, args 0,0).
+    // Base cce7002 OpenSubtitleDataSouce P19-adapted: host-field URLs, dropped stored `infos` → RETURNS [URLSubtitleInfo]
+    // (§5.1/§7.5, P60 — no-boxing confirmed at Open's witness). Internal choices deep-pinned from the binary (P59/P61):
+    //   host+"/subtitles" (search) · host+"/download" (loadDetails) · queryItems query/imdb_id/tmdb_id/languages
+    //   (base typo "imbd_id" → Forward-corrected "imdb_id") · headers Api-Key + optional Bearer (NO Accept/Content-Type —
+    //   the earlier chain-scan hits were spurious pairings) · JSON data[].attributes.files[].file_id → link/file_name.
+    public func searchSubtitle(query: String?, languages: [String]) async throws -> [URLSubtitleInfo] {
+        try await searchSubtitle(query: query, imdbID: 0, tmdbID: 0, languages: languages)
+    }
+
+    public func searchSubtitle(query: String?, imdbID: Int, tmdbID: Int, languages: [String]) async throws -> [URLSubtitleInfo] {
+        var queryItems = [String: String]()
+        if let query {
+            queryItems["query"] = query
+        }
+        if imdbID != 0 {
+            queryItems["imdb_id"] = String(imdbID)
+        }
+        if tmdbID != 0 {
+            queryItems["tmdb_id"] = String(tmdbID)
+        }
+        // Forward DROPPED base's `if queryItems.isEmpty { return [] }` here (audit+P42 disasm FUN_101aa9394:30-39: control
+        // flows unconditionally from the tmdb block into the languages build — no count-check/early-return). And the
+        // languages value gets `.replacingOccurrences(of: "_", with: "-")` (P42 disasm :44-52: _joined then
+        // _replacingOccurrences with 0x5f="_" / 0x2d="-") — normalizes locale codes (zh_CN → zh-CN). Base had neither.
+        queryItems["languages"] = languages.joined(separator: ",").replacingOccurrences(of: "_", with: "-")
+        return try await searchSubtitle(queryItems: queryItems)
+    }
+
+    public func searchSubtitle(queryItems: [String: String]) async throws -> [URLSubtitleInfo] {
+        if queryItems.isEmpty {
+            return []
+        }
+        guard let searchApi = URL(string: host + "/subtitles")?.add(queryItems: queryItems) else {
+            return []
+        }
+        var request = URLRequest(url: searchApi)
+        request.addValue(apiKey, forHTTPHeaderField: "Api-Key")
+        if let token {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+        guard let dataArray = json["data"] as? [[String: Any]] else {
+            return []
+        }
+        var result = [URLSubtitleInfo]()
+        for sub in dataArray {
+            if let attributes = sub["attributes"] as? [String: Any], let files = attributes["files"] as? [[String: Any]] {
+                for file in files {
+                    if let fileID = file["file_id"] as? Int, let info = try await loadDetails(fileID: fileID) {
+                        result.append(info)
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    private func loadDetails(fileID: Int) async throws -> URLSubtitleInfo? {
+        guard let detailApi = URL(string: host + "/download")?.add(queryItems: ["file_id": String(fileID)]) else {
+            return nil
+        }
+        var request = URLRequest(url: detailApi)
+        request.httpMethod = "POST"
+        request.addValue(apiKey, forHTTPHeaderField: "Api-Key")
+        if let token {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, _) = try await URLSession.shared.data(for: request)
+        // P42 disasm (FUN_101aaae78:48-60): JSON-parse error path calls __convertNSErrorToError + _swift_willThrow
+        // ⇒ `try` (propagate), NOT base cce7002's `try?` — same as Assrt.loadDetails (Forward unified the datasources).
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        guard let link = json["link"] as? String, let fileName = json["file_name"] as? String, let url = URL(string: link) else {
+            return nil
+        }
+        return URLSubtitleInfo(subtitleID: String(fileID), name: fileName, url: url)
+    }
 }
 
 extension URL {
