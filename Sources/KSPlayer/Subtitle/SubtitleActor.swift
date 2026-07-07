@@ -58,26 +58,76 @@ public actor SubtitleActor: KSSubtitleProtocol {
         // §1 — the exact concurrency plumbing is recon-chosen/under-included, binary-invisible, not a logic claim).
         nonisolated(unsafe) let subtitleInfo = info
         nonisolated(unsafe) let searchQuery = query
-        let result = await Self.delegateSearch(subtitleInfo, with: searchQuery)
-        // 898c — only the still-current search commits to `parts` (the reentrancy gate)
-        if generation == searchGeneration {
-            // ⚑ UNRESOLVED → deep (898c FUN_101ab898c, ~700 lines — decoded skeleton in ledger later·120):
-            //   the per-part positioning pass writes query.size→render.displaySize, query.textPosition (or the
-            //   SubtitleModel.textPosition global via swift_once)→position, query.textRole→styleRole into each
-            //   SubtitlePart.render (Either<SubtitleImageInfo, SubtitleTextInfo>), branching on textRole
-            //   (query+0x50/+0x51) and the render case via value-witness copies; the empty-result path
-            //   (898c @550-660) re-derives the display set from the existing `parts`. Novel Forward geometry
-            //   (no base analog) — committing the datasource result UN-positioned pending that reconstruction.
-            if !result.isEmpty {
-                parts = result
+        var result = await Self.delegateSearch(subtitleInfo, with: searchQuery)
+        // 898c stage 1 — apply the query's text position to every TEXT part (image parts untouched;
+        // query.size is NOT used). If the query carries a full textPosition, stamp it (B, 0x101ab8c1c);
+        // else if it carries just a verticalAlign, override that on the part's existing position or the
+        // SubtitleModel.textPosition default (A, 0x101ab89c8). render.position ← query+0x28.. / +0x18.
+        if let textPosition = query.textPosition {
+            for i in result.indices {
+                if case .right(var text) = result[i].render {
+                    text.position = textPosition
+                    result[i].render = .right(text)
+                }
+            }
+        } else if let verticalAlign = query.verticalAlign {
+            for i in result.indices {
+                if case .right(var text) = result[i].render {
+                    var position = text.position ?? SubtitleModel.textPosition
+                    position.verticalAlign = verticalAlign
+                    text.position = position
+                    result[i].render = .right(text)
+                }
             }
         }
-        // 959c — the current-time filter (≈ base KSSubtitle.search(for:), migrated: `part == query.time`).
-        // ⚑ APPROXIMATION: the decoded 898c per-branch return differs (still-current → the full committed
-        //   `parts`; stale → 959c(result) without committing) — folded into this single time-filter pending
-        //   the deep 898c/959c reconstruction (ledger later·120). Faithful gate + delegate above; exact
-        //   return/commit branches deferred with the positioning.
-        nonisolated(unsafe) let out = parts.filter { $0 == query.time }
+        // 898c stage 2 — a secondary track stamps its role onto every part (0x101ab8db4). render.styleRole
+        // ← query.textRole (query+0x51); text @render+0x49, image @render+0x70.
+        if query.textRole != .primary {
+            for i in result.indices {
+                switch result[i].render {
+                case .right(var text):
+                    text.styleRole = query.textRole
+                    result[i].render = .right(text)
+                case .left(var image):
+                    image.styleRole = query.textRole
+                    result[i].render = .left(image)
+                }
+            }
+        }
+        // 898c commit gate (0x101ab8ff0) — only the still-current search adopts results into `parts`.
+        if generation == searchGeneration {
+            if result.isEmpty {
+                // no fresh parts — the display set is the existing parts active at query.time (0x101ab9380)
+                result = parts.filter { $0.start <= query.time && query.time < $0.end }
+            } else {
+                // merge still-active existing parts not already present, dedup by (start,end) (0x101ab9284).
+                // ⚑ the 898c non-empty pre-pass (0x101ab9024) builds a discarded scratch + short-circuits to
+                //   commit when a result part has empty text.string — that edge case is not modeled here.
+                for part in parts where part.start <= query.time && query.time < part.end && part.end != .infinity {
+                    if !result.contains(where: { $0.start == part.start && $0.end == part.end }) {
+                        result.append(part)
+                    }
+                }
+            }
+            parts = result
+        } else {
+            // 959c (FUN_101ab959c) — the reentrancy-stale path yields the parts at `latestQueryTime`, adopting
+            // a non-empty fresh filter of `result` into `parts` as a side effect (this stale query's own
+            // generation is never adopted). ⚑ inlined (an isolated helper can't `sending`-return actor parts).
+            if let time = latestQueryTime {
+                let filtered = result.filter { $0.start <= time && time < $0.end }
+                if !filtered.isEmpty {
+                    parts = filtered
+                    result = filtered            // re-filtering by `time` is a no-op → return it whole
+                } else {
+                    result = parts.filter { $0.start <= time && time < $0.end }
+                }
+            } else {
+                result = []
+            }
+        }
+        // launder the actor-derived result across the `sending` return (§1 recon-chosen plumbing).
+        nonisolated(unsafe) let out = result
         return out
     }
 
