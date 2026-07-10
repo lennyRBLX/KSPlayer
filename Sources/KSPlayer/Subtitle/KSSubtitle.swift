@@ -245,6 +245,10 @@ open class SubtitleModel: ObservableObject {
 
     nonisolated(unsafe) public static var textFontSize = SubtitleModel.Size.standard.rawValue
     nonisolated(unsafe) public static var textBold = false
+    // ⚑ DAT_104c63248 (module-level static Bool; get FUN_1019bb6c0 / set FUN_1019bb700) — read in the iOS-18
+    //   translate success funclet 5aa8@0x6148: when true, the translated subtitle prepends the ORIGINAL text
+    //   ("original\ntranslation"). Exact source name/owner unrecoverable (P28) → recon-named here.
+    nonisolated(unsafe) public static var showsOriginalWithTranslation = false
     nonisolated(unsafe) public static var textItalic = false
     nonisolated(unsafe) public static var textPosition = TextPosition()
     nonisolated(unsafe) public static var audioRecognizes = [any AudioRecognize]()
@@ -438,17 +442,52 @@ open class SubtitleModel: ObservableObject {
         // Skip a redundant publish (and its objectWillChange) when nothing changed. (FUN_101b163b0, 5430@0x5508)
         guard newParts != parts else { return }
 
-        // iOS-18 TranslationSession.translate — SETUP faithful (438c/4c54/5430 @0x551c–56e8): if the first
-        // gathered part is text and a translation session is configured (self._translationSession, self+0x38),
-        // translate it (cont FUN_101ab5a34). ⚑ DEFERRED (translate follow-up): the exact request-buffer
-        // construction AND the post-await processing (5aa8 = NSMutableAttributedString from Response.targetText
-        // + republish; 664c = error fallback) — stubbed to `return` here (translated parts not yet republished).
+        // iOS-18 TranslationSession.translate (SETUP in 438c/4c54/5430 @0x551c–56e8; await cont FUN_101ab5a34): if
+        // the first gathered part is text and a translation session is configured (self._translationSession,
+        // self+0x38), await the translation and republish — success → FUN_101ab5aa8 (config source-adapt + attributed
+        // build + a fresh translated part), error → FUN_101ab664c (untranslated fallback). Both re-run the resume
+        // tail since generation/sequence can move during the await. ⚑ residual: the size-fit actor.info witness
+        // (subtitleDisplaySize) and the pre-hop skip/time (FUN_101ab9d00) remain deferred — the translate path is done.
         #if canImport(Translation) && !os(tvOS) && !os(watchOS)
         if #available(iOS 18, macOS 15, *),
            let first = newParts.first,
            case let .right(textInfo) = first.render,                    // first render must be text (byte@0x779==1)
            let session = _translationSession as? TranslationSession {    // self._translationSession (self+0x38)
-            _ = try? await session.translate(textInfo.text.string)       // → PTR__translate_104110fe8
+            // FUN_101ab5a34: `try? await` → success(response) [x20==0 → 5aa8] vs error(nil) [swift_errorRelease → 664c].
+            guard let response = try? await session.translate(textInfo.text.string) else {
+                // 664c error fallback: RE-RUN the resume tail (generation/sequence can move during the translate
+                // await), then publish the UNTRANSLATED parts (0x101ab664c → 674c).
+                publishIfCurrent(newParts, generation: generation, sequence: sequence)
+                return
+            }
+            // 5aa8 entry (0x101ab5aa8–5d58): re-validate the FULL gathered set against the CURRENT query time
+            // BEFORE any translation work — a supersession race during the translate await abandons here.
+            guard stillCurrent(newParts, generation: generation, sequence: sequence) else { return }
+            // 5aa8 success. Adapt the stored config's source language to the detected one when they differ
+            // (self._translationSessionConf, self+0x18, via a _modify coroutine FUN_101ab03c8; get/set_source
+            // 0x103452c98/ca4, Response.get_sourceLanguage 0x103452cd4, Locale.Language ==_infix 0x1034573f0@0x6448).
+            if var conf = _translationSessionConf as? TranslationSession.Configuration,
+               conf.source != response.sourceLanguage {
+                conf.source = response.sourceLanguage                    // set_source @0x6100
+                _translationSessionConf = conf
+            }
+            // Build the display attributed string (0x101ab6118): when the static flag is set, prepend the ORIGINAL
+            // text + "\n"; then append the translated targetText with "\n\n" collapsed to "\n".
+            let attributed = NSMutableAttributedString()
+            if SubtitleModel.showsOriginalWithTranslation {              // ⚑ DAT_104c63248 @0x6148 (see static above)
+                attributed.append(textInfo.text)                         // original (appendAttributedString @0x6160)
+                attributed.append(NSAttributedString(string: "\n"))      // separator (@0x6198)
+            }
+            let translated = response.targetText.replacingOccurrences(of: "\n\n", with: "\n")   // @0x61ec/@0x6250
+            attributed.append(NSAttributedString(string: translated))    // @0x62a8
+            // Build the translated part = copy of the first text part with only `text` replaced, then publish a
+            // FRESH 1-element array (0x101ab62b0–63cc _set_subscript keypaths d1e8/d210 → @Published parts).
+            var newTextInfo = textInfo
+            newTextInfo.text = attributed
+            let translatedPart = SubtitlePart(start: first.start, end: first.end, render: .right(newTextInfo))
+            // 5aa8: RE-RUN the resume tail after the translate await, then publish the fresh 1-element array
+            // (0x101ab6360 re-guard → 0x63cc _set_subscript).
+            publishIfCurrent([translatedPart], generation: generation, sequence: sequence)
             return
         }
         #endif
@@ -477,6 +516,38 @@ open class SubtitleModel: ObservableObject {
         guard r != 0, w != 0 else { return screenSize }
         return r <= h / w ? CGSize(width: w, height: Double(Int(r * w)))
                           : CGSize(width: Double(Int(h / r)), height: h)
+    }
+
+    // The resume-tail predicate: the generation snapshot still matches AND (when the sequence moved) every part is
+    // still within its role's latest-query half-open [start,end) window. Re-run after the iOS-18 translate `await`
+    // since generation/sequence may have changed during it. `@inline(__always)` to match the binary's
+    // tail-inlined-into-every-funclet codegen (5aa8 entry @0x5aa8 over newParts / 5aa8 publish @0x6360 over the
+    // translated part / 664c @0x674c over newParts).
+    @inline(__always)
+    private func stillCurrent(_ items: [SubtitlePart], generation: Int, sequence: Int) -> Bool {
+        guard generation == subtitleSearchGeneration else { return false }
+        if sequence != subtitleSearchSequence {
+            guard !items.isEmpty else { return false }
+            for part in items {
+                let role: SubtitleTextRole
+                switch part.render {
+                case let .left(image):
+                    role = image.styleRole
+                case let .right(text):
+                    if text.text.string.isEmpty { return false }
+                    role = text.styleRole
+                }
+                let queryTime = role == .secondary ? latestSecondarySubtitleQueryTime
+                                                   : latestPrimarySubtitleQueryTime
+                guard let queryTime, part.start <= queryTime, queryTime < part.end else { return false }
+            }
+        }
+        return true
+    }
+
+    @inline(__always)
+    private func publishIfCurrent(_ items: [SubtitlePart], generation: Int, sequence: Int) {
+        if stillCurrent(items, generation: generation, sequence: sequence) { parts = items }
     }
 
     // FUN_101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a
