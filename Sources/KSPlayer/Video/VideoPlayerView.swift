@@ -262,8 +262,13 @@ open class VideoPlayerView: PlayerView {
     override open func player(layer: KSPlayerLayer, currentTime: TimeInterval, totalTime: TimeInterval) {
         guard !isSliderSliding else { return }
         super.player(layer: layer, currentTime: currentTime, totalTime: totalTime)
-        if srtControl.subtitle(currentTime: currentTime) {
-            if let part = srtControl.parts.first {
+        // ⚑ consumer-ripple: subtitle(currentTime:) migrated sync `-> Bool` → async Void (parts now
+        //   @Published-observed). Base `nonisolated(unsafe)` launder (searchSubtitle idiom) + Task; the
+        //   parts-driven UI runs after the await. Faithful reconstruction of this delegate is separate scope.
+        nonisolated(unsafe) let model = srtControl
+        Task { @MainActor in
+            await model.subtitle(currentTime: currentTime)
+            if let part = model.parts.first {
                 // ⚑ UNRESOLVED → P4 M2: render `part.render` (Either<SubtitleImageInfo,SubtitleTextInfo>) —
                 //   recon part.image/part.text removed (payload consolidated into render, §8.6).
                 _ = part

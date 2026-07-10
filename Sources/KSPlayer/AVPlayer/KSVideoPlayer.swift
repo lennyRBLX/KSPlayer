@@ -263,7 +263,11 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
         if timemodel.totalTime != total {
             timemodel.totalTime = total
         }
-        _ = subtitleModel.subtitle(currentTime: currentTime)
+        // ⚑ consumer-ripple: subtitle(currentTime:) migrated sync `-> Bool` → async Void; laundered per the
+        //   base `nonisolated(unsafe) let strongSelf = self` idiom (searchSubtitle) + Task. Faithful
+        //   reconstruction of this delegate method is separate scope.
+        nonisolated(unsafe) let model = subtitleModel
+        Task { await model.subtitle(currentTime: currentTime) }
     }
 
     public func player(layer: KSPlayerLayer, finish error: Error?) {
