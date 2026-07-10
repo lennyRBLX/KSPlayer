@@ -13,7 +13,13 @@ public actor SubtitleActor: KSSubtitleProtocol {
     var info: any SubtitleInfo
     var searchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
     var latestQueryTime: Double?
-    // ⚑ init shape inferred → M2 witness-verify
+    // init(info:) — witness-verified against the inlined construction at BOTH willSets (FUN_101ab2540
+    // selectedSubtitleInfo @0x101ab2688 / FUN_101ab2de4 secondarySubtitleInfo): SubtitleActor metadata accessor
+    // (0x101aba99c) -> swift_allocObject -> swift_defaultActor_initialize -> store `info` (existential @actor+0x70..0x80)
+    // + field defaults (searchGeneration=0 @+0x88, latestQueryTime=nil @+0x90/98, parts=[]). FULLY INLINED — no
+    // standalone init function (locate_class_init P43: "init None" is correct for this final actor's trivial init).
+    // `info` is stored once and never reassigned (could be `let`; a `nonisolated let` would additionally enable the
+    // deferred size-fit's synchronous `actor.info` read in SubtitleModel.subtitle(currentTime:)).
     init(info: any SubtitleInfo) {
         self.info = info
     }
