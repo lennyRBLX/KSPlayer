@@ -146,6 +146,15 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifia
     var subtitleID: String { get }
     var name: String { get }
     var delay: TimeInterval { get set }
+    // Order pinned to the URLSubtitleInfo:SubtitleInfo witness table getters (+0x10..+0x38 =
+    // subtitleID / name / delay / languageCode / subtitleLanguage / isEnabled): languageCode (witness
+    // 0x100c55b00, String? getter @self+0x40) then subtitleLanguage (witness +0x30, FUN_101aa3cc8) sit
+    // between delay and isEnabled.
+    var languageCode: String? { get }
+    // subtitleLanguage = the subtitle's language as a `Locale.Language` (the translation SOURCE). Named
+    // `subtitleLanguage` (not `language`) to avoid the `MediaPlayerTrack.language: String?` collision on
+    // FFmpegAssetTrack. ⚑ P28: true name stripped.
+    var subtitleLanguage: Locale.Language? { get }
     //    var userInfo: NSMutableDictionary? { get set }
     //    var subtitleDataSouce: SubtitleDataSouce? { get set }
 //    var comment: String? { get }
@@ -154,6 +163,10 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifia
 
 public extension SubtitleInfo {
     var id: String { subtitleID }
+    // FUN_101aa3cc8: `Locale.Language(identifier:)` from `languageCode`, or nil when `languageCode` is nil.
+    var subtitleLanguage: Locale.Language? {
+        languageCode.map { Locale.Language(identifier: $0) }
+    }
     func hash(into hasher: inout Hasher) {
         hasher.combine(subtitleID)
     }
@@ -255,7 +268,30 @@ open class SubtitleModel: ObservableObject {
     // §7.3 — 24 fields in binary reflection order. @Published-backed → `_x` in field metadata;
     // `_translationSessionConf`/`_translationSession` are manual `_`-backings (computed accessors; the iOS18
     // TranslationSession is boxed for availability). Method bodies → P4 M2.
-    public var translation: Bool = false
+    // FUN_101aaf314 — `translation` didSet (synthesized setter FUN_101aafdd0 = store-then-call-with-oldValue).
+    // Toggling ON (re)builds the iOS-18 TranslationSession.Configuration only when a subtitle is selected but no
+    // config exists yet (the selectedSubtitleInfo willSet covers the subtitle-change side); toggling OFF clears it.
+    // Configuration(source: subtitle language, target: Locale.current.language) — byte-confirmed via the
+    // FUN_101aaf314 init call (x0=source=subtitle-lang buffer, x1=target=current-lang @0x101aafc14/c18) + the
+    // committed `conf.source = response.sourceLanguage` consistency (subtitle(currentTime:)).
+    public var translation: Bool = false {
+        didSet {
+            guard oldValue != translation else { return }
+            #if canImport(Translation) && !os(tvOS) && !os(watchOS)
+            if #available(iOS 18, macOS 15, *) {
+                if translation {
+                    guard _translationSessionConf as? TranslationSession.Configuration == nil else { return }
+                    let source = selectedSubtitleInfo?.subtitleLanguage
+                    let target = Locale.current.language
+                    guard source != target else { return }
+                    updateTranslationSessionConfiguration(.init(source: source, target: target))
+                } else {
+                    updateTranslationSessionConfiguration(nil)
+                }
+            }
+            #endif
+        }
+    }
     private var _translationSessionConf: Any?
     private var _translationSession: AnyObject?
     public var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
@@ -292,15 +328,23 @@ open class SubtitleModel: ObservableObject {
                 nonisolated(unsafe) let info = newValue
                 firstSubtitleActor = SubtitleActor(info: info)
                 didSelectSubtitle(info)                 // FUN_101ab8250 (shared with secondary); name P28
-                if translation, #available(iOS 18, *) {
-                    // ⚑ UNRESOLVED → P4 M2 Task 8: build+store TranslationSession.Configuration
-                    //   (source/target Locale.Language) via FUN_101aaffa0 updater; availability-boxed
-                    //   (_translationSessionConf/_translationSession). Deferred per user-gated scope (Batch 3).
+                #if canImport(Translation) && !os(tvOS) && !os(watchOS)
+                // FUN_101ab2540 translation branch: build a Configuration from the new subtitle's language and the
+                // current locale, skipping when they already match (nothing to translate).
+                if translation, #available(iOS 18, macOS 15, *) {
+                    let source = info.subtitleLanguage
+                    let target = Locale.current.language
+                    if source != target {
+                        updateTranslationSessionConfiguration(.init(source: source, target: target))
+                    }
                 }
+                #endif
             } else {
-                if #available(iOS 18, *) {
-                    // ⚑ UNRESOLVED → P4 M2 Task 8: clear the TranslationSession configuration (FUN_101aaffa0 nil path).
+                #if canImport(Translation) && !os(tvOS) && !os(watchOS)
+                if #available(iOS 18, macOS 15, *) {
+                    updateTranslationSessionConfiguration(nil)   // FUN_101ab2540 nil path
                 }
+                #endif
                 firstSubtitleActor = nil
             }
         }
@@ -373,6 +417,20 @@ open class SubtitleModel: ObservableObject {
             }
         }
     }
+
+    #if canImport(Translation) && !os(tvOS) && !os(watchOS)
+    // FUN_101aaffa0 — store the new Configuration into `_translationSessionConf` (self+0x18), then drop the live
+    // `_translationSession` (self+0x38) when the new config is nil/empty (forcing a rebuild). The binary reads NO
+    // prior value: the clear fires on a value-witness `==` of the new config against an empty one, NOT new-vs-old.
+    // ⚑ exact `==` spelling M2-verify (reconstructed to the proven behavior: clear-when-nil).
+    @available(iOS 18, macOS 15, *)
+    private func updateTranslationSessionConfiguration(_ configuration: TranslationSession.Configuration?) {
+        _translationSessionConf = configuration
+        if configuration == nil {
+            _translationSession = nil
+        }
+    }
+    #endif
 
     // FUN_101ab9d00 (async fn, async-FP @0x10506e8dd) → FUN_101ab4338 (arg-spill + executor hop) →
     // FUN_101ab438c (entry body) + funclets 4c04/4c54/53e0/5430 (+ deferred translate 5a34/5aa8/664c). §8:
