@@ -12,8 +12,13 @@ import Foundation
 // FFmpegSubtitleParse) — ASS-image is rendered via AssIncrementImageRenderer (Batch 5), not this text path.
 public class AssImageParse: KSParseProtocol {
     public init() {}
-    // ⚑ RESIDUAL → P4 M2 (existence-CHECKED deferral, session 19; name recovery EXHAUSTED — safe fallback per the
-    //   cardinal rule, NOT fabricated). canParse = FUN_101a96b98 (~298i, anchor-verified). Decoded spine:
+    // ⚑ TERMINAL DEFERRAL → P4 M2 (existence-CHECKED session 19, RE-VERIFIED session 25 [2026-07-10] — the block
+    //   HOLDS; name recovery EXHAUSTED — safe `false` fallback per the cardinal rule, NOT fabricated. Unblock needs a
+    //   symbolicated/app-context build or upstream Forward source; NOT further binary analysis — do NOT re-open as
+    //   pending work). RE-VERIFY (P43): recover_swift_function_name → all 4 helpers 'npl'(spurious #file:None); the
+    //   3 flag accessors FUN_1019b982c/98fc/99cc + shared reader FUN_101b1d474 → #function None.
+    //   ⚑[tool=recover_swift_function_name ref=FUN_1019b982c/98fc/99cc+FUN_101b1d474 result=FAILED-SEARCH]
+    //   canParse = FUN_101a96b98 (~298i, anchor-verified). Decoded spine:
     //     if flag151, scanner.string.contains(" --> ")  -> scanner.charactersToBeSkipped = nil; scanner.scanString("WEBVTT"); return true
     //     guard scanner.string.contains("Format: Name,") else { return false }
     //     if flag150 { return true };  guard flag152 else { return false }
