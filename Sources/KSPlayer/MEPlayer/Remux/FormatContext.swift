@@ -8,13 +8,14 @@
 //  → inner init `0x101a350bc` (the real body; derivation-heavy + side effects).
 //
 //  FAITHFUL PARTIAL: the 6 param-fed fields are assigned exactly as the binary stores them.
-//  RECONSTRUCTED (session 28) the 3 CLEAN symbolic-FFmpeg derivations — `formatName`, `startTime`,
-//  `maxFrameDuration` — verified against FUN_101a350bc + identical to the proven MEPlayerItem:233-239
-//  idioms (symbolic field access = faithful by construction under the non-stock ABI). Still UNRESOLVED
-//  (declared with safe defaults, `// UNRESOLVED`): `bitrate` (rate calc), `byteSeek`/`seekByBytes`
-//  (2-field flag+name logic, 0x280), the `assetTracks` per-stream FFmpegAssetTrack loop, and the
-//  embedded-font-extraction side-effect. Remaining derivations are NOT fabricated (a plausible-but-wrong
-//  body looks done and crashes downstream).
+//  RECONSTRUCTED (session 28) the 4 cleanly-separable symbolic-FFmpeg derivations — `formatName`,
+//  `startTime`, `maxFrameDuration` (idiom of the proven MEPlayerItem:233-239), and `byteSeek`
+//  (@0x101a35494-0x101a354e8, disasm-verified) — symbolic field access = faithful by construction under
+//  the non-stock ABI. Still UNRESOLVED (safe defaults, `// UNRESOLVED`): `seekByBytes` (+0x58, a CMTime
+//  duration-compare with a `formatCtx->duration` side-effect + array counts) and `bitrate` (+0x38, a
+//  rate calc at the loop tail) — BOTH entangled with the deferred `assetTracks` per-stream FFmpegAssetTrack
+//  loop + the embedded-font-extraction side-effect, so they come WITH that deep reconstruction. Remaining
+//  derivations are NOT fabricated (a plausible-but-wrong body looks done and crashes downstream).
 //
 
 import CoreMedia
@@ -82,7 +83,13 @@ public final class FormatContext {
         // +0x48 = String(cString: iformat->name). FUN_101a350bc reads *(*(formatCtx+8)) (iformat->name);
         // identical idiom to MEPlayerItem:236 (FFmpeg struct fields accessed SYMBOLICALLY — non-stock ABI, faithful by construction).
         self.formatName = String(cString: formatCtx.pointee.iformat.pointee.name)
-        self.byteSeek = false     // UNRESOLVED: derived in binary init @+0x59 — from format flags + name compare not reconstructed (faithful partial)
+        // +0x59 = (iformat.flags & AVFMT_NO_BYTE_SEEK == 0) && (iformat.flags & (AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS) != 0)
+        //   && formatName != "ogg". FUN_101a350bc @0x101a35494-0x101a354e8 disasm-verified (tbnz #0xf; and #0x280; "ogg" 0x67676f
+        //   compare). Broader mask than MEPlayerItem:237's seekByBytes (0x280 = AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS, vs 0x200 there).
+        let iformatFlags = formatCtx.pointee.iformat.pointee.flags
+        self.byteSeek = (iformatFlags & AVFMT_NO_BYTE_SEEK == 0)
+            && (iformatFlags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0)
+            && (formatName != "ogg")
         // +0x5c = CMTime from formatCtx->start_time (== AV_NOPTS_VALUE(Int64.min) ? kCMTimeZero : CMTime(value:, timescale: AV_TIME_BASE)).
         // FUN_101a350bc reads formatCtx-start_time == INT64_MIN; identical idiom to MEPlayerItem:238-239.
         self.startTime = formatCtx.pointee.start_time != Int64.min
