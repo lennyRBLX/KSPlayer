@@ -7,11 +7,14 @@
 //  Reconstructed from binary: outer init `0x101a35050` (_swift_allocObject + delegate)
 //  → inner init `0x101a350bc` (the real body; derivation-heavy + side effects).
 //
-//  FAITHFUL PARTIAL: the 6 param-fed fields are assigned exactly as the binary stores
-//  them; the derived fields (bitrate, byteSeek, startTime, maxFrameDuration, formatName)
-//  are COMPUTED in the 794-line body from `formatCtx` and are NOT reconstructed here —
-//  they are declared with safe defaults and marked `// UNRESOLVED`. Derivations are not
-//  fabricated (a plausible-but-wrong body looks done and crashes downstream).
+//  FAITHFUL PARTIAL: the 6 param-fed fields are assigned exactly as the binary stores them.
+//  RECONSTRUCTED (session 28) the 3 CLEAN symbolic-FFmpeg derivations — `formatName`, `startTime`,
+//  `maxFrameDuration` — verified against FUN_101a350bc + identical to the proven MEPlayerItem:233-239
+//  idioms (symbolic field access = faithful by construction under the non-stock ABI). Still UNRESOLVED
+//  (declared with safe defaults, `// UNRESOLVED`): `bitrate` (rate calc), `byteSeek`/`seekByBytes`
+//  (2-field flag+name logic, 0x280), the `assetTracks` per-stream FFmpegAssetTrack loop, and the
+//  embedded-font-extraction side-effect. Remaining derivations are NOT fabricated (a plausible-but-wrong
+//  body looks done and crashes downstream).
 //
 
 import CoreMedia
@@ -76,10 +79,18 @@ public final class FormatContext {
         // --- Derived fields: COMPUTED in the binary init body (likely from formatCtx).
         //     Declared with safe Swift defaults; computation not reconstructed. ---
         self.bitrate = 0          // UNRESOLVED: derived in binary init @+0x38 — fileSize*8/duration-style calc not reconstructed (faithful partial)
-        self.formatName = ""      // UNRESOLVED: derived in binary init @+0x48 — from formatCtx->iformat->name not reconstructed (faithful partial)
+        // +0x48 = String(cString: iformat->name). FUN_101a350bc reads *(*(formatCtx+8)) (iformat->name);
+        // identical idiom to MEPlayerItem:236 (FFmpeg struct fields accessed SYMBOLICALLY — non-stock ABI, faithful by construction).
+        self.formatName = String(cString: formatCtx.pointee.iformat.pointee.name)
         self.byteSeek = false     // UNRESOLVED: derived in binary init @+0x59 — from format flags + name compare not reconstructed (faithful partial)
-        self.startTime = .zero    // UNRESOLVED: derived in binary init @+0x5c — CMTime from formatCtx->start_time / kCMTimeZero not reconstructed (faithful partial)
-        self.maxFrameDuration = 0 // UNRESOLVED: derived in binary init @+0x78 — 3600 or 10 from format flags not reconstructed (faithful partial)
+        // +0x5c = CMTime from formatCtx->start_time (== AV_NOPTS_VALUE(Int64.min) ? kCMTimeZero : CMTime(value:, timescale: AV_TIME_BASE)).
+        // FUN_101a350bc reads formatCtx-start_time == INT64_MIN; identical idiom to MEPlayerItem:238-239.
+        self.startTime = formatCtx.pointee.start_time != Int64.min
+            ? CMTime(value: formatCtx.pointee.start_time, timescale: AV_TIME_BASE)
+            : .zero
+        // +0x78 = (iformat->flags & AVFMT_TS_DISCONT) ? 10 : 3600 — discontinuous-timestamp formats get a small max
+        // frame duration. FUN_101a350bc reads (iformat.flags & 0x200); idiom of MEPlayerItem:233-234 (there Double; here the field is Int, Si).
+        self.maxFrameDuration = formatCtx.pointee.iformat.pointee.flags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
 
         // --- Side effect (font registration) ---
         // init registers fonts: FileManager.createDirectory(at: fontsDir) + CTFontManagerRegisterFontsForURL(fontsDir) — side-effect spine; deep construction UNRESOLVED
