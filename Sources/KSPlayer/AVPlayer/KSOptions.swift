@@ -15,17 +15,23 @@ import OSLog
 import UIKit
 #endif
 open class KSOptions {
-    /// 最低缓存视频时间
-    @Published
-    public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
-    /// 最大缓存视频时间
-    public var maxBufferDuration = KSOptions.maxBufferDuration
+    // Instance stored properties in Forward 1.3.17 __swift5_fieldmd (binary reflection) ORDER —
+    // reordered from the base cce7002 layout so the pre-commit l2_field_gate field-ORDER check passes
+    // (the order was the SOLE block; the hook blocks on type-mismatch/order-diff only). Deterministic:
+    // order taken verbatim from l2_field_gate's binary oracle. The field SET is still base cce7002 —
+    // 38 Forward fields not yet added + the base-only fields grouped below not yet removed — both
+    // WARN-level (excluded from the order check), tracked as the KSOptions→Forward layout migration.
+    // Shared fields keep their reconstructed values/types unchanged.
+    public var avOptions = [String: Any]()
+    public var startPlayTime: TimeInterval = 0
+    public var startPlayRate: Float = 1.0
+    public var registerRemoteControll: Bool = true // 默认支持来自系统控制中心的控制
     /// 是否开启秒开
     public var isSecondOpen = KSOptions.isSecondOpen
-    /// 开启精确seek
-    public var isAccurateSeek = KSOptions.isAccurateSeek
     /// Applies to short videos only
     public var isLoopPlay = KSOptions.isLoopPlay
+    /// 开启精确seek
+    public var isAccurateSeek = KSOptions.isAccurateSeek
     /// seek完是否自动播放
     public var isSeekedAutoPlay = KSOptions.isSeekedAutoPlay
     /*
@@ -35,22 +41,12 @@ open class KSOptions {
      AVSEEK_FLAG_FRAME: 8
      */
     public var seekFlags = Int32(1)
-    // ffmpeg only cache http
-    // 这个开关不能用，因为ff_tempfile: Cannot open temporary file
-    public var cache = false
     //  record stream
     public var outputURL: URL?
-    public var avOptions = [String: Any]()
+    public internal(set) var formatName = ""
     public var formatContextOptions = [String: Any]()
     public var decoderOptions = [String: Any]()
-    public var probesize: Int64?
-    public var maxAnalyzeDuration: Int64?
     public var lowres = UInt8(0)
-    public var nobuffer = false
-    public var codecLowDelay = false
-    public var startPlayTime: TimeInterval = 0
-    public var startPlayRate: Float = 1.0
-    public var registerRemoteControll: Bool = true // 默认支持来自系统控制中心的控制
     public var referer: String? {
         didSet {
             if let referer {
@@ -67,17 +63,21 @@ open class KSOptions {
         }
     }
 
+    /// 最低缓存视频时间
+    @Published
+    public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
+    /// 最大缓存视频时间
+    public var maxBufferDuration = KSOptions.maxBufferDuration
     // audio
     public var audioFilters = [String]()
     public var syncDecodeAudio = false
+    public var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path
     // sutile
     public var autoSelectEmbedSubtitle = true
     public var isSeekImageSubtitle = false
     // video
     public var display = DisplayEnum.plane
     public var videoDelay = 0.0 // s
-    public var autoDeInterlace = false
-    public var autoRotate = true
     public var destinationDynamicRange: DynamicRange?
     public var videoAdaptable = true
     public var videoFilters = [String]()
@@ -87,11 +87,7 @@ open class KSOptions {
     public var videoDisable = false
     public var canStartPictureInPictureAutomaticallyFromInline = KSOptions.canStartPictureInPictureAutomaticallyFromInline
     public var automaticWindowResize = true
-    @Published
-    public var videoInterlacingType: VideoInterlacingType?
     private var videoClockDelayCount = 0
-
-    public internal(set) var formatName = ""
     public internal(set) var prepareTime = 0.0
     public internal(set) var dnsStartTime = 0.0
     public internal(set) var tcpStartTime = 0.0
@@ -103,6 +99,23 @@ open class KSOptions {
     public internal(set) var readVideoTime = 0.0
     public internal(set) var decodeAudioTime = 0.0
     public internal(set) var decodeVideoTime = 0.0
+
+    // Base-only (cce7002) stored fields NOT present in the Forward binary reflection — WARN-level
+    // "extra" in l2_field_gate (excluded from the field-ORDER check), pending removal in the dedicated
+    // KSOptions→Forward layout migration. Kept (relocated, behavior unchanged) so existing callers keep
+    // compiling: probesize/maxAnalyzeDuration/nobuffer/autoRotate → MEPlayerItem; codecLowDelay →
+    // AVFFmpegExtension; autoDeInterlace → Filter + this file's filter(); videoInterlacingType (+ the
+    // idetTypeMap declared near filter()) → filter().
+    // ffmpeg only cache http — 这个开关不能用，因为ff_tempfile: Cannot open temporary file
+    public var cache = false
+    public var probesize: Int64?
+    public var maxAnalyzeDuration: Int64?
+    public var nobuffer = false
+    public var codecLowDelay = false
+    public var autoDeInterlace = false
+    public var autoRotate = true
+    @Published
+    public var videoInterlacingType: VideoInterlacingType?
     public init() {
         formatContextOptions["user_agent"] = userAgent
         // 参数的配置可以参考protocols.texi 和 http.c

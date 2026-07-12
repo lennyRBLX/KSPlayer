@@ -28,9 +28,36 @@ class SubtitleDecode: DecodeProtocol {
     private var fontsDir: String?
     private var subtitleHeader: String?
     private var pendingASSImageSubtitles: [(subtitle: String, start: Double, duration: Double)] = [] // §8.6
-    // ⚑ init shape inferred → M2 witness-verify (real init builds the codec ctx + ASS parse from assetTrack)
-    required init(assetTrack: FFmpegAssetTrack, options _: KSOptions) {
+    // init(assetTrack:options:) — Batch 4 Tier 3a. FUN_101a6914c (via __allocating_init thunk 0x101a69100). Base
+    // cce7002 init is the adaptation reference, reworked for Forward's added fields (assetTrack/isASS/fontsDir/
+    // subtitleHeader §8.3) + a codecContext time_base set (like FFmpegDecode). isASS = codec_id in {SSA/ASS/EIA_608}
+    // (DAT_1044eb330/334/338 read = 0x17004/0x17016/0x1700a). Only the non-optional stored field (assetTrack) needs
+    // setting; the rest take their declared defaults (nil / AVSubtitle() / [] / 0 / false). Throwing: createContext
+    // do/catch. FFmpeg fields accessed SYMBOLICALLY (this build is FFmpeg 7.1, non-stock ABI).
+    // ⚑ DEFERRED (Tier 3b, next): the subtitleHeader "Style:" line-filtering (FUN_101a6914c dec 194-254) — simplified
+    //   here to String(cString:) (base behavior); the assParse it feeds sees the raw header meanwhile.
+    // ⚑ DEFERRED (Batch 5, TERMINAL): the flag-gated assImageRenderer build (dec 257-320) — gated on the SAME
+    //   un-nameable KSOptions private static Bools DAT_104c63150/151/152 as AssImageParse.canParse={false}; with the
+    //   feature off (always-current) the ASS-header falls through to assParse.canParse below. Not fabricated (cardinal rule).
+    required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.assetTrack = assetTrack
+        startTime = assetTrack.startTime.seconds
+        fontsDir = options.fontsDir?.path
+        isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.codec_id)
+        do {
+            codecContext = try assetTrack.createContext(options: options)
+            codecContext?.pointee.time_base = assetTrack.timebase.rational
+            if let pointer = codecContext?.pointee.subtitle_header {
+                let subtitleHeader = String(cString: pointer)
+                self.subtitleHeader = subtitleHeader
+                let assParse = AssParse()
+                if assParse.canParse(scanner: Scanner(string: subtitleHeader)) {
+                    self.assParse = assParse
+                }
+            }
+        } catch {
+            KSLog(error as CustomStringConvertible)
+        }
     }
 
     // ── FFmpeg provenance (P32) — every av* symbol named in this class is ffmpeg_name_oracle result=CONFIRMED
