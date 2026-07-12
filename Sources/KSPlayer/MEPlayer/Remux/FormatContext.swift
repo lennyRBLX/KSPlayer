@@ -8,19 +8,37 @@
 //  → inner init `0x101a350bc` (the real body; derivation-heavy + side effects).
 //
 //  FAITHFUL PARTIAL: the 6 param-fed fields are assigned exactly as the binary stores them.
-//  RECONSTRUCTED (session 28) the 4 cleanly-separable symbolic-FFmpeg derivations — `formatName`,
+//  RECONSTRUCTED (session 28) the 4 cleanly-separable symbolic-FFmpeg scalar derivations — `formatName`,
 //  `startTime`, `maxFrameDuration` (idiom of the proven MEPlayerItem:233-239), and `byteSeek`
-//  (@0x101a35494-0x101a354e8, disasm-verified) — symbolic field access = faithful by construction under
-//  the non-stock ABI. Still UNRESOLVED (safe defaults, `// UNRESOLVED`): `seekByBytes` (+0x58, a CMTime
-//  duration-compare with a `formatCtx->duration` side-effect + array counts) and `bitrate` (+0x38, a
-//  rate calc at the loop tail) — BOTH entangled with the deferred `assetTracks` per-stream FFmpegAssetTrack
-//  loop + the embedded-font-extraction side-effect, so they come WITH that deep reconstruction. Remaining
-//  derivations are NOT fabricated (a plausible-but-wrong body looks done and crashes downstream).
+//  (@0x101a35494-0x101a354e8, disasm-verified). RECONSTRUCTED (session 29) the per-stream `assetTracks`
+//  loop (calls the EXISTING `FFmpegAssetTrack(stream:)` = FUN_101a211ec — the 625-instr builder is already
+//  done, NOT re-derived here; the loop appends non-nil tracks and font-extracts on nil+attachment), the
+//  embedded-font-extraction side-effect (Data + createDirectory + write + CTFontManagerRegisterFontsForURL
+//  + av_freep, on ATTACHMENT streams whose codec_id ∈ {none, TTF, OTF}), the per-track `startTime`
+//  container-alignment, `bitrate` (+0x38, fileSize*8/duration with a track-bitRate-sum fallback), and the
+//  dominant-path `duration` = durationSeconds. Symbolic FFmpeg field access = faithful by construction
+//  under the non-stock ABI.
+//
+//  STILL UNRESOLVED (flagged `// UNRESOLVED`, NOT fabricated) — the `ioContext as? PlayList` arms: the
+//  `seekByBytes`=true branch + the `formatCtx->duration = duration*AV_TIME_BASE` side-effect + the per-track
+//  `languageCode`/`name` override from the playlist's per-entry metadata. `PlayList` (mangled
+//  `$s8KSPlayer8PlayListP`, cast-target descriptor resolved via l2 walk_mangled @0x103c2fbba) is a
+//  Forward-only protocol NOT yet reconstructed in-tree (only `parsePlaylist()` helpers exist); the same
+//  cast drives MEPlayerItem's FUN_101a512b4. Reconstructing these arms now would fabricate PlayList's
+//  witness interface — a flagged deferral is success (a plausible-but-wrong body looks done and crashes).
+//
+//  FFmpeg provenance (P32) — every av* symbol named in this file is ffmpeg_name_oracle result=CONFIRMED:
+//    ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]     (FUN_103253ed0, avutil/mem.o — free+null idiom)
+//    ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]  (FUN_10323a9d8, avutil/dict.o — inside toDictionary)
 //
 
+import AVFoundation
 import CoreMedia
+import CoreText
+import FFmpegKit
 import Foundation
 import Libavformat
+import Libavutil
 
 // Binary: vtable 1 (num_immediate 14 − num_fields 13 = 1). Slot 0 = init `0x101a35050`.
 // let/var is NOT binary-determinable for this class (vtable has NO accessor slots).
@@ -56,56 +74,107 @@ public final class FormatContext {
                 interrupt: IOInterruptContext,
                 ioContext: AbstractAVIOContext?,
                 fontsDir: URL?) {
-        // --- Param-fed fields: assigned faithfully (offsets confirmed in inner decompile) ---
+        // ── Scalar derivations into LOCALS first. Swift init-order forbids reading `self.startTime`
+        //    (or calling any `self` member) until EVERY stored property is assigned, and the per-track
+        //    startTime alignment in the loop needs the container startTime — so it reads the LOCAL. ──
+
+        // +0x5c = CMTime from formatCtx.start_time (== AV_NOPTS_VALUE(Int64.min) ? .zero :
+        //   CMTime(value:, timescale: AV_TIME_BASE)). FUN_101a350bc prologue @unaff_x20+0x5c; MEPlayerItem:238-239 idiom.
+        let startTimeValue: CMTime = formatCtx.pointee.start_time != Int64.min
+            ? CMTime(value: formatCtx.pointee.start_time, timescale: AV_TIME_BASE)
+            : .zero
+        // +0x28 duration: the binary re-derives durationSeconds = max(formatCtx.duration,0)/AV_TIME_BASE (INTEGER
+        //   divide → Double) and stores THAT on every non-PlayList path — the dominant path (plain file playback:
+        //   ioContext is nil / not a PlayList). // UNRESOLVED: the `ioContext as? PlayList` seg≥2 branch keeps the
+        //   `duration` PARAM instead (and mutates formatCtx.duration) — deferred with the PlayList protocol.
+        let durationSecondsInt = max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE)
+        let durationValue = Double(durationSecondsInt)
+        // +0x48 = String(cString: iformat.name). FUN_101a350bc reads *(*(formatCtx+8)); MEPlayerItem:236 idiom.
+        let formatNameValue = String(cString: formatCtx.pointee.iformat.pointee.name)
+        // +0x59 = (flags & AVFMT_NO_BYTE_SEEK == 0) && (flags & (AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS) != 0) &&
+        //   formatName != "ogg". FUN_101a350bc @0x101a35494-0x101a354e8 disasm-verified (and #0x280; "ogg" 0x67676f).
+        let iformatFlags = formatCtx.pointee.iformat.pointee.flags
+        let byteSeekValue = (iformatFlags & AVFMT_NO_BYTE_SEEK == 0)
+            && (iformatFlags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0)
+            && (formatNameValue != "ogg")
+        // +0x78 = (flags & AVFMT_TS_DISCONT) ? 10 : 3600. FUN_101a350bc reads (flags & 0x200); MEPlayerItem:233-234 (here Int, `Si`).
+        let maxFrameDurationValue = iformatFlags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
+
+        // ── +0x40 assetTracks: per-stream loop over formatCtx.streams[0..<nb_streams] (MEPlayerItem:283-284 idiom).
+        //    Builds an FFmpegAssetTrack per stream via the EXISTING FFmpegAssetTrack(stream:) (= FUN_101a211ec, the
+        //    625-instr builder, already reconstructed — NOT re-derived here); appends non-nil tracks; on a nil track
+        //    that is an ATTACHMENT stream, extracts the embedded font. ──
+        var assetTracks: [FFmpegAssetTrack] = []
+        for i in 0 ..< Int(formatCtx.pointee.nb_streams) {
+            guard let stream = formatCtx.pointee.streams[i] else { continue }
+            if let track = FFmpegAssetTrack(stream: stream) {
+                // GROUNDED @LAB_101a358b8 head (no PlayList): subtitle tracks — and any track whose start is within
+                //   10s of the container — snap to the container startTime.
+                if track.mediaType == .subtitle || abs((track.startTime - startTimeValue).seconds) < 10 {
+                    track.startTime = startTimeValue
+                }
+                // UNRESOLVED: the `ioContext as? PlayList` per-entry languageCode/name override (LAB_101a358b8 tail —
+                //   witness +0x08/+0x10/+0x20 + an [Int32:String] lookup keyed by the stream id) — deferred with the
+                //   PlayList protocol. ⚑[tool=name_type_at_addr ref=PlayList:0x103c2fbba result=protocol-not-in-tree]
+                assetTracks.append(track)
+            } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_ATTACHMENT {
+                // Embedded-font attachment: codec_id ∈ {NONE, 0x18000 TTF, 0x18006 OTF} — raw compare = the binary's
+                //   `iVar3 == 0 || == 0x18000 || == 0x18006`. Extract extradata → Data, write under fontsDir, register
+                //   with CoreText, then av_freep the extradata. FUN_101a350bc @0x101a35540-0x101a35840 font block.
+                let codecpar = stream.pointee.codecpar.pointee
+                let codecID = codecpar.codec_id
+                if codecID == AV_CODEC_ID_NONE || codecID.rawValue == 0x18000 || codecID.rawValue == 0x18006,
+                   let fontsDir, let extradata = codecpar.extradata {
+                    // FUN_100036e98 = Data(bytes:count:) from codecpar.extradata (+0x10) / extradata_size (+0x18).
+                    let data = Data(bytes: extradata, count: Int(codecpar.extradata_size))
+                    let metadata = toDictionary(stream.pointee.metadata)   // FUN_101a07bd8 = av_dict_get loop → [String:String]
+                    try? FileManager.default.createDirectory(at: fontsDir, withIntermediateDirectories: true)
+                    // ⚑ filename = "<stream.index>" + (metadata["filename"] ?? ".ttf"): index@stream+8, the "filename"
+                    //   key + ".ttf" literal are GROUNDED; the exact concatenation is the clearest reading of the two
+                    //   String.append + appendPathComponent (SSA register aliasing leaves the composition slightly fuzzy).
+                    let fontName = "\(stream.pointee.index)" + (metadata["filename"] ?? ".ttf")
+                    let fontURL = fontsDir.appendingPathComponent(fontName)
+                    try? data.write(to: fontURL)
+                    // scope .process (=1), error nil (=0) — same call as KSParseProtocol:99 (P42-disasm-confirmed).
+                    CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+                    // FUN_103253ed0 = av_freep(&extradata) idiom (free + null), then extradata_size = 0 (codecpar+0x18).
+                    av_freep(&stream.pointee.codecpar.pointee.extradata)
+                    stream.pointee.codecpar.pointee.extradata_size = 0
+                }
+            }
+        }
+
+        // +0x38 bitrate: duration>0 && fileSize≥1 → max((fileSize*8)/Int(duration), 1) (the binary's `< 2 → 1` clamp).
+        //   Else the fallback keys off the FIRST .video track: if that track's bitRate>0 → Σ all tracks' bitRate;
+        //   else (or no .video track) → 1. The selector M = .video, recovered by disasm @0x101a35fc4 (loads
+        //   GOT[0x104108740] — the AVMediaType slot the decompiler dropped, adjacent to Audio@0x104108730 /
+        //   Subtitle@0x104108738) + elimination (FFmpegAssetTrack.mediaType ∈ {audio,video,subtitle}). It is a FIRST-
+        //   match on mediaType, NOT contains-any-positive (@0x101a35fd0-0x101a36114). FUN_101a350bc @0x101a35e00-0x101a361cc.
+        let bitrateValue: Int64
+        if durationValue > 0, fileSize >= 1 {
+            let bps = (fileSize * 8) / durationSecondsInt
+            bitrateValue = bps < 2 ? 1 : bps
+        } else {
+            bitrateValue = (assetTracks.first { $0.mediaType == .video }?.bitRate ?? 0) > 0
+                ? assetTracks.reduce(0) { $0 + $1.bitRate }
+                : 1
+        }
+
+        // ── Store every stored property (param-fed offsets confirmed in the inner-decompile prologue) ──
         self.interrupt = interrupt   // +0x10 = param_4
         self.formatCtx = formatCtx   // +0x18 = param_2
         self.ioContext = ioContext   // +0x20 = param_5
         self.fileSize = fileSize     // +0x30 = param_3
         self.fontsDir = fontsDir     // (sym field) from param_6
-        // DIVERGENCE from brief mapping: the binary stores +0x28(duration)=param_1 on the
-        // dominant path, BUT param_1 is reassigned mid-body to a formatCtx-derived fallback
-        // (formatCtx->duration / 1_000_000) on the ioContext==nil branch. We assign the
-        // param (faithful to the dominant store); the derived-fallback override is UNRESOLVED.
-        self.duration = duration     // +0x28 = param_1 (derived override on ioContext==nil branch UNRESOLVED)
-
-        // --- seekByBytes: default false. UNRESOLVED: binary conditionally stores 0
-        //     (inner L222) or a computed 1 (inner L211, uVar20) across branches —
-        //     derivation not reconstructed (faithful partial); NOT a constant. ---
+        self.duration = durationValue
+        // +0x58 seekByBytes: false on every reconstructed (non-PlayList) path. // UNRESOLVED: the
+        //   `ioContext as? PlayList` seg≥2 branch computes true (+ mutates formatCtx.duration) — deferred.
         self.seekByBytes = false
-
-        // --- assetTracks: empty default (binary populates +0x40 from a per-stream
-        //     FFmpegAssetTrack-building loop; that construction is UNRESOLVED) ---
-        self.assetTracks = []
-
-        // --- Derived fields: COMPUTED in the binary init body (likely from formatCtx).
-        //     Declared with safe Swift defaults; computation not reconstructed. ---
-        self.bitrate = 0          // UNRESOLVED: derived in binary init @+0x38 — fileSize*8/duration-style calc not reconstructed (faithful partial)
-        // +0x48 = String(cString: iformat->name). FUN_101a350bc reads *(*(formatCtx+8)) (iformat->name);
-        // identical idiom to MEPlayerItem:236 (FFmpeg struct fields accessed SYMBOLICALLY — non-stock ABI, faithful by construction).
-        self.formatName = String(cString: formatCtx.pointee.iformat.pointee.name)
-        // +0x59 = (iformat.flags & AVFMT_NO_BYTE_SEEK == 0) && (iformat.flags & (AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS) != 0)
-        //   && formatName != "ogg". FUN_101a350bc @0x101a35494-0x101a354e8 disasm-verified (tbnz #0xf; and #0x280; "ogg" 0x67676f
-        //   compare). Broader mask than MEPlayerItem:237's seekByBytes (0x280 = AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS, vs 0x200 there).
-        let iformatFlags = formatCtx.pointee.iformat.pointee.flags
-        self.byteSeek = (iformatFlags & AVFMT_NO_BYTE_SEEK == 0)
-            && (iformatFlags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0)
-            && (formatName != "ogg")
-        // +0x5c = CMTime from formatCtx->start_time (== AV_NOPTS_VALUE(Int64.min) ? kCMTimeZero : CMTime(value:, timescale: AV_TIME_BASE)).
-        // FUN_101a350bc reads formatCtx-start_time == INT64_MIN; identical idiom to MEPlayerItem:238-239.
-        self.startTime = formatCtx.pointee.start_time != Int64.min
-            ? CMTime(value: formatCtx.pointee.start_time, timescale: AV_TIME_BASE)
-            : .zero
-        // +0x78 = (iformat->flags & AVFMT_TS_DISCONT) ? 10 : 3600 — discontinuous-timestamp formats get a small max
-        // frame duration. FUN_101a350bc reads (iformat.flags & 0x200); idiom of MEPlayerItem:233-234 (there Double; here the field is Int, Si).
-        self.maxFrameDuration = formatCtx.pointee.iformat.pointee.flags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
-
-        // --- Side effect (font registration) ---
-        // init registers fonts: FileManager.createDirectory(at: fontsDir) + CTFontManagerRegisterFontsForURL(fontsDir) — side-effect spine; deep construction UNRESOLVED
-        // Binary detail (NOT fabricated here): the real spine is a per-stream loop over
-        // formatCtx->streams that finds attachment streams (codec type == 4 / font mime),
-        // extracts each embedded font's Data, writes it to a derived temp URL, then calls
-        // NSFileManager.createDirectoryAtURL(...) + _CTFontManagerRegisterFontsForURL(url, 1, 0)
-        // per extracted font file. The observable two-call spine cannot be expressed without
-        // inventing the per-attachment URL/Data internals, so it is left UNRESOLVED.
+        self.assetTracks = assetTracks
+        self.formatName = formatNameValue
+        self.byteSeek = byteSeekValue
+        self.startTime = startTimeValue
+        self.maxFrameDuration = maxFrameDurationValue
+        self.bitrate = bitrateValue
     }
 }
