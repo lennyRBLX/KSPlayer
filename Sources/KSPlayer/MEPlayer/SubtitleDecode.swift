@@ -34,8 +34,13 @@ class SubtitleDecode: DecodeProtocol {
     // (DAT_1044eb330/334/338 read = 0x17004/0x17016/0x1700a). Only the non-optional stored field (assetTrack) needs
     // setting; the rest take their declared defaults (nil / AVSubtitle() / [] / 0 / false). Throwing: createContext
     // do/catch. FFmpeg fields accessed SYMBOLICALLY (this build is FFmpeg 7.1, non-stock ABI).
-    // ⚑ DEFERRED (Tier 3b, next): the subtitleHeader "Style:" line-filtering (FUN_101a6914c dec 194-254) — simplified
-    //   here to String(cString:) (base behavior); the assParse it feeds sees the raw header meanwhile.
+    // ⚑ DEFERRED (Tier 3b — a dedicated SubtitleModel-ASS-style SUBSYSTEM pass; full reverse-engineering in
+    //   play/reconstruction/tier3b_ass_style_serializer_analysis.md): the !isASS arm is
+    //   .split(whereSeparator: \.isNewline).map { $0.hasPrefix("Style: Default,") ? SubtitleModel.<assDefaultStyle> : String($0) }.joined("\n").
+    //   The match-branch (FUN_101aa17f4) REPLACES the embedded "Style: Default," with an app-styled ASS line built
+    //   from ~8 SubtitleModel ASS-style statics (config-derived defaults) — NOT a filter (earlier framing was wrong).
+    //   Simplified here to String(cString:) (base behavior — faithful for isASS + zero-flag paths); assParse sees the
+    //   raw header meanwhile. Committing the serializer = adding ~8 recon-named public statics → its own pass.
     // ⚑ DEFERRED (Batch 5, TERMINAL): the flag-gated assImageRenderer build (dec 257-320) — gated on the SAME
     //   un-nameable KSOptions private static Bools DAT_104c63150/151/152 as AssImageParse.canParse={false}; with the
     //   feature off (always-current) the ASS-header falls through to assParse.canParse below. Not fabricated (cardinal rule).
