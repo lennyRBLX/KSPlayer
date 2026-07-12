@@ -54,8 +54,6 @@ class SubtitleDecode: DecodeProtocol {
     //   10-regex complexity scan (DAT_1044eb5d0), the 3 KSOptions static gate flags (DAT_104c6315x), the
     //   assImageRenderer Task (FUN_101a03fd4) + pendingASSImageSubtitles buffering + lazy setup (FUN_101a6bc08).
     //   canParse={false} makes that path dead → deferring is zero-regression (spine-preserved-by-omission).
-    // ⚑ DEFERRED (Tier 2b, next): the SUBTITLE_BITMAP → SubtitleImageInfo(.left) arm of text() — net-new
-    //   palette→Data→BitmapSource (the removed VideoSwresample `scale` path's replacement), no base reference.
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
         guard let codecContext else {
             return
@@ -122,6 +120,7 @@ class SubtitleDecode: DecodeProtocol {
     // (see decodeFrame ⚑).
     private func text(subtitle: AVSubtitle, start: Double, end: Double) -> [SubtitlePart] {
         var parts = [SubtitlePart]()
+        var images = [SubtitleImageInfo]()
         var attributedString: NSMutableAttributedString?
         for i in 0 ..< Int(subtitle.num_rects) {
             guard let rect = subtitle.rects[i]?.pointee else {
@@ -151,11 +150,32 @@ class SubtitleDecode: DecodeProtocol {
                         parts.append(SubtitlePart(start: start, end: end, render: part.render))
                     }
                 }
+            } else if rect.type == SUBTITLE_BITMAP, let bitmap = rect.data.0, let palette = rect.data.1 {
+                // Tier 2b: SUBTITLE_BITMAP -> SubtitleImageInfo(.left). Net-new Forward code (replaces the removed
+                // VideoSwresample scale.transfer path). Two Foundation.Data copies — the bitmap (linesize[0]*h) and the
+                // palette (fixed AVPALETTE_SIZE = 256*4 = 1024) — plus a CGRect -> BitmapSource.palette. displaySize =
+                // the codec reference resolution. FUN_101a6a568 cache 259-362; the 0x78 stride confirms .palette=Data.
+                images.append(SubtitleImageInfo(
+                    rect: CGRect(x: Int(rect.x), y: Int(rect.y), width: Int(rect.w), height: Int(rect.h)),
+                    source: .palette(
+                        bitmap: Data(bytes: bitmap, count: Int(rect.linesize.0) * Int(rect.h)),
+                        palette: Data(bytes: palette, count: 1024),
+                        width: Int(rect.w),
+                        height: Int(rect.h),
+                        stride: Int(rect.linesize.0)
+                    ),
+                    displaySize: CGSize(width: Double(codecContext?.pointee.width ?? 0), height: Double(codecContext?.pointee.height ?? 0)),
+                    styleRole: .primary
+                ))
             }
-            // ⚑ DEFERRED (Tier 2b): else if rect.type == SUBTITLE_BITMAP { … SubtitleImageInfo(.left) via BitmapSource … }
         }
         if let attributedString {
             parts.append(SubtitlePart(start: start, end: end, render: .right(SubtitleTextInfo(text: attributedString, position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
+        }
+        // Merge the bitmap-subtitle images (built above) as .left parts, stamped with the packet start/end — the text
+        // accumulator part is emitted first, then the images. FUN_101a6a568 cache 992-1104 (stride 0x78 -> 0x88, .left).
+        for image in images {
+            parts.append(SubtitlePart(start: start, end: end, render: .left(image)))
         }
         return parts
     }

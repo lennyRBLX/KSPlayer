@@ -43,6 +43,6 @@ public struct AssLayerSource {
 // BitmapSource @0x1039f2178 — cases + payloads decoded (was NOT an empty/simple enum)
 public enum BitmapSource {
     case assBlend(layers: [AssLayer], boundingRect: CGRect)
-    case palette(bitmap: UnsafeMutablePointer<UInt8>?, palette: UnsafeMutablePointer<UInt8>?, width: Int, height: Int, stride: Int)   // ⚑ pointers inferred
+    case palette(bitmap: Data, palette: Data, width: Int, height: Int, stride: Int)   // Data payloads CONFIRMED (Tier 2b): SubtitleDecode.text() builds them via Foundation __DataStorage, and the 0x78 SubtitleImageInfo stride REQUIRES a 56-byte .palette (2×Data+3×Int), not the earlier ⚑-inferred pointers (40-byte). See FUN_101a6a568 cache 285-316.
     case prerendered(any MTLTexture)
 }
