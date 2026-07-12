@@ -213,15 +213,9 @@ extension MEPlayerItem {
         }
         options.openTime = CACurrentMediaTime()
         formatCtx.pointee.flags |= AVFMT_FLAG_GENPTS
-        if options.nobuffer {
-            formatCtx.pointee.flags |= AVFMT_FLAG_NOBUFFER
-        }
-        if let probesize = options.probesize {
-            formatCtx.pointee.probesize = probesize
-        }
-        if let maxAnalyzeDuration = options.maxAnalyzeDuration {
-            formatCtx.pointee.max_analyze_duration = maxAnalyzeDuration
-        }
+        // ⚑ Forward DROPPED nobuffer/probesize/maxAnalyzeDuration from KSOptions (binary reflection: absent),
+        //   so the base's direct AVFormatContext setting from those fields is Forward-removed. If Forward
+        //   re-routes them (e.g. via formatContextOptions), that is a MEPlayerItem-reconstruction follow-up.
         result = avformat_find_stream_info(formatCtx, nil)
         guard result == 0 else {
             error = .init(errorCode: .formatFindStreamInfo, avErrorCode: result)
@@ -360,7 +354,7 @@ extension MEPlayerItem {
             if let first = videos.first(where: { $0.trackID == videoIndex }) {
                 first.isEnabled = true
                 let rotation = first.rotation
-                if rotation > 0, options.autoRotate {
+                if rotation > 0 {  // ⚑ Forward dropped options.autoRotate (field absent); gate reduced to rotation>0 — verify Forward's rotation handling
                     options.hardwareDecode = false
                     if abs(rotation - 90) <= 1 {
                         options.videoFilters.append("transpose=clock")

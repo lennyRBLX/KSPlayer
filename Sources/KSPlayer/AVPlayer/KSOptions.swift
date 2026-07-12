@@ -9,6 +9,7 @@ import AVFoundation
 #if os(tvOS) || os(xrOS)
 import DisplayCriteria
 #endif
+import Metal
 import OSLog
 
 #if canImport(UIKit)
@@ -22,12 +23,32 @@ open class KSOptions {
     // 38 Forward fields not yet added + the base-only fields grouped below not yet removed — both
     // WARN-level (excluded from the order check), tracked as the KSOptions→Forward layout migration.
     // Shared fields keep their reconstructed values/types unchanged.
+    // ── Forward 1.3.17 __swift5_fieldmd (binary reflection) ORDER + full field SET (84 fields). The 38
+    //    Forward-only fields were ADDED and the 9 base-only extras REMOVED (KSOptions→Forward layout
+    //    migration — l2 REAL_FLAG 47→0). Field TYPES/ORDER = the deterministic binary oracle
+    //    (dump_binary_field_types.py, desc 0x1039ec4c0). Inline DEFAULTS = KSOptions.init (FUN_1019b2f7c,
+    //    symbolic-offset stores). Removed extras (cache/probesize/maxAnalyzeDuration/nobuffer/codecLowDelay/
+    //    autoDeInterlace/autoRotate/videoInterlacingType/idetTypeMap) migrated to their callers.
+    public var context = ""
     public var avOptions = [String: Any]()
+    public var isLive: Bool?
     public var startPlayTime: TimeInterval = 0
+    public var startPlayTimePercentage = 0.0
     public var startPlayRate: Float = 1.0
     public var registerRemoteControll: Bool = true // 默认支持来自系统控制中心的控制
+    public var isAutoPlay = KSOptions.isAutoPlay
+    public var enterForgeResumePlay = false
+    public var isDLNARunning = false
+    public var disableVideoFrameRateMatching = false
     /// 是否开启秒开
     public var isSecondOpen = KSOptions.isSecondOpen
+    public var playbackTimeInterval = 0.04
+    // playerTypes default reads the static KSOptions.playerTypes (not an inline literal).
+    // ⚑[tool=decompile_function ref=FUN_1019b4334:0x1019b4334 result=static [KSAVPlayer.self,KSMEPlayer.self] — element class-descriptor names confirmed @0x1039ec148/@0x1039ef750]
+    public var playerTypes: [MediaPlayerProtocol.Type] = KSOptions.playerTypes
+    public var mixAudio = false
+    public var canBackgroundPlay = true
+    public var contentMode = UIViewContentMode.scaleAspectFit  // macOS: KSPlayer.ContentMode (== binary); iOS/tvOS: UIView.ContentMode
     /// Applies to short videos only
     public var isLoopPlay = KSOptions.isLoopPlay
     /// 开启精确seek
@@ -43,10 +64,14 @@ open class KSOptions {
     public var seekFlags = Int32(1)
     //  record stream
     public var outputURL: URL?
+    public var outputMediaType: AVMediaType?
     public internal(set) var formatName = ""
     public var formatContextOptions = [String: Any]()
+    public var outputFormatContextOptions = [String: Any]()
+    public var ioContext: AbstractAVIOContext?
     public var decoderOptions = [String: Any]()
     public var lowres = UInt8(0)
+    public var useSystemHTTPProxy = KSOptions.useSystemHTTPProxy
     public var referer: String? {
         didSet {
             if let referer {
@@ -63,6 +88,7 @@ open class KSOptions {
         }
     }
 
+    public var seekUsePacketCache = false
     /// 最低缓存视频时间
     @Published
     public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
@@ -72,22 +98,45 @@ open class KSOptions {
     public var audioFilters = [String]()
     public var syncDecodeAudio = false
     public var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path
+    public var audioRecognizes: [AudioRecognize] = []
     // sutile
     public var autoSelectEmbedSubtitle = true
     public var isSeekImageSubtitle = false
+    public var yadifMode = KSOptions.yadifMode
+    public var deInterlaceAddIdet = KSOptions.deInterlaceAddIdet
+    public var dynamicRange = DynamicRange.sdr
+    public var doviProfile: Int?
+    public var audioCodecName: String?
+    public var audioChannelCount: UInt32 = 0
     // video
     public var display = DisplayEnum.plane
+    public var videoPipeline: VideoPipeline?
     public var videoDelay = 0.0 // s
+    public var isRotateByFilter = false
     public var destinationDynamicRange: DynamicRange?
-    public var videoAdaptable = true
+    public var videoAdaptable = false // Forward default = false (init stores 0)
     public var videoFilters = [String]()
     public var syncDecodeVideo = false
+    public var decodeType = DecodeType.avplayer
     public var hardwareDecode = KSOptions.hardwareDecode
     public var asynchronousDecompression = KSOptions.asynchronousDecompression
     public var videoDisable = false
     public var canStartPictureInPictureAutomaticallyFromInline = KSOptions.canStartPictureInPictureAutomaticallyFromInline
     public var automaticWindowResize = true
+    public var videoSoftDecodeThreadCount = KSOptions.videoSoftDecodeThreadCount
+    public var isDoubleRefreshRate = false
+    public var renderUseDispatchSourceTimer = false
+    public var brightness: Float = 1.0
+    public var contrast: Float = 1.0
+    public var saturation: Float = 1.0
+    // ⚑ adjustBuffer default: KSOptions.init (FUN_1019b2f7c @0x139) creates a 16-byte MTLBuffer
+    //   (device.makeBuffer(bytes:length:16), label "KSPlayer"). The init-body creation is UNRESOLVED here
+    //   (reconstruct in init()); declared as the stored MTLBuffer? field (nil until init sets it).
+    public var adjustBuffer: MTLBuffer?
+    public var forceDisableDisplayLayer = false
+    public var onPossibleDisplayLayerFlicker: (@MainActor @Sendable () -> Void)?
     private var videoClockDelayCount = 0
+    public internal(set) var lastVideoClockDropLogTime = 0.0
     public internal(set) var prepareTime = 0.0
     public internal(set) var dnsStartTime = 0.0
     public internal(set) var tcpStartTime = 0.0
@@ -99,23 +148,7 @@ open class KSOptions {
     public internal(set) var readVideoTime = 0.0
     public internal(set) var decodeAudioTime = 0.0
     public internal(set) var decodeVideoTime = 0.0
-
-    // Base-only (cce7002) stored fields NOT present in the Forward binary reflection — WARN-level
-    // "extra" in l2_field_gate (excluded from the field-ORDER check), pending removal in the dedicated
-    // KSOptions→Forward layout migration. Kept (relocated, behavior unchanged) so existing callers keep
-    // compiling: probesize/maxAnalyzeDuration/nobuffer/autoRotate → MEPlayerItem; codecLowDelay →
-    // AVFFmpegExtension; autoDeInterlace → Filter + this file's filter(); videoInterlacingType (+ the
-    // idetTypeMap declared near filter()) → filter().
-    // ffmpeg only cache http — 这个开关不能用，因为ff_tempfile: Cannot open temporary file
-    public var cache = false
-    public var probesize: Int64?
-    public var maxAnalyzeDuration: Int64?
-    public var nobuffer = false
-    public var codecLowDelay = false
-    public var autoDeInterlace = false
-    public var autoRotate = true
-    @Published
-    public var videoInterlacingType: VideoInterlacingType?
+    public internal(set) var firstPlayableTime = 0.0
     public init() {
         formatContextOptions["user_agent"] = userAgent
         // 参数的配置可以参考protocols.texi 和 http.c
@@ -280,37 +313,12 @@ open class KSOptions {
         }
     }
 
-    private var idetTypeMap = [VideoInterlacingType: UInt]()
-    open func filter(log: String) {
-        if log.starts(with: "Repeated Field:"), autoDeInterlace {
-            for str in log.split(separator: ",") {
-                let map = str.split(separator: ":")
-                if map.count >= 2 {
-                    if String(map[0].trimmingCharacters(in: .whitespaces)) == "Multi frame" {
-                        if let type = VideoInterlacingType(rawValue: map[1].trimmingCharacters(in: .whitespacesAndNewlines)) {
-                            idetTypeMap[type] = (idetTypeMap[type] ?? 0) + 1
-                            let tff = idetTypeMap[.tff] ?? 0
-                            let bff = idetTypeMap[.bff] ?? 0
-                            let progressive = idetTypeMap[.progressive] ?? 0
-                            let undetermined = idetTypeMap[.undetermined] ?? 0
-                            if progressive - tff - bff > 100 {
-                                videoInterlacingType = .progressive
-                                autoDeInterlace = false
-                            } else if bff - progressive > 100 {
-                                videoInterlacingType = .bff
-                                autoDeInterlace = false
-                            } else if tff - progressive > 100 {
-                                videoInterlacingType = .tff
-                                autoDeInterlace = false
-                            } else if undetermined - progressive - tff - bff > 100 {
-                                videoInterlacingType = .undetermined
-                                autoDeInterlace = false
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    open func filter(log _: String) {
+        // Forward DROPPED autoDeInterlace / videoInterlacingType / idetTypeMap from the KSOptions field set
+        // (binary reflection: all three absent). The base's `Repeated Field:` idet auto-detection was built
+        // entirely on those three, so it cannot exist in Forward. Forward's filter() body is // UNRESOLVED —
+        // reconstruct from the binary if non-empty; the open API surface is preserved (MEPlayerItem's log
+        // handler calls it). NOT fabricated (a guessed body would look done and mislead).
     }
 
     open func sei(string: String) {
@@ -473,6 +481,7 @@ public enum VideoInterlacingType: String {
 public extension KSOptions {
     nonisolated(unsafe) static var firstPlayerType: MediaPlayerProtocol.Type = KSAVPlayer.self
     nonisolated(unsafe) static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
+    nonisolated(unsafe) static var playerTypes: [MediaPlayerProtocol.Type] = [KSAVPlayer.self, KSMEPlayer.self]
     /// 最低缓存视频时间
     nonisolated(unsafe) static var preferredForwardBufferDuration = 3.0
     /// 最大缓存视频时间
@@ -490,6 +499,7 @@ public extension KSOptions {
     nonisolated(unsafe) static var hardwareDecode = true
     // 默认不用自研的硬解，因为有些视频的AVPacket的pts顺序是不对的，只有解码后的AVFrame里面的pts是对的。
     nonisolated(unsafe) static var asynchronousDecompression = false
+    nonisolated(unsafe) static var videoSoftDecodeThreadCount = 4
     nonisolated(unsafe) static var isPipPopViewController = false
     nonisolated(unsafe) static var canStartPictureInPictureAutomaticallyFromInline = true
     nonisolated(unsafe) static var preferredFrame = true

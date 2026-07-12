@@ -81,9 +81,8 @@ class MEFilter {
         if audioFlag {
             filters = options.audioFilters.joined(separator: ",")
         } else {
-            if options.autoDeInterlace, !options.videoFilters.contains("idet") {
-                options.videoFilters.append("idet")
-            }
+            // ⚑ Forward dropped options.autoDeInterlace (field absent) + the idet auto-detection (KSOptions.filter),
+            //   so the base idet-filter auto-append is Forward-removed. Verify Forward's de-interlace path.
             filters = options.videoFilters.joined(separator: ",")
         }
         guard !filters.isEmpty else {

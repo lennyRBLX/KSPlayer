@@ -368,6 +368,28 @@ public extension FixedWidthInteger {
     }
 }
 
+// Forward-only enum (binary-confirmed name `DecodeType`). Binary reflection (__swift5_fieldmd via the field-record
+// oracle, desc @0x1039edfec): 5 no-payload cases in this ORDER, 1-byte storage. Case indices are binary-pinned —
+// KSOptions.init (FUN_1019b2f7c) stores `decodeType = 1` = `.avplayer`. `vulka` is the binary's exact case name
+// (reflection-read; reads like a truncation of "vulkan" but is what Forward ships — searched, no standalone "vulkan").
+public enum DecodeType {
+    case asynchronousHardware
+    case avplayer
+    case hardware
+    case soft
+    case vulka
+}
+
+// Forward-only protocol (binary-confirmed name `VideoPipeline`). Binary (conformance_walker, proto descriptor
+// @0x1039edab8): 5 requirements — 1 getter + 4 methods — and NO in-binary conformer (external/call-site-inferred,
+// exactly like PlayList). The requirement NAMES + SIGNATURES are UNRESOLVED (no witness bodies to ground them) —
+// deferred to the PlayList/VideoPipeline protocol pass. Declared here (minimal) so `KSOptions.videoPipeline:
+// VideoPipeline?` is layout-faithful: a protocol existential's size is fixed regardless of its requirements, so the
+// KSOptions field type + offset are correct either way. ⚑ requirements deferred (not fabricated).
+public protocol VideoPipeline {
+    // 5 requirements (1 getter + 4 methods) UNRESOLVED — see the PlayList/VideoPipeline no-conformer protocol pass.
+}
+
 open class AbstractAVIOContext {
     // Forward addition (binary __swift5_fieldmd: readLimit@+0x10, bufferSize@+0x14;
     // vtable slots 0/1/2 are its synthesized getter/setter/read). Default -1

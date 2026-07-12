@@ -96,9 +96,8 @@ extension AVCodecParameters {
         }
         codecContext.pointee.codec_id = codec.pointee.id
         codecContext.pointee.flags2 |= AV_CODEC_FLAG2_FAST
-        if options?.codecLowDelay == true {
-            codecContext.pointee.flags |= AV_CODEC_FLAG_LOW_DELAY
-        }
+        // ⚑ Forward dropped options.codecLowDelay (field absent), so the base LOW_DELAY flag-setting is
+        //   Forward-removed. Verify Forward's codec-flag path.
         var avOptions = options?.decoderOptions.avOptions
         if let options {
             var lowres = options.lowres
