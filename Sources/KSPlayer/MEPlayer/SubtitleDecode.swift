@@ -44,10 +44,14 @@ class SubtitleDecode: DecodeProtocol {
     // ⚑ DEFERRED (Batch 5, TERMINAL): the flag-gated assImageRenderer build (dec 257-320) — gated on the SAME
     //   un-nameable KSOptions private static Bools DAT_104c63150/151/152 as AssImageParse.canParse={false}; with the
     //   feature off (always-current) the ASS-header falls through to assParse.canParse below. Not fabricated (cardinal rule).
-    required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
+    // ⚑ P55 REFINEMENT (session 32): `options` is `KSOptions?` (was non-optional — a Tier-3a faithfulness error).
+    //   Forward's binary FUN_101a6914c guards `if options == nil { fontsDir = String?.none }` (disasm @0x101a692a8);
+    //   the FFmpegSubtitle.init caller passes nil (`mov x1,#0x0` @0x101a9f5d8). Nullable options flows to createContext
+    //   (already `KSOptions?`). Other caller MEPlayerItemTrack:304 passes non-nil (binds unchanged).
+    required init(assetTrack: FFmpegAssetTrack, options: KSOptions?) {
         self.assetTrack = assetTrack
         startTime = assetTrack.startTime.seconds
-        fontsDir = options.fontsDir?.path
+        fontsDir = options?.fontsDir?.path
         isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.codec_id)
         do {
             codecContext = try assetTrack.createContext(options: options)

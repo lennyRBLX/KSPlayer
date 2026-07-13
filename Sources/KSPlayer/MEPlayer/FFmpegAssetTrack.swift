@@ -258,7 +258,9 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         trackID = 0
     }
 
-    func createContext(options: KSOptions) throws -> UnsafeMutablePointer<AVCodecContext> {
+    // ⚑ P55 (session 32): `options: KSOptions?` — SubtitleDecode.init forwards a nullable options through here
+    //   (binary FUN_101a6914c → this createContext with nullable options); codecpar.createContext is already KSOptions?.
+    func createContext(options: KSOptions?) throws -> UnsafeMutablePointer<AVCodecContext> {
         try codecpar.createContext(options: options)
     }
 
