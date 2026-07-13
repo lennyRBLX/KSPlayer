@@ -35,10 +35,12 @@
 import AVFoundation
 import CoreMedia
 import CoreText
+import CryptoKit
 import FFmpegKit
 import Foundation
 import Libavformat
 import Libavutil
+import QuartzCore
 
 // Binary: vtable 1 (num_immediate 14 − num_fields 13 = 1). Slot 0 = init `0x101a35050`.
 // let/var is NOT binary-determinable for this class (vtable has NO accessor slots).
@@ -177,4 +179,115 @@ public final class FormatContext {
         self.maxFrameDuration = maxFrameDurationValue
         self.bitrate = bitrateValue
     }
+}
+
+// MARK: - openFormatContext (FUN_101a392a0) — the shared avformat open/probe pipeline
+//
+//  ⚑ P28 NAME + HOME. The binary function `0x101a392a0` is `__swiftcall` with NO class namespace — stripped,
+//  takes no `self`/x20 (free/static, disasm-confirmed). Forward EXTRACTED the base KSPlayer
+//  `MEPlayerItem.openThread()` (alloc_context → open_input → find_stream_info, base @MEPlayerItem.swift:164-219)
+//  into this SHARED throwing routine — 9 callers (FFmpegSubtitle.init 0x101a9f27c, the thumbnailer 0x101a241f4,
+//  the main open paths 0x101a336b4/33f0c/34e54/3a0b8/3a2e8/3a89c/4d3d0). Homed here because its returned
+//  AVFormatContext is exactly what `FormatContext` wraps; free-func name `openFormatContext` = semantically
+//  grounded. Both names ⚑ P28 (IRREDUCIBLE — free-func + param names are not in reflection).
+//
+//  Signature P42-disasm-grounded (@0x101a392a0 register map d0=time, x0=url, x1=interrupt, x2=options,
+//  x3:x4=cacheKey; the last pinned via the sole non-nil caller FUN_101a34e54 @0x101a34f00, str+bridge = String?).
+//  Interrupt-context type recovered from reflection:
+//    ⚑[tool=read_memory ref=metadata:0x1044e9d20→desc:0x1039ef584→name:0x10356ab00 result="class IOInterruptContext"]
+//
+//  FFmpeg provenance (P32) — every av* symbol CONFIRMED via ffmpeg_name_oracle:
+//    ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_context:0x1031b85bc result=CONFIRMED]    (avformat/options.o)
+//    ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED]       (avformat/demux.o)
+//    ⚑[tool=ffmpeg_name_oracle ref=avformat_find_stream_info:0x1030e8520 result=CONFIRMED] (avformat/demux.o)
+//    ⚑[tool=ffmpeg_name_oracle ref=avformat_close_input:0x1030e632c result=CONFIRMED]      (avformat/demux.o; the
+//      binary calls it via wrapper FUN_101a39028, which also clears ctx+0xd8/+0xe0 + verbose-logs — ⚑ simplified to the close core)
+//
+//  FAITHFUL PARTIAL. The SPINE (alloc → open → find, the 4 throws, the P42 timing side-effects, the fontsDir
+//  block) is reconstructed. The intricate sub-systems that each need their own disasm pass are flagged
+//  `// UNRESOLVED` and NOT fabricated (a plausible-but-wrong body looks done and crashes downstream): the
+//  interrupt-callback install, the `url` custom-AVIOContext arm, `options.formatContextOptions`→AVDictionary,
+//  and the probesize tune.
+func openFormatContext(time: Double,
+                       url: URL?,
+                       interrupt: IOInterruptContext,
+                       options: KSOptions?,
+                       cacheKey: String?) throws -> UnsafeMutablePointer<AVFormatContext> {
+    // ⚑ P42 (disasm @0x101a392a0): the decompiler LINEARIZES `options.prepareTime = time`, but the disasm
+    //   stores `CACurrentMediaTime()` (bl 0x103459d54 → d8), guarded on `options != nil`. Same for openTime/
+    //   findTime below — a decompile-only body would bake the wrong value (`time`).
+    options?.prepareTime = CACurrentMediaTime()
+
+    // avformat_alloc_context() → nil ⟹ throw #1. Binary: err.code@0 = 0 (.unknown), message =
+    //   .formatCreate.description (disasm str-length 0x21=33 = "avformat_alloc_context return nil"; the
+    //   decompiler's string POINTER is scrambled — the length is the reliable disambiguator).
+    guard let formatCtx = avformat_alloc_context() else {
+        throw KSPlayerError(description: KSPlayerErrorCode.formatCreate.description)
+    }
+
+    // ⚑ UNRESOLVED — interrupt-callback install. Binary: `formatCtx.interrupt_callback = { callback:
+    //   <C fn 0x101a34dc0, stripped>, opaque: *(*(interrupt+0x28)+0x18) }`. Deferred: the C callback symbol
+    //   and IOInterruptContext's +0x28 opaque field are not recoverable without the cb + IOInterruptContext
+    //   disasm — a flagged deferral (installing a WRONG cb would mis-drive open/find interruption).
+    _ = interrupt
+
+    // ⚑ UNRESOLVED — the `url` custom-AVIOContext arm (getEnumCaseMultiPayload + `options.<vtable+0x5b0>`
+    //   dispatch): when `url` wraps an AbstractAVIOContext, a custom `pb` is installed pre-open.
+    // ⚑ UNRESOLVED — `options.formatContextOptions` → AVDictionary (FUN_101a322c0, [String:Any] → per-entry
+    //   dictionary inserts). The spine opens the dominant plain-file path with nil options.
+    var mutableCtx: UnsafeMutablePointer<AVFormatContext>? = formatCtx
+    let openResult: Int32
+    if let path = url?.path {
+        openResult = avformat_open_input(&mutableCtx, path, nil, nil)
+    } else {
+        // ⚑ nil url = the deferred custom-AVIOContext arm; FFmpeg reads the ctx.pb the arm would install.
+        openResult = avformat_open_input(&mutableCtx, nil, nil, nil)
+    }
+    guard openResult == 0 else {
+        avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (=FUN_1030e632c) — see provenance header
+        // throw #2. ⚑ binary embeds the open AVERROR in code@0 (P8, KSPlayerError-owner) — reconstructed via
+        //   description-form (code=.unknown). message = .formatOpenInput.description (str-length 0x19=25).
+        throw KSPlayerError(description: KSPlayerErrorCode.formatOpenInput.description)
+    }
+    options?.openTime = CACurrentMediaTime()   // ⚑ P42
+
+    // ⚑ UNRESOLVED — probesize tune (FUN_1030c1d6c on the stream → if the value > 50_000_000_000, write a ctx
+    //   field (word @ctx+0x3a) = value / 0xeb). Deferred: the exact ctx field + the helper's rescale math.
+
+    let findResult = avformat_find_stream_info(mutableCtx, nil)
+    guard findResult == 0 else {
+        avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (see open-fail path)
+        // AVERROR_EOF = FFERRTAG('E','O','F',' ') = -0x20464f45. throw #4 (EOF special) vs throw #3.
+        if findResult == swift_AVERROR_EOF {
+            // ⚑ binary: err.code@0 = AVERROR_EOF (raw), message nil. The enum-typed `code` cannot hold a raw
+            //   AVERROR — P8 (KSPlayerError-owner); reconstructed as an empty-message unknown.
+            throw KSPlayerError(code: .unknown, message: nil)
+        }
+        // throw #3. ⚑ binary embeds the find AVERROR in code@0 (P8). message = .formatFindStreamInfo.description
+        //   (str-length 0x24=36).
+        throw KSPlayerError(description: KSPlayerErrorCode.formatFindStreamInfo.description)
+    }
+
+    if let options {
+        options.findTime = CACurrentMediaTime()   // ⚑ P42
+        // fontsDir = NSTemporaryDirectory() + "fontsDir/" + key, where key = (cacheKey == nil ? UUID().uuidString
+        //   : MD5(urlString).hex). CryptoKit Insecure.MD5 (FUN_100006158 / HashFunction.init / _finalize / the
+        //   digest hex-joined). ⚑ path prefix = the 9-char small-string "fontsDir/" (0x72694473746e6f66 /
+        //   0xe9…2f; audit-corrected from the wrong "fonts/"). ⚑ MD5 INPUT = the opened url's string; the exact
+        //   input (urlString vs cacheKey) + hex-join are SSA-aliased. ⚑ the UUID-vs-MD5 SELECTOR tests local_160,
+        //   which the decompile reassigns to the url-string bridge (line 372) — the polarity may key off
+        //   url-string presence, not cacheKey; kept as the defensible cacheKey!=nil reading (audit did not overturn).
+        let key: String
+        if cacheKey != nil {
+            let digest = Insecure.MD5.hash(data: Data((url?.absoluteString ?? "").utf8))
+            key = digest.map { String(format: "%02x", $0) }.joined()
+        } else {
+            key = UUID().uuidString
+        }
+        let fontsURL = URL(fileURLWithPath: NSTemporaryDirectory() + "fontsDir/" + key)
+        try? FileManager.default.createDirectory(at: fontsURL, withIntermediateDirectories: true)
+        options.fontsDir = fontsURL
+    }
+
+    return formatCtx
 }
