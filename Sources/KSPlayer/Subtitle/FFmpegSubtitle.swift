@@ -31,10 +31,14 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         //   FUN_101a391bc(0,0) = IOInterruptContext.init (@0x101a9f384-3a0).
         let interrupt = IOInterruptContext(nil)
         let formatCtx = try openFormatContext(time: time, url: url, interrupt: interrupt, options: nil, cacheKey: nil)
-        // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext. `formatCtx`(x0) +
-        //   `interrupt`(x2) are disasm-confirmed; duration/fileSize/ioContext/fontsDir are register-aliased in this
-        //   caller — 0/0/nil/nil are the subtitle-sidecar defaults (FormatContext.init re-derives duration/fileSize
-        //   from formatCtx on the dominant path, so the passed scalars are overridden downstream).
+        // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext. Two args are
+        //   DISASM-confirmed live: `formatCtx`(x0) = the openFormatContext return; `interrupt`(x2) = the IOInterruptContext.
+        //   The other four are DEAD arguments the binary does not encode — 0/0/nil/nil are flagged residues:
+        //   `duration`(d0) is PROVEN dead (the callee never reads d0 — its first bl @0x101a35128 clobbers it — and
+        //   re-derives the duration field @+0x68 from formatCtx); `fileSize`(x1)/`ioContext`(x3)/`fontsDir`(x4) are
+        //   dead-arg-elided (openFormatContext returns a single UnsafeMutablePointer, so their post-call registers are
+        //   leftovers, not returns). The decompile's 0/nil for these is a stale-variable artifact — it renders
+        //   `interrupt` as 0 too, yet disasm proves interrupt = x20 — so they were resolved by disasm, not decompile.
         let formatContext = FormatContext(duration: 0, formatCtx: formatCtx, fileSize: 0,
                                           interrupt: interrupt, ioContext: nil, fontsDir: nil)
 
