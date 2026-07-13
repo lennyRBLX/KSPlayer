@@ -202,12 +202,17 @@ public final class FormatContext {
 //    ⚑[tool=ffmpeg_name_oracle ref=avformat_find_stream_info:0x1030e8520 result=CONFIRMED] (avformat/demux.o)
 //    ⚑[tool=ffmpeg_name_oracle ref=avformat_close_input:0x1030e632c result=CONFIRMED]      (avformat/demux.o; the
 //      binary calls it via wrapper FUN_101a39028, which also clears ctx+0xd8/+0xe0 + verbose-logs — ⚑ simplified to the close core)
+//    ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]               (avutil/dict.o; FUN_10323b034, frees the options dict after open — session 32)
+//    ⚑[tool=ffmpeg_name_oracle ref=avio_size:0x1030c1d6c result=CONFIRMED]                  (avformat/aviobuf.o; FUN_1030c1d6c, source size for the duration_probesize heuristic — session 32)
 //
 //  FAITHFUL PARTIAL. The SPINE (alloc → open → find, the 4 throws, the P42 timing side-effects, the fontsDir
-//  block) is reconstructed. The intricate sub-systems that each need their own disasm pass are flagged
-//  `// UNRESOLVED` and NOT fabricated (a plausible-but-wrong body looks done and crashes downstream): the
-//  interrupt-callback install, the `url` custom-AVIOContext arm, `options.formatContextOptions`→AVDictionary,
-//  and the probesize tune.
+//  block) is reconstructed. Session 32 RESOLVED 2 of the 4 deferred sub-systems (both DISASM-confirmed, not just
+//  decompile): `options.formatContextOptions`→AVDictionary (av_dict_free CONFIRMED) and the `duration_probesize`
+//  heuristic (avio_size CONFIRMED; also CORRECTED the ctx-field misname "probesize" → `duration_probesize`
+//  @ctx+0x1d0, offsetof-proven). The remaining 2 each need their own unit and stay flagged `// UNRESOLVED`
+//  (NOT fabricated — a plausible-but-wrong body looks done and crashes downstream): the interrupt-callback
+//  install (needs the registry predicate FUN_101a34af4 + IOInterruptContext token-visibility) and the `url`
+//  custom-AVIOContext arm (a Forward-modified `process(url:,cb,opaque)` + a second `ioContext`-param AVIO branch).
 func openFormatContext(time: Double,
                        url: URL?,
                        interrupt: IOInterruptContext,
@@ -225,24 +230,42 @@ func openFormatContext(time: Double,
         throw KSPlayerError(description: KSPlayerErrorCode.formatCreate.description)
     }
 
-    // ⚑ UNRESOLVED — interrupt-callback install. Binary: `formatCtx.interrupt_callback = { callback:
-    //   <C fn 0x101a34dc0, stripped>, opaque: *(*(interrupt+0x28)+0x18) }`. Deferred: the C callback symbol
-    //   and IOInterruptContext's +0x28 opaque field are not recoverable without the cb + IOInterruptContext
-    //   disasm — a flagged deferral (installing a WRONG cb would mis-drive open/find interruption).
+    // ⚑ UNRESOLVED — interrupt-callback install. Disasm @0x101a395cc-0x101a395dc: `stp x8,x27,[x0,#0xd8]`
+    //   installs `formatCtx.interrupt_callback = {callback: FUN_101a34dc0, opaque: x27}`, where the opaque
+    //   x27 = *(*(interrupt+0x28)+0x18) = `interrupt.token.opaque` (IOInterrupt.swift: token @+0x28,
+    //   IOInterruptToken.opaque @+0x18). The cb FUN_101a34dc0 = `{ IOInterruptRegistry.shared (swift_once
+    //   &DAT_1044e9ab8) ; FUN_101a34af4(opaque) & 1 }` — a hoisted @convention(c) closure over the
+    //   UN-reconstructed registry predicate FUN_101a34af4 (id→flag lookup). Base MEPlayerItem.openThread:171-185
+    //   inlines this reading `self.state`. DEFERRED: faithful reconstruction needs (a) FUN_101a34af4, (b) the
+    //   closure-hoisting shape, (c) cross-file access to `fileprivate token` — reconstructing now fabricates the
+    //   IOInterruptContext↔AVIOInterruptCB bridge (installing a WRONG cb mis-drives open/find interruption). Own unit.
     _ = interrupt
 
-    // ⚑ UNRESOLVED — the `url` custom-AVIOContext arm (getEnumCaseMultiPayload + `options.<vtable+0x5b0>`
-    //   dispatch): when `url` wraps an AbstractAVIOContext, a custom `pb` is installed pre-open.
-    // ⚑ UNRESOLVED — `options.formatContextOptions` → AVDictionary (FUN_101a322c0, [String:Any] → per-entry
-    //   dictionary inserts). The spine opens the dominant plain-file path with nil options.
+    // ⚑ UNRESOLVED — the `url` custom-AVIOContext arm. Disasm @0x101a39720-0x101a39798: `x21 = options.vtable[0x5b0]`
+    //   then `x21(indirect-ret, url, FUN_101a34dc0, opaque)` — NOT a plain "custom pb". It is a Forward-MODIFIED
+    //   `process(url:,callback,opaque)`: the base `KSOptions.process(url:) -> AbstractAVIOContext?` (KSOptions:469)
+    //   EXTENDED to take the interrupt cb + opaque (so custom IO can be interrupted); indirect-returns
+    //   `AbstractAVIOContext?`, threaded via FUN_101a3b534, then `formatCtx.pointee.pb = pb.getContext()`
+    //   (base MEPlayerItem.openThread:192-195). Entangled with a SECOND AVIO branch (the `ioContext`-param arm
+    //   @0x101a397e8, FUN_1030c1250/FUN_1030fdb5c → `ctx[4]=ctx->pb`). Its own AVIO subsystem unit —
+    //   reconstructing the modified `process` signature now would fabricate the KSOptions API.
+    //
+    // RESOLVED — `options.formatContextOptions` → AVDictionary. Disasm @0x101a39a40-0x101a39a74: FUN_101a322c0 =
+    //   the `[String:Any].avOptions` builder (AVFFmpegExtension:447 — per-entry inserts), its x0 return =
+    //   the AVDictionary (`mov x19,x0`; Ghidra dropped the capture). Guarded on options!=nil (`cbz x25,0x101a399e4`
+    //   → avOptions=nil) ⟹ exactly `options?.…avOptions`. Freed on BOTH paths (av_dict_free before the result
+    //   check @0x101a39ab4). Mirrors base MEPlayerItem.openThread:191-203 (`avOptions` → open → av_dict_free).
+    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED] (avformat/demux.o; opened below with &avOptions as the options dict)
+    var avOptions = options?.formatContextOptions.avOptions
     var mutableCtx: UnsafeMutablePointer<AVFormatContext>? = formatCtx
     let openResult: Int32
     if let path = url?.path {
-        openResult = avformat_open_input(&mutableCtx, path, nil, nil)
+        openResult = avformat_open_input(&mutableCtx, path, nil, &avOptions)
     } else {
         // ⚑ nil url = the deferred custom-AVIOContext arm; FFmpeg reads the ctx.pb the arm would install.
-        openResult = avformat_open_input(&mutableCtx, nil, nil, nil)
+        openResult = avformat_open_input(&mutableCtx, nil, nil, &avOptions)
     }
+    av_dict_free(&avOptions)   // ⚑ binary frees before the result check (@0x101a39ab4) — both success and failure paths
     guard openResult == 0 else {
         avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (=FUN_1030e632c) — see provenance header
         // throw #2. ⚑ binary embeds the open AVERROR in code@0 (P8, KSPlayerError-owner) — reconstructed via
@@ -251,8 +274,16 @@ func openFormatContext(time: Double,
     }
     options?.openTime = CACurrentMediaTime()   // ⚑ P42
 
-    // ⚑ UNRESOLVED — probesize tune (FUN_1030c1d6c on the stream → if the value > 50_000_000_000, write a ctx
-    //   field (word @ctx+0x3a) = value / 0xeb). Deferred: the exact ctx field + the helper's rescale math.
+    // RESOLVED — duration-probe heuristic for very large sources. Disasm @0x101a39b50-0x101a39bb0:
+    //   `avio_size(ctx->pb)` (pb @ctx+0x20) → if the source is > 50_000_000_000 bytes (cmp #0xBA43B7401,
+    //   strictly-greater) → `ctx->duration_probesize = avio_size / 235` (0xeb; umulh…lsr#7 magic-division,
+    //   store @ctx+0x1d0). ⚑ ctx+0x1d0 = `duration_probesize` (offsetof-proven against the reconstruction's own
+    //   Libavformat, anchor-validated: pb@0x20 / interrupt_callback@0xd8 / duration@0x68 all match the binary) —
+    //   CORRECTS the prior comment's "probesize" guess. Field accessed SYMBOLICALLY (faithful under the ABI).
+    let sourceSize = avio_size(mutableCtx?.pointee.pb)
+    if sourceSize > 50_000_000_000 {
+        mutableCtx?.pointee.duration_probesize = sourceSize / 235
+    }
 
     let findResult = avformat_find_stream_info(mutableCtx, nil)
     guard findResult == 0 else {
