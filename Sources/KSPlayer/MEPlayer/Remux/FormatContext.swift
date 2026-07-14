@@ -179,6 +179,26 @@ public final class FormatContext {
         self.maxFrameDuration = maxFrameDurationValue
         self.bitrate = bitrateValue
     }
+
+    // ⚑ chapters — computed getter, body = FUN_101a362d0. Self reads self+0x18 (= formatCtx) via RAW offsets
+    //   (Ghidra anchors MEPlayerItem's fields symbolically; these are raw ⟹ owner is FormatContext, not
+    //   MEPlayerItem). Forward moved the base MEPlayerItem.openThread chapters loop onto the wrapper.
+    //   Timebase.cmtime(for:) = CMTime(value: start*num, timescale: den) matches the decompile's inlined
+    //   CMTime math (Model.swift:197); title via toDictionary(chapter.metadata)["title"] ?? "".
+    var chapters: [Chapter] {
+        var result: [Chapter] = []
+        for i in 0 ..< formatCtx.pointee.nb_chapters {
+            if let chapter = formatCtx.pointee.chapters[Int(i)]?.pointee {
+                let timeBase = Timebase(chapter.time_base)
+                let start = timeBase.cmtime(for: chapter.start).seconds
+                let end = timeBase.cmtime(for: chapter.end).seconds
+                let metadata = toDictionary(chapter.metadata)
+                let title = metadata["title"] ?? ""
+                result.append(Chapter(start: start, end: end, title: title))
+            }
+        }
+        return result
+    }
 }
 
 // MARK: - openFormatContext (FUN_101a392a0) — the shared avformat open/probe pipeline
