@@ -55,10 +55,10 @@ public final class MEPlayerItem {
     public private(set) var duration: TimeInterval = 0          // 35
     public private(set) var fileSize: Int64 = 0                // 36 MediaPlayback.fileSize Int64 (bin field-record Int? UNCHECKED — kept Int64 per protocol)
     public private(set) var naturalSize = CGSize.zero        // 37 ⚑ bin field-record CGSize? (init nil), but MediaPlayback requires non-optional CGSize → kept CGSize; CGSize? deferred with the protocol migration
-    private var state = MESourceState.idle {                 // 38 ⚑ bin field-record type "State"; confirm nested MEPlayerItem.State vs MESourceState
+    private var state = State.idle {                         // 38 RESOLVED: nested MEPlayerItem.State (10 cases; desc @0x1039ef8b0, Model.swift). Was base MESourceState.
         didSet {
             switch state {
-            case .opened:
+            case .ready:                          // base `opened` (raw 2); renamed in Forward
                 delegate?.sourceDidOpened()
             case .reading:
                 timer?.fireDate = Date.distantPast
@@ -67,7 +67,8 @@ public final class MEPlayerItem {
             case .failed:
                 delegate?.sourceDidFailed(error: nil) // ⚑ UNRESOLVED: base passed removed `error` field; Forward error-source pending
                 timer?.fireDate = Date.distantFuture
-            case .idle, .opening, .seeking, .paused, .finished:
+            case .idle, .opening, .seeking, .paused, .endOfStream, .finished:
+                // ⚑ endOfStream (raw 6, NEW in Forward): base-derived no-op; Forward state.didSet body pending its own audit
                 break
             }
         }

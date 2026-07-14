@@ -16,16 +16,27 @@ import UIKit
 
 // MARK: enum
 
-enum MESourceState {
-    case idle
-    case opening
-    case opened
-    case reading
-    case seeking
-    case paused
-    case finished
-    case closed
-    case failed
+// Forward 1.3.17 renamed/reshaped base `MESourceState` into a type NESTED in MEPlayerItem
+// (`MEPlayerItem.State`; field-38 `state: State`). Cases + discriminant order are FAITHFUL —
+// decoded from the binary's nominal descriptor @0x1039ef8b0 (parent context = MEPlayerItem,
+// NumPayloadCases=0, NumEmptyCases=10) and its __swift5_fieldmd case records (in order).
+// Divergences from base MESourceState (9 cases): case-2 `opened`→`ready`; NEW `endOfStream`
+// (raw 6) inserted, shifting `finished`/`closed`/`failed` to 7/8/9. The 8/9 adjacency is why
+// MEPlayerItem's interrupt predicate compiles to `(state & 0xfe) == 8` (≡ .closed || .failed).
+// ⚑[tool=fetch_reflection_fields ref=MEPlayerItem.State:0x1039ef8b0 result=enum/10-empty-cases]
+extension MEPlayerItem {
+    enum State {
+        case idle        // 0
+        case opening     // 1
+        case ready       // 2  (base `opened`)
+        case reading     // 3
+        case seeking     // 4
+        case paused      // 5
+        case endOfStream // 6  (NEW in Forward)
+        case finished    // 7
+        case closed      // 8  ← interrupt terminal pair
+        case failed      // 9  ← interrupt terminal pair
+    }
 }
 
 // MARK: delegate
