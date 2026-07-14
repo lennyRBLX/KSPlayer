@@ -11,7 +11,13 @@ import Libavcodec
 import Libavfilter
 import Libavformat
 
-public final class MEPlayerItem {
+// ⚑ @unchecked Sendable — compiler-MANDATED, not binary-observable: the interrupt codegen is a `{ [weak self] }`
+//   @Sendable closure (openAndFindStream) which, under this target's Swift 6 + StrictConcurrency, compiles ONLY if
+//   MEPlayerItem is Sendable. Sendable is a marker protocol ⟹ NO ABI/reflection trace, so it's codegen-invisible
+//   but forced by the observed closure + IOInterruptContext.block's @Sendable type. The interrupt fires on FFmpeg's
+//   IO thread, so @Sendable-block-over-Sendable-self is the coherent faithful design; `unchecked` = the internal
+//   -locking assertion the player already makes. ⚑[tool=read_memory ref=weakSelfBox:0x1041d8340 result=@Sendable⟹Sendable-self]
+public final class MEPlayerItem: @unchecked Sendable {
     // ⚑ Field-layout migration (commit-1): the 42 stored properties in Forward binary order
     //   (scripts/dump_binary_field_types.py MEPlayerItem). Types from MEPlayerItem.init
     //   (FUN_101a4bae0) + name_type_at_addr; residual generic/closure exactness flagged
@@ -143,12 +149,65 @@ public final class MEPlayerItem {
 // MARK: private functions
 
 extension MEPlayerItem {
-    private func openThread() {
-        // ⚑ UNRESOLVED (commit-1 stub): Forward body = MEPlayerItem.openAndFindStream() (FUN_101a4d3d0) —
-        //   calls openFormatContext (FUN_101a392a0) → FormatContext.init, stores formatContext (field 7),
-        //   installs custom AVIO (defaultIOOpen/Close, pbArray append via FUN_101a5a030), sets fileSize/
-        //   duration/chapters. The base body drove the removed formatCtx/url/seekByBytes/startTime/
-        //   maxFrameDuration fields. Deferred to the openAndFindStream migration commit.
+    // openAndFindStream() — the open/find/WIRE path (the read loop is readThread/reading). FAITHFUL-PARTIAL:
+    //   the interrupt closure + openFormatContext/FormatContext wiring + fileSize/duration/formatName/chapters
+    //   + the createCodec call are reconstructed; the leading KSLog, close/reset call, custom-AVIO install,
+    //   pbArray append, io.right AVIO path, and KSOptions rate×duration store are flagged // ⚑ UNRESOLVED.
+    // ⚑[tool=recover_swift_function_name ref=openAndFindStream:0x101a4d3d0 result=#function/throws/no-params]
+    private func openAndFindStream() throws {
+        // ⚑ UNRESOLVED: leading KSLog(.debug, …) gated on `2 < logLevel` (prologue global DAT_1044e5173) — message deferred.
+        // ⚑ UNRESOLVED: a close/reset call precedes the open to reset prior state; method identity + body deferred.
+        //   ⚑[tool=recover_swift_function_name ref=closeReset:0x101a531fc result=no-#function/739B]
+
+        // io: Either<URL, AbstractAVIOContext>. .left(URL) = the reconstructed plain-URL open; .right = the
+        //   custom-AVIO/preload open — DEFERRED (custom-AVIO campaign; the AbstractAVIOContext threads into
+        //   openFormatContext's url-AVIO arm + FormatContext.init(ioContext:)).
+        let url: URL?
+        switch io {
+        case let .left(fileURL):
+            url = fileURL
+        case .right:
+            url = nil  // ⚑ UNRESOLVED: .right(AbstractAVIOContext) custom-AVIO wiring deferred
+        }
+
+        // Interrupt callback — FAITHFUL. A `{ [weak self] }` closure (compiler HeapLocalVariable box, metadata
+        //   kind 0x400 — NOT a user class): abort blocking IO when self is gone, an interrupt was requested, or
+        //   state is terminal ((state & 0xfe)==8 ≡ .closed || .failed).
+        //   ⚑[tool=read_memory ref=weakSelfBox:0x1041d8340 result=HeapLocalVariable/[weak self]]
+        //   ⚑[tool=decompile ref=interruptTrampoline:0x101a534e0 result=self==nil||interrupt||terminal]
+        let interruptContext = IOInterruptContext { [weak self] in
+            guard let self else { return true }
+            if self.interrupt { return true }
+            return self.state == .closed || self.state == .failed
+        }
+
+        // openFormatContext(time:0, …) → AVFormatContext*; `time:0` is the dead d0 residue (#function no params).
+        //   ⚑[tool=decompile ref=openFormatContext:0x101a392a0 result=try-throws→AVFormatContext*]
+        let formatCtx = try openFormatContext(time: 0, url: url, interrupt: interruptContext, options: options, cacheKey: nil)
+
+        // FormatContext dead-arg init (duration:0, fileSize:0 — the init re-derives both; the audited
+        //   FFmpegSubtitle.init precedent, FFmpegSubtitle.swift:44).
+        //   ⚑[tool=decompile ref=FormatContextInit:0x101a350bc result=dead-arg-init]
+        let formatContext = FormatContext(duration: 0, formatCtx: formatCtx, fileSize: 0,
+                                          interrupt: interruptContext, ioContext: nil, fontsDir: options.fontsDir)
+        self.formatContext = formatContext
+
+        // ⚑ UNRESOLVED: custom-AVIO install — Forward saves formatCtx.pb's default io_open/io_close into
+        //   defaultIOOpen/defaultIOClose (boxed) and swaps in its own thunks (formatCtx.pb.opaque = self).
+        //   ⚑[tool=decompile ref=ioOpenThunk:0x101a53560 result=deferred-custom-AVIO]
+        // ⚑ UNRESOLVED: pbArray append — allocs a PBClass and appends it to self.pbArray (field 29), then on a
+        //   successful dynamic-cast writes KSOptions seekUsePacketCache=false + a formatContextOptions entry.
+        //   ⚑[tool=decompile ref=pbClassAlloc:0x101a5a030 result=deferred-PBClass-body]
+
+        options.formatName = formatContext.formatName        // String @+0x48 (DERIVED from iformat.name)
+        self.fileSize = formatContext.fileSize               // +0x30
+        self.duration = formatContext.duration               // +0x28
+        // ⚑ UNRESOLVED: KSOptions rate×duration — `if options[+0x38] > 0 { options[+0x30] = options[+0x38] ×
+        //   formatContext.duration }` (two KSOptions Double fields; offset→name mapping deferred).
+        self.chapters = formatContext.chapters               // FormatContext.chapters getter (DONE, commit-2a)
+
+        //   ⚑[tool=decompile ref=createCodec:0x101a53c44 result=stub-call]
+        createCodec(formatCtx: formatCtx)                    // track-set builder; body deferred (commit-1 stub)
     }
 
     func startRecord(url: URL) {
