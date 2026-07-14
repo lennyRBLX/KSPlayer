@@ -206,8 +206,8 @@ extension MEPlayerItem {
         //   formatContext.duration }` (two KSOptions Double fields; offset→name mapping deferred).
         self.chapters = formatContext.chapters               // FormatContext.chapters getter (DONE, commit-2a)
 
-        //   ⚑[tool=decompile ref=createCodec:0x101a53c44 result=stub-call]
-        createCodec(formatCtx: formatCtx)                    // track-set builder; body deferred (commit-1 stub)
+        //   ⚑[tool=get_xrefs_to ref=createCodec:0x101a53c44 result=argless]
+        createCodec()                                        // track-set builder (argless, reads self.formatContext; slice-1 reconstructed)
     }
 
     func startRecord(url: URL) {
@@ -216,10 +216,33 @@ extension MEPlayerItem {
         //   the remuxer migration commit.
     }
 
-    private func createCodec(formatCtx: UnsafeMutablePointer<AVFormatContext>) {
-        // ⚑ UNRESOLVED (commit-1 stub): base body populated the removed `assetTracks` field and used the
-        //   removed `seekByBytes`. Forward builds allPlayerItemTracks/videoAudioTracks/videoTrack/audioTrack/
-        //   subtitleTrack from the streams. Deferred to the createCodec migration commit.
+    // createCodec() = FUN_101a53c44 (~2145 lines w/ 3 inline closures FUN_101a556b0/36964/36cf0). ARGLESS —
+    //   reads self.formatContext (the commit-1 `formatCtx:` param was the BASE signature; Forward is argless).
+    //   Being reconstructed in SLICES (this body is too large/intricate for one reliable partial). SLICE 1 =
+    //   the reset prologue + formatContext nil-guard + the isAudioStalled tail; the track-BUILD, rotation/
+    //   filter, and adaptation arms are flagged // ⚑ UNRESOLVED for their own slices.
+    // ⚑[tool=get_xrefs_to ref=createCodec:0x101a53c44 result=argless/self.formatContext]
+    private func createCodec() {
+        // Reset prologue (FUN_101a53c44 @0x101a53d?-53e?): clear the adaptation + track fields, shutdown existing tracks.
+        videoAdaptation = nil
+        videoTrack = nil
+        audioTrack = nil
+        videoAudioTracks = []
+        allPlayerItemTracks.forEach { $0.shutdown() }   // witness+0x80 = PlayerItemTrackProtocol.shutdown()
+        guard formatContext != nil else { return }      // self.formatContext; nil → early return (no track build)
+
+        // ⚑ UNRESOLVED (SLICE 2 — the track BUILD, closure FUN_101a556b0): rebuild allPlayerItemTracks/
+        //   videoAudioTracks/videoTrack/audioTrack/subtitleTrack from formatContext.assetTracks — per-assetTrack
+        //   SyncPlayerItemTrack construction (subtitle-language String selection, subclass dispatch, the
+        //   FFmpegAssetTrack.playerItemTrack link). Uses the DONE SyncPlayerItemTrack(mediaType:frameCapacity:options:).
+        // ⚑ UNRESOLVED (SLICE 3 — audio, closures FUN_101a36964/36cf0 + tail): audio sample-rate sampling
+        //   (audioStreamBasicDescription) + max-reduction + the KSOptions.vtable[0x6f8] call + AudioPlayerItemTrack
+        //   (FUN_101a383a8/33444) construction.
+        // ⚑ UNRESOLVED (SLICE 4 — rotation/filter): isRotateByFilter → transpose_vt/videoFilters/hardwareDecode/
+        //   asynchronousDecompression + the 90°-rotation angle math.
+        // ⚑ UNRESOLVED (SLICE 5 — adaptation): videoAdaptation rebuild + naturalSize.
+
+        isAudioStalled = false   // tail (@0x101a55d??): *(self + ::isAudioStalled) = 0, unconditional on the non-nil path
     }
 
     private func read() {
