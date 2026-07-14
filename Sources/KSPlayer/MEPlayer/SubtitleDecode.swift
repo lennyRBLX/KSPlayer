@@ -78,30 +78,33 @@ class SubtitleDecode: DecodeProtocol {
     // decode() — base cce7002 = empty `{}`; no Forward body (DecodeProtocol no-op requirement). Faithful as-is.
     func decode() {}
 
-    // decodeFrame — Batch 4 Tier 2a. Binary: FUN_101a69de8 (public: frame delivery) → FUN_101a69f54 (inner: decode +
-    // timing + text() + empty fallback) → FUN_101a6a568 (text(subtitle:start:end:)). The public/inner split is compiler
-    // outlining; the source is one method. Base cce7002 decodeFrame is the adaptation reference (P19/P61), reworked for
-    // the SubtitlePart STRUCT (render:Either, start/end baked in) + the divergences flagged inline. Timing arms
-    // disasm-verified (P42): FUN_101a69f54 @0x101a6a01c (ret<0), @0x101a6a038 (subtitle.pts branch), @0x101a6a0e0
-    // (start adjust). Frame timestamp/duration: FUN_101a63adc (getPosition; the binary outlines it into the frame-init
-    // helper — behaviorally identical whether in the loop here or SubtitleFrame.init).
+    // decodeFrame(from:) — FUN_101a69f54, `SubtitleDecode.decodeFrame(from:) -> ([SubtitlePart], Int64, Timebase)?`.
+    // Forward SPLIT the base's single completion-handler decodeFrame into this SYNCHRONOUS decode core + a
+    // completion-handler wrapper (decodeFrame(from:completionHandler:) below = FUN_101a69de8, which calls this). The
+    // split lets the subtitle-sidecar path (FFmpegSubtitle.init) and search(with:) accumulate [SubtitlePart] directly.
+    // THREE callers (get_function_xrefs 0x101a69f54): FUN_101a69de8 (completion — uses .parts + .timebase, captured
+    // @0x101a69e24 x2), FUN_101a9f27c=FFmpegSubtitle.init (uses .parts), FUN_101a9fa34=search(with:) async (deferred stub).
+    // Takes the RAW AVPacket* (FFmpegSubtitle.init passes its allocated packet pointer directly; pts@+0x08 / dts@+0x10 /
+    // duration@+0x40 read here) — NOT a Packet wrapper. Base cce7002 decodeFrame is the adaptation reference (P19/P61),
+    // reworked for the SubtitlePart STRUCT (render:Either, start/end baked in). Returns nil (x0=0) on the guard-fail
+    // paths (no codecContext / decode<0 / no subtitle); timestamp/timebase are x1/x2 of the tuple return. Timing arms
+    // disasm-verified (P42): FUN_101a69f54 @0x101a6a01c (ret<0), @0x101a6a038 (subtitle.pts branch), @0x101a6a0e0 (start floor).
     // ⚑ DEFERRED (Batch 5, TERMINAL — un-nameable primitives, consistent with AssImageParse.canParse={false}): the
     //   ASS-image detection+render arm of text() — the 4 detection helpers FUN_101a8e3b8/8f72c/90748/910ac, the
     //   10-regex complexity scan (DAT_1044eb5d0), the 3 KSOptions static gate flags (DAT_104c6315x), the
     //   assImageRenderer Task (FUN_101a03fd4) + pendingASSImageSubtitles buffering + lazy setup (FUN_101a6bc08).
     //   canParse={false} makes that path dead → deferring is zero-regression (spine-preserved-by-omission).
-    func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+    func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>) -> ([SubtitlePart], timestamp: Int64, timebase: Timebase)? {
         guard let codecContext else {
-            return
+            return nil
         }
         var gotsubtitle = Int32(0)
-        // ⚑[tool=ffmpeg_name_oracle ref=avcodec_decode_subtitle2:0x102a1a98c result=CONFIRMED]
-        let result = avcodec_decode_subtitle2(codecContext, &subtitle, &gotsubtitle, packet.corePacket)
+        let result = avcodec_decode_subtitle2(codecContext, &subtitle, &gotsubtitle, packet) // ⚑[tool=ffmpeg_name_oracle ref=avcodec_decode_subtitle2:0x102a1a98c result=CONFIRMED]
         if result < 0 { // Forward addition (base ignored the return): FUN_101a69f54 @0x101a6a01c `tbnz w19,#0x1f`
-            return
+            return nil
         }
         guard gotsubtitle != 0 else {
-            return
+            return nil
         }
         // Forward addition: prefer the subtitle's own pts (µs timebase) over the packet timestamp (track timebase).
         // FUN_101a69f54 @0x101a6a038 (subtitle.pts == AV_NOPTS_VALUE), @0x101a6a090 (num=1, den=1_000_000).
@@ -109,7 +112,15 @@ class SubtitleDecode: DecodeProtocol {
         let timestamp: Int64
         if subtitle.pts == Int64.min {
             timebase = assetTrack.timebase
-            timestamp = packet.timestamp // binary recomputes from corePacket.pts/dts with a 0-fallback (FUN_101a69f54 @0x101a6a05c); differs from packet.timestamp only when BOTH pts&dts == AV_NOPTS_VALUE (degenerate)
+            // FUN_101a69f54 @0x101a6a05c: timestamp = pts (if set) else dts (if set) else 0, read from the raw AVPacket
+            // (self+0x38..). This is the faithful form of the prior `packet.timestamp` approximation.
+            if packet.pointee.pts != Int64.min {
+                timestamp = packet.pointee.pts
+            } else if packet.pointee.dts != Int64.min {
+                timestamp = packet.pointee.dts
+            } else {
+                timestamp = 0
+            }
         } else {
             timebase = Timebase(num: 1, den: 1_000_000)
             timestamp = subtitle.pts
@@ -123,8 +134,8 @@ class SubtitleDecode: DecodeProtocol {
             end = .infinity
         } else {
             var duration = TimeInterval(subtitle.end_display_time - subtitle.start_display_time) / 1000.0
-            if duration == 0, packet.duration != 0 {
-                duration = assetTrack.timebase.cmtime(for: packet.duration).seconds // ⚑ binary reads codecContext timebase @0x5c/0x60; assetTrack.timebase is the equivalent value
+            if duration == 0, packet.pointee.duration != 0 {
+                duration = assetTrack.timebase.cmtime(for: packet.pointee.duration).seconds // ⚑ binary reads codecContext timebase @0x5c/0x60; assetTrack.timebase is the equivalent value
             }
             end = start + duration
         }
@@ -136,6 +147,18 @@ class SubtitleDecode: DecodeProtocol {
         // ⚑[tool=ffmpeg_name_oracle ref=avsubtitle_free:0x10294d330 result=CONFIRMED] — freed after text() extracts the
         // rect data into parts (Forward moves this before delivery; base freed it after the loop). FUN_101a69f54 @0x101a6a1ac.
         avsubtitle_free(&subtitle)
+        return (parts, timestamp, timebase)
+    }
+
+    // decodeFrame(from:completionHandler:) — FUN_101a69de8, the DecodeProtocol witness. Calls the synchronous
+    // decodeFrame(from:) above on packet.corePacket, then delivers each part as a SubtitleFrame. FUN_101a69de8
+    // @0x101a69e24 captures the tuple's .timebase (x2) and passes it to the frame-init getPosition helper (FUN_101a63adc,
+    // outlined into the frame build); the tuple's .timestamp (x1) is unused here (frame timing derives from part.start).
+    func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+        guard let corePacket = packet.corePacket,
+              let (parts, _, timebase) = decodeFrame(from: corePacket) else {
+            return
+        }
         for part in parts {
             let frame = SubtitleFrame(part: part, timebase: timebase)
             frame.timestamp = timebase.getPosition(from: part.start)

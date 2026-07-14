@@ -1,6 +1,8 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import Libavcodec
+import Libavformat
 
 // FFmpegSubtitle @0x1039f1718 — Forward 1.3.17 `actor` ($defaultActor field record; type_kind_gate).
 // §8.3 fields (7, reflection-authoritative: formatContext/decode/subtitleStreamIndex/preTime/startTime/
@@ -71,18 +73,22 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
             return
         }
 
-        // ⚑ UNRESOLVED — the decode-accumulate loop (@0x101a9f618-0x101a9f7cc). Structure disasm-mapped, all FFmpeg
-        //   callees CONFIRMED: `let pkt = av_packet_alloc()` (nil → av_packet_free) → `while av_read_frame(
-        //   formatContext.formatCtx, pkt) == 0 { if pkt.pointee.stream_index == subtitleStreamIndex { parts +=
-        //   <decode>(pkt) } av_packet_unref(pkt) }` → av_packet_free. DEFERRED: the decode-to-parts call — the binary
-        //   calls FUN_101a69f54 which returns `[SubtitlePart]` SYNCHRONOUSLY, but SubtitleDecode only exposes the
-        //   completion-handler `decodeFrame(from:completionHandler:)` (delivers a single `MEFrame`). Faithful
-        //   reconstruction needs SubtitleDecode's synchronous `(Packet) -> [SubtitlePart]` path resolved (touches the
-        //   Tier-2a decodeFrame outlining FUN_101a69de8/FUN_101a69f54) — its own unit; not a fabricated call.
-        //   ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]  (avcodec/packet.o)
-        //   ⚑[tool=ffmpeg_name_oracle ref=av_read_frame:0x1030e6e78 result=CONFIRMED]    (avformat/demux.o)
-        //   ⚑[tool=ffmpeg_name_oracle ref=av_packet_unref:0x102d61970 result=CONFIRMED]  (avcodec/packet.o)
-        //   ⚑[tool=ffmpeg_name_oracle ref=av_packet_free:0x102d618b8 result=CONFIRMED]   (avcodec/packet.o)
+        // ── decode-accumulate loop (@0x101a9f618-0x101a9f7cc): pump every packet from the subtitle stream through the
+        //   synchronous SubtitleDecode.decodeFrame(from:) (FUN_101a69f54, resolved this session) and accumulate its parts.
+        //   The sync decode returns ([SubtitlePart], timestamp, timebase)? — this sidecar caller uses only .parts (the
+        //   timestamp/timebase elements feed the completion-handler wrapper FUN_101a69de8, not the accumulate). ──
+        var pkt = av_packet_alloc() // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o)
+        if let packet = pkt {
+            // ⚑[tool=ffmpeg_name_oracle ref=av_read_frame:0x1030e6e78 result=CONFIRMED] (avformat/demux.o)
+            while av_read_frame(formatContext.formatCtx, packet) == 0 {
+                if packet.pointee.stream_index == subtitleStreamIndex,
+                   let (decoded, _, _) = decode.decodeFrame(from: packet) {
+                    parts += decoded
+                }
+                av_packet_unref(packet) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_unref:0x102d61970 result=CONFIRMED] (avcodec/packet.o)
+            }
+        }
+        av_packet_free(&pkt) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_free:0x102d618b8 result=CONFIRMED] (avcodec/packet.o)
     }
 
     // ⚑ UNRESOLVED → P4 M2 (Batch 4): subtitle(currentTime:) async + the real parts search. Signature migrated to
