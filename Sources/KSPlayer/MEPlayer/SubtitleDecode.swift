@@ -141,7 +141,15 @@ class SubtitleDecode: DecodeProtocol {
         }
         var parts = text(subtitle: subtitle, start: start, end: end)
         if assImageRenderer == nil, parts.isEmpty {
-            // base's empty placeholder part (base used attributedString: nil; the struct needs an empty text info).
+            // ⚑ DIVERGENCE (audit-caught, MED — a KNOWN simplification; this body stays DIVERGENT / NOT counted until fixed).
+            //   The binary (FUN_101a69f54 @0x101a6a204-0x101a6a2e4) builds this text from a NORMALIZED string, not a bare init:
+            //   `NSAttributedString(string: <s>.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: ""))`
+            //   — get_whitespaces(0x103451bac) → StringProtocol.trimmingCharacters(0x103458908) → replacingOccurrences
+            //   (0x103458914, of="\r"/with="") → String._bridgeToObjectiveC → NSAttributedString.initWithString:(0x103463620),
+            //   stored at the part's text-info +0x30. The PIPELINE is resolved; only the processed string <s> is not — it is a
+            //   value-witness buffer (x22, sized by the stripped metadata accessor 0x103451c90) whose write-site did not appear
+            //   in static disasm. NSAttributedString() is a behaviorally-close stand-in (the empty-parts branch likely yields
+            //   empty text), NOT fabricated — a faithful fix needs the <s>-origin pass. Base cce7002 used `attributedString: nil`.
             parts.append(SubtitlePart(start: start, end: end, render: .right(SubtitleTextInfo(text: NSAttributedString(), position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
         }
         // ⚑[tool=ffmpeg_name_oracle ref=avsubtitle_free:0x10294d330 result=CONFIRMED] — freed after text() extracts the
