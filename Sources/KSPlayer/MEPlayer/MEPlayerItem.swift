@@ -426,11 +426,25 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
     }
 }
 
-// ⚑ UNRESOLVED (commit-1): PBClass — the private class `_TtC8KSPlayerP33_92A0AD70DC642356038FCA3F4FD833927PBClass`
-//   (metadata 0x1044ea688; name confirmed via get_xrefs_from). Instances are 0x28 = 40 bytes (~3 word fields),
-//   allocated via FUN_101a5a030 in openAndFindStream and appended to MEPlayerItem.pbArray (field 29). Its stored
-//   fields are deferred to PBClass's own reconstruction commit; this minimal declaration lands `[PBClass]`.
-private final class PBClass {}
+// PBClass — the pbArray element (a custom-AVIO context tracker). Forward-added private class
+//   (`_TtC8KSPlayerP33_92A0AD70DC642356038FCA3F4FD833927PBClass`, metadata @0x1044ea688 via the accessor
+//   FUN_101a5a030 = `return 0x1044ea688`; name confirmed via get_xrefs_from). alloc 0x28 = 16-byte header +
+//   3 single-word fields. Field NAMES + `pb`'s type are FAITHFUL (dump_binary_field_types → __swift5_fieldmd);
+//   `_bytesRead`/`add` are fieldmd-UNMAPPED (type-record absent) — their precise types are pinned by the
+//   DEFERRED custom-AVIO read/append callbacks, so they are declared as single-word 0-init placeholders +
+//   flagged (l2 UNCHECKED, non-blocking; the prePosition residue pattern). Construction is inlined in
+//   openAndFindStream (the pbArray-append arm, itself deferred): +0x10=pb, +0x18=0, +0x20=0.
+// ⚑[tool=dump_binary_field_types ref=PBClass:0x1044ea688 result=pb/_bytesRead/add]
+private final class PBClass {
+    var pb: UnsafeMutablePointer<AVIOContext>?   // +0x10 — fieldmd concrete
+    var _bytesRead: Int64 = 0                    // +0x18 ⚑ UNRESOLVED type: fieldmd-unmapped; 0-init byte counter (incremented in the deferred custom-AVIO read cb); Int64 defensible, precise type pending that arm
+    var add: Int64 = 0                           // +0x20 ⚑ UNRESOLVED type: fieldmd-unmapped; 0-init single word (name "add"); used only in the deferred custom-AVIO path — placeholder pending that arm
+
+    // memberwise — construction inlined at the pbArray-append site (vtable slot devirtualized; no standalone init)
+    init(pb: UnsafeMutablePointer<AVIOContext>?) {
+        self.pb = pb
+    }
+}
 
 extension AbstractAVIOContext {
     func getContext() -> UnsafeMutablePointer<AVIOContext> {
