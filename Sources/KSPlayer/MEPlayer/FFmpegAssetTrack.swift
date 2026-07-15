@@ -9,9 +9,24 @@ import AVFoundation
 import FFmpegKit
 import Libavformat
 
+// ⚑ Forward-added protocol (absent from KSPlayer source). Resolved from the FFmpegAssetTrack.bitStreamFilter
+//   field-record symref → protocol descriptor 0x1039f0820 (kind=Protocol). Requirements deferred
+//   (minimal no-conformer declare). The field is a 16-byte class-existential (init nil): the descriptor's
+//   own class-constraint flag reads Any, so the class layout comes from the field-site `& AnyObject`,
+//   not the protocol — kept faithful to the descriptor.
+// ⚑[tool=name_type_at_addr ref=BitStreamFilter:0x1039f0820 result=protocol(kind=3,non-class-constrained)]
+protocol BitStreamFilter {}
+
 public class FFmpegAssetTrack: MediaPlayerTrack {
+    // ⚑ Field-layout migration (session 37, commit-1): the 37 stored properties in Forward binary order
+    //   (scripts/dump_binary_field_types.py FFmpegAssetTrack). NEW fields carry safe defaults = the
+    //   confirmed unconditional prologue init values (scale 1.0, translateY 0) or ⚑ nil/false pending
+    //   branch-conditional population (audit-gated commit-2). `codecpar` retyped value→pointer (+0xb8).
+    //   `isConvertNALSize` is source-only (Forward dropped it; l2 WARNs extra, non-blocking) — kept
+    //   trailing, read by the H.264 NAL-size path.
     public private(set) var trackID: Int32 = 0
     public let codecName: String
+    var profileName: String?                        // ⚑ 3 NEW · init population deferred (codec profile name via FUN_102e676a0); layout-first nil
     public var name: String = ""
     public private(set) var languageCode: String?
     public var nominalFrameRate: Float = 0
@@ -23,23 +38,30 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     public let bitDepth: Int32
     private var stream: UnsafeMutablePointer<AVStream>?
     package var startTime = CMTime.zero        // ⚑ package (Forward-fidelity): RemuxerIOAction (ProAVPlayer module) reads this cross-module — binary-arbitrated; exact modifier under-included §1 (could be public)
-    var codecpar: AVCodecParameters
+    var codecpar: UnsafeMutablePointer<AVCodecParameters>   // ⚑ retyped value→pointer (+0xb8); designated init derefs via `let codecpar = codecparPtr.pointee`
     package var timebase: Timebase = .defaultValue  // ⚑ package: see startTime — cross-module read by RemuxerIOAction.performRead/ptsToSeconds (FUN_101a32e28)
     let bitsPerRawSample: Int32
-    // audio
+    public let formatDescription: CMFormatDescription?   // moved up to bin +0xd0 (before audioDescriptor)
     public let audioDescriptor: AudioDescriptor?
-    // subtitle
+    var audioFormat: AVAudioFormat?                 // ⚑ 20 NEW · init population deferred (audio branch AVAudioFormat(cmAudioFormatDescription:))
     public let isImageSubtitle: Bool
     public var delay: TimeInterval = 0
+    var scale: Float = 1.0                          // ⚑ 23 NEW · prologue init 1.0 (0x3f800000) — confirmed unconditional
+    var translateY: Float = 0                       // ⚑ 24 NEW · prologue init 0 — confirmed unconditional
     var subtitle: SyncPlayerItemTrack<SubtitleFrame>?
-    // video
-    public private(set) var rotation: Int16 = 0
+    var subtitleRender: (any KSSubtitleProtocol)?   // ⚑ 26 NEW · 40b optional existential (+0x108..+0x130); protocol resolved via name_type_at_addr
+    public private(set) var rotation: Int16 = 0     // ⚑ bin field-record reads UInt16 (unmapped/UNCHECKED); kept Int16 — MediaPlayerProtocol requires `var rotation: Int16`, layout-identical (2b)
     public var dovi: DOVIDecoderConfigurationRecord?
     public let fieldOrder: FFmpegFieldOrder
-    public let formatDescription: CMFormatDescription?
+    var isImage: Bool = false                       // ⚑ 30 NEW · init population deferred (disposition/side-data)
+    var isStillImage: Bool = false                  // ⚑ 31 NEW · init population deferred
     var closedCaptionsTrack: FFmpegAssetTrack?
-    let isConvertNALSize: Bool
+    var bitStreamFilter: (any BitStreamFilter & AnyObject)?   // ⚑ 33 NEW · 16b class-existential (+0x148..+0x158); BitStreamFilter Forward-added (declared above)
+    var reorderSize: Int32 = 0                      // ⚑ 34 NEW · init param[0x1e]; population deferred
     var seekByBytes = false
+    var isDefault: Bool = false                     // ⚑ 36 NEW · init population deferred (disposition)
+    var isBilingual: Bool = false                   // ⚑ 37 NEW · init population deferred
+    let isConvertNALSize: Bool                      // ⚑ source-only: Forward dropped this stored field (binary lacks it; l2 WARNs extra, non-blocking). Kept — read by H.264 NAL-size path.
     public var description: String {
         var description = codecName
         if let formatName {
@@ -70,7 +92,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
 
     convenience init?(stream: UnsafeMutablePointer<AVStream>) {
         let codecpar = stream.pointee.codecpar.pointee
-        self.init(codecpar: codecpar)
+        self.init(codecpar: stream.pointee.codecpar)   // ⚑ pass the pointer (stored field retyped +0xb8); local `codecpar` value serves the reads below
         self.stream = stream
         let metadata = toDictionary(stream.pointee.metadata)
         if let value = metadata["variant_bitrate"] ?? metadata["BPS"], let bitRate = Int64(value) {
@@ -124,8 +146,9 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         //        avcodec_string(&buf, buf.count, codecpar, 0)
     }
 
-    init?(codecpar: AVCodecParameters) {
-        self.codecpar = codecpar
+    init?(codecpar codecparPtr: UnsafeMutablePointer<AVCodecParameters>) {
+        self.codecpar = codecparPtr
+        let codecpar = codecparPtr.pointee   // ⚑ local value copy keeps the dense codecpar.X reads unchanged; stored field is the pointer (+0xb8)
         bitRate = codecpar.bit_rate
         // codec_tag byte order is LSB first CMFormatDescription.MediaSubType(rawValue: codecpar.codec_tag.bigEndian)
         let codecType = codecpar.codec_id.mediaSubType
@@ -181,7 +204,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             }
             let sar = codecpar.sample_aspect_ratio.size
             var extradataSize = Int32(0)
-            var extradata = codecpar.extradata
+            let extradata = codecpar.extradata
             let atomsData: Data?
             if let extradata {
                 extradataSize = codecpar.extradata_size
@@ -193,25 +216,17 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                 }
                 atomsData = Data(bytes: extradata, count: Int(extradataSize))
             } else {
-                if codecType.rawValue == kCMVideoCodecType_VP9 {
-                    // ff_videotoolbox_vpcc_extradata_create
-                    var ioContext: UnsafeMutablePointer<AVIOContext>?
-                    guard avio_open_dyn_buf(&ioContext) == 0 else {
-                        return nil
-                    }
-                    ff_isom_write_vpcc(nil, ioContext, nil, 0, &self.codecpar)
-                    extradataSize = avio_close_dyn_buf(ioContext, &extradata)
-                    guard let extradata else {
-                        return nil
-                    }
-                    var data = Data()
-                    var array: [UInt8] = [1, 0, 0, 0]
-                    data.append(&array, count: 4)
-                    data.append(extradata, count: Int(extradataSize))
-                    atomsData = data
-                } else {
-                    atomsData = nil
-                }
+                // ⚑ REMOVED (session 37): the base VP9-synthetic-extradata path (avio_open_dyn_buf →
+                //   the vpcC-box writer → avio_close_dyn_buf) is PROVEN dead-in-Forward — the designated init
+                //   FUN_101a202a8 omits all three from its callee set, and the vpcC-box WRITER (libavformat's
+                //   isom vpcc writer) is absent from the binary: only the READER FUN_1031606b0 survives, and no
+                //   vpcC fourcc-immediate appears in code. Removing it keeps this layout commit gate-clean with
+                //   no fabricated FFmpeg marker (the deleted call is a `-` line the diff-scoped gate ignores).
+                //   ⚑ FAITHFUL-PARTIAL: proven Forward does NOT synthesize VP9 extradata via that writer; NOT
+                //   proven it does nothing else for VP9-without-extradata → `atomsData = nil` is the minimal
+                //   faithful form; exact VP9-no-extradata handling deferred to the init-body pass (commit-2).
+                //   ⚑[tool=get_function_callees ref=isom_vpcc_writer:absent-in-FUN_101a202a8 result=FAILED-SEARCH] (writer confirmed dead-stripped; only the reader survives)
+                atomsData = nil
                 isConvertNALSize = false
             }
             let format = AVPixelFormat(rawValue: codecpar.format)
@@ -261,7 +276,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     // ⚑ P55 (session 32): `options: KSOptions?` — SubtitleDecode.init forwards a nullable options through here
     //   (binary FUN_101a6914c → this createContext with nullable options); codecpar.createContext is already KSOptions?.
     func createContext(options: KSOptions?) throws -> UnsafeMutablePointer<AVCodecContext> {
-        try codecpar.createContext(options: options)
+        try codecpar.pointee.createContext(options: options)
     }
 
     public var isEnabled: Bool {
@@ -280,7 +295,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
 
 extension FFmpegAssetTrack {
     var pixelFormatType: OSType? {
-        let format = AVPixelFormat(codecpar.format)
+        let format = AVPixelFormat(codecpar.pointee.format)
         return format.osType(fullRange: formatDescription?.fullRangeVideo ?? false)
     }
 }

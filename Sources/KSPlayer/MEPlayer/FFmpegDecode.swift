@@ -48,10 +48,16 @@ class FFmpegDecode: DecodeProtocol {
         }
         // 需要avcodec_send_packet之后，properties的值才会变成FF_CODEC_PROPERTY_CLOSED_CAPTIONS
         if packet.assetTrack.mediaType == .video {
-            if Int32(codecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0, packet.assetTrack.closedCaptionsTrack == nil {
-                var codecpar = AVCodecParameters()
-                codecpar.codec_type = AVMEDIA_TYPE_SUBTITLE
-                codecpar.codec_id = AV_CODEC_ID_EIA_608
+            // ⚑ Forward retyped FFmpegAssetTrack.codecpar value→pointer, so the synthetic CC codecpar is
+            //   heap-allocated (stable pointer the track stores) — the alloc folds into the compound `if`
+            //   to match the binary (FUN_101a23404 L33-38: alloc-fail skips the block, not a return).
+            //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_alloc:0x1029f543c result=CONFIRMED]
+            //   ⚑ ownership/free deferred to the FFmpegAssetTrack lifecycle audit (the alloc'd params are now owned by the track; the base value-copy had no free step).
+            if Int32(codecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0,
+               packet.assetTrack.closedCaptionsTrack == nil,
+               let codecpar = avcodec_parameters_alloc() {
+                codecpar.pointee.codec_type = AVMEDIA_TYPE_SUBTITLE
+                codecpar.pointee.codec_id = AV_CODEC_ID_EIA_608
                 if let subtitleAssetTrack = FFmpegAssetTrack(codecpar: codecpar) {
                     subtitleAssetTrack.name = "Closed Captions"
                     subtitleAssetTrack.startTime = packet.assetTrack.startTime

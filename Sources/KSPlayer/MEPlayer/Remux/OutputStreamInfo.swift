@@ -100,10 +100,9 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             //   arms (gated on transcodeCodecIDs + track.mediaType + codec_id) build a per-codec transcode
             //   context via the devirt ctor helpers then avcodec_parameters_from_context [ref=0x1029f5738
             //   CONFIRMED] + transcodeMap[trackID]=ctx — DEFERRED to the OSI-transcode-arm unit (P36/P43).
-            withUnsafePointer(to: track.codecpar) { sourceParameters in    // ⚑ FFmpegAssetTrack.codecpar (+0xb8)
-                // ⚑[tool=ffmpeg_name_oracle ref=0x1029f5584 result=CONFIRMED] avcodec_parameters_copy (109/436)
-                _ = avcodec_parameters_copy(outputStream.pointee.codecpar, sourceParameters)
-            }
+            // ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED] (copy 109/436)
+            //   track.codecpar retyped value→pointer (+0xb8) — passed directly (was withUnsafePointer over the value)
+            _ = avcodec_parameters_copy(outputStream.pointee.codecpar, track.codecpar)   // ⚑ FFmpegAssetTrack.codecpar (+0xb8)
             if outputStream.pointee.codecpar.pointee.sample_rate == 0 {     // L754
                 outputStream.pointee.codecpar.pointee.sample_rate = 48000
             }

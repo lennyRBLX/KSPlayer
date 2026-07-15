@@ -173,7 +173,7 @@ class VideoToolboxDecode: DecodeProtocol {
         VTDecompressionSessionFinishDelayedFrames(session.decompressionSession)
         VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
         frames = []
-        if session.assetTrack.codecpar.codec_id == AV_CODEC_ID_H264 {
+        if session.assetTrack.codecpar.pointee.codec_id == AV_CODEC_ID_H264 {
             needReconfig = true
         }
     }
@@ -214,8 +214,8 @@ class DecompressionSession {
         let attributes: NSMutableDictionary = [
             kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
             kCVPixelBufferMetalCompatibilityKey: true,
-            kCVPixelBufferWidthKey: assetTrack.codecpar.width,
-            kCVPixelBufferHeightKey: assetTrack.codecpar.height,
+            kCVPixelBufferWidthKey: assetTrack.codecpar.pointee.width,
+            kCVPixelBufferHeightKey: assetTrack.codecpar.pointee.height,
             kCVPixelBufferIOSurfacePropertiesKey: NSDictionary(),
         ]
         var session: VTDecompressionSession?

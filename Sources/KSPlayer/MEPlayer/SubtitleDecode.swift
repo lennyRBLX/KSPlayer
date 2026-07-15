@@ -52,7 +52,7 @@ class SubtitleDecode: DecodeProtocol {
         self.assetTrack = assetTrack
         startTime = assetTrack.startTime.seconds
         fontsDir = options?.fontsDir?.path
-        isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.codec_id)
+        isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.pointee.codec_id)
         do {
             codecContext = try assetTrack.createContext(options: options)
             codecContext?.pointee.time_base = assetTrack.timebase.rational
