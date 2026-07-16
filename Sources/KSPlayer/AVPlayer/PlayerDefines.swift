@@ -8,6 +8,7 @@
 import AVFoundation
 import CoreMedia
 import CoreServices
+import FFmpegKit // Forward: AbstractAVIOContext's addSub/urlContext are FFmpeg-typed vtable slots (AVIOContext / URLContext / AVIOInterruptCB)
 #if canImport(UIKit)
 import UIKit
 
@@ -423,5 +424,26 @@ open class AbstractAVIOContext {
     }
 
     open func close() {}
+
+    // ── Forward addition: the last two AbstractAVIOContext vtable slots (+0xa8, +0xb0).
+    // Both are abstract `return nil` in the base (one coalesced binary body @0x10002d9d4) and
+    // overridden per-subclass in the PreLoadIOContext module. Declaration order is load-bearing:
+    // urlContext must precede addSub so addSub lands at slot +0xb0 (the io_open dispatch offset).
+
+    // +0xa8 — computed getter exposing the terminal FFmpeg URLContext down the AVIO cache chain
+    // (URLContextDownload returns self.context; HLSCacheIOContext returns download.context;
+    // CacheIOContext dynamic-casts + recurses). Return type is binary-grounded: URLContextDownload's
+    // first field `context: UnsafeMutablePointer<URLContext>?` @+0x18, and the getter's `return self+0x18`.
+    // ⚑ name INFERRED — no #function on any override (0x100822e00 / 0x101b99cac / 0x101b8d8b8)
+    // ⚑[tool=recover_swift_function_name ref=urlContext:0x100822e00 result=inferred]
+    open var urlContext: UnsafeMutablePointer<URLContext>? { nil }
+
+    // +0xb0 — open a sub-URL, returning the child AVIOContext* (the custom io_open dispatches here
+    // via ioContext.metadata[+0xb0], storing the result into *pb and PBClass.pb). Sole concrete
+    // override = HLSCacheIOContext.addSub. `interrupt:` is the format context's interrupt_callback
+    // (AVIOInterruptCB, the 2-word s+0xd8/+0xe0 pair) the child reader polls to cancel.
+    // ⚑[tool=recover_swift_function_name ref=addSub:0x101b97b2c result=high]
+    open func addSub(url: URL, flags: Int32, options: UnsafeMutablePointer<OpaquePointer?>?, interrupt: AVIOInterruptCB) -> UnsafeMutablePointer<AVIOContext>? { nil }
+
     deinit {}
 }
