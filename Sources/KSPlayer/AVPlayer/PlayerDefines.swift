@@ -447,3 +447,28 @@ open class AbstractAVIOContext {
 
     deinit {}
 }
+
+// DownloadProtocol — a Forward-added protocol (descriptor 0x1039edd38, absent from the base
+// KSPlayer source) that AbstractAVIOContext conforms to. It abstracts the AVIO download interface
+// so a cache context can hold `any DownloadProtocol` (see CacheIOContext.download) and recover the
+// concrete AVIO via `as? AbstractAVIOContext`. Public because PreLoadIOContext (which imports
+// KSPlayer) references it as CacheIOContext.download's type.
+//
+// UNRESOLVED (8 requirements — minimal-declare + defer, NOT fabricated): the descriptor gives
+//   NumRequirements=8 / NumRequirementsInSignature=0 (protocol_signature), so the requirement
+//   KINDS are deterministic — a settable var (Getter/Setter/ModifyCoroutine, reqs 0-2), a
+//   read-only var (Getter, req 3), and 4 methods (reqs 4-7) — but the requirement NAMES + Swift
+//   SIGNATURES are IRREDUCIBLE: the witnesses are stripped thunks (recover_swift_function_name on
+//   all 8 witness addrs = #function None) and there are no associated types to recover a name from.
+//   Declaring the requirements would fabricate names/signatures (cardinal rule), so the protocol is
+//   declared minimally. `any DownloadProtocol` is a 40-byte non-class-constrained existential
+//   regardless of requirement count, so CacheIOContext.download's field layout is faithful as-is.
+// ⚑[tool=conformance_walker ref=DownloadProtocol:0x1039edd38 result=8 reqs (2 vars + 4 methods), sole conformer=AbstractAVIOContext (witness table 0x1041d5330 validated), all 8 witnesses #function-unrecoverable → reqs deferred]
+public protocol DownloadProtocol {}
+
+// AbstractAVIOContext is DownloadProtocol's sole conformer (conformance_walker), so every AVIO
+// subclass conforms via inheritance. The extension body is empty because the 8 requirements are the
+// deferred residue documented above; the conformance itself is binary-grounded (validated witness
+// table 0x1041d5330). An extension (vs the class's inheritance clause) keeps the vtable declaration
+// order above untouched.
+extension AbstractAVIOContext: DownloadProtocol {}

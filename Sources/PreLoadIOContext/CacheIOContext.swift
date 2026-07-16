@@ -44,10 +44,13 @@ public class CacheIOContext: AbstractAVIOContext {
     // 0  bytesRead: running total of bytes returned to the reader. read() advances
     //    it (self+0x18 / unaff_x20[3]). gate-confirmed.
     var bytesRead: UInt64 = 0
-    // 1  download: the URLContextDownload that streams the source (designated init
-    //    stores it at +0x20; read() drives download.read via vtable+0x28). Built by
-    //    the convenience init via the shared URLContextDownload init FUN_101b90c58.
-    var download: URLContextDownload? // type inferred — ⚑ (built via the shared URLContextDownload init)
+    // 1  download: the AVIO that streams the source, held as its Forward-added `any DownloadProtocol`
+    //    existential (a 40-byte NON-class existential @+0x20, NOT a concrete URLContextDownload — the
+    //    designated init value-witness-copies it into +0x20, and urlContext recovers the concrete AVIO
+    //    via `as? AbstractAVIOContext`). Built by the convenience init via the shared URLContextDownload
+    //    init (URLContextDownload conforms to DownloadProtocol through AbstractAVIOContext).
+    // ⚑[tool=name_type_at_addr ref=DownloadProtocol:0x1039edd38 result=(any DownloadProtocol)? — 40B non-class existential; confirmed 4x: typeref-demangle 0x103571a68, 40B value-witness copy, fr_category=complex, downstream offset lastSpeedSampleTime@+0x58]
+    var download: (any DownloadProtocol)?
     // 2  end: logical end offset of the cached stream. ⚑ gate-UNCHECKED; UInt64 by
     //    the position-field pattern (siblings gate-confirmed).
     var end: UInt64 = 0 // ⚑ (gate UNCHECKED; position-pattern)
@@ -90,9 +93,11 @@ public class CacheIOContext: AbstractAVIOContext {
     // 16 _isClosed: whether close() has run. Designated init defaults it false; s64
     //    returns !_isClosed. field-record.
     var _isClosed: Bool = false
-    // 17 downloadLock: serializes the download/cache mutation. Designated init allocs
-    //    NSRecursiveLock(). ⚑ decompile-strong (designated init allocs NSRecursiveLock).
-    var downloadLock: NSRecursiveLock? = NSRecursiveLock() // ⚑ decompile-strong
+    // 17 downloadLock: serializes the download/cache mutation. NON-optional — the designated init
+    //    allocs NSRecursiveLock() unconditionally (allocWithZone + init, no nil-branch), and l2 reads
+    //    the binary field as non-optional NSRecursiveLock (the prior `?` was an over-cautious flag,
+    //    surfaced + corrected by the l2 gate on this touch).
+    var downloadLock: NSRecursiveLock = NSRecursiveLock()
     // 18 urlRefreshHandler: callback to refresh an expired source URL. Designated
     //    init defaults it nil (2-word zero). ⚑ exact closure shape UNRESOLVED.
     var urlRefreshHandler: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED
@@ -130,7 +135,8 @@ public class CacheIOContext: AbstractAVIOContext {
 
     // Designated init s61 → inner FUN_101b86d38 (cached). Arity inferred (no mangled
     // init symbol): the EXPLICIT param→field stores in the inner init are
-    //   param_1 → download (retained into +0x20),
+    //   param_1 → download (the `any DownloadProtocol` existential value-witness-copied into +0x20 —
+    //     a 40-byte existential, not an 8-byte retained class ptr),
     //   param_2/param_3 → a Swift String cacheKey (the appendingPathComponent base),
     //   param_4 → bufferSize (stored into base +0x14 → super.init(bufferSize:)),
     //   param_5 → saveFile (char store), param_6 → isReadComplete (char store).
@@ -138,7 +144,7 @@ public class CacheIOContext: AbstractAVIOContext {
     // String used to derive the per-source cache subdirectory" → named cacheKey,
     // best-effort. All 28 field defaults are transcribed above as property
     // initializers (so a stored-property-only init body is faithful to the defaults).
-    public init(download: URLContextDownload?, cacheKey: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
+    public init(download: (any DownloadProtocol)?, cacheKey: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
         self.download = download
         self.saveFile = saveFile          // binary: explicit (char)param_5 store
         self.isReadComplete = isReadComplete // binary: explicit param_6 store
@@ -201,6 +207,16 @@ public class CacheIOContext: AbstractAVIOContext {
     //   spine; the binary returns −1 on interrupt-cancel. — P2
     public override func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
         super.read(buffer: buffer, size: size)
+    }
+
+    // urlContext (base slot +0xa8) — io_open's terminal URLContext accessor. CacheIOContext holds its
+    //   source as `any DownloadProtocol` (not a concrete AVIO), so it recovers the concrete
+    //   AbstractAVIOContext by dynamic cast and recurses into ITS urlContext — the CHAIN-WALK down the
+    //   AVIO cache stack; a non-AVIO or nil download yields nil. The binary's swift_dynamicCast (vs a
+    //   free upcast) is exactly why download must be the existential, not URLContextDownload.
+    // ⚑[tool=name_type_at_addr ref=FUN_101b8d8b8:0x101b8d8b8 result=(download as? AbstractAVIOContext)?.urlContext; cast src=any DownloadProtocol, target=AbstractAVIOContext (metadata 0x1044e69b0), recursion=vtable+0xa8]
+    public override var urlContext: UnsafeMutablePointer<URLContext>? {
+        (download as? AbstractAVIOContext)?.urlContext
     }
 
     // s22 @101b86038 — `func resetDownloadSpeed()` (name inferred, devirt). Faithful
