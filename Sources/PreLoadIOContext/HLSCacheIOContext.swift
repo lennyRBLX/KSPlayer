@@ -109,6 +109,13 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         }
     }
 
+    // urlContext (base slot +0xa8) — io_open's terminal URLContext accessor. HLS forwards
+    //   to its manifest/segment `download` (a CONCRETE URLContextDownload — a direct field
+    //   load, no cast) and returns download.context. The decompile loads self.download
+    //   (self+0x18), then does a checked-exclusivity read of download.context (its +0x18).
+    // ⚑[tool=prefetch_decompiles ref=FUN_101b99cac:0x101b99cac result=lVar1=*(self+0x18)[download];beginAccess(lVar1+0x18);return*(lVar1+0x18) == download.context]
+    public override var urlContext: UnsafeMutablePointer<URLContext>? { download.context }
+
     // --- methods (only the 4 cached small methods; names devirt→inferred) ---
 
     // s22 @101b9a960 — `func segmentIndex(for url: URL) -> Int?` (name inferred, devirt).

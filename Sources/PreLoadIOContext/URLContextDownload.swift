@@ -45,6 +45,14 @@ public class URLContextDownload: AbstractAVIOContext {
         super.init(bufferSize: bufferSize)
     }
 
+    // urlContext (base slot +0xa8) — io_open's terminal URLContext accessor.
+    //   URLContextDownload is the download-chain TERMINAL: it exposes its own FFmpeg
+    //   URLContext (the `context` field @+0x18) directly. The decompile is a checked-
+    //   exclusivity read of self.context (beginAccess then the load) — the beginAccess is
+    //   compiler-emitted instrumentation, invisible at source; the body is `{ context }`.
+    // ⚑[tool=prefetch_decompiles ref=FUN_10081cbbc:0x10081cbbc result=_swift_beginAccess(self+0x18);return*(self+0x18) == self.context]
+    public override var urlContext: UnsafeMutablePointer<URLContext>? { context }
+
     // UNRESOLVED: read(buffer:size:) / write(buffer:size:) / seek(offset:whence:)
     //   overrides are devirtualized in the binary (no readable body) — inherited
     //   from AbstractAVIOContext, NOT reconstructed. — P2
