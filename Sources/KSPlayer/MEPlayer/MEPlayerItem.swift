@@ -229,12 +229,44 @@ extension MEPlayerItem {
         audioTrack = nil
         videoAudioTracks = []
         allPlayerItemTracks.forEach { $0.shutdown() }   // witness+0x80 = PlayerItemTrackProtocol.shutdown()
-        guard formatContext != nil else { return }      // self.formatContext; nil → early return (no track build)
+        guard let formatContext else { return }         // self.formatContext; nil → early return (no track build)
 
-        // ⚑ UNRESOLVED (SLICE 2 — the track BUILD, closure FUN_101a556b0): rebuild allPlayerItemTracks/
-        //   videoAudioTracks/videoTrack/audioTrack/subtitleTrack from formatContext.assetTracks — per-assetTrack
-        //   SyncPlayerItemTrack construction (subtitle-language String selection, subclass dispatch, the
-        //   FFmpegAssetTrack.playerItemTrack link). Uses the DONE SyncPlayerItemTrack(mediaType:frameCapacity:options:).
+        // SLICE 2 (closure FUN_101a556b0): rebuild the subtitle tracks from formatContext.assetTracks. Every track
+        //   is disabled (track.isEnabled = false — the disable-all reset; slices 3/4 re-enable the selected
+        //   video/audio). The `discard` values the disasm writes (non-sub→ALL, image-sub→ALL, text-sub→DEFAULT) are
+        //   exactly what the isEnabled setter yields for newValue=false, so this IS `isEnabled = false`. For subtitle
+        //   tracks a SyncPlayerItemTrack<SubtitleFrame> is built: image subtitles share the single self.subtitleTrack
+        //   (frameCapacity 8, built once); text subtitles get a per-track one (frameCapacity 128). BOTH branches were
+        //   disasm-confirmed to build SyncPlayerItemTrack<SubtitleFrame> (metadata 0x10356ac50), which is why
+        //   track.subtitle (+0x100) is homogeneous. delegate = self is a weak assign (+0x40).
+        allPlayerItemTracks = []
+        for track in formatContext.assetTracks {
+            track.isEnabled = false
+            if track.mediaType == .subtitle {
+                if track.isImageSubtitle {
+                    if subtitleTrack == nil {
+                        let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options)
+                        allPlayerItemTracks.append(subtitle)    // append BEFORE delegate: the binary's append endAccess barrier (0x101a55a74) precedes the delegate weakAssign (0x101a55a88) — matches the text branch order
+                        subtitle.delegate = self
+                        subtitleTrack = subtitle
+                    }
+                    track.subtitle = subtitleTrack
+                } else {
+                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options)
+                    subtitle.delegate = self
+                    track.subtitle = subtitle
+                    allPlayerItemTracks.append(subtitle)
+                }
+            }
+        }
+        // ⚑ UNRESOLVED (SLICE 2 — the 2nd-pass embed-subtitle registration, Forward-ADDED): the subtitle
+        //   FFmpegAssetTracks are collected + cast to [any SubtitleInfo] (FFmpegAssetTrack: SubtitleInfo via
+        //   EmbedDataSouce.swift; conformance witness 0x1041d7668) and passed to a KSOptions method at
+        //   vtable[0x768], whose result gets a follow-on witness[+0x40](true) dispatch. That method is Forward-
+        //   added: absent from source AND the origin/forward base, and statically unresolvable (metadata slot
+        //   md+0x768 is an unbound pattern value 0x105395200 with no function). Deferred — the P43 existence-check
+        //   RAN (source ✗, base ✗, static metadata ✗) and failed to name it.
+        //   ⚑[tool=get_function_by_address ref=KSOptions.vtable0x768:0x105395200 result=FAILED-SEARCH]
         // ⚑ UNRESOLVED (SLICE 3 — audio, closures FUN_101a36964/36cf0 + tail): audio sample-rate sampling
         //   (audioStreamBasicDescription) + max-reduction + the KSOptions.vtable[0x6f8] call + AudioPlayerItemTrack
         //   (FUN_101a383a8/33444) construction.
