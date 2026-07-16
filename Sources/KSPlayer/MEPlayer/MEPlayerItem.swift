@@ -29,7 +29,7 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var ioTask: Task<Void, Never>?                           // 4 ⚑ UNRESOLVED generics (Task confirmed, nil-init)
     private let ioWaiterLock = NSLock()                              // 5
     private var ioWaiter: CheckedContinuation<Void, Never>?          // 6 ⚑[tool=name_type_at_addr ref=ioWaiter:0x1035647f8 result=ScC<(),_>] error-param pending
-    private var formatContext: FormatContext?                        // 7
+    fileprivate var formatContext: FormatContext?                        // 7
     private var remuxer: Remuxer?                                    // 8
     private var seekTime = TimeInterval(0)                           // 9
     private var seekUsePacketCache = false                           // 10
@@ -52,20 +52,20 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var audioTrack: SyncPlayerItemTrack<AudioFrame>?       // 26
     private var subtitleTrack: SyncPlayerItemTrack<SubtitleFrame>? // 27 (nil-init parallel; SubtitleFrame: MEFrame, Model.swift:245)
     private var videoAdaptation: VideoAdaptationState?            // 28
-    private var pbArray = [PBClass]()                             // 29
+    fileprivate var pbArray = [PBClass]()                             // 29
     private var interrupt = false                                // 30
     private var prePosition: Int64 = 0                           // 31 ⚑ UNRESOLVED: single-word 0-init; Int64|Int|Double pending assignment site
     // 32 — the saved default AVFormatContext.io_open, boxed as a Swift closure (2-word [fn,ctx], the
     //   io_open C signature); ioOpen() falls back to it when there is no ioContext / addSub declines. The
     //   install (saving + boxing formatCtx's original io_open) is the ⚑UNRESOLVED openAndFindStream arm.
     // ⚑[tool=decompile ref=defaultIOOpen:0x101a53560 result=io_open-signature-closure]
-    private var defaultIOOpen: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?) -> Int32)? // 32
+    fileprivate var defaultIOOpen: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?) -> Int32)? // 32
     // 33 — the saved default AVFormatContext.io_close2, boxed as a Swift closure (2-word [fn,ctx],
     //   the io_close2 signature (AVFormatContext*, AVIOContext*) -> Int32); ioClose() always delegates
     //   to it after the pbArray cleanup. The install (boxing formatCtx's original io_close2) is the
     //   ⚑UNRESOLVED openAndFindStream arm.
     // ⚑[tool=decompile ref=defaultIOClose:0x101a53924 result=io_close2-signature-closure]
-    private var defaultIOClose: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<AVIOContext>?) -> Int32)? // 33
+    fileprivate var defaultIOClose: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<AVIOContext>?) -> Int32)? // 33
     public private(set) var chapters: [Chapter] = []            // 34
     public private(set) var duration: TimeInterval = 0          // 35
     public private(set) var fileSize: Int64 = 0                // 36 MediaPlayback.fileSize Int64 (bin field-record Int? UNCHECKED — kept Int64 per protocol)
@@ -201,9 +201,32 @@ extension MEPlayerItem {
                                           interrupt: interruptContext, ioContext: nil, fontsDir: options.fontsDir)
         self.formatContext = formatContext
 
-        // ⚑ UNRESOLVED: custom-AVIO install — Forward saves formatCtx.pb's default io_open/io_close into
-        //   defaultIOOpen/defaultIOClose (boxed) and swaps in its own thunks (formatCtx.pb.opaque = self).
-        //   ⚑[tool=decompile ref=ioOpenThunk:0x101a53560 result=deferred-custom-AVIO]
+        // Custom-AVIO install (unconditional) — save + BOX the format context's default io_open/io_close2
+        //   into defaultIOOpen/defaultIOClose (each a Swift closure that captures the original C fn-ptr and
+        //   forwards to it — the compiler emits the boxed-closure thin entry, storing the captured fn-ptr in
+        //   the box), stash self in the format context's opaque, and install our two @convention(c) thunks
+        //   (ioOpen/ioClose are context-free statics → the compiler emits the matching adapters). The
+        //   AVFormatContext fields are accessed symbolically; `formatCtx` is the AVFormatContext* the
+        //   FormatContext wraps (== the openFormatContext local, stored at FormatContext+0x18). Order matches
+        //   the binary: box io_open → opaque=self → io_open thunk → box io_close2 → io_close2 thunk.
+        // ⚑[tool=decompile ref=customAVIOInstall:0x101a4d3d0 result=saves formatCtx.io_open@+0x1c0/io_close2@+0x1c8 (boxed→defaultIOOpen/Close), opaque@+0x1a0=self, installs the ioOpen/ioClose thunks]
+        // ⚑[tool=decompile ref=boxTrampolineOpen:0x101a5a0c4 result=io_open boxed-closure thin-entry: loads captured fn-ptr @box+0x10 and forwards]
+        // ⚑[tool=decompile ref=boxTrampolineClose:0x101a5a0bc result=io_close2 boxed-closure thin-entry]
+        // ⚑[tool=decompile ref=ioOpenThunk:0x101a53560 result=@convention(c) adapter the compiler emits for MEPlayerItem.ioOpen]
+        // ⚑[tool=decompile ref=ioCloseThunk:0x101a53924 result=@convention(c) adapter for MEPlayerItem.ioClose]
+        if let defaultOpen = formatCtx.pointee.io_open {
+            defaultIOOpen = { s, pb, url, flags, options in defaultOpen(s, pb, url, flags, options) }
+        } else {
+            defaultIOOpen = nil
+        }
+        formatCtx.pointee.opaque = Unmanaged.passUnretained(self).toOpaque()
+        formatCtx.pointee.io_open = ioOpen
+        if let defaultClose = formatCtx.pointee.io_close2 {
+            defaultIOClose = { s, pb in defaultClose(s, pb) }
+        } else {
+            defaultIOClose = nil
+        }
+        formatCtx.pointee.io_close2 = ioClose
         // ⚑ UNRESOLVED: pbArray append — allocs a PBClass and appends it to self.pbArray (field 29), then on a
         //   successful dynamic-cast writes KSOptions seekUsePacketCache=false + a formatContextOptions entry.
         //   ⚑[tool=decompile ref=pbClassAlloc:0x101a5a030 result=deferred-PBClass-body]
@@ -219,55 +242,9 @@ extension MEPlayerItem {
         createCodec()                                        // track-set builder (argless, reads self.formatContext; slice-1 reconstructed)
     }
 
-    // io_open (FUN_101a53560) — the custom-AVIO open callback. Forward installs it on formatCtx.io_open
-    //   (the compiler @convention(c) adapter = thunk_FUN_101a53560) and stashes self in formatCtx.opaque;
-    //   that install (+ saving/boxing the original opener into defaultIOOpen) is the still-⚑UNRESOLVED arm
-    //   in openAndFindStream. Retrieves self from s.opaque (force-unwrap: brk if nil @0x101a5391c), routes
-    //   the URL through ioContext.addSub (HLS sub-URLs), else the saved default opener; each opened
-    //   AVIOContext is tracked in pbArray via a PBClass (pb, _bytesRead=0, add=0).
-    // ⚑[tool=decompile ref=ioOpen:0x101a53560 result=self@opaque→addSub-or-defaultIOOpen→pbArray]
-    private static func ioOpen(_ s: UnsafeMutablePointer<AVFormatContext>?,
-                               _ pb: UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?,
-                               _ url: UnsafePointer<CChar>?,
-                               _ flags: Int32,
-                               _ options: UnsafeMutablePointer<OpaquePointer?>?) -> Int32 {
-        guard let s, let url else { return -1 }
-        let item = Unmanaged<MEPlayerItem>.fromOpaque(s.pointee.opaque!).takeUnretainedValue()
-        if let ioContext = item.formatContext?.ioContext, let subURL = URL(string: String(cString: url)) {
-            if let opened = ioContext.addSub(url: subURL, flags: flags, options: options,
-                                             interrupt: s.pointee.interrupt_callback) {
-                pb?.pointee = opened
-                item.pbArray.append(PBClass(pb: opened))
-                return 0
-            }
-        }
-        // no ioContext / invalid URL / addSub declined → the saved default opener
-        guard let defaultIOOpen = item.defaultIOOpen else { return -1 }
-        let ret = defaultIOOpen(s, pb, url, flags, options)
-        if ret >= 0 {
-            item.pbArray.append(PBClass(pb: pb?.pointee))
-        }
-        return ret
-    }
-
-    // io_close (FUN_101a53924) — the io_close2 counterpart of ioOpen. Retrieves self from s.opaque,
-    //   removes this pb's PBClass from pbArray (crediting the closing sub-context's total bytes to
-    //   pbArray[0].add so the top-level context's byte count survives), then always delegates to the
-    //   saved defaultIOClose. Installed on formatCtx.io_close2 (same ⚑UNRESOLVED openAndFindStream arm).
-    // ⚑[tool=decompile ref=ioClose:0x101a53924 result=self@opaque→pbArray-remove+bytes-transfer→defaultIOClose]
-    private static func ioClose(_ s: UnsafeMutablePointer<AVFormatContext>?,
-                                _ pb: UnsafeMutablePointer<AVIOContext>?) -> Int32 {
-        guard let s else { return -1 }
-        let item = Unmanaged<MEPlayerItem>.fromOpaque(s.pointee.opaque!).takeUnretainedValue()
-        if let index = item.pbArray.firstIndex(where: { $0.pb == pb }) {
-            let removed = item.pbArray.remove(at: index)
-            if let first = item.pbArray.first {
-                first.add += removed.totalBytesRead()
-            }
-        }
-        guard let defaultIOClose = item.defaultIOClose else { return -1 }
-        return defaultIOClose(s, pb)
-    }
+    // ioOpen / ioClose (the custom-AVIO open/close2 callbacks) are declared at FILE SCOPE (below PBClass):
+    //   a static method cannot form a C function pointer in Swift 6, so `formatCtx.io_open = MEPlayerItem.ioOpen`
+    //   does not compile — a top-level func does. openAndFindStream installs them (@convention(c) thunks).
 
     func startRecord(url: URL) {
         // ⚑ UNRESOLVED (commit-1 stub): base body used the removed outputFormatCtx/streamMapping/outputPacket
@@ -538,6 +515,59 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             return nil
         }
     }
+}
+
+// ── Custom-AVIO callbacks (io_open / io_close2) ─────────────────────────────────────────────────
+// FILE-SCOPE funcs (NOT MEPlayerItem methods): a static method cannot form a C function pointer in
+//   Swift 6, so these must be top-level to be installable on formatCtx.io_open/io_close2 (as the
+//   @convention(c) thunks the compiler emits). Each is context-free — it retrieves its MEPlayerItem
+//   from the format context's opaque (force-unwrap: brk if nil), capturing nothing.
+
+// io_open (FUN_101a53560) — the custom-AVIO open callback: routes the URL through ioContext.addSub
+//   (HLS sub-URLs), else the saved default opener; each opened AVIOContext is tracked in pbArray via a
+//   PBClass (pb, _bytesRead=0, add=0).
+// ⚑[tool=decompile ref=ioOpen:0x101a53560 result=self@opaque→addSub-or-defaultIOOpen→pbArray]
+private func ioOpen(_ s: UnsafeMutablePointer<AVFormatContext>?,
+                    _ pb: UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?,
+                    _ url: UnsafePointer<CChar>?,
+                    _ flags: Int32,
+                    _ options: UnsafeMutablePointer<OpaquePointer?>?) -> Int32 {
+    guard let s, let url else { return -1 }
+    let item = Unmanaged<MEPlayerItem>.fromOpaque(s.pointee.opaque!).takeUnretainedValue()
+    if let ioContext = item.formatContext?.ioContext, let subURL = URL(string: String(cString: url)) {
+        if let opened = ioContext.addSub(url: subURL, flags: flags, options: options,
+                                         interrupt: s.pointee.interrupt_callback) {
+            pb?.pointee = opened
+            item.pbArray.append(PBClass(pb: opened))
+            return 0
+        }
+    }
+    // no ioContext / invalid URL / addSub declined → the saved default opener
+    guard let defaultIOOpen = item.defaultIOOpen else { return -1 }
+    let ret = defaultIOOpen(s, pb, url, flags, options)
+    if ret >= 0 {
+        item.pbArray.append(PBClass(pb: pb?.pointee))
+    }
+    return ret
+}
+
+// io_close (FUN_101a53924) — the io_close2 counterpart of ioOpen. Retrieves self from s.opaque,
+//   removes this pb's PBClass from pbArray (crediting the closing sub-context's total bytes to
+//   pbArray[0].add so the top-level context's byte count survives), then always delegates to the
+//   saved defaultIOClose.
+// ⚑[tool=decompile ref=ioClose:0x101a53924 result=self@opaque→pbArray-remove+bytes-transfer→defaultIOClose]
+private func ioClose(_ s: UnsafeMutablePointer<AVFormatContext>?,
+                     _ pb: UnsafeMutablePointer<AVIOContext>?) -> Int32 {
+    guard let s else { return -1 }
+    let item = Unmanaged<MEPlayerItem>.fromOpaque(s.pointee.opaque!).takeUnretainedValue()
+    if let index = item.pbArray.firstIndex(where: { $0.pb == pb }) {
+        let removed = item.pbArray.remove(at: index)
+        if let first = item.pbArray.first {
+            first.add += removed.totalBytesRead()
+        }
+    }
+    guard let defaultIOClose = item.defaultIOClose else { return -1 }
+    return defaultIOClose(s, pb)
 }
 
 // PBClass — the pbArray element (a custom-AVIO context tracker). Forward-added private class
