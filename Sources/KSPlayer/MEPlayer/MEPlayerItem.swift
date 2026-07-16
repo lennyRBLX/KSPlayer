@@ -60,7 +60,12 @@ public final class MEPlayerItem: @unchecked Sendable {
     //   install (saving + boxing formatCtx's original io_open) is the ⚑UNRESOLVED openAndFindStream arm.
     // ⚑[tool=decompile ref=defaultIOOpen:0x101a53560 result=io_open-signature-closure]
     private var defaultIOOpen: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?) -> Int32)? // 32
-    private var defaultIOClose: (() -> Void)?                    // 33 ⚑ UNRESOLVED placeholder: AVIO io_close closure (thunk FUN_101a5a0bc)
+    // 33 — the saved default AVFormatContext.io_close2, boxed as a Swift closure (2-word [fn,ctx],
+    //   the io_close2 signature (AVFormatContext*, AVIOContext*) -> Int32); ioClose() always delegates
+    //   to it after the pbArray cleanup. The install (boxing formatCtx's original io_close2) is the
+    //   ⚑UNRESOLVED openAndFindStream arm.
+    // ⚑[tool=decompile ref=defaultIOClose:0x101a53924 result=io_close2-signature-closure]
+    private var defaultIOClose: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<AVIOContext>?) -> Int32)? // 33
     public private(set) var chapters: [Chapter] = []            // 34
     public private(set) var duration: TimeInterval = 0          // 35
     public private(set) var fileSize: Int64 = 0                // 36 MediaPlayback.fileSize Int64 (bin field-record Int? UNCHECKED — kept Int64 per protocol)
@@ -243,6 +248,25 @@ extension MEPlayerItem {
             item.pbArray.append(PBClass(pb: pb?.pointee))
         }
         return ret
+    }
+
+    // io_close (FUN_101a53924) — the io_close2 counterpart of ioOpen. Retrieves self from s.opaque,
+    //   removes this pb's PBClass from pbArray (crediting the closing sub-context's total bytes to
+    //   pbArray[0].add so the top-level context's byte count survives), then always delegates to the
+    //   saved defaultIOClose. Installed on formatCtx.io_close2 (same ⚑UNRESOLVED openAndFindStream arm).
+    // ⚑[tool=decompile ref=ioClose:0x101a53924 result=self@opaque→pbArray-remove+bytes-transfer→defaultIOClose]
+    private static func ioClose(_ s: UnsafeMutablePointer<AVFormatContext>?,
+                                _ pb: UnsafeMutablePointer<AVIOContext>?) -> Int32 {
+        guard let s else { return -1 }
+        let item = Unmanaged<MEPlayerItem>.fromOpaque(s.pointee.opaque!).takeUnretainedValue()
+        if let index = item.pbArray.firstIndex(where: { $0.pb == pb }) {
+            let removed = item.pbArray.remove(at: index)
+            if let first = item.pbArray.first {
+                first.add += removed.totalBytesRead()
+            }
+        }
+        guard let defaultIOClose = item.defaultIOClose else { return -1 }
+        return defaultIOClose(s, pb)
     }
 
     func startRecord(url: URL) {
@@ -533,6 +557,23 @@ private final class PBClass {
     // memberwise — construction inlined at the pbArray-append site (vtable slot devirtualized; no standalone init)
     init(pb: UnsafeMutablePointer<AVIOContext>?) {
         self.pb = pb
+    }
+
+    // FUN_101a59258 — total bytes read through this AVIO context: the accumulated `add` plus the
+    //   current pb.bytes_read. Syncs _bytesRead to pb.bytes_read each call; when the live counter has
+    //   gone backwards (the sub-context was replaced/reset) it first banks the prior _bytesRead into
+    //   `add` so the running total never regresses. ⚑ name INFERRED (#function unrecoverable).
+    // ⚑[tool=recover_swift_function_name ref=totalBytesRead:0x101a59258 result=inferred]
+    func totalBytesRead() -> Int64 {
+        let current: Int64
+        if let pb {
+            current = pb.pointee.bytes_read
+            if current < _bytesRead { add += _bytesRead }
+            _bytesRead = current
+        } else {
+            current = _bytesRead
+        }
+        return add + current
     }
 }
 
