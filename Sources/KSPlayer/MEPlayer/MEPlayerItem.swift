@@ -55,7 +55,11 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var pbArray = [PBClass]()                             // 29
     private var interrupt = false                                // 30
     private var prePosition: Int64 = 0                           // 31 ⚑ UNRESOLVED: single-word 0-init; Int64|Int|Double pending assignment site
-    private var defaultIOOpen: (() -> Void)?                     // 32 ⚑ UNRESOLVED placeholder: AVIO io_open closure (openAndFindStream thunk FUN_101a5a0c4)
+    // 32 — the saved default AVFormatContext.io_open, boxed as a Swift closure (2-word [fn,ctx], the
+    //   io_open C signature); ioOpen() falls back to it when there is no ioContext / addSub declines. The
+    //   install (saving + boxing formatCtx's original io_open) is the ⚑UNRESOLVED openAndFindStream arm.
+    // ⚑[tool=decompile ref=defaultIOOpen:0x101a53560 result=io_open-signature-closure]
+    private var defaultIOOpen: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?) -> Int32)? // 32
     private var defaultIOClose: (() -> Void)?                    // 33 ⚑ UNRESOLVED placeholder: AVIO io_close closure (thunk FUN_101a5a0bc)
     public private(set) var chapters: [Chapter] = []            // 34
     public private(set) var duration: TimeInterval = 0          // 35
@@ -208,6 +212,37 @@ extension MEPlayerItem {
 
         //   ⚑[tool=get_xrefs_to ref=createCodec:0x101a53c44 result=argless]
         createCodec()                                        // track-set builder (argless, reads self.formatContext; slice-1 reconstructed)
+    }
+
+    // io_open (FUN_101a53560) — the custom-AVIO open callback. Forward installs it on formatCtx.io_open
+    //   (the compiler @convention(c) adapter = thunk_FUN_101a53560) and stashes self in formatCtx.opaque;
+    //   that install (+ saving/boxing the original opener into defaultIOOpen) is the still-⚑UNRESOLVED arm
+    //   in openAndFindStream. Retrieves self from s.opaque (force-unwrap: brk if nil @0x101a5391c), routes
+    //   the URL through ioContext.addSub (HLS sub-URLs), else the saved default opener; each opened
+    //   AVIOContext is tracked in pbArray via a PBClass (pb, _bytesRead=0, add=0).
+    // ⚑[tool=decompile ref=ioOpen:0x101a53560 result=self@opaque→addSub-or-defaultIOOpen→pbArray]
+    private static func ioOpen(_ s: UnsafeMutablePointer<AVFormatContext>?,
+                               _ pb: UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?,
+                               _ url: UnsafePointer<CChar>?,
+                               _ flags: Int32,
+                               _ options: UnsafeMutablePointer<OpaquePointer?>?) -> Int32 {
+        guard let s, let url else { return -1 }
+        let item = Unmanaged<MEPlayerItem>.fromOpaque(s.pointee.opaque!).takeUnretainedValue()
+        if let ioContext = item.formatContext?.ioContext, let subURL = URL(string: String(cString: url)) {
+            if let opened = ioContext.addSub(url: subURL, flags: flags, options: options,
+                                             interrupt: s.pointee.interrupt_callback) {
+                pb?.pointee = opened
+                item.pbArray.append(PBClass(pb: opened))
+                return 0
+            }
+        }
+        // no ioContext / invalid URL / addSub declined → the saved default opener
+        guard let defaultIOOpen = item.defaultIOOpen else { return -1 }
+        let ret = defaultIOOpen(s, pb, url, flags, options)
+        if ret >= 0 {
+            item.pbArray.append(PBClass(pb: pb?.pointee))
+        }
+        return ret
     }
 
     func startRecord(url: URL) {
