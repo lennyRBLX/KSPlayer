@@ -322,14 +322,26 @@ extension MEPlayerItem {
     private func readThread() {
         // ⚑ UNRESOLVED (commit-1 stub): base body used removed formatCtx/startTime/seekByBytes/condition (the
         //   OperationQueue read+seek loop). Forward's read loop runs under `ioTask: Task` with `ioWaiter:
-        //   CheckedContinuation` + `ioWaiterLock: NSLock` for suspension. Deferred to the read-loop migration commit.
+        //   CheckedContinuation` + `ioWaiterLock: NSLock` for suspension. See `reading()` for the characterized
+        //   ioTask-driven read-loop cluster (driver / error-handler / reconnect). Deferred to Stage-2 DEEP.
     }
 
     private func reading() -> Int32 {
-        // ⚑ UNRESOLVED (commit-1 stub): base body used removed formatCtx/outputFormatCtx/streamMapping/
-        //   outputPacket/assetTracks/startTime/error (the demuxer read loop → per-track putPacket + remux
-        //   write). Forward reads via formatContext + routes recording through `remuxer`. Deferred to the
-        //   read-loop migration commit.
+        // ⚑ UNRESOLVED → Stage-2 DEEP (a runtime-keystone CLUSTER, ioTask-reached, static-invisible).
+        //   The Forward read machinery is a 3-function cluster driven from `ioTask: Task` (a thread entry
+        //   the static Swift→Swift callee graph cannot see — topo_readiness v1 confirms the driver is NOT
+        //   in its analyzed universe). Characterized here (named residuals + closure), NOT reconstructed —
+        //   deferred to the Stage-2 EASY/DEEP partition (topo_readiness v2 seeds the ioTask thread-entry
+        //   root so the cluster becomes a tracked keystone). The exact per-track reset requirement and all
+        //   three names are #function-unrecoverable → the witness offset needs the PlayerItemTrackProtocol
+        //   witness table decoded at reconstruction time. NOT fabricated.
+        //     • DRIVER — the packet-read/demuxer loop; on a read error it calls the error handler.
+        // ⚑[tool=get_function_by_address ref=FUN_101a512b4:0x101a512b4 result=read-loop driver ~575 insns; ioTask-reached runtime keystone, static-invisible (topo_readiness v1: absent from universe)]
+        //     • ERROR HANDLER — decides per errno: AVERROR_EOF/feof → reconnect-or-finish; EIO/EPIPE →
+        //       reconnect (below); else → a `readFrame_fail` KSPlayerError (s_readFrame_fail).
+        // ⚑[tool=decompile ref=FUN_101a5685c:0x101a5685c result=read-error handler ~415 insns — EOF/reconnect/readFrame_fail decision; sole caller of the reconnect arm]
+        //     • RECONNECT ARM — KSLog + `try? openAndFindStream()` + `allPlayerItemTracks.forEach { $0.<reset>() }`.
+        // ⚑[tool=decompile ref=FUN_101a56ecc:0x101a56ecc result=reconnect arm ~40 insns — level-gated KSLog + openAndFindStream + per-track witness+0x58 reset (offset needs PlayerItemTrackProtocol WT decode; shutdown is witness+0x80)]
         0
     }
 
