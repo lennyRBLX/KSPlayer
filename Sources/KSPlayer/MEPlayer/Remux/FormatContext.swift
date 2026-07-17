@@ -199,6 +199,44 @@ public final class FormatContext {
         }
         return result
     }
+
+    // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,
+    //   no deep pins): (1) raise the interrupt flag to cancel any in-flight IO; (2) if fonts were registered,
+    //   unregister each embedded font (the init's CTFontManagerRegisterFontsForURL mirror, .process scope) and
+    //   delete the temp fontsDir — both file ops `try?` (the binary __convertNSErrorToError + willThrow +
+    //   errorRelease is a swallowed throw); (3) if a custom ioContext is installed, close it (AbstractAVIOContext
+    //   vtable +0xa0) and hand-free its AVIOContext (pb) — buffer via av_freep, struct via avio_context_free,
+    //   which FFmpeg leaves to the caller under AVFMT_FLAG_CUSTOM_IO; (4) close the format context.
+    // ⚑[tool=disassemble ref=FUN_101a3302c:0x101a3302c result=interrupt.flag=1 → fontsDir cleanup → (ioContext close + pb free) → format-context teardown]
+    // ⚑[tool=read_memory ref=AbstractAVIOContext.close:0x10000e52c result=vtable +0xa0=close() (metadata 0x1044e69b0+0xa0 word=0x10000e52c, coalesced w/ seek@+0x90; +0xa8=urlContext 0x10002d9d4 anchors the slot)]
+    // ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]
+    // ⚑[tool=ffmpeg_name_oracle ref=avio_context_free:0x1030c1358 result=CONFIRMED]
+    // ⚑[tool=ffmpeg_name_oracle ref=avformat_close_input:0x1030e632c result=CONFIRMED]
+    // ⚑[tool=decompile ref=FUN_101a39028:0x101a39028 result=avformat-close wrapper — nils formatCtx.interrupt_callback then avformat_close_input(0x1030e632c CONFIRMED); its callback-clear + verbose KSLog simplified to the close core, matching :290/:310]
+    func close() {
+        interrupt.flag = true
+        if let fontsDir {
+            if let fonts = try? FileManager.default.contentsOfDirectory(at: fontsDir, includingPropertiesForKeys: nil) {
+                for fontURL in fonts {
+                    CTFontManagerUnregisterFontsForURL(fontURL as CFURL, .process, nil)
+                }
+            }
+            try? FileManager.default.removeItem(at: fontsDir)
+        }
+        if let ioContext {
+            ioContext.close()
+            // free the caller-owned custom AVIOContext (fields accessed symbolically per the non-stock ABI).
+            if let pb = formatCtx.pointee.pb {
+                if pb.pointee.buffer != nil {
+                    av_freep(&pb.pointee.buffer)
+                }
+                var pbLocal: UnsafeMutablePointer<AVIOContext>? = pb
+                avio_context_free(&pbLocal)
+            }
+        }
+        var mutableCtx: UnsafeMutablePointer<AVFormatContext>? = formatCtx
+        avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (=avformat_close_input, see header)
+    }
 }
 
 // MARK: - openFormatContext (FUN_101a392a0) — the shared avformat open/probe pipeline
