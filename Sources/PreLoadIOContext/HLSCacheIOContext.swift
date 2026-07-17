@@ -116,6 +116,65 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     // ⚑[tool=prefetch_decompiles ref=FUN_101b99cac:0x101b99cac result=lVar1=*(self+0x18)[download];beginAccess(lVar1+0x18);return*(lVar1+0x18) == download.context]
     public override var urlContext: UnsafeMutablePointer<URLContext>? { download.context }
 
+    // addSub (base slot +0xb0) — the io_open sub-URL router; the SOLE concrete +0xb0 override (every
+    //   other AbstractAVIOContext subclass inherits the base `nil`). io_open (the reconstructed ioOpen,
+    //   MEPlayerItem.swift:538) dispatches each HLS sub-URL open through here: on a handled URL it returns
+    //   the built/found child sub-context's AVIOContext* (ioOpen stores it into *pb and tracks it in a
+    //   PBClass); on a decline it returns nil (ioOpen falls back to the saved default opener).
+    //   Reconstructed FAITHFUL-PARTIAL: the ROUTING SPINE is faithful — the m3u8 / m3u / ".m3u8"-contains
+    //   path-extension classification, the subContextsLock discipline, and the isEmpty + segment-index
+    //   lookup guard. The child-context CONSTRUCTION is PINNED (`// UNRESOLVED → P8/streaming`): it builds a
+    //   child URLContextDownload whose designated init is deferred to P8 (IO-completion) and materializes
+    //   the returned AVIOContext through a shared avio_alloc_context-style helper (bufferSize@self+0x14 +
+    //   read/write/seek trampolines) — neither is reconstructed, so the spine returns nil at the success
+    //   points and the markers below characterize the real non-nil return. NOT fabricated. (The decompiler
+    //   showed `return 0` on every path — an x0 value-residue across the materialization helper; the
+    //   disassembly + the ioOpen caller arbitrate the true non-nil-AVIOContext contract, P28.)
+    // ⚑[tool=disassemble ref=FUN_101b97b2c:0x101b97b2c result=ext=url.pathExtension.lowercased(); route (ext=="m3u8"||ext=="m3u"||url.absoluteString.contains(".m3u8"))→child-HLS else→segment-cache; success returns the sub-context AVIOContext* else nil (epilogue mov x0,#0)]
+    // ⚑[tool=get_function_by_address ref=FUN_101b90c58:0x101b90c58 result=URLContextDownload designated-init inner (s3) — deferred to P8/IO-completion per URLContextDownload.swift; the child download build in both branches]
+    // ⚑[tool=decompile ref=FUN_1019e258c:0x1019e258c result=AVIOContext materialization — avio_alloc_context-style (bufferSize@self+0x14, write-flag, read/write/seek callbacks, class 0x104c63590); shared KSPlayer outlined helper; the success-path return residue]
+    public override func addSub(url: URL, flags: Int32, options: UnsafeMutablePointer<OpaquePointer?>?, interrupt: AVIOInterruptCB) -> UnsafeMutablePointer<AVIOContext>? {
+        let ext = url.pathExtension.lowercased()
+        if ext == "m3u8" || ext == "m3u" || url.absoluteString.contains(".m3u8") {
+            // variant playlist (a child .m3u8): build a child URLContextDownload for `url`, wrap it in a
+            //   child HLSCacheIOContext(download:, mediaId: mediaId, baseURL: url,
+            //   formatContextOptions: formatContextOptions) [this file's designated init], append it to
+            //   childHLSContexts, and return that child's AVIOContext*.
+            // UNRESOLVED → owner phase (streaming/P8): the child URLContextDownload build and the
+            //   AVIOContext materialization are the deferred residuals (see the class-level markers), so the
+            //   child is not built here and the childHLSContexts.append + non-nil return are characterized
+            //   only. The routing/classification spine above is faithful.
+            // ⚑[tool=disassemble ref=FUN_101b96cb0:0x101b96cb0 result=HLSCacheIOContext designated init (this file) — the child (download:, mediaId:, baseURL:url, formatContextOptions:) construction, called after the P8 URLContextDownload build]
+            return nil
+        }
+        // media segment: consult the per-segment child cache under subContextsLock, creating it on a miss.
+        subContextsLock.lock()
+        if !subContexts.isEmpty, segmentIndex(for: url) != nil {
+            // hit: the child CacheIOContext already cached at the resolved segment key is returned (its
+            //   AVIOContext*). The isEmpty guard + lock discipline + segment-index lookup spine are
+            //   faithful; the key→value read (subContexts storage) + AVIOContext materialization are pinned.
+            // UNRESOLVED → owner phase (streaming): return subContexts[<resolved key>]'s AVIOContext*.
+            // ⚑[tool=get_function_by_address ref=FUN_100020444:0x100020444 result=segment-index lookup helper (the segmentIndex(for:) spine, == subContext's s22 lookup)]
+            subContextsLock.unlock()
+            return nil
+        }
+        subContextsLock.unlock()
+        // miss: derive the segment cache key from `url`, build a URLContextDownload, construct a child
+        //   CacheIOContext(download:, cacheKey:, bufferSize: 0x40000, saveFile: true, isReadComplete:
+        //   false) [CacheIOContext's designated init, in-module/done], insert it into subContexts under
+        //   subContextsLock, register the segment, and return its AVIOContext*.
+        // UNRESOLVED → owner phase (streaming/P8): the cache-key String derivation, the URLContextDownload
+        //   build (P8), the keyed subContexts insert (the same insert helper setSubContext pins), and the
+        //   trailing segment-match loop over `segments` (its element URL read goes through the HLSSegment
+        //   placeholder layout, like segmentIndex) are NOT reconstructed; the AVIOContext materialization +
+        //   non-nil return are characterized only. The lock discipline + miss-path spine above are faithful.
+        // ⚑[tool=get_function_by_address ref=FUN_101b86a2c:0x101b86a2c result=segment cache-key String builder (URLComponents queryItems/url, 651B)]
+        // ⚑[tool=get_function_by_address ref=FUN_1019f0d98:0x1019f0d98 result=String(UTF8View,count) re-encode in the cache-key derivation]
+        // ⚑[tool=get_function_by_address ref=FUN_101b9b45c:0x101b9b45c result=subContexts keyed insert (same helper setSubContext pins, 335B)]
+        // ⚑[tool=disassemble ref=FUN_101b86d38:0x101b86d38 result=CacheIOContext designated init (in-module/done, CacheIOContext.swift:147); addSub calls it with bufferSize=0x40000 saveFile=true isReadComplete=false]
+        return nil
+    }
+
     // --- methods (only the 4 cached small methods; names devirt→inferred) ---
 
     // s22 @101b9a960 — `func segmentIndex(for url: URL) -> Int?` (name inferred, devirt).
