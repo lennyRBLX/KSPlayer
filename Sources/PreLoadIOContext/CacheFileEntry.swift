@@ -19,7 +19,9 @@ final class CacheFileEntry {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // file: backing FileHandle. s13/s14 fetch it at field offset 0x10 and drive
     //   NSFileHandle::_offset / seekToOffset:error: / _write / _read on it.
-    var file: FileHandle? // type inferred — ⚑ (complex; confirmed FileHandle by s13/s14 NSFileHandle interop)
+    var file: FileHandle! // ⚑ IUO: field-record mangle `So12NSFileHandleC` carries NO `Sg` ⇒ non-optional
+    //   (nil until init opens it; `guard let file` binds it). The prior `?` was an inferred guess; the
+    //   binary is authoritative. FileHandle erases to NSFileHandle (Foundation.apinotes SwiftName).
     // url: source/destination URL of the cache file.
     var url: URL? // type inferred — ⚑ (Foundation; unmapped in field-records)
     // position: base byte offset of this entry within the underlying stream.
