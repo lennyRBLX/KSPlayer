@@ -163,6 +163,27 @@ open class KSOptions {
     public internal(set) var decodeAudioTime = 0.0
     public internal(set) var decodeVideoTime = 0.0
     public internal(set) var firstPlayableTime = 0.0
+
+    // ⚑ INFERRED name `resetTime`: #function unrecoverable (direct call @0x1019c0798, no vtable slot).
+    //   KSMEPlayer's prepare path (caller @0x101a432fc, logs "Preparing to Play") calls
+    //   `options.<this>()` to zero the prepare-pipeline timing telemetry before a fresh measurement.
+    //   Resets exactly the 12 *Time fields above (prepareTime…firstPlayableTime), in declaration
+    //   order; each Double → 0. Access modifier not binary-determinable → internal (same-module caller).
+    func resetTime() {
+        prepareTime = 0
+        dnsStartTime = 0
+        tcpStartTime = 0
+        tcpConnectedTime = 0
+        openTime = 0
+        findTime = 0
+        readyTime = 0
+        readAudioTime = 0
+        readVideoTime = 0
+        decodeAudioTime = 0
+        decodeVideoTime = 0
+        firstPlayableTime = 0
+    }
+
     public init() {
         formatContextOptions["user_agent"] = userAgent
         // 参数的配置可以参考protocols.texi 和 http.c
