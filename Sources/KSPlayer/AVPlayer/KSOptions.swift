@@ -126,13 +126,27 @@ open class KSOptions {
     public var videoSoftDecodeThreadCount = KSOptions.videoSoftDecodeThreadCount
     public var isDoubleRefreshRate = false
     public var renderUseDispatchSourceTimer = false
-    public var brightness: Float = 1.0
-    public var contrast: Float = 1.0
-    public var saturation: Float = 1.0
-    // ⚑ adjustBuffer default: KSOptions.init (FUN_1019b2f7c @0x139) creates a 16-byte MTLBuffer
-    //   (device.makeBuffer(bytes:length:16), label "KSPlayer"). The init-body creation is UNRESOLVED here
-    //   (reconstruct in init()); declared as the stored MTLBuffer? field (nil until init sets it).
-    public var adjustBuffer: MTLBuffer?
+    public var brightness: Float = 1.0 {
+        didSet {
+            adjustBuffer = KSOptions.makeAdjustBuffer(brightness: brightness, contrast: contrast, saturation: saturation)
+        }
+    }
+    public var contrast: Float = 1.0 {
+        didSet {
+            adjustBuffer = KSOptions.makeAdjustBuffer(brightness: brightness, contrast: contrast, saturation: saturation)
+        }
+    }
+    public var saturation: Float = 1.0 {
+        didSet {
+            adjustBuffer = KSOptions.makeAdjustBuffer(brightness: brightness, contrast: contrast, saturation: saturation)
+        }
+    }
+    // adjustBuffer holds a 16-byte MTLBuffer of SIMD4<Float>(brightness, contrast, saturation, enable),
+    // rebuilt by each colour property's didSet; the default is folded from the (1,1,1) defaults → [1,1,1,0].
+    // ⚑ INFERRED name `makeAdjustBuffer`: the builder is inlined at all four call sites (KSOptions.init +
+    //   the 3 didSets), so its source symbol is unrecoverable — a shared static factory is the DRY reading,
+    //   matching the MetalRender lazy-buffer idiom (label set on the returned MTLBuffer).
+    public var adjustBuffer: MTLBuffer? = KSOptions.makeAdjustBuffer(brightness: 1, contrast: 1, saturation: 1)
     public var forceDisableDisplayLayer = false
     public var onPossibleDisplayLayerFlicker: (@MainActor @Sendable () -> Void)?
     private var videoClockDelayCount = 0
@@ -354,6 +368,18 @@ open class KSOptions {
                 }
             }
         }
+    }
+
+    // ⚑ INFERRED name (unrecoverable — inlined at every call site). Builds the colour-adjustment
+    //   uniform buffer: SIMD4<Float>(brightness, contrast, saturation, enable), where `enable` is 0
+    //   when no adjustment is active (all three == 1) and 1 otherwise. 16 bytes, label "adjust"
+    //   (both verified from the binary: the packed q-register lanes + the Swift small-string 0xE6…"adjust").
+    private static func makeAdjustBuffer(brightness: Float, contrast: Float, saturation: Float) -> MTLBuffer? {
+        let enable: Float = brightness == 1 && contrast == 1 && saturation == 1 ? 0 : 1
+        var adjust = SIMD4<Float>(brightness, contrast, saturation, enable)
+        let buffer = MetalRender.device.makeBuffer(bytes: &adjust, length: MemoryLayout<SIMD4<Float>>.size)
+        buffer?.label = "adjust"
+        return buffer
     }
 
     @MainActor
