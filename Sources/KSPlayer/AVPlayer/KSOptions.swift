@@ -360,6 +360,22 @@ open class KSOptions {
         KSLog("sei \(string)")
     }
 
+    // ⚑ INFERRED name `processHardwareDecode`: #function unrecoverable (direct call @0x1019b5fe0, no
+    //   vtable slot; recover_swift_function_name → None). A KSOptions helper (called by the video-format
+    //   setup @0x100a5d8d8) that forces software decoding for H.264 High 4:4:4 Predictive — a profile
+    //   VideoToolbox can't hardware-decode. Binary: `assetTrack as? FFmpegAssetTrack` (WMO-optimized to
+    //   an exact object_getClass compare vs the FFmpegAssetTrack metadata) then reads codecpar.pointee
+    //   .profile (AVCodecParameters+0x40, FFmpegKit-8.1.1 header) == 244 = AV_PROFILE_H264_HIGH_444_PREDICTIVE
+    //   (defs.h:122). Access modifier not binary-determinable → internal (same-module caller).
+    func processHardwareDecode(assetTrack: some MediaPlayerTrack) {
+        // 244 = AV_PROFILE_H264_HIGH_444_PREDICTIVE (a C `#define`, not bridged into Swift → literal,
+        //   as the binary compares `cmp w8, #0xf4`).
+        if let assetTrack = assetTrack as? FFmpegAssetTrack,
+           assetTrack.codecpar.pointee.profile == 244 {
+            hardwareDecode = false
+        }
+    }
+
     /**
             在创建解码器之前可以对KSOptions和assetTrack做一些处理。例如判断fieldOrder为tt或bb的话，那就自动加videofilters
      */
