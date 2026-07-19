@@ -31,7 +31,9 @@ import AVFoundation
 public class AudioBaseOutput {
     // Fields in __swift5_fieldmd (field-record) order — dump_binary_field_types.
     public weak var renderSource: OutputRenderSourceDelegate?
-    private var sourceNodeAudioFormat: AVAudioFormat?
+    // internal, not private: AudioEnginePlayer.prepare(audioFormat:) both reads this
+    // (the early-out compare) and writes it, and it lives in another file.
+    var sourceNodeAudioFormat: AVAudioFormat?
     private var memsetZero: Bool = false
     private var outputLatencySystem: Double = 0
     private var _outputLatency: Double = 0
