@@ -18,13 +18,12 @@
 //    slot 28    prepare(audioFormat:) overridable hook — DONE.
 //    slot 29    prepareRender() (⚑ inferred name) — DONE.
 //    slot 33    audioPlayerDidRenderSample() — DONE.
-//  DEFERRED — the sample-copy engine (next commit):
-//    // ⚑ UNRESOLVED private method — audioPlayerShouldInputData, the sample-copy @0x101a12b28 (non-vtable; reached from
-//    //    prepare's AVAudioSourceNode render block → thunk @0x101a0f6f0 → closure @0x101a0ed08). Under renderLock it pulls
-//    //    frames, honours memsetZero (bzero silence path in place of the memmove copy), re-prepares on a format change via
-//    //    slot 28, and zero-fills the tail.
-//  THEN the re-parent of AudioEnginePlayer (field move + prepare/init rewrite + delete sampleSize/the flat render methods —
-//  those changes are load-bearing and would break the build if done before the engine lands).
+//    non-vtable audioPlayerShouldInputData @0x101a12b28 — the sample-copy engine — DONE.
+//  The base class is now complete. REMAINING: the re-parent of AudioEnginePlayer
+//  (declare `: AudioBaseOutput`, move the machinery fields off it, rewrite prepare/init to
+//  override the base hook and drive this engine, delete sampleSize and the flat render
+//  methods, then its 11 own accessors). Those changes are load-bearing, so they land as
+//  their own unit rather than being folded in here.
 //
 
 import AVFoundation
@@ -117,6 +116,73 @@ public class AudioBaseOutput {
                 time = time - CMTime(seconds: outputLatency, preferredTimescale: time.timescale)
             }
             renderSource.setAudio(time: time, position: currentRender.position)
+        }
+    }
+
+    // audioPlayerShouldInputData (@0x101a12b28) — the sample-copy engine, reached
+    // from AudioEnginePlayer.prepare's AVAudioSourceNode render block (block-invoke
+    // @0x101a10114 → thunk @0x101a0f6f0 → closure @0x101a0ed08). It carries no
+    // vtable slot, so it is final; private is ruled out because the subclass's
+    // prepare closure calls it from another file.
+    // Forward reworks upstream here: sampleSize is gone — both the work amount and
+    // the write offset come from the buffer's own mDataByteSize — the pull/copy
+    // runs under renderLock, and memsetZero swaps the memmove for a bzero (silence).
+    // The trailing zero-fill is guarded: it runs only on the two underrun exits,
+    // never on the normal drain path.
+    final func audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer) {
+        guard ioData.count > 0 else {
+            return
+        }
+        var residueBytes = ioData[0].mDataByteSize
+        while residueBytes != 0 {
+            os_unfair_lock_lock(&renderLock)
+            if currentRender == nil {
+                currentRender = renderSource?.getAudioOutputRender()
+                currentRenderReadOffset = 0
+            }
+            guard let render = currentRender else {
+                os_unfair_lock_unlock(&renderLock)
+                break
+            }
+            // Compare before subtracting: the binary guards on the comparison and
+            // emits no borrow trap here, so the subtraction cannot underflow.
+            guard currentRenderReadOffset < render.numberOfSamples else {
+                currentRender = nil
+                os_unfair_lock_unlock(&renderLock)
+                continue
+            }
+            let residueLinesize = render.numberOfSamples - currentRenderReadOffset
+            // Optional != non-optional: a nil sourceNodeAudioFormat is unequal by
+            // construction, so an unconfigured engine takes the re-prepare edge.
+            if sourceNodeAudioFormat != render.audioFormat {
+                os_unfair_lock_unlock(&renderLock)
+                runOnMainThread { [weak self] in
+                    self?.prepare(audioFormat: render.audioFormat)
+                }
+                break
+            }
+            let bytesToCopy = min(residueBytes, residueLinesize)
+            for i in 0 ..< min(ioData.count, render.data.count) {
+                if let source = render.data[i], let destination = ioData[i].mData {
+                    let writeOffset = Int(ioData[i].mDataByteSize - residueBytes)
+                    if memsetZero {
+                        bzero(destination + writeOffset, Int(bytesToCopy))
+                    } else {
+                        memmove(destination + writeOffset, source + Int(currentRenderReadOffset), Int(bytesToCopy))
+                    }
+                }
+            }
+            currentRenderReadOffset += bytesToCopy
+            os_unfair_lock_unlock(&renderLock)
+            residueBytes -= bytesToCopy
+        }
+        // Reached only on the two underrun exits; after a complete copy
+        // residueBytes is 0 and the binary returns without touching the buffers.
+        if residueBytes > 0 {
+            for i in 0 ..< ioData.count {
+                let buffer = ioData[i]
+                bzero(buffer.mData! + Int(buffer.mDataByteSize - residueBytes), Int(residueBytes))
+            }
         }
     }
 }
