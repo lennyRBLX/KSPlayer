@@ -517,14 +517,44 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
         return frame
     }
 
-    public func getAudioOutputRender() -> AudioFrame? {
+    // getAudioOutputRender @0x101a59088 (witness req0 of AudioOutputRenderSourceDelegate, WT 0x1041d84d8
+    //   via thunk 0x101a59248). Returns Either<AudioFrame, Bool> — `undefined1 [16]`, i.e. x0 = payload and
+    //   x1 = tag; tag 0 builds .left(frame), tag 1 builds .right(<eof>).
+    // The .right payload is NOT a constant: the binary computes it as
+    //   `audioTrack != nil && audioTrack.isEndOfFile && audioTrack.packetCount == 0 && <queue empty>`.
+    //   Offsets → members via dump_field_bindings: the `*(char*)(track+0x29) != 1` guard is
+    //   SyncPlayerItemTrack field 5 `isEndOfFile`; `track[0xb]` (+0x58) is field 9 `outputRenderQueue`;
+    //   and CircularBuffer's own field records place `condition` @+0x18, `headIndex` @+0x20, `tailIndex`
+    //   @+0x28 — an exact match for the binary's `lock(+0x18); h=*(+0x20); t=*(+0x28); unlock; h == t`.
+    //   Since `CircularBuffer.count` is `Int(tailIndex &- headIndex)` under that same lock, `h == t` is the
+    //   folded form of `count == 0`, i.e. `frameCount == 0` (the idiom this file already uses at :97).
+    // The packetCount read is a VTABLE dispatch (metadata +0x130 = generic vtable slot 12, kind=Getter,
+    //   base impl 0x10002d9d4 = `return 0`) precisely because AsyncPlayerItemTrack OVERRIDES it, whereas
+    //   frameCount is not overridden and was devirtualised + inlined — the two dispatch shapes corroborate
+    //   the member identification.
+    // ⚑ FORM (not behaviour): `frameCount == 0`, `outputRenderQueue.count == 0` and an `isEmpty` spelling
+    //   all fold to the same `h == t` compare, so the binary cannot discriminate them. The file's existing
+    //   idiom decides it here.
+    // ⚑[tool=disassemble ref=getAudioOutputRender:0x101a59088 result=Either_left_frame|right_eof]
+    // ⚑[tool=vtable_walk ref=SyncPlayerItemTrack.packetCount:slot12@0x10002d9d4 result=getter_returns_0]
+    public func getAudioOutputRender() -> Either<AudioFrame, Bool> {
         if let frame = audioTrack?.getOutputRender(where: nil) {
-            SubtitleModel.audioRecognizes.first {
+            // The recognizer list is the INSTANCE property on self.options, not the
+            //   SubtitleModel static: the access base is `*(self + MEPlayerItem::options)
+            //   + KSOptions::audioRecognizes`, i.e. an instance load through swiftself,
+            //   which a static's fixed global address can never be — and there is no
+            //   swift_once and no SubtitleModel metadata accessor anywhere in the body,
+            //   both of which a lazily-initialised static stored property would require.
+            //   Element stride 0x10 (instance + witness table) = a class-bound existential.
+            options.audioRecognizes.first {
                 $0.isEnabled
             }?.append(frame: frame)
-            return frame
+            return .left(frame)
         } else {
-            return nil
+            guard let audioTrack, audioTrack.isEndOfFile, audioTrack.packetCount == 0 else {
+                return .right(false)
+            }
+            return .right(audioTrack.frameCount == 0)
         }
     }
 }

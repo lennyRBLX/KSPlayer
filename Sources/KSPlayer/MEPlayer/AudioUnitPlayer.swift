@@ -138,7 +138,13 @@ extension AudioUnitPlayer {
         var numberOfSamples = numberOfFrames
         while numberOfSamples > 0 {
             if currentRender == nil {
-                currentRender = renderSource?.getAudioOutputRender()
+                // ⚑ Adapted to the Either return only — superseded when this class is re-parented
+                //   onto AudioBaseOutput (binary superclass; this flat body is pre-re-parent).
+                if case let .left(frame)? = renderSource?.getAudioOutputRender() {
+                    currentRender = frame
+                } else {
+                    currentRender = nil
+                }
             }
             guard let currentRender else {
                 break

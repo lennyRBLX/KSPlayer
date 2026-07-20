@@ -68,14 +68,14 @@ public class AudioRendererPlayer: AudioOutput {
             if renderer.hasSufficientMediaDataForReliablePlaybackStart {
                 time = synchronizer.currentTime()
             } else {
-                if let currentRender = renderSource?.getAudioOutputRender() {
+                if case let .left(currentRender)? = renderSource?.getAudioOutputRender() {
                     time = currentRender.cmtime
                 } else {
                     time = .zero
                 }
             }
         } else {
-            if let currentRender = renderSource?.getAudioOutputRender() {
+            if case let .left(currentRender)? = renderSource?.getAudioOutputRender() {
                 time = currentRender.cmtime
             } else {
                 time = .zero
@@ -113,14 +113,17 @@ public class AudioRendererPlayer: AudioOutput {
 
     private func request() {
         while renderer.isReadyForMoreMediaData, !isPaused {
-            guard var render = renderSource?.getAudioOutputRender() else {
+            // ⚑ Adapted to the Either return only — this body is the flat PRE-re-parent version and is
+            //   superseded wholesale when AudioRendererPlayer is re-parented onto AudioDataBuffer.
+            guard case let .left(firstRender)? = renderSource?.getAudioOutputRender() else {
                 break
             }
+            var render = firstRender
             var array = [render]
             let loopCount = Int32(render.audioFormat.sampleRate) / 20 / Int32(render.numberOfSamples) - 2
             if loopCount > 0 {
                 for _ in 0 ..< loopCount {
-                    if let render = renderSource?.getAudioOutputRender() {
+                    if case let .left(render)? = renderSource?.getAudioOutputRender() {
                         array.append(render)
                     }
                 }

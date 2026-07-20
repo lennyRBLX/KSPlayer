@@ -44,8 +44,16 @@ extension MEPlayerItem {
 // Forward 1.3.17 SPLIT the render-source delegate into two protocols (audio / video); the binary has NO combined
 // (search_strings: only `AudioOutputRenderSourceDelegate` @0x1039ef… + `VideoOutputRenderSourceDelegate` @0x1039efe1c,
 // each 2 instance methods, `: AnyObject`). MEPlayerItem conforms BOTH (superclass_conformance-confirmed).
+// getAudioOutputRender returns `Either<AudioFrame, Bool>`, NOT `AudioFrame?`: the witness returns TWO
+//   registers (x0 = payload, x1 = tag), and x0's MEANING changes with the tag — an AudioFrame on tag 0,
+//   a Bool on tag 1 — which no tuple spelling reproduces (a tuple's element positions are fixed).
+//   `.left(frame)` = a frame is available; `.right(isEOF)` = no frame, plus whether the stream has ended.
+//   Proven at THREE independent sites: MEPlayerItem's witness impl @0x101a59088 (returns 16 bytes),
+//   AudioDataBuffer @0x101a123d0 (stores x0's low bit into its `eof` field on tag 1), and AudioBaseOutput
+//   @0x101a12c70 (`csel x8,xzr,x23,eq` — keeps .left, discards .right's Bool; it has no eof field).
+// ⚑[tool=disassemble ref=getAudioOutputRender_witness:0x101a59088 result=undefined1[16]=x0_payload+x1_tag]
 public protocol AudioOutputRenderSourceDelegate: AnyObject {
-    func getAudioOutputRender() -> AudioFrame?
+    func getAudioOutputRender() -> Either<AudioFrame, Bool>
     func setAudio(time: CMTime, position: Int64)
 }
 

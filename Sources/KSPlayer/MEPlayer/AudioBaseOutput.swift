@@ -93,7 +93,14 @@ public class AudioBaseOutput {
     public func prepareRender() {
         os_unfair_lock_lock(&renderLock)
         if currentRender == nil {
-            currentRender = renderSource?.getAudioOutputRender()
+            // .left only — this class has no `eof` field, so .right's Bool is dropped.
+            // Binary @0x101a12c70: `csel x8,xzr,x23,eq` (tag==1 ? nil : payload) then an
+            // unconditional store. See Model.swift's note on the Either return.
+            if case let .left(frame)? = renderSource?.getAudioOutputRender() {
+                currentRender = frame
+            } else {
+                currentRender = nil
+            }
             currentRenderReadOffset = 0
         }
         os_unfair_lock_unlock(&renderLock)
@@ -139,7 +146,12 @@ public class AudioBaseOutput {
         while residueBytes != 0 {
             os_unfair_lock_lock(&renderLock)
             if currentRender == nil {
-                currentRender = renderSource?.getAudioOutputRender()
+                // .left only (see prepareRender): .right's Bool has no home on this class.
+                if case let .left(frame)? = renderSource?.getAudioOutputRender() {
+                    currentRender = frame
+                } else {
+                    currentRender = nil
+                }
                 currentRenderReadOffset = 0
             }
             guard let render = currentRender else {
