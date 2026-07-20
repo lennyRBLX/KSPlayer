@@ -4,15 +4,35 @@
 //
 //  Created by kintan on 2022/12/2.
 //
+//  Forward 1.3.17 EVOLVED this class into a subclass of `AudioDataBuffer`: it no longer owns
+//  renderSource/eof/currentRender/currentRenderReadOffset (all inherited) and drives an
+//  AVSampleBufferAudioRenderer from CMSampleBuffers produced by the inherited
+//  `sampleBuffer(nanoseconds:)`. Descriptor @0x1039eebf0, super=AudioDataBuffer
+//  (superclass_conformance_gate), conformances=[AudioOutput, FrameOutput] (AudioOutput refines
+//  FrameOutput). 9 own fields (field-record order below), a 32-slot own vtable + an override table.
+//
+//  Field declaration order below IS the __swift5_fieldmd order (dump_field_bindings) and, for the
+//  four accessor-bearing members, the vtable accessor-triple order: outputLatency (slots 0-2),
+//  playbackRate (3-5), volume (6-8), isMuted (9-11); the private stored state gets storage but no
+//  vtable triple. Do not reorder.
+//
 
 import AVFoundation
 import Foundation
 
-public class AudioRendererPlayer: AudioOutput {
+public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
+    // outputLatency @+0x38 (field 1) — subtracted from the reported audio time (play() + the
+    // periodic-observer callback both guard `if outputLatency != 0`). init = 0. Non-private: it
+    // carries the vtable accessor triple at slots 0-2.
+    var outputLatency: TimeInterval = 0
+    // playbackRate @+0x40 (field 2). vtable setter @0x101a1320c.
     public var playbackRate: Float = 1 {
         didSet {
             if !isPaused {
                 synchronizer.rate = playbackRate
+                if playbackRate == 1, !renderer.hasSufficientMediaDataForReliablePlaybackStart {
+                    renderer.flush()
+                }
             }
         }
     }
@@ -35,16 +55,30 @@ public class AudioRendererPlayer: AudioOutput {
         }
     }
 
-    public weak var renderSource: OutputRenderSourceDelegate?
+    // periodicTimeObserver @+0x48 (field 3, Any? — 32-byte existential 0x48..0x67).
     private var periodicTimeObserver: Any?
-    private let renderer = AVSampleBufferAudioRenderer()
-    private let synchronizer = AVSampleBufferRenderSynchronizer()
-    private let serializationQueue = DispatchQueue(label: "ks.player.serialization.queue")
+    // flushTime @+0x68 (field 4) — the FLUSH-PENDING flag. flush()/stop()/request()-on-eof set it;
+    // play() consumes it: only when set does play() flush the renderer and re-seed the render loop
+    // (a plain pause->play resume with flushTime == false just restores the rate). init = false.
+    private var flushTime = false
+    private let renderer = AVSampleBufferAudioRenderer()          // @+0x70 (field 5)
+    private let synchronizer = AVSampleBufferRenderSynchronizer() // @+0x78 (field 6)
+    // requestQueue @+0x80 (field 7) — renamed from the pre-re-parent `serializationQueue`. The
+    // binary label literal @0x103d341b0 (len 0x24).
+    private let requestQueue = DispatchQueue(label: "KSPlayer-AudioRendererPlayer-request")
+    // startTime @+0x88 (field 8, CMTime) — the first render's presentation time (ns scale); the
+    // observer adds the synchronizer's elapsed time to it. flush-work resets it to .zero. init = .zero.
+    private var startTime = CMTime.zero
+    // timestamp @+0xa0 (field 9, Int64) — the running-MAX nanosecond media clock handed to the
+    // inherited sampleBuffer(nanoseconds:). init = -1; play() resets it to -1.
+    private var timestamp: Int64 = -1
+
     var isPaused: Bool {
         synchronizer.rate == 0
     }
 
-    public required init() {
+    public required override init() {
+        super.init()
         synchronizer.addRenderer(renderer)
         if #available(macOS 11.3, iOS 14.5, tvOS 14.5, *) {
             synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
@@ -57,89 +91,133 @@ public class AudioRendererPlayer: AudioOutput {
     public func prepare(audioFormat: AVAudioFormat) {
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
-        KSLog("[audio] set preferredOutputNumberOfChannels: \(audioFormat.channelCount)")
+        try? AVAudioSession.sharedInstance().setPreferredSampleRate(audioFormat.sampleRate)
+        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)")
         #endif
+        if let periodicTimeObserver {
+            synchronizer.removeTimeObserver(periodicTimeObserver)
+            self.periodicTimeObserver = nil
+        }
+        periodicTimeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 100, timescale: Int32(audioFormat.sampleRate)), queue: .main) { [weak self] time in
+            guard let self else {
+                return
+            }
+            var audioTime = time + self.startTime
+            if self.outputLatency != 0 {
+                audioTime = audioTime - CMTime(seconds: self.outputLatency, preferredTimescale: 1_000_000_000)
+            }
+            self.renderSource?.setAudio(time: audioTime, position: -1)
+        }
+        flushTime = true
+        if timestamp != -1 {
+            requestQueue.sync {
+                currentRender = nil
+                renderer.stopRequestingMediaData()
+            }
+        }
     }
 
     public func play() {
-        let time: CMTime
-        if #available(macOS 11.3, iOS 14.5, tvOS 14.5, *) {
-            // 判断是否有足够的缓存，有的话就用当前的时间。seek的话，需要清空缓存，这样才能取到最新的时间。
-            if renderer.hasSufficientMediaDataForReliablePlaybackStart {
-                time = synchronizer.currentTime()
-            } else {
-                if case let .left(currentRender)? = renderSource?.getAudioOutputRender() {
-                    time = currentRender.cmtime
-                } else {
-                    time = .zero
+        eof = false
+        if flushTime {
+            flushTime = false
+            timestamp = -1
+            renderer.flush()
+            synchronizer.setRate(playbackRate, time: .zero)
+            renderer.requestMediaDataWhenReady(on: requestQueue) { [weak self] in
+                guard let self else {
+                    return
                 }
+                self.request()
+            }
+            if case let .left(render)? = renderSource?.getAudioOutputRender() {
+                currentRender = render
+            } else {
+                currentRender = nil
+            }
+            if let render = currentRender {
+                startTime = render.cmtime.convertScale(1_000_000_000, method: .default)
+                var audioTime = startTime
+                if outputLatency != 0 {
+                    audioTime = audioTime - CMTime(seconds: outputLatency, preferredTimescale: 1_000_000_000)
+                }
+                renderSource?.setAudio(time: audioTime, position: -1)
             }
         } else {
-            if case let .left(currentRender)? = renderSource?.getAudioOutputRender() {
-                time = currentRender.cmtime
-            } else {
-                time = .zero
-            }
-        }
-        synchronizer.setRate(playbackRate, time: time)
-        // 要手动的调用下，这样才能及时的更新音频的时间
-        renderSource?.setAudio(time: time, position: -1)
-        renderer.requestMediaDataWhenReady(on: serializationQueue) { [weak self] in
-            guard let self else {
-                return
-            }
-            self.request()
-        }
-        periodicTimeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.01), queue: .main) { [weak self] time in
-            guard let self else {
-                return
-            }
-            self.renderSource?.setAudio(time: time, position: -1)
+            synchronizer.rate = playbackRate
         }
     }
 
     public func pause() {
         synchronizer.rate = 0
-        renderer.stopRequestingMediaData()
+    }
+
+    // Overrides the inherited AudioDataBuffer.flush() (override_table; body @0x101a14360). Sets the
+    // flush-pending flag, then on the requestQueue tears down the in-flight render + renderer state.
+    override public func flush() {
+        flushTime = true
+        requestQueue.sync {
+            currentRender = nil
+            renderer.stopRequestingMediaData()
+            synchronizer.rate = 0
+            startTime = .zero
+        }
+    }
+
+    // stop() @0x101a144d0 — flush-work + observer teardown. This body is fully reconstructed. It is
+    // NOT yet a FrameOutput requirement in source (the binary FrameOutput has {pause,flush,play,stop};
+    // the source has {renderSource,pause,flush,play}); formalizing stop()/renderSource on the protocol
+    // belongs to the render-output protocol subsystem reconstruction (a separate follow-on unit).
+    public func stop() {
+        flushTime = true
+        requestQueue.sync {
+            currentRender = nil
+            renderer.stopRequestingMediaData()
+            synchronizer.rate = 0
+            startTime = .zero
+        }
         if let periodicTimeObserver {
             synchronizer.removeTimeObserver(periodicTimeObserver)
             self.periodicTimeObserver = nil
         }
     }
 
-    public func flush() {
-        renderer.flush()
-    }
-
-    private func request() {
-        while renderer.isReadyForMoreMediaData, !isPaused {
-            // ⚑ Adapted to the Either return only — this body is the flat PRE-re-parent version and is
-            //   superseded wholesale when AudioRendererPlayer is re-parented onto AudioDataBuffer.
-            guard case let .left(firstRender)? = renderSource?.getAudioOutputRender() else {
-                break
+    // request() @0x101a1468c — the requestMediaDataWhenReady callback. Rewired onto the inherited
+    // AudioDataBuffer.sampleBuffer(nanoseconds:) (@0x101a11cd4) instead of the old flat
+    // toCMSampleBuffer() loop. One enqueue per call (AVFoundation re-invokes the block); it throttles
+    // with a bounded sleep when the enqueued buffer runs far enough ahead of the synchronizer.
+    func request() {
+        guard !isPaused else {
+            return
+        }
+        let nanoseconds = max(synchronizer.currentTime().convertScale(1_000_000_000, method: .default).value, timestamp)
+        timestamp = nanoseconds
+        guard let sampleBuffer = sampleBuffer(nanoseconds: nanoseconds) else {
+            if eof {
+                flushTime = true
+                renderer.stopRequestingMediaData()
             }
-            var render = firstRender
-            var array = [render]
-            let loopCount = Int32(render.audioFormat.sampleRate) / 20 / Int32(render.numberOfSamples) - 2
-            if loopCount > 0 {
-                for _ in 0 ..< loopCount {
-                    if case let .left(render)? = renderSource?.getAudioOutputRender() {
-                        array.append(render)
-                    }
-                }
+            return
+        }
+        if let formatDescription = sampleBuffer.formatDescription {
+            let channelCount = formatDescription.audioStreamBasicDescription?.mChannelsPerFrame ?? 0
+            let sampleRate = formatDescription.audioStreamBasicDescription?.mSampleRate ?? 0
+            timestamp += CMTime(value: Int64(sampleBuffer.numSamples), timescale: Int32(sampleRate)).convertScale(1_000_000_000, method: .default).value
+            renderer.audioTimePitchAlgorithm = channelCount > 2 ? .spectral : .timeDomain
+            #if !os(macOS)
+            if AVAudioSession.sharedInstance().preferredOutputNumberOfChannels != Int(channelCount) {
+                try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(channelCount))
             }
-            if array.count > 1 {
-                render = AudioFrame(array: array)
+            if AVAudioSession.sharedInstance().preferredSampleRate != sampleRate {
+                try? AVAudioSession.sharedInstance().setPreferredSampleRate(sampleRate)
             }
-            if let sampleBuffer = render.toCMSampleBuffer() {
-                let channelCount = render.audioFormat.channelCount
-                renderer.audioTimePitchAlgorithm = channelCount > 2 ? .spectral : .timeDomain
-                renderer.enqueue(sampleBuffer)
-                #if !os(macOS)
-                if AVAudioSession.sharedInstance().preferredOutputNumberOfChannels != channelCount {
-                    try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(channelCount))
-                }
-                #endif
+            #endif
+        }
+        renderer.enqueue(sampleBuffer)
+        if renderer.isReadyForMoreMediaData {
+            let ahead = (sampleBuffer.presentationTimeStamp - synchronizer.currentTime()).seconds
+            if Double(playbackRate) * 2.2 <= ahead {
+                Thread.sleep(forTimeInterval: min(ahead / 10, 0.4))
             }
         }
     }

@@ -35,11 +35,16 @@ public class AudioDataBuffer {
     // (dump_field_bindings: flags 0x2), so each earns an accessor triple (slots 0-11).
     //
     // renderSource: weak+optional+existential (dump_field_type_mangles:
-    // `<SYM:2@0x1039efde8>_pSgXw`; the symref descriptor's Name reads
-    // "AudioOutputRenderSourceDelegate"). This is new code with no legacy, so it takes
-    // the binary-proven spelling directly, NOT the ⚑ session-16b `OutputRenderSourceDelegate`
-    // bridge the older `AudioBaseOutput` still carries.
-    public weak var renderSource: AudioOutputRenderSourceDelegate?
+    // `<SYM:2@0x1039efde8>_pSgXw`; the field-record descriptor Name reads
+    // "AudioOutputRenderSourceDelegate"). Typed as the ⚑ session-16b `OutputRenderSourceDelegate`
+    // bridge (Model.swift:69 — refines Audio+VideoOutputRenderSourceDelegate), matching every sibling
+    // renderer (AudioBaseOutput/AudioGraphPlayer/AudioUnitPlayer) and FrameOutput.renderSource. The
+    // public subclass AudioRendererPlayer inherits THIS field and satisfies FrameOutput through it, so
+    // the bridge spelling is load-bearing here. It is a P51 source-extra (the binary has no combined
+    // protocol) that erases acceptably; the l2 gate leaves this existential field UNCHECKED either way.
+    // (Session 47 corrected the original binary-literal spelling once the re-parent coupling surfaced —
+    // AudioDataBuffer had been the sole outlier in an otherwise all-bridge subsystem.)
+    public weak var renderSource: OutputRenderSourceDelegate?
     // eof: field-record concrete type `Sb`. Receives the `.right(Bool)` payload of
     // `getAudioOutputRender() -> Either<AudioFrame, Bool>` on the no-frame path (the tag-1
     // branch does `and w8,w0,#0x1; strb w8,[self,#0x20]` in slots 13 and 14) — it is the
