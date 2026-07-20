@@ -723,16 +723,38 @@ public class FileLog: LogHandler {
     }
 }
 
+// The message existential carries the BRIDGED NSError itself, not its
+// localizedDescription. At an inlined call site (AudioEnginePlayer.doPlay
+// @0x101a0f438) the sequence is $_convertErrorToNSError -> an NSError class-metadata
+// fetch -> a RUNTIME conformance lookup, with the NSError pointer stored straight into
+// the existential buffer. A `.localizedDescription` message would instead be a String
+// carried by the statically-known String : CustomStringConvertible witness and would
+// leave a localizedDescription accessor call — that body has none.
 @inlinable
 public func KSLog(_ error: @autoclosure () -> Error, file: String = #file, function: String = #function, line: UInt = #line) {
-    KSLog(level: .error, error().localizedDescription, file: file, function: function, line: line)
+    KSLog(level: .error, error() as NSError, file: file, function: function, line: line)
 }
 
+// `file` reaches the log handler UNTRANSFORMED — upstream's
+// `(file as NSString).lastPathComponent` step is gone. At every inlined site the count
+// word handed to the handler's witness is the FULL #file length (0x20 = 32 for
+// "KSPlayer/AudioEnginePlayer.swift"; the basename would be 23), and no site performs a
+// String->NSString bridge or a lastPathComponent call — prepare @0x101a0e0a8 has four
+// inlined KSLogs across 792 instructions and neither appears.
+//
+// NOTE the level literals at inlined sites (2 for .error, 3 for .warning) are enum CASE
+// INDICES, not raw values: a fieldless enum is stored and passed as its case index
+// regardless of any RawValue conformance, so the gate compiles to `ldrb w8,[logLevel];
+// cmp w8,#0x3`. The declared raw values are NOT merely assumed here — setLogCallback's
+// body @0x101a0a8f8-0x101a0a95c emits the tag->rawValue switch as 0/8/0x10/0x18/0x20/
+// 0x28/0x30 with `ubfiz w9,w20,#0x3,#0x8` (rawValue == tag * 8), byte-for-byte the
+// AV_LOG_* values below. Since they are monotonic in declaration order, the constant
+// folder reduces `level.rawValue <= KSOptions.logLevel.rawValue` to the tag compare, so
+// this `<=` is faithful as written and must not be "corrected" to match the literals.
 @inlinable
 public func KSLog(level: LogLevel = .warning, _ message: @autoclosure () -> CustomStringConvertible, file: String = #file, function: String = #function, line: UInt = #line) {
     if level.rawValue <= KSOptions.logLevel.rawValue {
-        let fileName = (file as NSString).lastPathComponent
-        KSOptions.logger.log(level: level, message: message(), file: fileName, function: function, line: line)
+        KSOptions.logger.log(level: level, message: message(), file: file, function: function, line: line)
     }
 }
 
