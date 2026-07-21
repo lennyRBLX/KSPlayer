@@ -4,34 +4,38 @@
 //
 //  Created by kintan on 2018/3/16.
 //
+//  Forward re-parents this onto AudioBaseOutput (binary superclass @0x1044e84c8), which
+//  owns the render engine — renderSource / currentRender / sourceNodeAudioFormat / the
+//  render lock / the sample-copy loop (audioPlayerShouldInputData) and the audio clock
+//  (audioPlayerDidRenderSample). What is left here is the 4-node AUGraph (timePitch ->
+//  dynamicsProcessor -> mixer -> output). Binary: descriptor @0x1039ee8e4, conformances
+//  = [AudioOutput, FrameOutput, AudioDynamicsProcessor], own vtable = {Init} (VTableSize=1)
+//  + an override table (current-swiftc override-direct, so no vtable-numbering pin). Own
+//  stored fields (dump_field_bindings, field-record order): audioUnitForDynamicsProcessor
+//  @0x50, graph @0x58, audioUnitForMixer @0x60, audioUnitForTimePitch @0x68,
+//  audioUnitForOutput @0x70, currentRenderReadOffset @0x78. Inherited storage is 0x10..0x4f.
 
 import AudioToolbox
 import AVFAudio
 import CoreAudio
 
-public final class AudioGraphPlayer: AudioOutput, AudioDynamicsProcessor {
+public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProcessor {
     public private(set) var audioUnitForDynamicsProcessor: AudioUnit
     private let graph: AUGraph
     private var audioUnitForMixer: AudioUnit!
     private var audioUnitForTimePitch: AudioUnit!
     private var audioUnitForOutput: AudioUnit!
+    // Vestigial: the binary retains this own field (init zeroes it), but nothing in the
+    // re-parented class reads or writes it — the render loop is now the inherited
+    // AudioBaseOutput.audioPlayerShouldInputData, which uses its own currentRenderReadOffset.
+    // Declared to match the binary's 6-field layout.
     private var currentRenderReadOffset = UInt32(0)
-    private var sourceNodeAudioFormat: AVAudioFormat?
-    private var sampleSize = UInt32(MemoryLayout<Float>.size)
     #if os(macOS)
     private var volumeBeforeMute: Float = 0.0
     #endif
-    private var outputLatency = TimeInterval(0)
-    public weak var renderSource: OutputRenderSourceDelegate?
-    private var currentRender: AudioFrame? {
-        didSet {
-            if currentRender == nil {
-                currentRenderReadOffset = 0
-            }
-        }
-    }
 
     public func play() {
+        prepareRender()
         AUGraphStart(graph)
     }
 
@@ -94,7 +98,11 @@ public final class AudioGraphPlayer: AudioOutput, AudioDynamicsProcessor {
         }
     }
 
-    public init() {
+    // init @0x101a10918 (alloc entry 0x101a108e4). `required override init()`: overrides
+    // AudioBaseOutput.init() and satisfies AudioOutput's init requirement. super.init() seeds
+    // the base storage (incl. outputLatencySystem from AVAudioSession on iOS/tvOS), which is
+    // why the upstream `outputLatency = AVAudioSession...` line is gone from here.
+    public required override init() {
         var newGraph: AUGraph!
         NewAUGraph(&newGraph)
         graph = newGraph
@@ -140,6 +148,7 @@ public final class AudioGraphPlayer: AudioOutput, AudioDynamicsProcessor {
         self.audioUnitForDynamicsProcessor = audioUnitForDynamicsProcessor!
         AUGraphNodeInfo(graph, nodeForMixer, &descriptionForMixer, &audioUnitForMixer)
         AUGraphNodeInfo(graph, nodeForOutput, &descriptionForOutput, &audioUnitForOutput)
+        super.init()
         addRenderNotify(audioUnit: audioUnitForOutput)
         var value = UInt32(1)
         AudioUnitSetProperty(audioUnitForTimePitch,
@@ -147,21 +156,24 @@ public final class AudioGraphPlayer: AudioOutput, AudioDynamicsProcessor {
                              kAudioUnitScope_Output, 0,
                              &value,
                              UInt32(MemoryLayout<UInt32>.size))
-        #if !os(macOS)
-        outputLatency = AVAudioSession.sharedInstance().outputLatency
-        #endif
     }
 
-    public func prepare(audioFormat: AVAudioFormat) {
+    // prepare(audioFormat:) @0x101a10bf4 — OVERRIDES AudioBaseOutput's slot-28 hook. Forward's
+    // deltas over the flat body: the preferred sample rate is set as well as the channel count;
+    // the KSLog gains the outputNumberOfChannels value; sampleSize is gone (AudioBaseOutput
+    // drives the copy from the buffer's own mDataByteSize). The channel layout still comes from
+    // channelLayout?.layout (unlike AudioUnitPlayer, which switched to
+    // CMAudioFormatDescriptionGetChannelLayout).
+    override public func prepare(audioFormat: AVAudioFormat) {
         if sourceNodeAudioFormat == audioFormat {
             return
         }
         sourceNodeAudioFormat = audioFormat
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
-        KSLog("[audio] set preferredOutputNumberOfChannels: \(audioFormat.channelCount)")
+        try? AVAudioSession.sharedInstance().setPreferredSampleRate(audioFormat.sampleRate)
+        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)")
         #endif
-        sampleSize = audioFormat.sampleSize
         var audioStreamBasicDescription = audioFormat.formatDescription.audioStreamBasicDescription
         let audioStreamBasicDescriptionSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         let channelLayout = audioFormat.channelLayout?.layout
@@ -201,14 +213,11 @@ public final class AudioGraphPlayer: AudioOutput, AudioDynamicsProcessor {
         AUGraphInitialize(graph)
     }
 
-    public func flush() {
-        currentRender = nil
-        #if !os(macOS)
-        outputLatency = AVAudioSession.sharedInstance().outputLatency
-        #endif
-    }
-
-    deinit {
+    // stop() @0x101a11138 (FrameOutput requirement 3). New in Forward — the flat class did this
+    // in deinit; that deinit is gone (DisposeAUGraph has exactly one caller now, stop()).
+    // flush() is NOT overridden: FrameOutput requirement 2 resolves to the inherited
+    // AudioBaseOutput.flush @0x101a117b0.
+    public func stop() {
         AUGraphStop(graph)
         AUGraphUninitialize(graph)
         AUGraphClose(graph)
@@ -220,90 +229,30 @@ extension AudioGraphPlayer {
     private func renderCallbackStruct() -> AURenderCallbackStruct {
         var inputCallbackStruct = AURenderCallbackStruct()
         inputCallbackStruct.inputProcRefCon = Unmanaged.passUnretained(self).toOpaque()
-        inputCallbackStruct.inputProc = { refCon, _, _, _, inNumberFrames, ioData in
+        // inputProc @0x101a114a0 — calls the INHERITED audioPlayerShouldInputData(ioData:); the
+        // frame count comes from the buffer's own mDataByteSize, so inNumberFrames is unused.
+        inputCallbackStruct.inputProc = { refCon, _, _, _, _, ioData in
             guard let ioData else {
                 return noErr
             }
             let `self` = Unmanaged<AudioGraphPlayer>.fromOpaque(refCon).takeUnretainedValue()
-            self.audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer(ioData), numberOfFrames: inNumberFrames)
+            self.audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer(ioData))
             return noErr
         }
         return inputCallbackStruct
     }
 
     private func addRenderNotify(audioUnit: AudioUnit) {
-        AudioUnitAddRenderNotify(audioUnit, { refCon, ioActionFlags, inTimeStamp, _, _, _ in
+        // renderNotify @0x101a11548 — calls the INHERITED audioPlayerDidRenderSample() on
+        // PostRender; Forward drops the flat body's unused sampleTimestamp argument.
+        AudioUnitAddRenderNotify(audioUnit, { refCon, ioActionFlags, _, _, _, _ in
             let `self` = Unmanaged<AudioGraphPlayer>.fromOpaque(refCon).takeUnretainedValue()
             autoreleasepool {
                 if ioActionFlags.pointee.contains(.unitRenderAction_PostRender) {
-                    self.audioPlayerDidRenderSample(sampleTimestamp: inTimeStamp.pointee)
+                    self.audioPlayerDidRenderSample()
                 }
             }
             return noErr
         }, Unmanaged.passUnretained(self).toOpaque())
-    }
-
-    private func audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer, numberOfFrames: UInt32) {
-        var ioDataWriteOffset = 0
-        var numberOfSamples = numberOfFrames
-        while numberOfSamples > 0 {
-            if currentRender == nil {
-                // ⚑ Adapted to the Either return only — superseded when this class is re-parented
-                //   onto AudioBaseOutput (binary superclass; this flat body is pre-re-parent).
-                if case let .left(frame)? = renderSource?.getAudioOutputRender() {
-                    currentRender = frame
-                } else {
-                    currentRender = nil
-                }
-            }
-            guard let currentRender else {
-                break
-            }
-            let residueLinesize = currentRender.numberOfSamples - currentRenderReadOffset
-            guard residueLinesize > 0 else {
-                self.currentRender = nil
-                continue
-            }
-            if sourceNodeAudioFormat != currentRender.audioFormat {
-                runOnMainThread { [weak self] in
-                    guard let self else {
-                        return
-                    }
-                    self.prepare(audioFormat: currentRender.audioFormat)
-                }
-                return
-            }
-            let framesToCopy = min(numberOfSamples, residueLinesize)
-            let bytesToCopy = Int(framesToCopy * sampleSize)
-            let offset = Int(currentRenderReadOffset * sampleSize)
-            for i in 0 ..< min(ioData.count, currentRender.data.count) {
-                if let source = currentRender.data[i], let destination = ioData[i].mData {
-                    (destination + ioDataWriteOffset).copyMemory(from: source + offset, byteCount: bytesToCopy)
-                }
-            }
-            numberOfSamples -= framesToCopy
-            ioDataWriteOffset += bytesToCopy
-            currentRenderReadOffset += framesToCopy
-        }
-        let sizeCopied = (numberOfFrames - numberOfSamples) * sampleSize
-        for i in 0 ..< ioData.count {
-            let sizeLeft = Int(ioData[i].mDataByteSize - sizeCopied)
-            if sizeLeft > 0 {
-                memset(ioData[i].mData! + Int(sizeCopied), 0, sizeLeft)
-            }
-        }
-    }
-
-    private func audioPlayerDidRenderSample(sampleTimestamp _: AudioTimeStamp) {
-        if let currentRender {
-            let currentPreparePosition = currentRender.timestamp + currentRender.duration * Int64(currentRenderReadOffset) / Int64(currentRender.numberOfSamples)
-            if currentPreparePosition > 0 {
-                var time = currentRender.timebase.cmtime(for: currentPreparePosition)
-                if outputLatency != 0 {
-                    time = time - CMTime(seconds: outputLatency, preferredTimescale: time.timescale)
-                }
-                renderSource?.setAudio(time: time, position: currentRender.position)
-            }
-        }
     }
 }
