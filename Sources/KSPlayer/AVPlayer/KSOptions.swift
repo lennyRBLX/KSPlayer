@@ -568,7 +568,10 @@ public extension KSOptions {
     nonisolated(unsafe) static var preferredFrame = true
     nonisolated(unsafe) static var useSystemHTTPProxy = true
     /// 日志级别
-    nonisolated(unsafe) static var logLevel = LogLevel.warning
+    // default = .error: the logLevel global byte @0x1044e5173 = 2, the CASE INDEX of .error
+    // (a fieldless enum stores/reads as its case index, not the rawValue — 2 matches no LogLevel
+    // rawValue [0/8/16/24/…], so it is unambiguously the index; see the KSLog gate note below).
+    nonisolated(unsafe) static var logLevel = LogLevel.error
     nonisolated(unsafe) static var logger: LogHandler = OSLog(lable: "KSPlayer")
     internal static func deviceCpuCount() -> Int {
         var ncpu = UInt(0)
