@@ -34,7 +34,12 @@ public class AudioBaseOutput {
     // internal, not private: AudioEnginePlayer.prepare(audioFormat:) both reads this
     // (the early-out compare) and writes it, and it lives in another file.
     var sourceNodeAudioFormat: AVAudioFormat?
-    private var memsetZero: Bool = false
+    // internal, not private: AudioUnitPlayer.isMuted's didSet mirrors the mute
+    // state into this flag from another file (its setter writes self+0x28
+    // directly — no accessor call — which requires at least `internal` access).
+    // The sample-copy loop reads it to swap the memmove for a bzero. Same reason
+    // as sourceNodeAudioFormat above.
+    var memsetZero: Bool = false
     private var outputLatencySystem: Double = 0
     private var _outputLatency: Double = 0
     private var renderLock: os_unfair_lock_s = os_unfair_lock_s()

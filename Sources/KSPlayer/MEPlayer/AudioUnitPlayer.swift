@@ -4,45 +4,69 @@
 //
 //  Created by kintan on 2018/3/16.
 //
+//  Forward re-parents this onto AudioBaseOutput (binary superclass @0x1044e84c8),
+//  which now owns the render engine — renderSource / currentRender / sourceNodeAudioFormat
+//  / the render lock / the sample-copy loop (audioPlayerShouldInputData) and the audio
+//  clock (audioPlayerDidRenderSample). What is left here is the raw output AudioUnit.
+//
+//  Binary: descriptor @0x1039eed40, super=AudioBaseOutput, conformances=[AudioOutput,
+//  FrameOutput]. Own vtable is {Init} (VTableSize=1) + an override table — current-swiftc
+//  emits `override` records directly, so there is no vtable-numbering pin. Own stored fields
+//  (dump_field_bindings, field-record order): audioUnitForOutput@0x50, lastPrepareTime@0x58,
+//  minDelayAfterPrepare@0x60, isPlaying@0x68, playbackRate@0x6c, isMuted@0x70. Inherited
+//  storage is 0x10..0x4f. `volume` carries no field record — it is computed onto the unit.
+//
+//  let/var below are the __swift5_fieldmd IsVar flags (dump_field_bindings.py AudioUnitPlayer):
+//  minDelayAfterPrepare is a `let`, so it earns no vtable triple and its 0.15 constant-folds
+//  into play() (see below).
 
 import AudioToolbox
 import AVFAudio
 import CoreAudio
+import CoreMedia
 
-public final class AudioUnitPlayer: AudioOutput {
+public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     private var audioUnitForOutput: AudioUnit!
-    private var currentRenderReadOffset = UInt32(0)
-    private var sourceNodeAudioFormat: AVAudioFormat?
-    private var sampleSize = UInt32(MemoryLayout<Float>.size)
-    public weak var renderSource: OutputRenderSourceDelegate?
-    private var currentRender: AudioFrame? {
-        didSet {
-            if currentRender == nil {
-                currentRenderReadOffset = 0
-            }
-        }
-    }
-
+    // Written by prepare(audioFormat:), read by play(): the timestamp the play()
+    // debounce measures against (the "从多声道切换到2声道马上调用start会不生效" workaround —
+    // a play() within minDelayAfterPrepare of the last prepare is deferred).
+    var lastPrepareTime: Double = 0
+    // ⚑ `let` (IsVar clear), init 0.15 (=0x3fc3333333333333). Because it is a `let`, every
+    // read constant-folds — play() compares against an inline 0.15 and this field is loaded
+    // nowhere in the binary. Access is underdetermined (a `let` carries no vtable entry at any
+    // level); `private` matches its role.
+    private let minDelayAfterPrepare = 0.15
     private var isPlaying = false
-    public func play() {
-        if !isPlaying {
-            isPlaying = true
-            AudioOutputUnitStart(audioUnitForOutput)
-        }
-    }
-
-    public func pause() {
-        if isPlaying {
-            isPlaying = false
-            AudioOutputUnitStop(audioUnitForOutput)
-        }
-    }
-
     public var playbackRate: Float = 1
-    public var volume: Float = 1
-    public var isMuted: Bool = false
-    private var outputLatency = TimeInterval(0)
-    public init() {
+    public var isMuted: Bool = false {
+        didSet {
+            // Mirror into the inherited flag the sample-copy loop reads (setter writes
+            // self+0x70 then self+0x28). memsetZero was made `internal` on AudioBaseOutput
+            // for this cross-file write.
+            memsetZero = isMuted
+        }
+    }
+
+    // volume is COMPUTED onto the output unit (no field record). id 14 / scope 1 / element 0
+    // are pinned from the binary's AudioUnitGet/SetParameter arguments (kHALOutputParam_Volume
+    // == 14, kAudioUnitScope_Input == 1).
+    public var volume: Float {
+        get {
+            var value = AudioUnitParameterValue(0)
+            AudioUnitGetParameter(audioUnitForOutput, kHALOutputParam_Volume, kAudioUnitScope_Input, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForOutput, kHALOutputParam_Volume, kAudioUnitScope_Input, 0, newValue, 0)
+        }
+    }
+
+    // init @0x101a15270 (alloc entry 0x101a1523c). `required override init()`: overrides
+    // AudioBaseOutput.init() and satisfies AudioOutput's init requirement. super.init() seeds
+    // the base storage (incl. outputLatencySystem from AVAudioSession on iOS/tvOS), which is
+    // why the upstream `outputLatency = AVAudioSession...` line is gone from here.
+    public required override init() {
+        super.init()
         var descriptionForOutput = AudioComponentDescription()
         descriptionForOutput.componentType = kAudioUnitType_Output
         descriptionForOutput.componentManufacturer = kAudioUnitManufacturer_Apple
@@ -50,7 +74,6 @@ public final class AudioUnitPlayer: AudioOutput {
         descriptionForOutput.componentSubType = kAudioUnitSubType_HALOutput
         #else
         descriptionForOutput.componentSubType = kAudioUnitSubType_RemoteIO
-        outputLatency = AVAudioSession.sharedInstance().outputLatency
         #endif
         let nodeForOutput = AudioComponentFindNext(nil, &descriptionForOutput)
         AudioComponentInstanceNew(nodeForOutput!, &audioUnitForOutput)
@@ -62,28 +85,42 @@ public final class AudioUnitPlayer: AudioOutput {
                              UInt32(MemoryLayout<UInt32>.size))
     }
 
-    public func prepare(audioFormat: AVAudioFormat) {
+    // prepare(audioFormat:) @0x101a153cc — OVERRIDES AudioBaseOutput's slot-28 hook. Forward's
+    // evolution over the flat body: a running unit is stopped and uninitialized before
+    // reconfiguring; the preferred sample rate is set as well as the channel count; the channel
+    // layout comes from CMAudioFormatDescriptionGetChannelLayout rather than
+    // channelLayout?.layout; lastPrepareTime is stamped; and the trailing restart defers to
+    // play() (which owns the debounce) via a @MainActor Task rather than calling start() here.
+    override public func prepare(audioFormat: AVAudioFormat) {
         if sourceNodeAudioFormat == audioFormat {
             return
         }
+        let isRunning = isPlaying
+        if isPlaying {
+            isPlaying = false
+            AudioOutputUnitStop(audioUnitForOutput)
+        }
+        AudioUnitUninitialize(audioUnitForOutput)
         sourceNodeAudioFormat = audioFormat
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
-        KSLog("[audio] set preferredOutputNumberOfChannels: \(audioFormat.channelCount)")
+        try? AVAudioSession.sharedInstance().setPreferredSampleRate(audioFormat.sampleRate)
+        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)")
         #endif
-        sampleSize = audioFormat.sampleSize
         var audioStreamBasicDescription = audioFormat.formatDescription.audioStreamBasicDescription
         AudioUnitSetProperty(audioUnitForOutput,
                              kAudioUnitProperty_StreamFormat,
                              kAudioUnitScope_Input, 0,
                              &audioStreamBasicDescription,
                              UInt32(MemoryLayout<AudioStreamBasicDescription>.size))
-        let channelLayout = audioFormat.channelLayout?.layout
-        AudioUnitSetProperty(audioUnitForOutput,
-                             kAudioUnitProperty_AudioChannelLayout,
-                             kAudioUnitScope_Input, 0,
-                             channelLayout,
-                             UInt32(MemoryLayout<AudioChannelLayout>.size))
+        var layoutSize = 0
+        if let channelLayout = CMAudioFormatDescriptionGetChannelLayout(audioFormat.formatDescription, sizeOut: &layoutSize) {
+            AudioUnitSetProperty(audioUnitForOutput,
+                                 kAudioUnitProperty_AudioChannelLayout,
+                                 kAudioUnitScope_Input, 0,
+                                 channelLayout,
+                                 UInt32(layoutSize))
+        }
         var inputCallbackStruct = renderCallbackStruct()
         AudioUnitSetProperty(audioUnitForOutput,
                              kAudioUnitProperty_SetRenderCallback,
@@ -92,16 +129,56 @@ public final class AudioUnitPlayer: AudioOutput {
                              UInt32(MemoryLayout<AURenderCallbackStruct>.size))
         addRenderNotify(audioUnit: audioUnitForOutput)
         AudioUnitInitialize(audioUnitForOutput)
+        lastPrepareTime = CFAbsoluteTimeGetCurrent()
+        if isRunning {
+            nonisolated(unsafe) weak var weakSelf = self
+            Task { @MainActor in
+                weakSelf?.play()
+            }
+        }
     }
 
-    public func flush() {
-        currentRender = nil
-        #if !os(macOS)
-        outputLatency = AVAudioSession.sharedInstance().outputLatency
-        #endif
+    // play() @0x101a14c54 (FrameOutput requirement 0): a play() that lands within
+    // minDelayAfterPrepare of the last prepare is deferred by the remainder of that window.
+    // The comparison fuses to an inline 0.15 because minDelayAfterPrepare is a `let`.
+    public func play() {
+        if !isPlaying {
+            let elapsed = CFAbsoluteTimeGetCurrent() - lastPrepareTime
+            if lastPrepareTime > 0, elapsed < minDelayAfterPrepare {
+                nonisolated(unsafe) weak var weakSelf = self
+                DispatchQueue.main.asyncAfter(deadline: .now() + (minDelayAfterPrepare - elapsed)) { @MainActor in
+                    weakSelf?.doPlay()
+                }
+            } else {
+                doPlay()
+            }
+        }
     }
 
-    deinit {
+    // The actual start, shared by play()'s immediate path and the deferred @MainActor closure
+    // (fully inlined at both sites, so it carries no distinct address). prepareRender() is the
+    // inherited AudioBaseOutput hook @0x101a116c0.
+    private func doPlay() {
+        if !isPlaying {
+            isPlaying = true
+            prepareRender()
+            AudioOutputUnitStart(audioUnitForOutput)
+        }
+    }
+
+    // pause() @0x101a150dc (FrameOutput requirement 1).
+    public func pause() {
+        if isPlaying {
+            isPlaying = false
+            AudioOutputUnitStop(audioUnitForOutput)
+        }
+    }
+
+    // stop() @0x101a15b28 (FrameOutput requirement 3). New in Forward — the flat class did this
+    // in deinit; that deinit is gone (AudioUnitUninitialize has exactly two callers now, prepare
+    // and stop). flush() is NOT overridden: FrameOutput requirement 2 resolves to the inherited
+    // AudioBaseOutput.flush @0x101a117b0.
+    public func stop() {
         AudioUnitUninitialize(audioUnitForOutput)
     }
 }
@@ -110,94 +187,30 @@ extension AudioUnitPlayer {
     private func renderCallbackStruct() -> AURenderCallbackStruct {
         var inputCallbackStruct = AURenderCallbackStruct()
         inputCallbackStruct.inputProcRefCon = Unmanaged.passUnretained(self).toOpaque()
-        inputCallbackStruct.inputProc = { refCon, _, _, _, inNumberFrames, ioData in
+        // inputProc @0x101a15f18 — calls the INHERITED audioPlayerShouldInputData(ioData:); the
+        // frame count comes from the buffer's own mDataByteSize, so inNumberFrames is unused.
+        inputCallbackStruct.inputProc = { refCon, _, _, _, _, ioData in
             guard let ioData else {
                 return noErr
             }
             let `self` = Unmanaged<AudioUnitPlayer>.fromOpaque(refCon).takeUnretainedValue()
-            self.audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer(ioData), numberOfFrames: inNumberFrames)
+            self.audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer(ioData))
             return noErr
         }
         return inputCallbackStruct
     }
 
     private func addRenderNotify(audioUnit: AudioUnit) {
-        AudioUnitAddRenderNotify(audioUnit, { refCon, ioActionFlags, inTimeStamp, _, _, _ in
+        // renderNotify @0x101a15fc0 — calls the INHERITED audioPlayerDidRenderSample() on
+        // PostRender; Forward drops the flat body's unused sampleTimestamp argument.
+        AudioUnitAddRenderNotify(audioUnit, { refCon, ioActionFlags, _, _, _, _ in
             let `self` = Unmanaged<AudioUnitPlayer>.fromOpaque(refCon).takeUnretainedValue()
             autoreleasepool {
                 if ioActionFlags.pointee.contains(.unitRenderAction_PostRender) {
-                    self.audioPlayerDidRenderSample(sampleTimestamp: inTimeStamp.pointee)
+                    self.audioPlayerDidRenderSample()
                 }
             }
             return noErr
         }, Unmanaged.passUnretained(self).toOpaque())
-    }
-
-    private func audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer, numberOfFrames: UInt32) {
-        var ioDataWriteOffset = 0
-        var numberOfSamples = numberOfFrames
-        while numberOfSamples > 0 {
-            if currentRender == nil {
-                // ⚑ Adapted to the Either return only — superseded when this class is re-parented
-                //   onto AudioBaseOutput (binary superclass; this flat body is pre-re-parent).
-                if case let .left(frame)? = renderSource?.getAudioOutputRender() {
-                    currentRender = frame
-                } else {
-                    currentRender = nil
-                }
-            }
-            guard let currentRender else {
-                break
-            }
-            let residueLinesize = currentRender.numberOfSamples - currentRenderReadOffset
-            guard residueLinesize > 0 else {
-                self.currentRender = nil
-                continue
-            }
-            if sourceNodeAudioFormat != currentRender.audioFormat {
-                runOnMainThread { [weak self] in
-                    guard let self else {
-                        return
-                    }
-                    self.prepare(audioFormat: currentRender.audioFormat)
-                }
-                return
-            }
-            let framesToCopy = min(numberOfSamples, residueLinesize)
-            let bytesToCopy = Int(framesToCopy * sampleSize)
-            let offset = Int(currentRenderReadOffset * sampleSize)
-            for i in 0 ..< min(ioData.count, currentRender.data.count) {
-                if let source = currentRender.data[i], let destination = ioData[i].mData {
-                    if isMuted {
-                        memset(destination + ioDataWriteOffset, 0, bytesToCopy)
-                    } else {
-                        (destination + ioDataWriteOffset).copyMemory(from: source + offset, byteCount: bytesToCopy)
-                    }
-                }
-            }
-            numberOfSamples -= framesToCopy
-            ioDataWriteOffset += bytesToCopy
-            currentRenderReadOffset += framesToCopy
-        }
-        let sizeCopied = (numberOfFrames - numberOfSamples) * sampleSize
-        for i in 0 ..< ioData.count {
-            let sizeLeft = Int(ioData[i].mDataByteSize - sizeCopied)
-            if sizeLeft > 0 {
-                memset(ioData[i].mData! + Int(sizeCopied), 0, sizeLeft)
-            }
-        }
-    }
-
-    private func audioPlayerDidRenderSample(sampleTimestamp _: AudioTimeStamp) {
-        if let currentRender {
-            let currentPreparePosition = currentRender.timestamp + currentRender.duration * Int64(currentRenderReadOffset) / Int64(currentRender.numberOfSamples)
-            if currentPreparePosition > 0 {
-                var time = currentRender.timebase.cmtime(for: currentPreparePosition)
-                if outputLatency != 0 {
-                    time = time - CMTime(seconds: outputLatency, preferredTimescale: time.timescale)
-                }
-                renderSource?.setAudio(time: time, position: currentRender.position)
-            }
-        }
     }
 }
