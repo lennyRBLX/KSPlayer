@@ -135,22 +135,26 @@ class SubtitleDecode: DecodeProtocol {
         } else {
             var duration = TimeInterval(subtitle.end_display_time - subtitle.start_display_time) / 1000.0
             if duration == 0, packet.pointee.duration != 0 {
-                duration = assetTrack.timebase.cmtime(for: packet.pointee.duration).seconds // ⚑ binary reads codecContext timebase @0x5c/0x60; assetTrack.timebase is the equivalent value
+                // The duration fallback reads codecContext.time_base (num@+0x5c / den@+0x60 per the non-stock FFmpeg
+                // ABI), reconstructed symbolically: @0x101a6a124 `ldrsw` num · @0x101a6a138 `ldr` den · CMTime(value:
+                // duration*num, timescale: den). (Previously assetTrack.timebase — a stream-vs-codec value equivalence
+                // both audit rounds flagged; now byte-faithful by construction — the trivial Timebase init inlines away.)
+                duration = Timebase(codecContext.pointee.time_base).cmtime(for: packet.pointee.duration).seconds
             }
             end = start + duration
         }
         var parts = text(subtitle: subtitle, start: start, end: end)
         if assImageRenderer == nil, parts.isEmpty {
-            // ⚑ DIVERGENCE (audit-caught, MED — a KNOWN simplification; this body stays DIVERGENT / NOT counted until fixed).
-            //   The binary (FUN_101a69f54 @0x101a6a204-0x101a6a2e4) builds this text from a NORMALIZED string, not a bare init:
-            //   `NSAttributedString(string: <s>.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: ""))`
-            //   — get_whitespaces(0x103451bac) → StringProtocol.trimmingCharacters(0x103458908) → replacingOccurrences
-            //   (0x103458914, of="\r"/with="") → String._bridgeToObjectiveC → NSAttributedString.initWithString:(0x103463620),
-            //   stored at the part's text-info +0x30. The PIPELINE is resolved; only the processed string <s> is not — it is a
-            //   value-witness buffer (x22, sized by the stripped metadata accessor 0x103451c90) whose write-site did not appear
-            //   in static disasm. NSAttributedString() is a behaviorally-close stand-in (the empty-parts branch likely yields
-            //   empty text), NOT fabricated — a faithful fix needs the <s>-origin pass. Base cce7002 used `attributedString: nil`.
-            parts.append(SubtitlePart(start: start, end: end, render: .right(SubtitleTextInfo(text: NSAttributedString(), position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
+            // Placeholder for an empty subtitle cue: a part covering [start, end] whose text is the normalization
+            // pipeline applied to an empty string. The binary (@0x101a6a204-0x101a6a2e4) runs the same normalization it
+            // uses for real text: get_whitespaces(@0x103451bac) → StringProtocol.trimmingCharacters(@0x103458908) →
+            // replacingOccurrences(@0x103458914, of="\r"/with="") → String._bridgeToObjectiveC → NSAttributedString
+            // initWithString:(@0x103463620), stored at the text-info +0x30. The receiver is a PROVEN literal "":
+            // @0x101a6a204 materializes it with immediate stores (`stp xzr,x8`, x8=0xe000000000000000 = the empty
+            // small-string), NOT a field load; the trim receiver is x20=&"" while x0=x22 holds the .whitespaces
+            // CharacterSet (get_whitespaces' x8-indirect result), so trimming "" is a no-op and the cue renders empty.
+            // (Supersedes the s33 <s>-unresolved deferral: x22 was misread as the receiver — it is the CharacterSet.)
+            parts.append(SubtitlePart(start: start, end: end, render: .right(SubtitleTextInfo(text: NSAttributedString(string: "".trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "")), position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
         }
         // ⚑[tool=ffmpeg_name_oracle ref=avsubtitle_free:0x10294d330 result=CONFIRMED] — freed after text() extracts the
         // rect data into parts (Forward moves this before delivery; base freed it after the loop). FUN_101a69f54 @0x101a6a1ac.
