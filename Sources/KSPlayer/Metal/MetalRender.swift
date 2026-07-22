@@ -22,53 +22,53 @@ class MetalRender {
         return library
     }()
 
-    private let renderPassDescriptor = MTLRenderPassDescriptor()
-    private let commandQueue = MetalRender.device.makeCommandQueue()
-    private lazy var samplerState: MTLSamplerState? = {
+    private nonisolated(unsafe) static let renderPassDescriptor = MTLRenderPassDescriptor()
+    private static let commandQueue = MetalRender.device.makeCommandQueue()
+    private static let samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.minFilter = .linear
         samplerDescriptor.magFilter = .linear
         return MetalRender.device.makeSamplerState(descriptor: samplerDescriptor)
     }()
 
-    private lazy var colorConversion601VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_601_4.pointee.videoRange.buffer
+    private nonisolated(unsafe) static let colorConversion601VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_601_4.pointee.videoRange.buffer
 
-    private lazy var colorConversion601FullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_601_4.pointee.buffer
+    private nonisolated(unsafe) static let colorConversion601FullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_601_4.pointee.buffer
 
-    private lazy var colorConversion709VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_709_2.pointee.videoRange.buffer
+    private nonisolated(unsafe) static let colorConversion709VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_709_2.pointee.videoRange.buffer
 
-    private lazy var colorConversion709FullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_709_2.pointee.buffer
+    private nonisolated(unsafe) static let colorConversion709FullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_709_2.pointee.buffer
 
-    private lazy var colorConversionSMPTE240MVideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_SMPTE_240M_1995.videoRange.buffer
+    private nonisolated(unsafe) static let colorConversionSMPTE240MVideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_SMPTE_240M_1995.videoRange.buffer
 
-    private lazy var colorConversionSMPTE240MFullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_SMPTE_240M_1995.buffer
+    private nonisolated(unsafe) static let colorConversionSMPTE240MFullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_SMPTE_240M_1995.buffer
 
-    private lazy var colorConversion2020VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_2020.videoRange.buffer
+    private nonisolated(unsafe) static let colorConversion2020VideoRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_2020.videoRange.buffer
 
-    private lazy var colorConversion2020FullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_2020.buffer
+    private nonisolated(unsafe) static let colorConversion2020FullRangeMatrixBuffer: MTLBuffer? = kvImage_YpCbCrToARGBMatrix_ITU_R_2020.buffer
 
-    private lazy var colorOffsetVideoRangeMatrixBuffer: MTLBuffer? = {
+    private nonisolated(unsafe) static let colorOffsetVideoRangeMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<Float>(-16.0 / 255.0, -128.0 / 255.0, -128.0 / 255.0)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<Float>>.size)
         buffer?.label = "colorOffset"
         return buffer
     }()
 
-    private lazy var colorOffsetFullRangeMatrixBuffer: MTLBuffer? = {
+    private nonisolated(unsafe) static let colorOffsetFullRangeMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<Float>(0, -128.0 / 255.0, -128.0 / 255.0)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<Float>>.size)
         buffer?.label = "colorOffset"
         return buffer
     }()
 
-    private lazy var leftShiftMatrixBuffer: MTLBuffer? = {
+    private nonisolated(unsafe) static let leftShiftMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<UInt8>(1, 1, 1)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<UInt8>>.size)
         buffer?.label = "leftShit"
         return buffer
     }()
 
-    private lazy var leftShiftSixMatrixBuffer: MTLBuffer? = {
+    private nonisolated(unsafe) static let leftShiftSixMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<UInt8>(64, 64, 64)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<UInt8>>.size)
         buffer?.label = "leftShit"
@@ -76,10 +76,10 @@ class MetalRender {
     }()
 
     func clear(drawable: MTLDrawable) {
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-        renderPassDescriptor.colorAttachments[0].loadAction = .clear
-        guard let commandBuffer = commandQueue?.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)
+        MetalRender.renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        MetalRender.renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        guard let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor)
         else {
             return
         }
@@ -92,14 +92,14 @@ class MetalRender {
     @MainActor
     func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable) {
         let inputTextures = pixelBuffer.textures()
-        renderPassDescriptor.colorAttachments[0].texture = drawable.texture
-        guard !inputTextures.isEmpty, let commandBuffer = commandQueue?.makeCommandBuffer(), let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+        MetalRender.renderPassDescriptor.colorAttachments[0].texture = drawable.texture
+        guard !inputTextures.isEmpty, let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(), let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor) else {
             return
         }
         encoder.pushDebugGroup("RenderFrame")
         let state = display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
         encoder.setRenderPipelineState(state)
-        encoder.setFragmentSamplerState(samplerState, index: 0)
+        encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
         for (index, texture) in inputTextures.enumerated() {
             texture.label = "texture\(index)"
             encoder.setFragmentTexture(texture, index: index)
@@ -119,18 +119,18 @@ class MetalRender {
             let yCbCrMatrix = pixelBuffer.yCbCrMatrix
             let isFullRangeVideo = pixelBuffer.isFullRangeVideo
             if yCbCrMatrix == kCVImageBufferYCbCrMatrix_ITU_R_709_2 {
-                buffer = isFullRangeVideo ? colorConversion709FullRangeMatrixBuffer : colorConversion709VideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? MetalRender.colorConversion709FullRangeMatrixBuffer : MetalRender.colorConversion709VideoRangeMatrixBuffer
             } else if yCbCrMatrix == kCVImageBufferYCbCrMatrix_SMPTE_240M_1995 {
-                buffer = isFullRangeVideo ? colorConversionSMPTE240MFullRangeMatrixBuffer : colorConversionSMPTE240MVideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? MetalRender.colorConversionSMPTE240MFullRangeMatrixBuffer : MetalRender.colorConversionSMPTE240MVideoRangeMatrixBuffer
             } else if yCbCrMatrix == kCVImageBufferYCbCrMatrix_ITU_R_2020 {
-                buffer = isFullRangeVideo ? colorConversion2020FullRangeMatrixBuffer : colorConversion2020VideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? MetalRender.colorConversion2020FullRangeMatrixBuffer : MetalRender.colorConversion2020VideoRangeMatrixBuffer
             } else {
-                buffer = isFullRangeVideo ? colorConversion601FullRangeMatrixBuffer : colorConversion601VideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? MetalRender.colorConversion601FullRangeMatrixBuffer : MetalRender.colorConversion601VideoRangeMatrixBuffer
             }
             encoder.setFragmentBuffer(buffer, offset: 0, index: 0)
-            let colorOffset = isFullRangeVideo ? colorOffsetFullRangeMatrixBuffer : colorOffsetVideoRangeMatrixBuffer
+            let colorOffset = isFullRangeVideo ? MetalRender.colorOffsetFullRangeMatrixBuffer : MetalRender.colorOffsetVideoRangeMatrixBuffer
             encoder.setFragmentBuffer(colorOffset, offset: 0, index: 1)
-            let leftShift = pixelBuffer.leftShift == 0 ? leftShiftMatrixBuffer : leftShiftSixMatrixBuffer
+            let leftShift = pixelBuffer.leftShift == 0 ? MetalRender.leftShiftMatrixBuffer : MetalRender.leftShiftSixMatrixBuffer
             encoder.setFragmentBuffer(leftShift, offset: 0, index: 2)
         }
     }
