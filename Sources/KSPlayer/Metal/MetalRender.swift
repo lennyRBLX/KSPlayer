@@ -105,7 +105,7 @@ class MetalRender {
             texture.label = "texture\(index)"
             encoder.setFragmentTexture(texture, index: index)
         }
-        setFragmentBuffer(pixelBuffer: pixelBuffer, encoder: encoder)
+        MetalRender.setFragmentBuffer(encoder: encoder, pixelBuffer: pixelBuffer)
         display.set(encoder: encoder)
         encoder.popDebugGroup()
         encoder.endEncoding()
@@ -114,24 +114,24 @@ class MetalRender {
         commandBuffer.waitUntilCompleted()
     }
 
-    private func setFragmentBuffer(pixelBuffer: PixelBufferProtocol, encoder: MTLRenderCommandEncoder) {
+    private static func setFragmentBuffer(encoder: MTLRenderCommandEncoder, pixelBuffer: PixelBufferProtocol) {
         if pixelBuffer.planeCount > 1 {
-            let buffer: MTLBuffer?
-            let yCbCrMatrix = pixelBuffer.yCbCrMatrix
             let isFullRangeVideo = pixelBuffer.isFullRangeVideo
-            if yCbCrMatrix == kCVImageBufferYCbCrMatrix_ITU_R_709_2 {
-                buffer = isFullRangeVideo ? MetalRender.colorConversion709FullRangeMatrixBuffer : MetalRender.colorConversion709VideoRangeMatrixBuffer
+            let leftShift = pixelBuffer.leftShift == 0 ? leftShiftMatrixBuffer : leftShiftSixMatrixBuffer
+            let yCbCrMatrix = pixelBuffer.yCbCrMatrix
+            let buffer: MTLBuffer?
+            if yCbCrMatrix == kCVImageBufferYCbCrMatrix_ITU_R_601_4 {
+                buffer = isFullRangeVideo ? colorConversion601FullRangeMatrixBuffer : colorConversion601VideoRangeMatrixBuffer
             } else if yCbCrMatrix == kCVImageBufferYCbCrMatrix_SMPTE_240M_1995 {
-                buffer = isFullRangeVideo ? MetalRender.colorConversionSMPTE240MFullRangeMatrixBuffer : MetalRender.colorConversionSMPTE240MVideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? colorConversionSMPTE240MFullRangeMatrixBuffer : colorConversionSMPTE240MVideoRangeMatrixBuffer
             } else if yCbCrMatrix == kCVImageBufferYCbCrMatrix_ITU_R_2020 {
-                buffer = isFullRangeVideo ? MetalRender.colorConversion2020FullRangeMatrixBuffer : MetalRender.colorConversion2020VideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? colorConversion2020FullRangeMatrixBuffer : colorConversion2020VideoRangeMatrixBuffer
             } else {
-                buffer = isFullRangeVideo ? MetalRender.colorConversion601FullRangeMatrixBuffer : MetalRender.colorConversion601VideoRangeMatrixBuffer
+                buffer = isFullRangeVideo ? colorConversion709FullRangeMatrixBuffer : colorConversion709VideoRangeMatrixBuffer
             }
+            let colorOffset = isFullRangeVideo ? colorOffsetFullRangeMatrixBuffer : colorOffsetVideoRangeMatrixBuffer
             encoder.setFragmentBuffer(buffer, offset: 0, index: 0)
-            let colorOffset = isFullRangeVideo ? MetalRender.colorOffsetFullRangeMatrixBuffer : MetalRender.colorOffsetVideoRangeMatrixBuffer
             encoder.setFragmentBuffer(colorOffset, offset: 0, index: 1)
-            let leftShift = pixelBuffer.leftShift == 0 ? MetalRender.leftShiftMatrixBuffer : MetalRender.leftShiftSixMatrixBuffer
             encoder.setFragmentBuffer(leftShift, offset: 0, index: 2)
         }
     }
