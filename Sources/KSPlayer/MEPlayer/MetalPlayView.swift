@@ -267,7 +267,7 @@ class MetalView: UIView {
 
     func clear() {
         if let drawable = metalLayer.nextDrawable() {
-            render.clear(drawable: drawable)
+            MetalRender.clear(drawable: drawable)
         }
     }
 
