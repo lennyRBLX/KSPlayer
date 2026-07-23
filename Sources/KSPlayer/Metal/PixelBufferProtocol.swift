@@ -171,18 +171,28 @@ class PixelBuffer: PixelBufferProtocol {
     var aspectRatio: CGSize
     let leftShift: UInt8
     let isFullRangeVideo: Bool
+    // ⚑ Forward-added HDR side-data field (binary PixelBuffer @+0x48; init @0x101a8a318 sets an empty
+    // default). Reflection field-record is symbolic/unmapped → type inferred `Data` from the 16-byte
+    // field size + empty-Data init default (sibling Resample.hdr10PlusData is `Data?`; layout-identical).
+    var hdr10PlusData = Data()
     var cvPixelBuffer: CVPixelBuffer? { nil }
     var colorPrimaries: CFString?
     var transferFunction: CFString?
     var yCbCrMatrix: CFString?
     var colorspace: CGColorSpace?
-    var formatDescription: CMVideoFormatDescription? = nil
+    var formatDescription: CMFormatDescription? = nil // ⚑ binary field-record is CMFormatDescription? (CMVideoFormatDescription is a CoreMedia alias of the same type); resolves the l2 TYPE MISMATCH
     private let format: AVPixelFormat
     private let formats: [MTLPixelFormat]
     private let widths: [Int]
     private let heights: [Int]
     private let buffers: [MTLBuffer?]
     private let lineSize: [Int]
+    // ⚑ Forward-added trailing HDR side-data fields (binary PixelBuffer @+0xb0/+0xc0/+0xd0; init
+    // @0x101a8a318 sets empty defaults). Reflection symbolic/unmapped → type inferred `Data` (16-byte
+    // fields + empty-Data init default). Total instance size 0xe0 (224 B) confirmed vs the binary alloc.
+    var displayInfo = Data()
+    var contentInfo = Data()
+    var ambientViewingEnvironment = Data()
 
     init(frame: AVFrame) {
         yCbCrMatrix = frame.colorspace.ycbcrMatrix
