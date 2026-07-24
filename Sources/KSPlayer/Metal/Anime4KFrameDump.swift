@@ -51,4 +51,20 @@ public enum Anime4KFrameDump {
     /// Serial queue for the export work. Lazy (once-init @0x101a773cc: label "Anime4KFrameDump",
     /// default qos, empty attributes → serial). Storage DAT_1044ebd00. ⚑ name inferred.
     static let queue = DispatchQueue(label: "Anime4KFrameDump")
+
+    /// Public config entry — ⚑ method + param names INFERRED ⚑[tool=recover_swift_function_name ref=0x101a775c0 result=None].
+    /// Sets the enable flag, the frame limit and the two sub-toggles, optionally overrides the export
+    /// directory, and resets the frame counter under `stateLock`. Reconstructed from @0x101a775c0.
+    public static func configure(enable: Bool, limit: Int, directory: URL?, notify: Bool, readback: Bool) {
+        isEnabled = enable
+        frameLimit = limit
+        if let directory {
+            Anime4KFrameDump.directory = directory
+        }
+        notifyEnabled = notify
+        readbackEnabled = readback
+        stateLock.lock()
+        frameCounter = 0
+        stateLock.unlock()
+    }
 }
