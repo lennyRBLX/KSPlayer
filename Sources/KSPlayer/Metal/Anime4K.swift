@@ -86,6 +86,13 @@ public class Anime4K {
     ///     __swift_stdlib_strtof_clocale (Float).
     ///   • `max(Int(sigma), 1)` is the binary's `if n < 2 { n = 1 }` — identical over Int — and
     ///     `n * 2 + 1` is its `n << 1 | 1`.
+    ///   • WIDTH/HEIGHT with 4 tokens: the OPERATOR is `tokens[3]` and the scale is `Float(tokens[2])`,
+    ///     which reads backwards but is what the binary does. Element base is +0x20, stride 0x10, so
+    ///     the operator compare loads +0x50 (index 3) while the value fed to the Float parser loads
+    ///     +0x40 (index 2) under a `count < 3` bounds check — a `count < 4` check would be required
+    ///     to subscript index 3, and none is emitted. The operator is compared BEFORE the target
+    ///     split, and each of the `*` and `/` arms performs that split independently, so a malformed
+    ///     operator throws without the split's trapping subscript ever running.
     ///   • ⚑ the `String(describing:)` spelling is the one detail the decompile does not discriminate:
     ///     a CustomStringConvertible `description` witness IS invoked (so it is not `String(_: Int)`,
     ///     which would not call it), but interpolation `"\(…)"` is an equivalent-codegen alternative.
@@ -132,11 +139,10 @@ public class Anime4K {
                     current!.save = tokens[1]
                 case "WIDTH":
                     if tokens.count == 4 {
-                        let target = String(tokens[1].split(separator: ".")[0])
-                        if tokens[2] == "*" {
-                            current!.width = (target, Float(tokens[3])!)
-                        } else if tokens[2] == "/" {
-                            current!.width = (target, 1.0 / Float(tokens[3])!)
+                        if tokens[3] == "*" {
+                            current!.width = (String(tokens[1].split(separator: ".")[0]), Float(tokens[2])!)
+                        } else if tokens[3] == "/" {
+                            current!.width = (String(tokens[1].split(separator: ".")[0]), 1.0 / Float(tokens[2])!)
                         } else {
                             throw GLSLError.parseFail(line)
                         }
@@ -145,11 +151,10 @@ public class Anime4K {
                     }
                 case "HEIGHT":
                     if tokens.count == 4 {
-                        let target = String(tokens[1].split(separator: ".")[0])
-                        if tokens[2] == "*" {
-                            current!.height = (target, Float(tokens[3])!)
-                        } else if tokens[2] == "/" {
-                            current!.height = (target, 1.0 / Float(tokens[3])!)
+                        if tokens[3] == "*" {
+                            current!.height = (String(tokens[1].split(separator: ".")[0]), Float(tokens[2])!)
+                        } else if tokens[3] == "/" {
+                            current!.height = (String(tokens[1].split(separator: ".")[0]), 1.0 / Float(tokens[2])!)
                         } else {
                             throw GLSLError.parseFail(line)
                         }
