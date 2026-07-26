@@ -176,17 +176,56 @@ public class Anime4K {
         return shaders
     }
 
+    /// Runs `pattern` over `text` and returns every range of every match, flattened — for each match,
+    /// element 0 is the whole match and 1+ are its capture groups. That flattening is why
+    /// `parseShaders` tests `matches.count == 2` and reads `matches[1]` (@0x101a7dfe8, 300
+    /// instructions; callers are `parseShaders` and the shader-source transform @0x101a7cd84, which
+    /// is what makes it a real private method rather than an inlined closure).
+    ///
     /// ⚑ INFERRED name ⚑[tool=recover_swift_function_name ref=regexMatches:0x101a7dfe8 result=none]
-    ///   — `#function` is absent from the stripped image and the tool returns no name. The signature
-    ///   is read off the call site: (pattern String, subject String) -> [String], where element 0 is
-    ///   the whole match and element 1 the first capture group (`parseShaders` tests `count == 2`).
-    /// ⚑[tool=decompile ref=regexMatches:0x101a7dfe8 result=pinned] BODY NOT RECONSTRUCTED (300
-    ///   instructions). It is a real private method rather than an inlined closure because it has a
-    ///   second caller — the shader-source transform @0x101a7cd84 — so it lands with that transform
-    ///   in the follow-on commit. `fatalError` is deliberate: returning `[]` would fabricate a
-    ///   plausible-but-wrong "no match". Unreachable today — nothing reconstructed instantiates
-    ///   `Anime4K`.
+    ///   — `#function` is absent from the stripped image and the tool returns no name. The body bakes
+    ///   no `#function`/`#file` literal either (its only literal is the interpolation prefix below,
+    ///   and it uses `print`, not `KSLog`), so the name is not recoverable. The signature is read off
+    ///   the `parseShaders` call site: the 29-count literal lands in the first String pair, the line
+    ///   in the second, so pattern precedes text.
+    ///
+    /// Decode notes:
+    ///   • the range is `NSRange(text.startIndex..., in: text)`. The instantiated mangled type
+    ///     @0x103c30782 is `<symref>y<symref>G`, whose GOT slots dyld-bind to
+    ///     `_$ss16PartialRangeFromVMn` and `_$sSS5IndexVMn` = `PartialRangeFrom<String.Index>`; the
+    ///     lowerBound immediate 0xf has encodedOffset 0 (bits 63:16), i.e. position 0 = `startIndex`.
+    ///   • ⚠️ the `do`/`catch` is NOT visible in the decompile — Ghidra reports
+    ///     "Removing unreachable block (ram,0x000101a7e04c)" and emits no error handling, while the
+    ///     callee glossary still lists print / localizedDescription / getErrorValue. That
+    ///     contradiction is the tell; the block was recovered by disassembling 0x101a7e04c-0x101a7e130
+    ///     (`cbz x21` at 0x101a7e048 is the error test, and the arm ends by returning the empty array).
+    ///   • the message is interpolation, not `+`: the storage is created EMPTY and grown to a
+    ///     compile-time constant 17 before the 15-character literal is stored, and 17 = 15 + 2*1 =
+    ///     `DefaultStringInterpolation.init(literalCapacity:interpolationCount:)`. `String.+` cannot
+    ///     produce a constant 17 because it appends a right-hand side of unknown length. (The
+    ///     opposite call was correct in `GLSLError.errorDescription`, which has no such init.)
+    ///   • `NSRegularExpression(pattern:)`, `matches(in:range:)`, and `print`'s separator/terminator
+    ///     all pass their DEFAULT arguments (options 0, `" "`, `"\n"`), so the source omits them; an
+    ///     explicit `options: []` would be indistinguishable from omission here.
     private func regexMatches(_ pattern: String, _ text: String) -> [String] {
-        fatalError("⚑[tool=decompile ref=regexMatches:0x101a7dfe8 result=pinned] not yet reconstructed")
+        var result = [String]()
+        do {
+            let regex = try NSRegularExpression(pattern: pattern)
+            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            for match in matches {
+                var groups = [String]()
+                for i in 0 ..< match.numberOfRanges {
+                    if let range = Range(match.range(at: i), in: text) {
+                        groups.append(String(text[range]))
+                    } else {
+                        groups.append("")
+                    }
+                }
+                result += groups
+            }
+        } catch {
+            print("invalid regex: \(error.localizedDescription)")
+        }
+        return result
     }
 }
