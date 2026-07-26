@@ -207,18 +207,26 @@ public class Anime4K {
     ///   • `NSRegularExpression(pattern:)`, `matches(in:range:)`, and `print`'s separator/terminator
     ///     all pass their DEFAULT arguments (options 0, `" "`, `"\n"`), so the source omits them; an
     ///     explicit `options: []` would be indistinguishable from omission here.
+    ///   • `groups` is a `map`, NOT an append loop. The binary calls
+    ///     `_createNewBuffer(bufferIsUnique: false, minimumCapacity: numberOfRanges,
+    ///     growForAppend: false)` — i.e. a reserve of exactly n — INSIDE the `numberOfRanges != 0`
+    ///     guard and before the loop, which is `Collection.map`'s `if n == 0 { return [] };
+    ///     reserveCapacity(n)`. The per-iteration growth check is the same callee with
+    ///     `(isUnique, count + 1, growForAppend: true)`, so the two are distinguishable by their third
+    ///     argument. An explicit `groups.reserveCapacity(n)` on an append loop does NOT reproduce it:
+    ///     that call would be emitted outside the `n != 0` guard. In-binary control: `parseShaders`'
+    ///     `lines = …map { $0.trimmingCharacters(…) }` emits the identical `(0, n, 0)` call.
     private func regexMatches(_ pattern: String, _ text: String) -> [String] {
         var result = [String]()
         do {
             let regex = try NSRegularExpression(pattern: pattern)
             let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
             for match in matches {
-                var groups = [String]()
-                for i in 0 ..< match.numberOfRanges {
+                let groups = (0 ..< match.numberOfRanges).map { i -> String in
                     if let range = Range(match.range(at: i), in: text) {
-                        groups.append(String(text[range]))
+                        return String(text[range])
                     } else {
-                        groups.append("")
+                        return ""
                     }
                 }
                 result += groups
