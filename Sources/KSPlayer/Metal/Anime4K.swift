@@ -176,64 +176,90 @@ public class Anime4K {
         return shaders
     }
 
-    /// Runs `pattern` over `text` and returns every range of every match, flattened — for each match,
-    /// element 0 is the whole match and 1+ are its capture groups. That flattening is why
-    /// `parseShaders` tests `matches.count == 2` and reads `matches[1]` (@0x101a7dfe8, 300
-    /// instructions; callers are `parseShaders` and the shader-source transform @0x101a7cd84, which
-    /// is what makes it a real private method rather than an inlined closure).
-    ///
-    /// ⚑ INFERRED name ⚑[tool=recover_swift_function_name ref=regexMatches:0x101a7dfe8 result=none]
-    ///   — `#function` is absent from the stripped image and the tool returns no name. The body bakes
-    ///   no `#function`/`#file` literal either (its only literal is the interpolation prefix below,
-    ///   and it uses `print`, not `KSLog`), so the name is not recoverable. The signature is read off
-    ///   the `parseShaders` call site: the 29-count literal lands in the first String pair, the line
-    ///   in the second, so pattern precedes text.
-    ///
-    /// Decode notes:
-    ///   • the range is `NSRange(text.startIndex..., in: text)`. The instantiated mangled type
-    ///     @0x103c30782 is `<symref>y<symref>G`, whose GOT slots dyld-bind to
-    ///     `_$ss16PartialRangeFromVMn` and `_$sSS5IndexVMn` = `PartialRangeFrom<String.Index>`; the
-    ///     lowerBound immediate 0xf has encodedOffset 0 (bits 63:16), i.e. position 0 = `startIndex`.
-    ///   • ⚠️ the `do`/`catch` is NOT visible in the decompile — Ghidra reports
-    ///     "Removing unreachable block (ram,0x000101a7e04c)" and emits no error handling, while the
-    ///     callee glossary still lists print / localizedDescription / getErrorValue. That
-    ///     contradiction is the tell; the block was recovered by disassembling 0x101a7e04c-0x101a7e130
-    ///     (`cbz x21` at 0x101a7e048 is the error test, and the arm ends by returning the empty array).
-    ///   • the message is interpolation, not `+`: the storage is created EMPTY and grown to a
-    ///     compile-time constant 17 before the 15-character literal is stored, and 17 = 15 + 2*1 =
-    ///     `DefaultStringInterpolation.init(literalCapacity:interpolationCount:)`. `String.+` cannot
-    ///     produce a constant 17 because it appends a right-hand side of unknown length. (The
-    ///     opposite call was correct in `GLSLError.errorDescription`, which has no such init.)
-    ///   • `NSRegularExpression(pattern:)`, `matches(in:range:)`, and `print`'s separator/terminator
-    ///     all pass their DEFAULT arguments (options 0, `" "`, `"\n"`), so the source omits them; an
-    ///     explicit `options: []` would be indistinguishable from omission here.
-    ///   • `groups` is a `map`, NOT an append loop. The binary calls
-    ///     `_createNewBuffer(bufferIsUnique: false, minimumCapacity: numberOfRanges,
-    ///     growForAppend: false)` — i.e. a reserve of exactly n — INSIDE the `numberOfRanges != 0`
-    ///     guard and before the loop, which is `Collection.map`'s `if n == 0 { return [] };
-    ///     reserveCapacity(n)`. The per-iteration growth check is the same callee with
-    ///     `(isUnique, count + 1, growForAppend: true)`, so the two are distinguishable by their third
-    ///     argument. An explicit `groups.reserveCapacity(n)` on an append loop does NOT reproduce it:
-    ///     that call would be emitted outside the `n != 0` guard. In-binary control: `parseShaders`'
-    ///     `lines = …map { $0.trimmingCharacters(…) }` emits the identical `(0, n, 0)` call.
-    private func regexMatches(_ pattern: String, _ text: String) -> [String] {
-        var result = [String]()
-        do {
-            let regex = try NSRegularExpression(pattern: pattern)
-            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-            for match in matches {
-                let groups = (0 ..< match.numberOfRanges).map { i -> String in
-                    if let range = Range(match.range(at: i), in: text) {
-                        return String(text[range])
-                    } else {
-                        return ""
-                    }
+    /// ⚑[tool=decompile ref=transformSource:0x101a7cd84 result=pinned] the per-shader Metal-compile
+    ///   loop that consumes `MPVShader.transformSource` is still pinned in `init` above. Ownership of
+    ///   that transform was DISCHARGED this session and it is a method on `MPVShader`, NOT on this
+    ///   class — see the note on `regexMatches` below.
+}
+
+/// Runs `pattern` over `text` and returns every range of every match, flattened — for each match,
+/// element 0 is the whole match and 1+ are its capture groups. That flattening is why
+/// `Anime4K.parseShaders` tests `matches.count == 2` and reads `matches[1]`
+/// (@0x101a7dfe8, 300 instructions).
+///
+/// MODULE SCOPE, not a member — this is a decoded fact, not a style choice:
+///   • the function TAKES NO SELF. Neither caller sets x20 (swiftself) before the `bl`: the
+///     `parseShaders` site @0x101a7ea38 passes x0/x1 = pattern, x2/x3 = text, and the
+///     `transformSource` site @0x101a7d3d0 actually uses x20 as an ARGUMENT SOURCE (`mov x2, x20`)
+///     without restoring its own self (saved in x23 at its prologue) first. The body never
+///     dereferences x20 and freely clobbers it as a scratch inout pointer.
+///   • its two callers belong to DIFFERENT types — `Anime4K.parseShaders` and
+///     `MPVShader.transformSource` @0x101a7cd84 (that transform reads x20 at offsets 0x00/0x10/0x18/
+///     0x20/0x98, which is MPVShader's field layout, and its `MetalShaderExporter` call site copies
+///     0xa0 bytes — MPVShader's exact size — into a stack slot and passes it as indirect self). A
+///     member marked `private` on `Anime4K` could not be reached from `MPVShader`, so the earlier
+///     placement inside the class was wrong.
+///   • ⚑ access level INFERRED. The image is stripped, so no linkage survives. `internal` is the
+///     minimum that satisfies the observed cross-type call GIVEN this reconstruction's per-type file
+///     split; the original almost certainly used `fileprivate`, since the binary's source
+///     organisation puts this whole subsystem in one `KSPlayer/Anime4K.swift`. That difference is a
+///     consequence of our file layout, not a claim about the binary.
+///   • absence of a self at the ABI is NOT by itself proof of a free function — an unused `self` can
+///     be dead-argument-eliminated. What forces module scope here is the cross-type call, which is
+///     unambiguous. (`parseShaders` has the same no-self signature but only ONE caller,
+///     `Anime4K.init`, so nothing forces it out and it stays a private member.)
+///
+/// ⚑ INFERRED name ⚑[tool=recover_swift_function_name ref=regexMatches:0x101a7dfe8 result=none]
+///   — `#function` is absent from the stripped image and the tool returns no name. The body bakes
+///   no `#function`/`#file` literal either (its only literal is the interpolation prefix below,
+///   and it uses `print`, not `KSLog`), so the name is not recoverable. The signature is read off
+///   the `parseShaders` call site: the 29-count literal lands in the first String pair, the line
+///   in the second, so pattern precedes text.
+///
+/// Decode notes:
+///   • the range is `NSRange(text.startIndex..., in: text)`. The instantiated mangled type
+///     @0x103c30782 is `<symref>y<symref>G`, whose GOT slots dyld-bind to
+///     `_$ss16PartialRangeFromVMn` and `_$sSS5IndexVMn` = `PartialRangeFrom<String.Index>`; the
+///     lowerBound immediate 0xf has encodedOffset 0 (bits 63:16), i.e. position 0 = `startIndex`.
+///   • ⚠️ the `do`/`catch` is NOT visible in the decompile — Ghidra reports
+///     "Removing unreachable block (ram,0x000101a7e04c)" and emits no error handling, while the
+///     callee glossary still lists print / localizedDescription / getErrorValue. That
+///     contradiction is the tell; the block was recovered by disassembling 0x101a7e04c-0x101a7e130
+///     (`cbz x21` at 0x101a7e048 is the error test, and the arm ends by returning the empty array).
+///   • the message is interpolation, not `+`: the storage is created EMPTY and grown to a
+///     compile-time constant 17 before the 15-character literal is stored, and 17 = 15 + 2*1 =
+///     `DefaultStringInterpolation.init(literalCapacity:interpolationCount:)`. `String.+` cannot
+///     produce a constant 17 because it appends a right-hand side of unknown length. (The
+///     opposite call was correct in `GLSLError.errorDescription`, which has no such init.)
+///   • `NSRegularExpression(pattern:)`, `matches(in:range:)`, and `print`'s separator/terminator
+///     all pass their DEFAULT arguments (options 0, `" "`, `"\n"`), so the source omits them; an
+///     explicit `options: []` would be indistinguishable from omission here.
+///   • `groups` is a `map`, NOT an append loop. The binary calls
+///     `_createNewBuffer(bufferIsUnique: false, minimumCapacity: numberOfRanges,
+///     growForAppend: false)` — i.e. a reserve of exactly n — INSIDE the `numberOfRanges != 0`
+///     guard and before the loop, which is `Collection.map`'s `if n == 0 { return [] };
+///     reserveCapacity(n)`. The per-iteration growth check is the same callee with
+///     `(isUnique, count + 1, growForAppend: true)`, so the two are distinguishable by their third
+///     argument. An explicit `groups.reserveCapacity(n)` on an append loop does NOT reproduce it:
+///     that call would be emitted outside the `n != 0` guard. In-binary control: `parseShaders`'
+///     `lines = …map { $0.trimmingCharacters(…) }` emits the identical `(0, n, 0)` call.
+func regexMatches(_ pattern: String, _ text: String) -> [String] {
+    var result = [String]()
+    do {
+        let regex = try NSRegularExpression(pattern: pattern)
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        for match in matches {
+            let groups = (0 ..< match.numberOfRanges).map { i -> String in
+                if let range = Range(match.range(at: i), in: text) {
+                    return String(text[range])
+                } else {
+                    return ""
                 }
-                result += groups
             }
-        } catch {
-            print("invalid regex: \(error.localizedDescription)")
+            result += groups
         }
-        return result
+    } catch {
+        print("invalid regex: \(error.localizedDescription)")
     }
+    return result
 }
