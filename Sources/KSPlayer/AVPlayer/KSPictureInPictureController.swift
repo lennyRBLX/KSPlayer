@@ -10,6 +10,23 @@ import AVKit
 @available(tvOS 14.0, *)
 @MainActor
 public class KSPictureInPictureController: AVPictureInPictureController {
+    // ⚑ VTABLE-SHAPE DIVERGENCE (session 60) — slot bodies recovered, member identity is NOT.
+    //   Forward metadata @0x1044217e0 (descriptor 0x1039ece54, name _TtC8KSPlayer28KSPictureInPictureController)
+    //   carries class_ro_t @0x104421780 with ivars == NULL — the binary class has ZERO stored properties
+    //   (independently confirmed by dump_binary_field_types.py: "total fields: 0") — and a 3-entry vtable
+    //   whose bodies are each ONE statement:
+    //     slot 0 @0x1019c75cc (2 instr) `mov x0,x20; b 0x10346d1c0` -> selref 0x10440e238 -> "startPictureInPicture"
+    //     ⚑[tool=ghidra ref=startPictureInPicture:0x1019c75cc result=pinned]
+    //     slot 1 @0x1019c75d4  UIControl().sendAction(<selref 0x10440e498 = "suspend">, to: UIApplication.shared, for: nil)
+    //     slot 2 @0x1019c7648 (2 instr) `mov x0,x20; b 0x10346d400` -> selref 0x10440e2c8 -> "stopPictureInPicture"
+    //     ⚑[tool=ghidra ref=stopPictureInPicture:0x1019c7648 result=pinned]
+    //   Both selectors are dispatched EXACTLY ONCE binary-wide (get_xrefs_to on each stub returns a single
+    //   UNCONDITIONAL_CALL, from the slot itself), so no larger method contains these calls. The three methods
+    //   are not @objc — baseMethodList @0x103471e38 has count=1, imp 0x1019c7588, which is none of them — and
+    //   recover_swift_function_name.py returns no name for any of the three. Their Swift member names are
+    //   therefore unrecoverable from this binary; do NOT infer them from what a PiP controller "would" have.
+    //   The declarations below are a later, larger revision (5 stored properties, 2 multi-statement methods).
+    //   Reconciling them is a class-level task, not a per-slot one.
     nonisolated(unsafe) private static var pipController: KSPictureInPictureController?
     private var originalViewController: UIViewController?
     private var view: KSPlayerLayer?

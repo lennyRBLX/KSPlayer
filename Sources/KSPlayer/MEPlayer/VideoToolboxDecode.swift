@@ -166,10 +166,20 @@ class VideoToolboxDecode: DecodeProtocol {
         }
     }
 
-    // slot30 @0x101a6ebf4. The four method slots run 29..32 in declaration order —
-    // decodeFrame @0x101a6ce44 · doFlushCodec · shutdown @0x101a6ec80 · decode — which
-    // is what pins `decode()` (below) to the 4-instruction slot-32 body rather than to
-    // this one: only the LAST slot is the bare three-store reset.
+    // slot30 @0x101a6ebf4. NAME PROVEN, not inferred: the DecodeProtocol witness table for
+    // VideoToolboxDecode (scripts/decode_witness_table.py --wt 0x1041d95c8, conf_desc 0x10356bbd8)
+    // lists its 4 requirements in protocol-declaration order —
+    //   req0 0x101a6ecfc (direct) · req1 ->0x101a6ce44 · req2 ->0x101a6ebf4 · req3 ->0x101a6ec80
+    // against DecodeProtocol's declaration order decode · decodeFrame · doFlushCodec · shutdown
+    // (MEPlayerItemTrack.swift:293-298). So req2 = doFlushCodec = THIS body, and req0 = decode()
+    // = the 4-instruction slot-32 body below. (This supersedes the earlier slot-ORDER argument,
+    // which could only pin the {doFlushCodec, decode} PAIR, never which was which.)
+    // Body, verbatim from disasm @0x101a6ebf4: `stp xzr,xzr,[x20,#0x30]` (startTime, maxTimestamp)
+    // · `mov x8,#-0x1; str x8,[x20,#0x40]` (lastTimestamp) · two VTDecompressionSession calls on
+    // session(+0xcf8).decompressionSession(+0x18) · beginAccess+__swiftEmptyArrayStorage on
+    // frames(+0xcf0) · `cmp w8,#0x1b` on session.assetTrack.codecpar.codec_id → needReconfig(+0x48)=1.
+    // ⚑ 0x1b = 27 = AV_CODEC_ID_H264, counted from AV_CODEC_ID_NONE in FFmpeg-n8.1.1
+    // libavcodec/codec_id.h:79 — written symbolically below, never as the raw ordinal.
     func doFlushCodec() {
         startTime = 0
         maxTimestamp = 0
@@ -191,10 +201,13 @@ class VideoToolboxDecode: DecodeProtocol {
         ff_dovi_ctx_unref(&doviContext)
     }
 
-    // slot32 @0x101a6ecfc, whole body (4 instr): `stp xzr,xzr,[x20,#0x30]` then
-    // `str #-1,[x20,#0x40]`. The two stored zeroes land on ONE `stp`, which is also the
+    // slot32 @0x101a6ecfc, whole body (4 instr): `stp xzr,xzr,[x20,#0x30]` · `mov x8,#-0x1` ·
+    // `str x8,[x20,#0x40]` · `ret`. The two stored zeroes land on ONE `stp`, which is also the
     // layout proof for the three fields — startTime@+0x30, maxTimestamp@+0x38 (adjacent,
-    // hence pairable) and lastTimestamp@+0x40.
+    // hence pairable) and lastTimestamp@+0x40. The -1 is a full-width 64-bit integer store,
+    // so these three are Int64, NOT the Double that l2_field_gate's unscoped symbol lookup
+    // reports for startTime (the gate itself marks that UNCHECKED / "verify via field-record mangle").
+    // NAME PROVEN by the DecodeProtocol witness table, req0 → this address directly (see doFlushCodec).
     func decode() {
         startTime = 0
         maxTimestamp = 0
