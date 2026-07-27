@@ -33,6 +33,58 @@ actor DemuxerIO {
     ///     (the known-answer control, proven prior sessions) ⇒ `any Error`.
     /// The 5 no-payload cases carry no associated values (field-record). ⚑ Only the closure `-> Void` return
     /// (mangling `y…`) is spelling-inferred.
+    ///
+    /// ── VALUE-WITNESS CORROBORATION — the declaration above is now re-derived a SECOND, independent way,
+    ///    from Event's own metadata + value witnesses rather than from the field record. Metadata @0x1041e1770
+    ///    (kind 0x201 = Enum, descriptor 0x1039f55a4 = this type) → its VWT @0x1041e16f8:
+    ///      size 25, stride 32, alignMask 7 (align 8), flags 0x00230007, extraInhabitantCount 253.
+    ///    • size 25 = 8 (`to: Double`) + 16 (the two-word `completion` closure) + 1 out-of-line tag byte @+0x18.
+    ///      The tag is OUT-OF-LINE because `seek`'s first payload word is a `Double` (no spare bits) overlaid on
+    ///      `failed`'s `Error` pointer, so the cases share no spare bits — and flags indeed clears HasSpareBits
+    ///      (0x00080000). flags = HasEnumWitnesses | IsNonInline | IsNonPOD; IsNonBitwiseTakable (0x00100000) is
+    ///      clear, matching `initializeWithTake` @0x101b81a74 being a raw 25-byte copy (`ldr q0,[x1]` +
+    ///      `ldur q1,[x1,#9]`) — which is also where the 25 is directly observable.
+    ///    • extraInhabitantCount 253 ⇒ the tag byte takes exactly 3 values {0,1,2} (256 − 3) = 2 payload cases
+    ///      plus one shared "empty cases" tag. `getEnumTagSinglePayload` @0x100217dbc agrees: it treats that same
+    ///      byte as occupied only when `< 3`.
+    ///    • `getEnumTag` @0x101b81ad4 is the case-ORDER proof and it is exact:
+    ///        `w8 = word0; w9 = tagByte; w8 += 2; return w9 > 1 ? w8 : w9`
+    ///      ⇒ tag 0 → index 0 (`seek`), tag 1 → index 1 (`failed`), tag 2 → index `word0 + 2`, i.e. the five
+    ///      no-payload cases occupy indices 2…6 in declaration order (startReading/pause/resume/endOfStream/
+    ///      close). That reproduces the field-record order AND `process(_:)`'s control dispatch {0,1,2,3,else}
+    ///      from a different section of the binary.
+    ///
+    /// ── COMPILER-EMITTED ARC helpers for this enum — PINNED, so they are never re-attempted as source bodies.
+    ///    They carry no user source; the declaration below is what emits them.
+    ///    ⚑[tool=decompile_function ref=outlined copy of DemuxerIO.Event:0x101b7f8d4 result=pinned]
+    ///    ⚑[tool=decompile_function ref=outlined destroy of DemuxerIO.Event:0x101b81988 result=pinned]
+    ///    Both take the value exploded into registers (x0/x1/x2 = payload words 0-2, w3 = the +0x18 tag byte —
+    ///    the explosion is read off @0x101b819ac, which does `ldp x20,x21,[x1]` / `ldr x22,[x1,#0x10]` /
+    ///    `ldrb w23,[x1,#0x18]` straight into x0…x3) and are instruction-for-instruction mirrors, identical
+    ///    except for the two call targets. Both switch on the tag:
+    ///      · tag 0 (`seek`)   → `if completionFn != 0 { swift_retain / swift_release(completionCtx) }`
+    ///        (@0x1000cecec / @0x1000b6684). Two facts fall out: word0 (`to: Double`) is POD and is never
+    ///        touched, and the closure context is managed with plain `swift_retain`/`swift_release` — a NATIVE
+    ///        Swift box, not unknownObject/bridgeObject. So `completion` is a two-word Swift closure made
+    ///        Optional by a null function pointer, exactly as declared.
+    ///      · tag 1 (`failed`) → `swift_errorRetain` @0x10345cd00 / `swift_errorRelease` @0x10345ccf4 on word0 —
+    ///        the payload is a boxed `any Error` sharing word0 with `seek`'s Double.
+    ///      · tag 2            → `ret`. The five empty cases own nothing.
+    ///    Reached from the VWT entries destroy @0x101b81974 (VWT+0x08 — loads the 25 bytes and tail-calls the
+    ///    destroy helper), initializeWithCopy @0x101b819ac (VWT+0x10 — loads, calls the copy helper, stores the
+    ///    25 bytes to the destination) and assignWithCopy @0x101b81a08 (VWT+0x18 — copy-new, store, then
+    ///    destroy-old via @0x101b81988); plus exactly THREE inline call sites inside `process(_:)` @0x101b7e9d0,
+    ///    one per `seekingCompletionHandler = completion` store in the `.seek` branch below (.endOfStream /
+    ///    .failed / the active-state set). That 3-for-3 match is a further check on the branch: the binary's
+    ///    retain-new / store / release-old triple is precisely the ARC bookkeeping those three assignments
+    ///    require, and contributes no extra source statement.
+    ///    ⚑ WORKLIST CORRECTION — the unit id `DemuxerIO_slot26_seekHandler_101b7f8d4` is a MISATTRIBUTION.
+    ///      @0x101b7f8d4 is not a seek handler and not a vtable slot; its only non-code reference lies in
+    ///      __LINKEDIT (@0x10506fd22), not in any vtable, and slot26 is `process(_:)` @0x101b7e9d0 (below).
+    ///      `classify_compiler_helpers.py` also reads it as SOURCE (fan-in 3 ≤ 5) — a known limit, not a result:
+    ///      that heuristic is calibrated to separate MODULE-SHARED runtime helpers, and a TYPE-LOCAL outlined
+    ///      value witness legitimately has only a handful of callers. Fan-in cannot classify this family;
+    ///      membership in the type's VWT (above) can, and should be the check used for the sibling helpers.
     enum Event {
         case seek(to: Double, completion: (@Sendable (Bool) async throws -> Void)?)
         case failed(any Error)

@@ -180,6 +180,12 @@ public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
 
 // §7.2 — Souce→Source + FileURL→URL. Stateless (dropped the recon's stored `infos`, §5.1).
 public class DirectorySubtitleDataSource: URLSubtitleDataSource {
+    // The class's ONLY vtable entry (slot 0, kind=init) is @0x10084c444, a one-instruction
+    // `b 0x10008090c`; that target is the whole allocating init and it is
+    // `swift_allocObject(metadata, size: 0x10, alignMask: 7)` tail-called with nothing after it.
+    // Size 0x10 == the bare object header, so the class carries NO stored property — a second,
+    // independent confirmation of the §5.1 "dropped the recon's stored `infos`" finding, and the
+    // reason the initializing init left no separate body (an empty `init()` inlines away).
     public init() {}
     // FUN_101aa5c5c → FUN_101aac684 (setup) → FUN_101aac728 (isFileURL + contentsOfDirectory + filter) → FUN_101aa4844
     //   (in-place mergeSort by URLSubtitleInfo.name). Binary-pinned: isFileURL guard, contentsOfDirectory(at:

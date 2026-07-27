@@ -380,11 +380,33 @@ open class SubtitleModel: ObservableObject {
     //   Convenience default kept as the consumer-ripple bridge; M2 verifies the real init / options wiring.
     public convenience init() { self.init(options: KSOptions()) }
 
-    // FUN_101ab3a3c (public entry FUN_101ab3a34 passes reselect=true). Dedupe-by-subtitleID with REPLACE
-    // (base cce7002 only SKIPPED-if-present — the Forward divergence). `reselect` (default true) gates the
-    // re-point of selected/secondary to the new instance (FUN_101ab3d64, single-call-site helper inlined).
-    // ⚑ `reselect` param name unrecoverable (P28) — recon-chosen for the semantic bool the public entry sets true.
-    public func addSubtitle(info: any SubtitleInfo, reselect: Bool = true) {
+    // Two vtable slots, not one: binary slot 95 @0x101ab3a34 is `mov w2,#0x1 ; b 0x101ab3a3c`
+    // and slot 96 @0x101ab3a3c is the real body. Both carry their own MethodDescriptor
+    // (0x1039f2034 / 0x1039f203c) and their own metadata vtable word (0x1044ef358 / 0x1044ef360).
+    //
+    // This was previously spelled as ONE method with `reselect: Bool = true`. That spelling is
+    // WRONG and cannot produce the binary: a Swift default argument emits ONE vtable entry plus a
+    // separate default-argument *generator* that is not in the vtable, so it yields 111 slots where
+    // the binary has 112. PROVEN by compiling both spellings (session 58):
+    //
+    //   one decl + default arg  -> sil_vtable has a single `addSubtitle(info:reselect:)` entry
+    //   two overloads           -> sil_vtable has BOTH, adjacent, 1-arg FIRST (declaration order)
+    //
+    // and the 1-arg overload's codegen on a devirtualizable self-call is exactly
+    //   `mov w2, #1 ; b <addSubtitle(info:reselect:)>`
+    // i.e. instruction-for-instruction the binary's slot 95. So the source is an overload PAIR.
+    // No name is invented here — `addSubtitle(info:)` is the same base name with the existing
+    // `info:` label, and `reselect` keeps its existing pin below, unchanged by this split.
+    public func addSubtitle(info: any SubtitleInfo) {
+        addSubtitle(info: info, reselect: true)
+    }
+
+    // @0x101ab3a3c (slot 96 — the real body; slot 95 above forwards with reselect=true).
+    // Dedupe-by-subtitleID with REPLACE (base cce7002 only SKIPPED-if-present — the Forward
+    // divergence). `reselect` gates the re-point of selected/secondary to the new instance
+    // (@0x101ab3d64, single-call-site helper inlined).
+    // ⚑ `reselect` param name unrecoverable (P28) — recon-chosen for the semantic bool slot 95 sets true.
+    public func addSubtitle(info: any SubtitleInfo, reselect: Bool) {
         if let index = subtitleInfos.firstIndex(where: { $0.subtitleID == info.subtitleID }) {
             subtitleInfos[index] = info
         } else {

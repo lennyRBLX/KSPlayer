@@ -402,6 +402,18 @@ open class AbstractAVIOContext {
         self.bufferSize = bufferSize
     }
 
+    // ── The 11-entry own vtable (descriptor 0x1039edc0c, VTableOffset 12 words = meta+0x60), walked
+    // slot-by-slot. It corroborates the DECLARATION ORDER below independently of the field records,
+    // because three of the eleven impls are shared bodies and only this ordering explains which pair
+    // each one serves:
+    //   0/1/2 readLimit getter/setter/modify · 3 init(bufferSize:) @0x1019e2448
+    //   4 read  @0x100137314 ─┐ both `return size` — arg-in-x1 passthrough, one body
+    //   5 write @0x100137314 ─┘
+    //   6 seek  @0x10000e52c ─┐ `return offset` is a bare `ret` (offset is already the return reg)
+    //   8 close @0x10000e52c ─┘ and `{}` is also a bare `ret` — so these two coalesce as well
+    //   7 fileSize @0x10047dae8 = `mov x0,#-1; ret`
+    //   9 urlContext / 10 addSub @0x10002d9d4 (the `nil` pair already noted below)
+    // Any other ordering would put a non-matching body on one half of a shared pair.
     open func read(buffer _: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
         size
     }

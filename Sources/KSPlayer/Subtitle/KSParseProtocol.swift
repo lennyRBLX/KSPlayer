@@ -25,6 +25,11 @@ public extension KSOptions {
 public extension String {}
 
 public extension KSParseProtocol {
+    // Default body @0x10002d9dc — 3 instructions, `adrp/ldr` the __got slot 0x104112d00 then `ret`.
+    // That slot is a dyld bind to libswiftCore `__swiftEmptyArrayStorage` (`dyld_info -fixups`), so the
+    // return really is the empty-array singleton and not a heap allocation: `[]`, nothing else.
+    // Shared as the witness by every conformer that does not override it (FFmpegSubtitleParse slot 1,
+    // AssImageParse — see those files).
     func parsePart(scanner: Scanner) -> [SubtitlePart] { [] }
 
     func parse(scanner: Scanner) -> [SubtitlePart] {

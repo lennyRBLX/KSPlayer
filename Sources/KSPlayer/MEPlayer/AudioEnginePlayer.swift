@@ -197,7 +197,27 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     // with a thunk in the base slot" has been identified; an older toolchain is the leading
     // hypothesis. NOT a behavioural divergence — every body below is verdicted faithful —
     // and NOT applicable to entries 0..14, which precede init and are reproduced exactly.
-    // Deliberately left as a pin rather than guessed at. Re-derive alongside
+    //
+    // RE-DERIVED session 58 — the pin STANDS, and one candidate explanation is now RULED OUT.
+    //   • The negative claim above was re-tested directly: compiling `open class Sub: Base` with
+    //     `public required override init()` + `open override func prepare()` yields a sil_vtable
+    //     containing ONLY `[override]` records pointing straight at the subclass methods, and no
+    //     own entries. Current-toolchain behaviour confirmed; the pin's premise is sound.
+    //   • SubtitleModel's superficially identical shape is a DIFFERENT mechanism and must not be
+    //     conflated with this one. There, slots 95/96 (and 99/105) are BOTH own-vtable slots and
+    //     resolve to an ordinary overload PAIR — one declaration forwarding to another — which
+    //     reproduces byte-exactly (`mov w2,#1 ; b <target>`, and a bare `b <target>` when the
+    //     forward needs no argument change). See KSSubtitle.swift addSubtitle(info:).
+    //     Here, by contrast, 0x101a0f7ec and 0x101a0f7f4 are NOT vtable slots at all — the own
+    //     vtable ends at 0x1039ee854 and their descriptor xrefs are 0x1039ee860 / 0x1039ee86c,
+    //     i.e. OVERRIDE-table entries (they are also referenced from 0x1041d6f88 / 0x1041d6f90).
+    //     An overload pair therefore cannot explain this shape: an overload introduces a second
+    //     OWN entry, never a thunk in a superclass's slot.
+    //   • Reading 0x101a0f7ec as "invoke a stored closure at self+0x248" is WRONG and was
+    //     considered and rejected: for an initializer x20 is the METATYPE, so 0x248 is exactly
+    //     this class's own vtable word 15 (0x1d0 + 15*8), as the line above already states.
+    // The mechanism remains unidentified; the older-toolchain hypothesis is untouched by the
+    // above. Deliberately left as a pin rather than guessed at. Re-derive alongside
     // AudioBaseOutput's own 34-entry set, which shows a similar shortfall.
     //
     // init: entry 15 @0x101a0df64 is the allocating entry — swift_allocObject(size: 0x7c,

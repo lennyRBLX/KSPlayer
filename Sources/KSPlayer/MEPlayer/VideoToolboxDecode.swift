@@ -166,6 +166,10 @@ class VideoToolboxDecode: DecodeProtocol {
         }
     }
 
+    // slot30 @0x101a6ebf4. The four method slots run 29..32 in declaration order —
+    // decodeFrame @0x101a6ce44 · doFlushCodec · shutdown @0x101a6ec80 · decode — which
+    // is what pins `decode()` (below) to the 4-instruction slot-32 body rather than to
+    // this one: only the LAST slot is the bare three-store reset.
     func doFlushCodec() {
         startTime = 0
         maxTimestamp = 0
@@ -187,6 +191,10 @@ class VideoToolboxDecode: DecodeProtocol {
         ff_dovi_ctx_unref(&doviContext)
     }
 
+    // slot32 @0x101a6ecfc, whole body (4 instr): `stp xzr,xzr,[x20,#0x30]` then
+    // `str #-1,[x20,#0x40]`. The two stored zeroes land on ONE `stp`, which is also the
+    // layout proof for the three fields — startTime@+0x30, maxTimestamp@+0x38 (adjacent,
+    // hence pairable) and lastTimestamp@+0x40.
     func decode() {
         startTime = 0
         maxTimestamp = 0
