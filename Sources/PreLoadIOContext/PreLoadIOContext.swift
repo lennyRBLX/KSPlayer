@@ -70,7 +70,9 @@ public class PreLoadIOContext: CacheIOContext {
     // s20 @101ba78a4 — `var timeIndex: [TimeIndexEntry]` (name inferred, devirt).
     //   FAITHFUL (full): the lone getter that closes the stored-field triples (vtable_walk
     //   puts the field triples at slots 2-19 and the first deep-IO method at slot 21, so
-    //   this is declared exactly here). Straight-line, single exit: retain _timeIndexLock,
+    //   this is declared exactly here). Straight-line, single exit: LOAD _timeIndexLock
+    //   (a bare ivar load feeding the msgSend stub — there is NO retain of the lock; the
+    //   body's only runtime calls are `swift_beginAccess` and `swift_bridgeObjectRetain`),
     //   `objc lock`, READ `swift_beginAccess` (flags 0,0) on the `_timeIndex` ivar-offset
     //   global, load the array word, `swift_bridgeObjectRetain` it (the +1 the return
     //   hands out), `objc unlock`, return. The `_x`-prefixed storage + a locked public

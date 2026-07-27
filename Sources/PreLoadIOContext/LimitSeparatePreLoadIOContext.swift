@@ -65,8 +65,10 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // s20 @101ba4298 — `var timeIndex: [TimeIndexEntry]` (name inferred, devirt).
     //   FAITHFUL (full): vtable_walk puts the field triples at slots 8-19 and the two
     //   inits at 21/22, so this lone getter is declared exactly here, between the last
-    //   stored field and the designated init. Straight-line, single exit: retain
-    //   _timeIndexLock, `objc lock`, READ `swift_beginAccess` (flags 0,0) on the
+    //   stored field and the designated init. Straight-line, single exit: LOAD
+    //   _timeIndexLock (a bare ivar load feeding the msgSend stub — there is NO retain of
+    //   the lock; the body's only runtime calls are `swift_beginAccess` and
+    //   `swift_bridgeObjectRetain`), `objc lock`, READ `swift_beginAccess` (flags 0,0) on the
     //   `_timeIndex` ivar-offset global, load the array word, `swift_bridgeObjectRetain`
     //   (the +1 handed to the caller), `objc unlock`, return. PreLoadIOContext#slot20
     //   @0x101ba78a4 carries the identical shape over its own `_timeIndex`/`_timeIndexLock`

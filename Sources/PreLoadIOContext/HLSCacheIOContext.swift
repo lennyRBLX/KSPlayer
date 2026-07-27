@@ -267,7 +267,9 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     // s26 @101b9ad24 — `var subContextCount: Int` (name inferred, devirt). FAITHFUL
     //   (full): the LAST vtable slot (vtable_walk: VTableSize=27, so slot 26 is declared
     //   after the four sub-context methods above — hence its position here). Straight-line
-    //   body, no branches: retain subContextsLock into a register, `objc lock`, then a
+    //   body, no branches: LOAD subContextsLock into a register (a bare ivar load feeding
+    //   the msgSend stub — there is NO retain anywhere in this body; its only runtime call
+    //   is `swift_beginAccess`), `objc lock`, then a
     //   READ `swift_beginAccess` (flags 0,0) on the `subContexts` ivar-offset global,
     //   load `*(storage + 0x10)` — `count` in `__RawDictionaryStorage`, which sits right
     //   after the 16-byte object header — then `objc unlock` and return that word. No
