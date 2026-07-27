@@ -71,6 +71,28 @@ open class KSAVPlayer {
     // Recon KVO NSKeyValueObservations → Combine observer cancellables; `urlAsset` → `io: Either<URL, AVAsset>`.
     // Every stored field carries an explicit `: Type` annotation. Method bodies that used the removed fields are
     // grounded `⚑ UNRESOLVED → KSAVPlayer M2` stubs (the AVPlayer-wrapper bodies are M2).
+    //
+    // ⚑[tool=vtable_walk ref=KSAVPlayer.nominalTypeDescriptor:0x1039ec148 result=LOCATED] the 103-slot vtable
+    //   (VTableDescriptorHeader @0x1039ec180) lays out one getter/setter/_modify triple per property in DECLARATION
+    //   order, and every one of those accessors is COMPILER-GENERATED for the stored fields below — there is no source
+    //   text to recover for them. The live ones are slots 6 (io getter), 9–11 (shouldSeekTo), 18–20 (subtitleTracks),
+    //   30–32 (pipController), 33–35 (delegate), 36–38 (duration), 39–41 (fileSize), 46–48 (chapters), 49–51
+    //   (naturalSize) and 58/59 (error get/set). Proof of shape: each body does nothing but
+    //   `swift_beginAccess(self + <field-offset global @0x104c63048…0x104c630a0>, …)` and then loads (getter, flags 0)
+    //   / stores (setter, flags 1) / yields (`_modify`, flags 0x21 = Modify|Tracking) that address. Control: the same
+    //   compiler's output for THIS file — KSAVPlayer.delegate.setter / .delegate.modify / .naturalSize.modify in
+    //   reconstruction/KSPlayer_recon_s59.dylib — matches instruction-for-instruction (only the offset-global and stub
+    //   addresses differ, plus a back-deployment `coroFrameAlloc` availability check Forward carries and the dylib does
+    //   not), down to the `coroFrameAlloc(0x38, 0xbed)` frame magic. All-dropped accessors leave an all-null
+    //   triple (playerLooper 12–14, mediaPlayerTracks 15–17, the three observer*Cancellables sets 21–29,
+    //   shouldResumePlayback 52–54) — which is how the field↔slot alignment above was cross-checked.
+    // ⚑[tool=dyld_info ref=KSPlayer.KSAVPlayer.io.setter:0x10198eb18 result=LOCATED] Forward's export trie carries 37
+    //   KSAVPlayer accessor symbols, ALL aliasing one address, 0x10198eb18 = the shared `swift_deletedMethodError`
+    //   stub — i.e. exactly the accessors the optimiser dropped (they match the all-null triples above). Their mangled
+    //   names show `io`, `error`, `options` and `shouldResumePlayback` with NO fileprivate discriminator, in contrast
+    //   to `(cancellable in _96682D5E1A2F36FD0BE1DC3A2D928BC7)`, so those four are NOT `private` in Forward. Left
+    //   spelled `private` here on purpose: mangling cannot separate internal from public, and widening the access
+    //   level re-scopes their l2 field checks from UNCHECKED to CHECKED for a reason unrelated to this batch.
     private var cancellable: AnyCancellable?
     private var periodicTimeObserver: Any?
     private let playerView: KSAVPlayerView = KSAVPlayerView()
@@ -92,7 +114,30 @@ open class KSAVPlayer {
     //   byte-count fields). MediaPlayback.fileSize migrated Double→Int64 (session 16b); l2 UNCHECKED (GOT-external field-record).
     public private(set) var fileSize: Int64 = 0
     public private(set) var playableTime: TimeInterval = 0
-    public let chapters: [Chapter] = []
+    // ⚑[tool=vtable_walk ref=KSAVPlayer.nominalTypeDescriptor:0x1039ec148 result=LOCATED] Forward declares ONE MORE
+    //   member between `playableTime` and `chapters` that has no counterpart here: vtable slot 45, a lone live getter
+    //   @0x1019a1244 (get-only — no setter/_modify slot follows it, and the playableTime triple 42–44 and the chapters
+    //   triple 46–48 bracket it). What the body establishes without guessing: it returns an Array (one path returns
+    //   `__swiftEmptyArrayStorage`), it reads the stored `duration` field and takes the empty-array path when
+    //   `duration <= 0`, it performs a `swift_dynamicCast`, and it dispatches a method at metadata offset +0x458 on
+    //   self. Type and name are not established — a genuinely un-reconstructed computed property, not an artifact.
+    // Forward stores `chapters` MUTABLY, not as a `let`: the vtable carries a live setter (slot 47 @0x1019a1380,
+    // tail-calling the module-shared outlined accessor @0x1005a07d4, fan-in 14) AND a live `_modify` coroutine
+    // (slot 48 @0x1019a138c, `swift_beginAccess` flags 0x21 = Modify|Tracking on the `chapters` ivar-offset global
+    // @0x104c63088) — neither is the deleted-method stub. Control: this file's own `public let chapters` compiles to a
+    // getter ONLY — `nm reconstruction/KSPlayer_recon_s59.dylib | grep KSAVPlayerC8chapters` yields zero `vs`/`vM`
+    // symbols — so a live setter+`_modify` pair can only come from a `var`.
+    // The setter's ACCESS LEVEL *is* decidable, and it is plain `public` — `private(set)` is refuted. A
+    // `private(set)` setter is not overridable, so the compiler emits NO modify coroutine for it; only plain
+    // `public var` emits the getter/setter/modify triple that slots 46–48 carry. Compiled both spellings and read
+    // `sil_vtable` (P110 — the same lever that settled the addSubtitle overload pair @108752e):
+    //   public private(set) var chapters -> #chapters!getter, #chapters!setter                (2 entries, NO modify)
+    //   public var chapters              -> #chapters!getter, #chapters!setter, #chapters!modify (3 entries)
+    // Slot 48 @0x1019a138c is a live modify, so the declaration cannot be `private(set)`.
+    // (Superseded reasoning, recorded so it is not re-derived: `private(set)` had been chosen on convention —
+    //  MediaPlayerProtocol asks only for `{ get }` and the sibling MEPlayerItem.chapters is spelled that way —
+    //  on the false premise that both spellings emit the same three slots. Convention lost to compilation.)
+    public var chapters: [Chapter] = []
     public var naturalSize: CGSize = .zero
     private var shouldResumePlayback: Bool = false
     private var options: KSOptions {
@@ -114,7 +159,20 @@ open class KSAVPlayer {
 
     // binary `$__lazy_storage_$_dynamicInfo` (reflection-filtered lazy backing); recon had `let dynamicInfo = nil`.
     // ⚑ UNRESOLVED → KSAVPlayer M2: the binary builds a DynamicInfo lazily (metadata/bytesRead/bitrate blocks).
+    // The lazy triple is vtable slots 61–63; the getter @0x1019a1a3c is 0x4d4 bytes (vs. the 16-instruction generated
+    // getters around it), i.e. it holds the whole lazy initialiser — that body is the M2 target.
     public lazy var dynamicInfo: DynamicInfo? = nil
+
+    // Declared HERE, between `dynamicInfo` and `bufferingProgress` — Forward's vtable puts this lone getter at slot 64,
+    // after the dynamicInfo triple (61–63) and before the bufferingProgress triple (65–67, getter live / setter+_modify
+    // dropped). Body (slot 64 @0x1019a1fa4, 10 instructions): load `playerView` from the fixed instance offset +0x38,
+    // load the KSAVPlayerView `player` ivar, then `objc_msgSend(-[AVPlayer playbackCoordinator])` via the stub
+    // @0x103466300 — so the receiver chain really is `playerView.player`, NOT the `player` extension property, and the
+    // property is get-only (no setter/_modify slot follows).
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
+    public var playbackCoordinator: AVPlaybackCoordinator {
+        playerView.player.playbackCoordinator
+    }
 
     public private(set) var bufferingProgress: UInt8 = 0 {
         didSet {
@@ -169,11 +227,6 @@ open class KSAVPlayer {
                 }
             }
         }
-    }
-
-    @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
-    public var playbackCoordinator: AVPlaybackCoordinator {
-        playerView.player.playbackCoordinator
     }
 
     #if os(xrOS)
@@ -426,21 +479,34 @@ extension AVAssetTrack {
 }
 
 class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
-    let formatDescription: CMFormatDescription?
-    let description: String
+    // Stored properties are in the binary's own declaration order, read from
+    // `__swift5_fieldmd` via `scripts/dump_binary_field_types.py AVMediaPlayerTrack`. Field
+    // metadata records declaration order, so matching it is faithful by construction — this
+    // is not cosmetic reshuffling, and `l2_field_gate` BLOCKs on `order differs` precisely
+    // because a wrong order is a wrong layout.
+    //
+    // ⚑[tool=dump_binary_field_types ref=AVMediaPlayerTrack.reorderSize:idx8 result=pinned]
+    //   The binary has 16 fields; this source has 15. `reorderSize: Swift.Int32` sits at
+    //   index 8, between `trackID` and `bitDepth`, and is NOT declared here. It is left out
+    //   rather than invented: adding a stored property changes the layout, and nothing in
+    //   this class reads or writes it, so there is no body to derive its use from. The gate
+    //   reports it as `field in binary, absent in source` — that FLAG is the marker.
     private let track: AVPlayerItemTrack
-    var nominalFrameRate: Float
-    let trackID: Int32
-    let rotation: Int16 = 0
-    let bitDepth: Int32
-    let bitRate: Int64
-    let name: String
-    let languageCode: String?
     let mediaType: AVFoundation.AVMediaType
-    let isImageSubtitle = false
-    var dovi: DOVIDecoderConfigurationRecord?
+    let name: String
+    let description: String
+    var nominalFrameRate: Float
+    let bitRate: Int64
+    let trackID: Int32
+    // reorderSize: Int32 — binary index 8, undeclared (see the pin above)
+    let bitDepth: Int32
+    let rotation: Int16 = 0
     let fieldOrder: FFmpegFieldOrder = .unknown
+    let isImageSubtitle = false
     var isPlayable: Bool
+    let languageCode: String?
+    var dovi: DOVIDecoderConfigurationRecord?
+    let formatDescription: CMFormatDescription?
     @MainActor
     var isEnabled: Bool {
         get {

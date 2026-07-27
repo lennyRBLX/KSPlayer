@@ -268,7 +268,31 @@ open class SubtitleModel: ObservableObject {
     // §7.3 — 24 fields in binary reflection order. @Published-backed → `_x` in field metadata;
     // `_translationSessionConf`/`_translationSession` are manual `_`-backings (computed accessors; the iOS18
     // TranslationSession is boxed for availability). Method bodies → P4 M2.
-    // FUN_101aaf314 — `translation` didSet (synthesized setter FUN_101aafdd0 = store-then-call-with-oldValue).
+    //
+    // ⚑ ACCESSOR-SLOT COLLAPSE (session 59). The descriptor is 112 slots; 0…93 are property accessors in
+    // strict getter/setter/modify TRIPLES (kind 2/3/4 read from MethodDescriptorFlags — kind 4 is
+    // ModifyCoroutine, NOT a read coroutine). Two families of those slots carry no source at all and
+    // collapse into the declarations below; recorded here so they are not re-mined as bodies:
+    //   • EVERY `modify` slot. Proven by compiling an `open class` probe (P110): a stored var, a get+set
+    //     computed var and a `didSet` var each emit exactly getter/setter/modify while a get-only var emits
+    //     ONLY a getter — so the third member of every triple is the synthesized `modify` coroutine. Each
+    //     body is a yield-once ramp, and for the plain stored properties the resume funclet is literally
+    //     `_swift_endAccess` (0x100046b24 → 0x10003ba24 → 0x10345cce8), SHARED between properties.
+    //   • EVERY `@Published` accessor. The bodies call Combine's property-wrapper static subscript with the
+    //     `\.x` / `\._x` keypath pair: GOT slots 0x10410ce50/e58/e48 bind (dyld_info -fixups) to
+    //     `Combine.Published.subscript(_enclosingInstance:wrapped:storage:)` get/set/modify (…luigZ/luisZ/
+    //     luiMZ); the `$x` projection's accessors call `Combine.Published.projectedValue` get/set
+    //     (0x10410ce38/e40). All compiler-synthesized property-wrapper machinery.
+    // Keypath-pair → property (patterns at 0x10356d…, emitted in declaration order; d140/d168 and d1e8/d210
+    // were pinned by earlier sessions and anchor the rest): d140/d168 subtitleInfos · d198/d1c0
+    // searchedSubtitleInfos · d1e8/d210 parts · d240/d268 flag · d288/d2b0 subtitleTranslateY · d2d0/d2f8
+    // screenSize — corroborated by each getter's return register (flag `ldr x0` = 1 word · subtitleTranslateY
+    // `ldr s0` = Float · screenSize `ldp d0,d1` = CGSize). Field offsets come from runtime globals because
+    // `Published<T>` is a resilient Combine type, so SubtitleModel's layout is not statically known.
+    //
+    // @0x101aaf314 — `translation` didSet. Slots 0/1/2 are its accessors and carry NO source: the setter
+    // @0x101aafdd0 is the synthesized didSet forwarder (`swift_beginAccess` → `ldrb` oldValue → `strb`
+    // newValue → `bl 0x101aaf314`) and the modify @0x101aafe14 is the yield-once ramp over self+0x10.
     // Toggling ON (re)builds the iOS-18 TranslationSession.Configuration only when a subtitle is selected but no
     // config exists yet (the selectedSubtitleInfo willSet covers the subtitle-change side); toggling OFF clears it.
     // Configuration(source: subtitle language, target: Locale.current.language) — byte-confirmed via the
@@ -294,14 +318,51 @@ open class SubtitleModel: ObservableObject {
     }
     private var _translationSessionConf: Any?
     private var _translationSession: AnyObject?
+    #if canImport(Translation) && !os(tvOS) && !os(watchOS)
+    // Descriptor group g4 = slots 12/13/14 (getter 0x101ab05e8 · setter 0x101ab0634 · modify 0x101ab0688) —
+    // the TYPED view over the `_translationSession` box, sitting between that box (g3, slots 9/10/11) and
+    // `subtitleDataSources` (g5): exactly the `_x`-box + typed-accessor idiom §7.3 already records for the
+    // two `_`-backings. 43 of the 112 method descriptors carry Impl rel==0 — a genuine NULL, so the link
+    // step eliminated the never-virtually-dispatched accessors; g3/g5 are among them, which is why the two
+    // boxes contribute no bodies while their typed views (g2/g4) do.
+    // Getter = `_translationSession as? TranslationSession`: self+0x38 loaded, then `swift_dynamicCastClass`
+    // against the metadata from 0x103452cec, whose GOT slot 0x104110ff0 binds (dyld_info -fixups) to
+    // `Translation/_$s11Translation0A7SessionCMa` = Translation.TranslationSession. The cast is CONDITIONAL
+    // (dynamicCastClass + null-test → nil, not …Unconditional), hence `as?` not `as!`.
+    // The modify @0x101ab0688 is the synthesized computed-property coroutine (getter inlined into a temp,
+    // yield, continuation 0x101ab06f4 writes back) — no source, see the collapse note above.
+    // ⚑ P28: the property's own name is stripped (recover_swift_function_name 0x101ab05e8 → no #function,
+    //   no labels) → recon-named for the type it yields.
+    @available(iOS 18, macOS 15, *)
+    private var translationSession: TranslationSession? {
+        get { _translationSession as? TranslationSession }
+        set {
+            _translationSession = newValue
+            // 0x101ab0634: after the store, `cbz` @0x101ab065c → `bl 0x101ab68d8` @0x101ab0660. A non-nil
+            // session invalidates the in-flight query (generation/sequence bump + query-time/parts reset) so
+            // the next tick re-queries and translates.
+            if newValue != nil {
+                // ⚑[tool=prefetch_decompiles ref=SubtitleModel.searchSubtitle:0x101ab68d8 result=pinned]
+                //   The CALL is proven; its SOURCE SPELLING is not. The call site materialises NO arguments
+                //   (x0 holds the `swift_unknownObjectRelease` return, x1/x2 are untouched) because the
+                //   callee provably reads none of them — so no argument value survives in the binary, and
+                //   this 2-arg entry is indistinguishable from the 0-arg slot-99 entry @0x101ab68d4
+                //   (`b 0x101ab68d8`), whose name is unrecoverable. Behaviour is reproduced exactly; the
+                //   argument VALUES below are placeholders into ignored (`_`-labelled) parameters.
+                searchSubtitle(query: nil, languages: [])
+            }
+        }
+    }
+    #endif
     public var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
     @Published public private(set) var subtitleInfos: [any SubtitleInfo] = []
     @Published public private(set) var searchedSubtitleInfos: [URLSubtitleInfo] = []
+    // slots 30/31/32 (keypaths d1e8/d210) + the `$parts` projection 33/34/35 — all Combine machinery.
     @Published public private(set) var parts: [SubtitlePart] = []
-    public var subtitleDelay: Double = 0.0 // s
-    public var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2
-    public var options: KSOptions
-    @Published public var flag: Int = 0
+    public var subtitleDelay: Double = 0.0 // s — slots 36/37/38, offset var 0x104c637c8, getter returns d0
+    public var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2; slots 39/40/41, 0x104c637d0, getter ldrb
+    public var options: KSOptions // slots 42/43/44, offset var 0x104c637d8, getter `ldr x0` + swift_retain
+    @Published public var flag: Int = 0 // slots 45/46/47 (keypaths d240/d268)
     @Published public var subtitleTranslateY: Float = 0
     public var playRatio: Double = 1
     @Published public var screenSize: CGSize = .zero
