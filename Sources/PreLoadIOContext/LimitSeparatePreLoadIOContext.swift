@@ -17,15 +17,18 @@ import FFmpegKit  // FFmpeg C types reachable through the CacheIOContext chain
 //             maxReadedFileSize=param_8) then delegates to CacheIOContext's designated
 //             init FUN_101b86d38. Arity/param-order inferred (no mangled init symbol);
 //             the field stores + super-delegation are explicit in the decompile.
-//           — s21 init is devirtualized (`new-unresolved`, no readable body) →
-//             UNRESOLVED→P8 (IO-completion), NOT reconstructed.
+//           — s21 @101ba4308 is a THROWING CONVENIENCE init with a full 210-instruction
+//             body (the earlier "devirtualized, no readable body" note was WRONG and is
+//             corrected below); PINNED on its argument labels, not on its shape.
 //   methods — s27 @101ba4bd0 (cached, 109 instr; name devirt→inferred): a locked,
 //             sorted insert-or-update into _timeIndex keyed by position. Faithful
 //             spine; the Swift-synthesized stdlib Array internals (COW / insert /
 //             grow) are noted as UNRESOLVED rather than transcribed by FUN-address.
-//           — the deep separate-download / limit IO engine (s29/s30/s31) is stripped
-//             FFmpeg → UNRESOLVED→P8 (IO-completion), NOT reconstructed. s28 (1-instr stdlib stub) is
-//             skipped.
+//           — s29 @101ba4e30 (346 instr) and s31 @101ba5a5c (250 instr) are reconstructed
+//             below; NEITHER touches FFmpeg — both are pure Swift over the inherited
+//             entryList/urlPos/logicalPos, so the older "stripped FFmpeg" note did not
+//             apply to them. s30 (433 instr) is still NOT reconstructed. s28 (1-instr
+//             stdlib stub) is skipped.
 //
 // CacheIOContext / URLContextDownload / TimeIndexEntry are in-module (already
 //   committed; no import). PreLoadIOContext builds green via
@@ -129,9 +132,80 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
                    saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38
     }
 
-    // UNRESOLVED → P8 (IO-completion): s21 init — devirtualized (`new-unresolved`); the binary has no
-    //   readable body for it (the designated reconstructed above is s22). No body to
-    //   reconstruct → not fabricated. — P2
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot21:0x101ba4308 result=pinned — throwing convenience init; 8 labels unrecoverable]
+    //   CORRECTION: the previous note here ("devirtualized, the binary has no readable
+    //   body") is FALSE. Slot 21 is a 210-instruction, fully readable function. It is
+    //   PINNED because its argument LABELS are unrecoverable, NOT because it is empty.
+    //
+    //   What is proven about it:
+    //   • It is an ALLOCATING init entry: `self` rides x20 as a METATYPE, and the body's
+    //     one dispatched call is `ldur x20,[x29,#-0xe0]; ldr x8,[x20,#0x530]; blr x8`
+    //     @0x101ba459c. vtable_walk reports VTableOffset=144 words (0x480) for this class,
+    //     so metadata+0x530 = 0x480 + 22*8 = SLOT 22 — the designated init reconstructed
+    //     above. An allocating entry that dispatches its own class's designated init
+    //     through the metatype is a CONVENIENCE init (convenience inits have no separate
+    //     initializing entry, which is also why the slot body is 210 instructions and not
+    //     the ~13-instruction alloc+tail-call thunk an Init slot usually holds).
+    //   • It THROWS and PROPAGATES (it does not catch): x21 (the arm64 swifterror
+    //     register) is saved into x27 at entry, re-supplied before each call, tested with
+    //     `cbz x21` after each, and restored into x21 in the epilogue alongside the
+    //     returned object. Both error edges jump to the SAME epilogue with the error
+    //     still live.
+    //   • Ghidra's `/* WARNING: Removing unreachable block (ram,0x000101ba4514) */` is
+    //     that SECOND error edge, and it hides NO source construct: disassembled, the
+    //     block is `swift_release(obj1)` → URL value-witness `destroy` → the options
+    //     bridgeObjectRelease → `b 0x101ba460c`, i.e. pure ARC unwind on the throw path.
+    //     (Ghidra dropped it because it cannot model `bl` clobbering the swifterror
+    //     register, so it proved x21==0 on that edge.)
+    //   • It builds TWO URLContextDownloads before delegating — which is exactly this
+    //     class's `download` + `moreDownload` pair. That identification is not a guess:
+    //     `FUN_101b90c44(0)` is a metadata accessor
+    //     (`adrp x1,cache; adrp x2,0x1039f5a64; b swift_getSingletonMetadata`) and
+    //     descriptor 0x1039f5a64 is URLContextDownload's own entry in
+    //     classmap_1.3.17.jsonl, which independently records 0x101b90c44 as its accessor;
+    //     its result then feeds `swift_allocObject(md,[md+0x30],[md+0x34])`, and
+    //     `FUN_101b90c58` is the initializing init URLContextDownload.swift already
+    //     documents as the SHARED 7-arg inner init. Each gets a value-witness COPY of the
+    //     SAME incoming Foundation.URL (`Foundation::URL` type-metadata accessor
+    //     @0x103452464, then VWT+0x10 `initializeWithCopy` into two `__chkstk_darwin`
+    //     allocas), so the convenience init's first parameter is a URL.
+    // ⚑[tool=vtable_walk ref=type_metadata_accessor_for_URLContextDownload:0x101b90c44 result=desc 0x1039f5a64 = URLContextDownload (classmap)]
+    // ⚑[tool=prefetch_decompiles ref=URLContextDownload.init.inner:0x101b90c58 result=shared 7-arg inner init, per URLContextDownload.swift]
+    // ⚑[tool=disassemble_function ref=FUN_101a08224:0x101a08224 result=pinned — unnamed; called (optionsReceiver, GOT[0x104112ce0]+8), 1-word result passed by address to the URLContextDownload init then outlined-destroyed]
+    // ⚑[tool=disassemble_function ref=FUN_100029440:0x100029440 result=pinned — unnamed; source operand is a 24-byte Any box (Int 100000 payload, Swift.Int metadata at +0x18)]
+    // ⚑[tool=disassemble_function ref=FUN_101b9b5ac:0x101b9b5ac result=pinned — unnamed; receiver in x20, args = the "rw_timeout" small string + a swift_isUniquelyReferenced_nonNull_native flag + an INDIRECT value]
+    // ⚑[tool=disassemble_function ref=FUN_1019f0d98:0x1019f0d98 result=pinned — unnamed; String→String, its result is the String passed in the designated init's cacheKey position]
+    // ⚑[tool=disassemble_function ref=FUN_101b86a2c:0x101b86a2c result=pinned — unnamed; called with the incoming URL's address in the self register x20, returns the String fed to 0x1019f0d98]
+    // ⚑[tool=disassemble_function ref=FUN_10323b034:0x10323b034 result=pinned — outlined destroy, called on the address of that 1-word value]
+    //   • Between the two, it sets ONE FFmpeg AVOption on an options dictionary:
+    //     key "rw_timeout" — recovered from the small-string immediates
+    //     `mov x1,#0x7772; movk …#0x745f,#0x6d69,#0x6f65` = "rw_timeo" and
+    //     `mov x2,#0x7475; movk x2,#0xea00,LSL#48` = "ut" with discriminator 0xea
+    //     (0xe0 | count 10) — and value `Int(100000)` (`mov w9,#0x86a0; movk w9,#0x1,LSL
+    //     #16`) boxed into a 24-byte `Any` existential whose metadata word sits at +0x18
+    //     (`PTR___type_metadata_for_Swift_Int_104111920`). The receiver is mutated through
+    //     x20 with a `swift_isUniquelyReferenced_nonNull_native` guard and released with
+    //     `swift_bridgeObjectRelease` — the Dictionary COW signature — and the value is
+    //     passed INDIRECTLY, so the dictionary's Value is address-only, i.e. `[String: Any]`.
+    //   • The delegating call passes bufferSize = `mov w4,#0x40000` (262144 = 256 KiB),
+    //     NOT the 32 KiB default.
+    //
+    //   Why it is NOT written: eight argument labels and three parameter TYPES
+    //   (`FUN_101a08224`, `FUN_100029440`, `FUN_101b9b5ac`, `FUN_1019f0d98`,
+    //   `FUN_101b86a2c` are all unnamed, and recover_swift_function_name @0x101ba4308
+    //   returns None with no labels), so every label would be invented. Deferred, not
+    //   guessed. — P2
+    //
+    //   OPEN QUESTION for the owner phase (evidence, not a change made here): the
+    //   delegating call at 0x101ba45cc loads `ldp x6,x7,[x29,#-0xf0]` — TWO 64-bit values
+    //   in x6/x7 — and pushes a Bool onto the stack (`strb w9,[sp,#-0x10]!`), with the
+    //   other Bool in w5 and bufferSize in w4. That register assignment fits the order
+    //   (…, bufferSize: Int32, <Bool>, <UInt64>, <UInt64>, <Bool>) and NOT the order
+    //   declared above (…, bufferSize, saveFile, isReadComplete, maxFileSize,
+    //   maxReadedFileSize), which would place the two Bools in w5/w6. Which Bool is
+    //   `saveFile` and which is `isReadComplete` is NOT determinable from the binary
+    //   (both are 1-bit), so the declaration above is left untouched rather than
+    //   reordered on a guess.
 
     // s26 @101ba4b68 — `var bufferedBytes: Int` (name inferred, devirt). FAITHFUL (full):
     //   the lone getter between the slot 23-25 triple and the first method at slot 27, so
@@ -196,11 +270,139 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
 
     // s28 — 1-instruction stdlib stub → skipped (no reconstructable body).
 
-    // UNRESOLVED → P8 (IO-completion) (deep separate-download / limit IO engine — NOT reconstructed;
-    //   their symbols are devirt and their calls are stripped FFmpeg the P2 oracle
-    //   names; declare nothing beyond these markers):
-    //   • s29 @ (346 instr) — separate-download IO
-    //   • s30 @ (433 instr) — limit IO engine
-    //   • s31 @ (250 instr) — separate-download / limit IO
-    //   stripped-FFmpeg saturated. — P2
+    // s29 @101ba4e30 — `func loadMorePosition() -> UInt64?` (name inferred, devirt;
+    //   346 instr). FAITHFUL (full spine). NO FFmpeg: every call in the glossary is
+    //   `_CocoaArrayWrapper.endIndex` (0x103459010), the bridged-element down-cast helper
+    //   (0x101b95bfc) or ARC — this is pure Swift over the INHERITED entryList (+0x88),
+    //   urlPos (+0x50) and logicalPos (+0x80).
+    //
+    //   Return type is `UInt64?`, not `(UInt64, Bool)`: the pair comes back in x0/x1 and
+    //   EVERY failure edge forces x0 to 0 while setting x1 to 1
+    //   (`uVar11 = end < logicalPos; uVar10 = 0; if !that { uVar10 = end }`), i.e. the
+    //   payload is dead whenever the flag is set — the Optional payload/extra-tag ABI,
+    //   not a meaningful tuple element.
+    //
+    //   Spine: pick the probe position (`urlPos == 0 ? logicalPos : min(urlPos,
+    //   logicalPos)` — the binary really does special-case urlPos == 0 rather than fold it
+    //   into the min), binary-search entryList for the entry that CONTAINS it, and if that
+    //   misses retry once with `max(urlPos, logicalPos)`; then walk forward from the hit
+    //   merging entries whose `position` equals the running end, and return that end
+    //   unless it equals urlPos or lies below logicalPos.
+    //
+    //   The two searches are emitted as two identical loops — an explicit `(low + high)/2`
+    //   walk with the Swift `+` overflow trap, a `_swift_release` of the probed element on
+    //   the `key < position` edge, and an `isEmpty` pre-check — so they are transcribed
+    //   twice here rather than factored into a helper the binary does not contain.
+    // UNRESOLVED → P8: two byte-identical search loops are at least as likely to be ONE
+    //   private source helper the optimizer inlined at both call sites (P115) as they are
+    //   to be duplicated source. Nothing in the binary distinguishes the two spellings, so
+    //   the literal form is kept and the alternative is recorded rather than chosen. — P2
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot29:0x101ba4e30 result=Method; NAME inferred]
+    func loadMorePosition() -> UInt64? { // name inferred (devirt)
+        let position = urlPos == 0 ? logicalPos : min(urlPos, logicalPos)
+        var index: Int?
+        if !entryList.isEmpty {
+            var low = 0
+            var high = entryList.count - 1
+            while low <= high {
+                let mid = (low + high) / 2
+                let entry = entryList[mid]
+                if position < entry.position {
+                    high = mid - 1
+                } else if position < entry.position + UInt64(entry.size) {
+                    index = mid
+                    break
+                } else {
+                    low = mid + 1
+                }
+            }
+        }
+        // binary: max(urlPos, logicalPos) is computed on BOTH edges of the first search,
+        //   before the hit/miss test.
+        let retry = max(urlPos, logicalPos)
+        if index == nil, retry != position, !entryList.isEmpty {
+            var low = 0
+            var high = entryList.count - 1
+            while low <= high {
+                let mid = (low + high) / 2
+                let entry = entryList[mid]
+                if retry < entry.position {
+                    high = mid - 1
+                } else if retry < entry.position + UInt64(entry.size) {
+                    index = mid
+                    break
+                } else {
+                    low = mid + 1
+                }
+            }
+        }
+        guard var cursor = index else {
+            return nil
+        }
+        var end = entryList[cursor].position + UInt64(entryList[cursor].size)
+        while cursor + 1 < entryList.count {
+            let next = entryList[cursor + 1]
+            if next.position != end {
+                break
+            }
+            end += UInt64(next.size)   // binary: CARRY8-trapped UInt64 add
+            cursor += 1
+        }
+        guard end != urlPos, end >= logicalPos else {
+            return nil
+        }
+        return end
+    }
+
+    // UNRESOLVED → P8 (IO-completion): s30 @101ba5398 (433 instr) — the limit IO engine.
+    //   NOT reconstructed; declare nothing beyond this marker. — P2
+
+    // s31 @101ba5a5c — `func canPreload(_ position: UInt64) -> Bool` (name inferred,
+    //   devirt; 250 instr). FAITHFUL (full). Also NO FFmpeg — same three inherited fields
+    //   plus this class's own `maxFileSize` / `maxReadedFileSize`, both read through their
+    //   ivar-offset globals (`…LimitSeparatePreLoadIOContext::maxFileSize` /
+    //   `::maxReadedFileSize`), which is what pins those two reads to THIS class rather
+    //   than a sibling's like-named field.
+    //
+    //   One argument (x0, a ulong) and a Bool return. Body: bail out `true` while the
+    //   cache holds fewer than 9 entries; otherwise split the total cached bytes at the
+    //   playhead into bytes already behind it and bytes ahead of it, and compare each
+    //   against its cap. The `entryList.count - 3` index and the literal 9 are the
+    //   binary's own constants (`SBORROW8(count,3)` guard; `if (count < 9) return true`).
+    //
+    //   The delete path really does MUTATE the inherited entryList: the binary takes a
+    //   MODIFY exclusivity scope on +0x88 (`_swift_beginAccess(self+0x88, …, 0x21, 0)`,
+    //   flags = Modify|Tracking, closed by `_swift_endAccess`) around a call whose
+    //   disassembly is the textbook specialised `Array.remove(at:)` — COW make-unique,
+    //   `cmp index,count; b.cs brk` bounds check, load the element at base+0x20+index*8,
+    //   `memmove` the tail left by one word, store count-1 — and whose returned element is
+    //   immediately `swift_release`d, i.e. discarded.
+    // ⚑[tool=disassemble_function ref=Array.remove(at:)_specialized:0x101ba3fd0 result=COW make-unique + bounds check + memmove tail + count-1 + return removed element]
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot31:0x101ba5a5c result=Method; NAME and argument label inferred]
+    func canPreload(_ position: UInt64) -> Bool { // name inferred (devirt)
+        if entryList.count < 9 {
+            return true
+        }
+        var readedSize: UInt64 = 0
+        var moreSize: UInt64 = 0
+        for entry in entryList {
+            if logicalPos < entry.position {
+                moreSize += UInt64(entry.size)
+            } else {
+                readedSize += UInt64(entry.size)
+            }
+        }
+        if moreSize > maxFileSize {
+            return position < entryList[entryList.count - 3].position
+        }
+        if readedSize <= maxReadedFileSize {
+            return true
+        }
+        let entry = entryList[1]
+        if entry.position + UInt64(entry.size) < logicalPos {
+            entryList.remove(at: 1)
+            return true
+        }
+        return false
+    }
 }

@@ -242,11 +242,23 @@ public class ShooterSubtitleDataSource: URLSubtitleDataSource {
 // §7.2 — Souce→Source. token+host (was token+infos; +host = the API base, dropped stored infos §5.1).
 public class AssrtSubtitleDataSource: SearchSubtitleDataSource {
     private let token: String
-    private let host: String
-    // ⚑ init shape inferred → M2 witness-verify
-    public init(token: String, host: String) {
+    // ⚑[tool=vtable_walk+disassemble_function ref=AssrtSubtitleDataSource.__allocating_init:0x101aa6bd0 result=verified]
+    //   M2 witness-verify of the former "init shape inferred": `host` is a COMPILE-TIME CONSTANT, not a
+    //   parameter. The class has VTableSize=1, slot 0 kind=Init @0x101aa6bd0 (desc 0x1039f1c80), and that
+    //   body reads ONLY x0/x1 — the single String parameter, stored to token @0x10. x2/x3 are never read,
+    //   which also rules out `host: String = "…"`: a defaulted parameter is still passed in x2/x3 (the
+    //   default-argument generator runs at the CALL site), so a default form would store x2/x3, not a literal.
+    //   host @0x20 is materialized inline: adrp+add → 0x103d34200; `sub x8,#0x20` is _StringObject.nativeBias
+    //   (32), NOT an address adjustment; `orr #0x8000000000000000` = immortal-literal flag; x9 = 0xd000…0017
+    //   = ASCII-literal flags | count 23 — and 0x103d34200 holds exactly 23 bytes "http://api.assrt.net/v1"
+    //   (http, NOT https). swift_allocObject(size 0x30, alignMask 7) = header 0x10 + 2×String ⇒ these 2 fields
+    //   and no other. Field order token,host confirmed by dump_binary_field_types.
+    //   ⚑ property-initializer vs in-body `self.host = …` is NOT separable in codegen; the constant store
+    //   precedes the parameter store here AND in OpenSubtitleDataSource, in both cases against address order
+    //   (so it is not a store-sorting artifact), which favors the property-initializer form written here.
+    private let host: String = "http://api.assrt.net/v1"
+    public init(token: String) {
         self.token = token
-        self.host = host
     }
 
     // Task 5 (session 20). Witness FUN_101aa6c50 (WT 0x1041da848) → real body FUN_101aad528. Base cce7002
@@ -326,11 +338,19 @@ public class AssrtSubtitleDataSource: SearchSubtitleDataSource {
 public class OpenSubtitleDataSource: SearchSubtitleDataSource {
     private var token: String? = nil
     private let apiKey: String
-    private let host: String
-    // ⚑ init shape inferred → M2 witness-verify
-    public init(apiKey: String, host: String) {
+    // ⚑[tool=vtable_walk+disassemble_function ref=OpenSubtitleDataSource.__allocating_init:0x101aa84b0 result=verified]
+    //   M2 witness-verify of the former "init shape inferred": `host` is a COMPILE-TIME CONSTANT, not a
+    //   parameter — same shape as AssrtSubtitleDataSource. VTableSize=1, slot 0 kind=Init @0x101aa84b0
+    //   (desc 0x1039f1cbc); the body reads ONLY x0/x1 (the single String parameter → apiKey @0x20) and never
+    //   reads x2/x3, ruling out a defaulted `host:` parameter (a default is still passed in x2/x3).
+    //   `stp xzr,xzr,[x0,#0x10]` zero-fills token ⇒ the `= nil` default. host @0x30 is materialized inline:
+    //   adrp+add → 0x103d34220; `sub #0x20` = _StringObject.nativeBias; `orr #0x8000000000000000` = immortal
+    //   literal; x9 = 0xd000…0024 = count 36 — and 0x103d34220 holds exactly 36 bytes
+    //   "https://api.opensubtitles.com/api/v1". swift_allocObject(size 0x40, alignMask 7) = header 0x10 +
+    //   String? + 2×String ⇒ exactly these 3 fields. Field order token,apiKey,host per dump_binary_field_types.
+    private let host: String = "https://api.opensubtitles.com/api/v1"
+    public init(apiKey: String) {
         self.apiKey = apiKey
-        self.host = host
     }
 
     // Task 5 body 2/2 (session 20). Witness FUN_101aab81c → FUN_101aa9374 (the imdbID:tmdbID: delegate, args 0,0).

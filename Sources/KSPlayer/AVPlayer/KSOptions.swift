@@ -51,6 +51,32 @@ open class KSOptions {
     public var contentMode = UIViewContentMode.scaleAspectFit  // macOS: KSPlayer.ContentMode (== binary); iOS/tvOS: UIView.ContentMode
     /// Applies to short videos only
     public var isLoopPlay = KSOptions.isLoopPlay
+    // ── SLOT→MEMBER ALIGNMENT (basis for every `vtable slot N` note in this class) ─────────────
+    // `scripts/vtable_walk.py KSOptions` gives 284 slots in DECLARATION order;
+    // `scripts/dump_field_bindings.py KSOptions` gives the 84 stored fields in the same order with
+    // their var/let binding. The two align 1:1 and EXACTLY: 81 `var` fields × (Getter,Setter,
+    // ModifyCoroutine) = 243 slots, the 3 `let` fields (useSystemHTTPProxy/yadifMode/
+    // deInterlaceAddIdet) contribute ZERO slots (control: OSLog and FileLog are all-`let` and have
+    // vtables of size 2 = init + log, no accessor slots), 1 lone Getter (slot 43) + 1 extra triple
+    // (slots 112-117 region) = 2 computed properties, and 37 method/init slots. 243+1+3+37 = 284.
+    // Four independent anchors confirm it — Ghidra resolves the field-offset globals by name in the
+    // getters: slot 125 → _TtC8KSPlayer9KSOptions::syncDecodeAudio (field 37), slot 134 →
+    // ::audioRecognizes (39), slot 217 → ::adjustBuffer (68), slot 226 → ::forceDisableDisplayLayer
+    // (69); plus slots 56/61 read self+0x70/+0x71, the two adjacent Bools isLoopPlay/isAccurateSeek.
+    //
+    // Slots 59-60 are two methods declared HERE, between `isLoopPlay` and `isAccurateSeek`.
+    // Slot 59 @0x1019b52fc is the `adaptable`-shaped body (maxBufferDuration * 0.5,
+    // CACurrentMediaTime, bitRateStates.last, bitRates index walk).
+    // Slot 60 @0x10047da30 is PINNED, not reconstructed: the member has no recoverable identity.
+    // The binary is stripped and `scripts/recover_swift_function_name.py --addr 0x10047da30` returns
+    // #function None / #file None; the entire body is `mov x0,#0x100000000; ret` (2 instructions),
+    // so there is no callee, string, field access or trap to characterise it beyond its ABI — no
+    // arguments past self (x20), ONE 8-byte direct result whose bit pattern is 0x0000000100000000.
+    // The body is this method's OWN, not a linker-folded stub: its 5 xrefs are the KSOptions type
+    // descriptor slot (0x1039ec6e4) + three class-metadata vtables (0x10448c198/0x10448ce48/
+    // 0x1044e5818 — KSOptions and two subclasses inheriting it) + one __LINKEDIT entry, exactly the
+    // shape slot 59's own body shows one word lower. Writing a name here would be invention.
+    // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_10047da30:0x10047da30 result=LOCATED pinned=member-identity-undetermined]
     /// 开启精确seek
     public var isAccurateSeek = KSOptions.isAccurateSeek
     /// seek完是否自动播放
@@ -97,6 +123,20 @@ open class KSOptions {
     // audio
     public var audioFilters = [String]()
     public var syncDecodeAudio = false
+    // Slots 128-130 are three methods declared HERE, between `syncDecodeAudio` (slots 125-127, the
+    // named-anchor getter) and `fontsDir` (131-133, all three impls null in the descriptor).
+    // Slot 129 @0x1019b91c8 is an audioFrameMaxCount-shaped body: when a once-initialised static
+    // type equals one particular class it clamps the 2nd argument up to 6, computes
+    // Int(fps) * that, >>1, capped at 0x1000; otherwise Int(fps) * arg, >>2, capped at 0x400.
+    // Slot 130 @0x1019b9330 returns that same static-type equality as a Bool.
+    // Slot 128 @0x10002db34 is PINNED: `mov x0,#0x0; mov x1,#0x0; ret` (3 instructions) — a
+    // 16-byte all-zero direct result and nothing else. recover_swift_function_name --addr returns
+    // #function None. The body is a LINKER-FOLDED (ICF) stub, so it carries no identifying
+    // information whatsoever: it has 16 xrefs, spread across a dozen unrelated class metadata
+    // objects (0x10411eb30, 0x10412b500, 0x104137858, 0x10413c0c0, 0x104147208, 0x10417c970,
+    // 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068, 0x1044e5a38) plus two call sites, whereas the
+    // KSOptions descriptor claims only 0x1039ec904. Position is exact; identity is not derivable.
+    // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_10002db34:0x10002db34 result=LOCATED pinned=member-identity-undetermined]
     public var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path
     public var audioRecognizes: [AudioRecognize] = []
     // sutile
@@ -147,6 +187,37 @@ open class KSOptions {
     //   the 3 didSets), so its source symbol is unrecoverable — a shared static factory is the DRY reading,
     //   matching the MetalRender lazy-buffer idiom (label set on the returned MTLBuffer).
     public var adjustBuffer: MTLBuffer? = KSOptions.makeAdjustBuffer(brightness: 1, contrast: 1, saturation: 1)
+    // (Corroboration for the ⚑ INFERRED `makeAdjustBuffer` above — POSITIONAL only, not a name
+    // proof: slot 216 is a Method slot with a NULL impl in the descriptor, declared between
+    // `saturation` (slots 213-215) and `adjustBuffer` (217-219) — exactly where a colour-adjust
+    // builder would sit, and a null impl is what "inlined at every call site" leaves behind.)
+    //
+    // Slots 220-225 are SIX methods declared HERE, between `adjustBuffer` (217-219) and
+    // `forceDisableDisplayLayer` (226-228) — both bracketing getters resolve their field-offset
+    // global BY NAME, so the bracket is exact. None of the six has a recoverable member identity:
+    // recover_swift_function_name --addr returns #function None / #file None for every one.
+    // Context (not in this batch): slot 220 @0x1019be928 = `staticBool || fpsArg > 61.0` → Bool;
+    // slot 221 @0x1019be98c reads UITraitCollection.current.userInterfaceIdiom; slot 223
+    // @0x1019bea14 retains arg+0x20 when arg+0x10 is non-nil.
+    //
+    // Slot 222 @0x1019bea08 — PINNED. Body `orn w8,w1,w0; and w0,w8,#0x1; ret` = two Bool-shaped
+    // argument words (w0, w1) and a 1-bit result equal to `!arg0 || arg1`. 5 xrefs = 1 descriptor +
+    // 3 metadata vtables + 1 linkedit, i.e. its own impl, not a folded stub.
+    // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_1019bea08:0x1019bea08 result=LOCATED pinned=member-identity-undetermined]
+    //
+    // Slot 224 @0x1019bea54 — PINNED. Body is `cmp w1,#0x2; mov w8,#0x4; mov w9,#0x8;
+    // csel w0,w9,w8,gt; ret` — i.e. the only input the body reads is w1 (a signed 32-bit word;
+    // self rides x20, so w1 is the SECOND argument word) and the 4-byte result is 8 when w1 > 2,
+    // else 4. 5 xrefs = 1 descriptor + 3 metadata vtables + 1 linkedit (own impl).
+    // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_1019bea54:0x1019bea54 result=LOCATED pinned=member-identity-undetermined]
+    //
+    // Slot 225 @0x100232cd4 — PINNED. Body `mov x0,#0x0; mov x1,#0x0; mov w2,#0x1; ret`: the
+    // three-register `nil` of an Optional whose payload is two 8-byte words (x0, x1 payload +
+    // w2 tag = 1). Shape-identical to how slot 59's `adaptable`-style result is returned, but the
+    // body is LINKER-FOLDED — besides the KSOptions descriptor slot (0x1039ecc0c) it is also
+    // claimed by a second, different type descriptor (0x1039efab4) — so the body proves the return
+    // shape and nothing about which member this is.
+    // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_100232cd4:0x100232cd4 result=LOCATED pinned=member-identity-undetermined]
     public var forceDisableDisplayLayer = false
     public var onPossibleDisplayLayerFlicker: (@MainActor @Sendable () -> Void)?
     private var videoClockDelayCount = 0
@@ -699,8 +770,18 @@ public protocol LogHandler {
 
 public class OSLog: LogHandler {
     public let label: String
+    // Forward's OSLog carries a DateFormatter, exactly like FileLog. Binary reflection lists TWO
+    // stored fields for OSLog — `label: Swift.String` then `formatter: NSDateFormatter`, BOTH with
+    // field-record flags 0x0 = `let` (scripts/dump_binary_field_types.py OSLog +
+    // scripts/dump_field_bindings.py OSLog) — and the vtable has ZERO accessor slots
+    // (vtable_walk.py OSLog: slot 0 Init, slot 1 Method), which is the `let`-only shape.
+    // init @0x1019e19ec: swift_allocObject(size 0x28 = 16 header + 16 String @self+0x10/+0x18 (the
+    // `lable` argument) + 8 @self+0x20), [[NSDateFormatter alloc] init] stored to self+0x20, then
+    // -[NSDateFormatter setDateFormat:] with the SAME 18-char literal FileLog uses (see below).
+    public let formatter = DateFormatter()
     public init(lable: String) {
         label = lable
+        formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
     }
 
     @inlinable
@@ -714,7 +795,16 @@ public class FileLog: LogHandler {
     public let formatter = DateFormatter()
     public init(fileHandle: FileHandle) {
         self.fileHandle = fileHandle
-        formatter.dateFormat = "MM-dd HH:mm:ss.SSSSSS"
+        // 18 chars, NOT the base's 21-char "…SSSSSS". init @0x1019e380c emits the literal as
+        // `mov x0,#0x12; movk x0,#0xd000,LSL#48` → _StringObject count = 0x12 = 18, and
+        // `adrp x8,0x103d34000; add x8,x8,#0x9c0; sub x22,x8,#0x20` → the object word is the literal
+        // address MINUS _StringObject.nativeBias (32), so the literal itself is at 0x103d349c0 =
+        // "MM-dd HH:mm:ss.SSS" (NUL at +18). The bias DIRECTION is proven by a control in this same
+        // file's FileLog.log @0x1019e38d0: identical `add #0xfa0; sub #0x20` shape with count
+        // 0x14 = 20, where the add result 0x103d34fa0 holds "%@ %@ %@:%d %@ | %@\n" (exactly 20
+        // chars) while the sub result 0x103d34f80 holds a 23-char string — so the ADD result is the
+        // literal. Both lengths therefore agree only for the add-side reading.
+        formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
     }
 
     @inlinable

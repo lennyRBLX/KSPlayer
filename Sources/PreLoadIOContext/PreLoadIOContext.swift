@@ -176,6 +176,157 @@ public class PreLoadIOContext: CacheIOContext {
         //   omitted it. Do not repeat the omission.
     }
 
+    // ── s49 / s50: the two cached-segment lookups. Both walk the inherited
+    //    `entryList` ([CacheFileEntry], self+0x88) with the SAME inlined binary search;
+    //    see the shared-helper PIN at the bottom of this pair.
+
+    // s49 @101ba862c — `func bufferedSeconds() -> Double` (name inferred, devirt).
+    //   FAITHFUL (full): all 208 instructions are accounted for. The only calls are
+    //   `interpolateTime` (this class's own s33 — vtable_walk puts slot 33 at exactly the
+    //   address the decompile calls, so this is a resolved same-class direct call, not an
+    //   unnamed helper), the stdlib Array bridged-subscript / `_CocoaArrayWrapper.endIndex`
+    //   thunks, and swift_beginAccess/retain/release. NO FFmpeg symbol, no unresolved
+    //   callee, and NO dropped do/catch: every callee in the prefetch glossary has a
+    //   construct in the body, the cache contains no "Removing unreachable block" (its only
+    //   warnings are "Does not return", ×8, one per trap), and all eight `brk #1` sites are
+    //   Swift overflow/bounds traps, not calls.
+    // ⚑[tool=vtable_walk ref=interpolateTime:0x101ba80e8 result=slot33 — same-class direct call]
+    //
+    //   SIGNATURE is disassembly-grounded, not conventional. vtable_walk reports slot 49 as
+    //   kind=Method (a computed property prints `Getter`) → a `func`; and NO argument register
+    //   is ever READ: x0-x3 are each WRITTEN first (`add x0,x20,x21` … `mov x3,#0`), x4-x7 and
+    //   v0-v7 never appear except as destinations, and the only live-in is x20 (swiftself) →
+    //   it takes NO arguments. The result leaves in d0 → Double.
+    //
+    //   Field identity is symbol-grounded, not offset-guessed: the decompile resolves the
+    //   ivar-offset globals by NAME (`CacheIOContext::eof`, `PreLoadIOContext::videoDuration`,
+    //   `CacheFileEntry::position`, `CacheFileEntry::size`) and each of those names checks out
+    //   against the committed field lists. The direct-offset reads are the ones CacheIOContext
+    //   already pins: end@+0x48, logicalPos@+0x80, entryList@+0x88.
+    //   Corroboration that `entry.position` and `entry.size` are read (and not some other
+    //   pair): `size` is fetched THROUGH a swift_beginAccess and `position` is NOT, which is
+    //   exactly what dump_field_bindings reports for CacheFileEntry — `position` is a `let`
+    //   (no exclusivity check possible) and `size` is a `var`.
+    //
+    //   Shape, instruction-anchored:
+    //     0x101ba867c  guard eof                       (ldrb; cmp w8,#1; b.ne → return 0)
+    //     0x101ba868c  guard end != 0                  (INTEGER `cbz x19`, not a float compare —
+    //                                                   Ghidra types +0x48 as `double` only
+    //                                                   because it shares a reg with the call)
+    //     0x101ba8698  guard videoDuration > 0         (fcmp d8,#0.0; b.le — NaN exits too)
+    //     0x101ba86c0  startTime = interpolateTime(videoDuration, position: logicalPos, total: end)
+    //     0x101ba86f4  guard !entryList.isEmpty        (count is loaded TWICE — once for this
+    //                                                   `cbz`, once for `count - 1`)
+    //     0x101ba8744  binary search for logicalPos    (mid = (low+high)/2 via adds/asr with the
+    //                                                   overflow trap = a checked Int `+`)
+    //     0x101ba87fc  forward contiguity scan         (count re-loaded EVERY iteration ⇒ the
+    //                                                   source is a `while i < entryList.count`,
+    //                                                   not a `for i in ..<count`)
+    //     0x101ba8888  cursor = max(cursor, …)         (cmp + csel …,hi)
+    //     0x101ba88e8  endTime = interpolateTime(videoDuration, position: cursor, total: end)
+    //     0x101ba88ec  return endTime - startTime      (fsub d0,d9)
+    //   `logicalPos` is RE-LOADED from the ivar at each of its three uses (0x101ba86b4 /
+    //   0x101ba86c8 / 0x101ba87f8) rather than held in a register across the call, so the
+    //   source really does spell the property three times — a `let` local would have pinned it.
+    // ⚑[tool=prefetch_decompiles ref=PreLoadIOContext.slot49:0x101ba862c result=body full; NAME inferred]
+    func bufferedSeconds() -> Double { // name inferred (devirt)
+        guard eof, end != 0, videoDuration > 0 else { return 0 }
+        let startTime = interpolateTime(videoDuration, position: logicalPos, total: end)
+        guard !entryList.isEmpty else { return 0 }
+        var low = 0
+        var high = entryList.count - 1
+        while low <= high {
+            let mid = (low + high) / 2
+            let entry = entryList[mid]
+            if logicalPos < entry.position {
+                high = mid - 1
+            } else if logicalPos < entry.position + UInt64(entry.size) {
+                // hit: extend forward while the following segments stay contiguous
+                var cursor = logicalPos
+                var index = mid
+                while index < entryList.count {
+                    let next = entryList[index]
+                    if cursor < next.position {
+                        break
+                    }
+                    cursor = max(cursor, next.position + UInt64(next.size))
+                    index += 1
+                }
+                let endTime = interpolateTime(videoDuration, position: cursor, total: end)
+                return endTime - startTime
+            } else {
+                low = mid + 1
+            }
+        }
+        return 0
+    }
+
+    // s50 @101ba896c — `func requestThumbnailData(offset:size:) -> UInt32` (name inferred,
+    //   devirt). FAITHFUL (full): all 141 instructions are accounted for; the only calls are
+    //   the stdlib Array bridged-subscript / endIndex thunks and swift_beginAccess/retain/
+    //   release. NO FFmpeg symbol, no unresolved callee, and NO dropped do/catch (same three
+    //   checks as s49: glossary fully consumed, no unreachable-block warning, and the seven
+    //   `brk #1` sites are overflow/bounds traps).
+    //
+    //   SIGNATURE, from the prologue: x0 is a 64-bit live-in and w1 a 32-bit live-in
+    //   (`str w1,[sp,#0xc]` / `mov x21,x0` before any other use), x2+ untouched → two
+    //   parameters, (UInt64, UInt32). The widths are then CONFIRMED by the only side effect:
+    //   the miss path stores x0 as the 8-byte word and w1 as the 4-byte word of
+    //   `thumbnailFetchRequest`, whose declared shape is `(offset: UInt64, size: UInt32)?`.
+    //   The return leaves in w0 → 32-bit, and the hit path returns parameter 2 verbatim
+    //   (`ldr w0,[sp,#0xc]`), so the return type is that parameter's type, UInt32.
+    //
+    //   Shape, instruction-anchored:
+    //     0x101ba89bc  guard !entryList.isEmpty        (miss when empty — same double count
+    //                                                   load as s49)
+    //     0x101ba8a0c  the SAME binary search as s49, keyed on `offset`
+    //     0x101ba8ac8  HIT → subscript entryList[mid] once more and DISCARD it, then
+    //                  `return size`. The discard is in the binary, not an editorial choice:
+    //                  the bridged arm calls the subscript thunk and immediately
+    //                  swift_unknownObjectReleases the +1 it returns, and the native arm keeps
+    //                  only the two bounds traps (`cmn x19,#1` re-derives mid ≥ 0 for a SECOND
+    //                  subscript at the same index) with the element load itself ARC-elided.
+    //                  The loop's own `entry` is already released at 0x101ba8a80, before this.
+    //     0x101ba8b18  MISS (search exhausted or list empty) → thumbnailFetchRequest =
+    //                  (offset, size); the tag byte at +0xc is stored 0 = `.some`; return 0.
+    //   Note the miss store clobbers x20, so it can only ever be reached on the miss path —
+    //   which is itself the proof that the hit path never falls through into it.
+    // ⚑[tool=prefetch_decompiles ref=PreLoadIOContext.slot50:0x101ba896c result=body full; NAME inferred]
+    func requestThumbnailData(offset: UInt64, size: UInt32) -> UInt32 { // name inferred (devirt)
+        if !entryList.isEmpty {
+            var low = 0
+            var high = entryList.count - 1
+            while low <= high {
+                let mid = (low + high) / 2
+                let entry = entryList[mid]
+                if offset < entry.position {
+                    high = mid - 1
+                } else if offset < entry.position + UInt64(entry.size) {
+                    _ = entryList[mid] // binary: the hit is re-fetched and dropped (see above)
+                    return size
+                } else {
+                    low = mid + 1
+                }
+            }
+        }
+        thumbnailFetchRequest = (offset: offset, size: size)
+        return 0
+    }
+
+    // ⚑[tool=disassemble_function ref=PreLoadIOContext.slot49:0x101ba8744 result=pinned]
+    //   s49 and s50 contain the SAME inlined binary search over `entryList`, down to the
+    //   redundant `guard !entryList.isEmpty` ahead of a `count - 1` that the loop test would
+    //   have covered anyway. That is what a shared helper looks like after -O WMO inlining,
+    //   and the two call sites even consume DIFFERENT results from it — s49 uses the found
+    //   INDEX (it resumes the forward scan at `mid`), while s50 re-subscripts and drops the
+    //   found ELEMENT, which is the signature of an `if let … = <helper returning
+    //   CacheFileEntry?>` binding that never reads its binding. So a shared private helper is
+    //   likely, but its NAME, its RETURN TYPE and even whether it is one helper or two are all
+    //   unrecoverable — it has no vtable slot (private methods get none) and no surviving
+    //   symbol. Writing the loop out at both sites invents nothing and is code-equivalent
+    //   (the compiler would have inlined the helper here regardless); inventing a helper name
+    //   would not be. Deferred, not guessed.
+
     // s55 @101ba6bb8 — `func bufferedBytesAvailable() -> UInt32` (name inferred,
     //   devirt). FAITHFUL (full, modulo the inherited-field offsets it reads). The
     //   decompile: if isPreloadPaused → 0. Else, when CacheIOContext.eof and the two
@@ -251,8 +402,6 @@ public class PreLoadIOContext: CacheIOContext {
     //     • slot 21  (301 instr) @ —    — preload/download IO
     //     • slot 32  (200 instr) @ —    — preload/download IO
     //     • slot 35  (165 instr) @ —    — preload/download IO
-    //     • slot 49  (208 instr) @ —    — preload/download IO
-    //     • slot 50  (141 instr) @ —    — preload/download IO
     //     • slot 53  (346 instr) @ —    — preload/download IO
     //     • slot 51  (1193 instr) @ —   — preload/download IO (deepest)
     //     • slot 54  (1183 instr) @ —   — preload/download IO (deepest)

@@ -48,6 +48,12 @@ class LocalHLSServer {
     /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).
     /// ⚑ param labels inferred (stripped). URL param + `throws` are binary facts (URL value-witness copy
     /// into rootDirectory; NWListener(using:on:) throws → `_swift_willThrow`/`deallocPartialClassInstance`).
+    /// vtable slot 6 @0x101b70274 is the compiler-emitted ALLOCATING entry point for this init and has no
+    /// source of its own — whole body (20 instr, disasm): save x0/x1 → `ldr w1,[x20,#0x30]` /
+    /// `ldrh w2,[x20,#0x34]` (instanceSize / alignMask off the metadata in x20) → `bl 0x10345caf0`
+    /// (swift_allocObject) → restore x0 (URL), x1 (port) → `bl 0x101b705ec` → ret. It also round-trips the
+    /// swifterror register (`mov x19,x21` on entry, `mov x21,x19` before the call), which is a SECOND,
+    /// independent binary witness for `throws` here.
     init(rootDirectory: URL, port: UInt16) throws {
         self.rootDirectory = rootDirectory
         self.port = port

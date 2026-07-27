@@ -12,8 +12,9 @@ import FFmpegKit  // AVIOInterruptCB (inherited interrupt chain — FFmpeg C str
 //             width + init constants); NAMES + ORDER + COUNT + TYPES + DEFAULTS are
 //             transcribed verbatim from the brief, NOT re-derived from the decompiles.
 //             The ⚑ ones are best-effort (composite/width-inferred) → l2_field_gate
-//             UNCHECKs them (expected 0 FLAG). CachedDistribution is an EMPTY
-//             placeholder (its ~40-byte layout is UNRESOLVED → P8 (IO-completion)).
+//             UNCHECKs them (expected 0 FLAG). `cachedDistribution` is NO LONGER a
+//             placeholder: its type is the labeled tuple recovered verbatim from the
+//             field record (see the field comment).
 //   init    — the designated init (s37 @101b9d748, READABLE) sets LimitPreLoad's 14
 //             own fields (all but the two caps carry the field defaults below) and
 //             delegates to CacheIOContext's designated init (inherited through
@@ -21,19 +22,15 @@ import FFmpegKit  // AVIOInterruptCB (inherited interrupt chain — FFmpeg C str
 //             PreLoadIOContext's own field defaults (loadMoreBuffer/_timeIndex/etc.) —
 //             that is the COMPILER flattening the init chain; those belong to
 //             PreLoadIOContext's declared defaults and are NOT re-set here.
-//   methods — only the one cached small method s21 (@101b9d4dc) is reconstructed
-//             (faithful spine + `// UNRESOLVED` for the unnamed-FUN parts). Its name is
-//             devirt→inferred (no mangled method symbol). Everything else — the deep
-//             limit/cache-distribution IO engine and the null devirt slots — is
-//             UNRESOLVED→later phase, marked NOT fabricated (see the tail markers).
+//   methods — s21 (@101b9d4dc) and s44 (@101b9f684) are reconstructed (faithful spine +
+//             `// UNRESOLVED` for the unnamed-FUN parts). Their names are devirt→inferred
+//             (no mangled method symbol). Everything else — the deep limit/cache IO
+//             engine and the null devirt slots — is UNRESOLVED→later phase, marked NOT
+//             fabricated (see the tail markers).
 //
 // PreLoadIOContext / CacheIOContext / TimeIndexEntry are in-module (already committed;
 // no import). AVIOInterruptCB resolves via `import FFmpegKit` (the inherited interrupt
 // field). Builds via `swift build --target PreLoadIOContext`.
-
-// UNRESOLVED placeholder — ~40-byte composite (init zeroes 4 words + a UInt16=0x100);
-// real layout → P2. Fabricating its fields is forbidden by the brief — empty only.
-struct CachedDistribution {}
 
 public class LimitPreLoadIOContext: PreLoadIOContext {
     // --- stored fields (binary __swift5_fieldmd order; defaults are the binary's
@@ -69,9 +66,39 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     // 9  deleteCheckThreshold: cache growth before a delete-check. ⚑ width-inferred
     //    UInt64; init 4_194_304 (binary const 0x400000).
     var deleteCheckThreshold: UInt64 = 4_194_304 // ⚑ (width-inferred; gate UNCHECKED)
-    // 10 cachedDistribution: cached byte-distribution composite. ⚑ EMPTY placeholder
-    //    (~40-byte; init zeroes 4 words + a UInt16=0x100 — real layout P2).
-    var cachedDistribution: CachedDistribution = CachedDistribution() // ⚑ placeholder (gate UNCHECKED)
+    // 10 cachedDistribution: the cached byte-distribution snapshot produced by s44.
+    //    NOT a placeholder and NOT inferred — the element NAMES, ORDER and TYPES are
+    //    transcribed verbatim from this field's own MangledTypeName record
+    //    @0x103c38424 (71 bytes), which decodes as an OPTIONAL LABELED TUPLE:
+    //      02 33a74d00                 symbolic ref → Swift.UInt64 (the same symref
+    //                                  carried by maxFileSize/maxReadedFileSize/
+    //                                  moovProtectionSize, i.e. proven = UInt64)
+    //      "6readed_"                  element 0: label `readed`
+    //      "AA" "17contiguousPreload"  element 1: subst→UInt64, label `contiguousPreload`
+    //      "AA" "12disconnected"       element 2: subst→UInt64, label `disconnected`
+    //      "SiSg" "0D10StartIndex"     element 3: Int?, label = word-subst 'D'(=word 3,
+    //                                  "disconnected") + "StartIndex" → `disconnectedStartIndex`
+    //      "t"                         → tuple
+    //      "Sg"                        → Optional<tuple>
+    //    Layout corroborates the decode twice over: the tuple payload is 33 bytes
+    //    (4 words + the Int? tag byte at +32) and the OUTER Optional adds a second tag
+    //    byte at +33 — which is exactly why the designated init writes the payload words
+    //    as four zero stores and then a single 16-bit `0x0100` at +32 (inner tag 0,
+    //    outer tag 1 = nil), and why s44's consumer stores 33 bytes and then
+    //    `strb wzr,[x28,#0x21]` (outer tag 0 = .some) at 0x101b9fc7c.
+    //    The decode is not hand-waved: feeding the record verbatim to the official
+    //    demangler — substituting `Su` for the symbolic reference (a standard
+    //    substitution contributes no identifier, so the word-substitution table is
+    //    unchanged) —
+    //      swift-demangle '$sSu6readed_Su17contiguousPreloadSu12disconnectedSiSg0D10StartIndextSg'
+    //      → (readed: Swift.UInt, contiguousPreload: Swift.UInt,
+    //         disconnected: Swift.UInt, disconnectedStartIndex: Swift.Int?)?
+    //    i.e. the demangler itself resolves the `0D10StartIndex` word substitution to
+    //    `disconnectedStartIndex`.
+    // ⚑[tool=dump_field_type_mangles ref=LimitPreLoadIOContext.cachedDistribution:0x103c38424 result=0233a74d00367265616465645f41413137636f6e746967756f75735072656c6f616441413132646973636f6e6e656374656453695367304431305374617274496e646578745367]
+    var cachedDistribution: (readed: UInt64, contiguousPreload: UInt64,
+                             disconnected: UInt64, disconnectedStartIndex: Int?)?
+        // binary init: 4 zero words + `strh #0x100` at +32 ⇒ nil (implicit here).
     // 11 cachedDistributionLogicalPos: logical position the distribution covers. ⚑
     //    Int64; init -1 (binary const 0xffffffffffffffff).
     var cachedDistributionLogicalPos: Int64 = -1 // ⚑ (composite/width-inferred; gate UNCHECKED)
@@ -158,13 +185,89 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         //   reconstruction scope) → preserved as a faithful note, NOT re-set here.
     }
 
-    // UNRESOLVED → later phase (do NOT reconstruct — no readable body and/or their calls
-    //   are stripped FFmpeg the P2 oracle names — fabrication risk):
-    //   DEEP ENGINE (limit / cache-distribution IO → P2):
-    //     • s39 (177 instr) @ —   — limit/cache-distribution IO engine
-    //     • s44 (199 instr) @ —   — limit/cache-distribution IO engine
-    //     • s43 (1009 instr) @ —  — limit/cache-distribution IO engine (deepest)
+    // UNRESOLVED → later phase (do NOT reconstruct — their calls are stripped FFmpeg the
+    //   P2 oracle names — fabrication risk):
+    //   DEEP ENGINE (limit / cache IO → P2):
+    //     • s39 (177 instr)  @0x101b9dee0 — limit/cache IO engine
+    //     • s43 (1009 instr) @0x101b9e510 — limit/cache IO engine (deepest); one of the
+    //       three direct callers of s44 below.
     //   DEVIRT (null, no body): slots 40, 41, 42.
-    //   cache-distribution layout (CachedDistribution) is P2; limit/cache IO is P2.
     //   — NOT fabricated.
+
+    // s44 @101b9f684 — `func calculateCachedDistribution() -> (readed: UInt64,
+    //   contiguousPreload: UInt64, disconnected: UInt64, disconnectedStartIndex: Int?)`.
+    //   LAST vtable slot (VTableSize=45), so it is declared last. FAITHFUL (full body).
+    //
+    //   The NAME is inferred (recover_swift_function_name → None, no labels). The RETURN
+    //   TYPE is NOT inferred: it is the `cachedDistribution` field's own tuple, minus the
+    //   outer Optional — see that field's mangle transcription above. Three independent
+    //   signals fix it:
+    //     1. the prologue saves x8 (`str x8,[sp,#0x20]`) and the epilogue writes the
+    //        result through it as 4 words + one byte at +32 ⇒ a 33-byte INDIRECT return,
+    //        exactly the tuple payload (the outer Optional's tag byte at +33 is NOT
+    //        written here);
+    //     2. caller FUN_101b9f9a0 sets the sret dest, calls, reads the 33 bytes back and
+    //        re-stores them followed by `strb wzr,[…,#0x21]` — i.e. it wraps the result in
+    //        `.some` before assigning it to the Optional field;
+    //     3. the four accumulators' arithmetic matches the four labels one-for-one
+    //        (below), which is what makes the slot→member mapping evidence and not a guess.
+    //   x0-x7 are never read (all four `swift_beginAccess` calls pass 0 in x2/x3), so the
+    //   method takes NO arguments; `self` rides x20 as usual.
+    //
+    //   Body, straight from the decompile:
+    //     • READ `swift_beginAccess` on the inherited logicalPos (+0x80) and on this
+    //       class's `moovProtectionSize` ivar-offset global, then
+    //       `csel x19,x8,x23,hi` = max(moovProtectionSize, logicalPos) — computed ONCE
+    //       before the loop (`preloadStart` here), while `logicalPos` is re-read from
+    //       +0x80 inside the loop under the same access.
+    //     • READ beginAccess on the inherited entryList (+0x88) then an index walk with
+    //       the bridged-array fallback (`_CocoaArrayWrapper.endIndex` + the element
+    //       down-cast helper 0x101b95bfc) — plain `for` codegen over an Array of a class
+    //       element. TWO lock-step counters advance together (both `+1` with an SCARRY8
+    //       trap) and only one of them is ever consumed — as the value stored into
+    //       `disconnectedStartIndex` — which is `enumerated()` codegen (offset counter +
+    //       base position), so the loop is written as such here.
+    //     • each entry contributes `end = position + size` (CARRY8-trapped, i.e. the
+    //       UInt64 `+` trap) with `size` read through the `CacheFileEntry::size`
+    //       ivar-offset global as a `uint` and widened to 64 bits.
+    //   Every `-` below is a checked UInt64 subtraction in the binary too (the
+    //   `if (end < lower) SoftwareBreakpoint` guards are that trap, not source branches).
+    // ⚑[tool=vtable_walk ref=LimitPreLoadIOContext.slot44:0x101b9f684 result=Method, last slot; NAME inferred]
+    func calculateCachedDistribution() -> (readed: UInt64, contiguousPreload: UInt64,
+                                           disconnected: UInt64, disconnectedStartIndex: Int?) {
+        var readed: UInt64 = 0
+        var contiguousPreload: UInt64 = 0
+        var disconnected: UInt64 = 0
+        var disconnectedStartIndex: Int?
+        var cursor = logicalPos                                  // binary: uVar18, seeded from +0x80
+        let preloadStart = max(moovProtectionSize, logicalPos)   // binary: csel …,hi (uVar2)
+        for (index, entry) in entryList.enumerated() {
+            let position = entry.position
+            let size = UInt64(entry.size)
+            let end = position + size
+            if logicalPos < end {
+                if cursor < position {
+                    // binary: the tag byte is stored unconditionally (0 on both paths) and
+                    //   only the payload is conditional — that is `x == nil` codegen.
+                    if disconnectedStartIndex == nil {
+                        disconnectedStartIndex = index
+                    }
+                    disconnected += size
+                } else {
+                    if position < logicalPos, moovProtectionSize < logicalPos {
+                        readed += logicalPos - max(moovProtectionSize, position)
+                    }
+                    if preloadStart < end {
+                        contiguousPreload += end - max(preloadStart, position)
+                    }
+                    cursor = max(cursor, end)
+                }
+            } else if moovProtectionSize < end {
+                // entry ends at or before the playhead: it is already-read bytes, clipped
+                //   to the moov-protection window.
+                readed += position < moovProtectionSize ? end - moovProtectionSize : size
+            }
+        }
+        return (readed, contiguousPreload, disconnected, disconnectedStartIndex)
+    }
 }

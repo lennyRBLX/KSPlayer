@@ -24,11 +24,44 @@ public protocol MediaPlayback: AnyObject {
     func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void))
 }
 
+// 14 stored fields; the source order below IS the binary reflection order (scripts/dump_field_bindings.py
+// DynamicInfo — 6 `let`, then 8 `var`). The slot-34 allocating init @0x1019df094 is the single witness for
+// every default value quoted below (disassemble_function, verbatim), and its `stp`/`str` widths are also the
+// layout proof. Vtable (scripts/vtable_walk.py DynamicInfo, 37 entries) is the placement evidence: an
+// immutable `let` is not overridable and takes no entry, so the entries are 3 var-triples (slots 0-8) ·
+// 4 BARE getters (slots 9-12) · 7 var-triples (slots 13-33) · 2 Init (34, 35) · 1 Method (36). Exactly 4
+// bare getters ⇒ the 4 read-only computed properties, and the only assignment of the 10 triples that closes
+// the count WITHOUT inventing a member is 8 stored vars + the 2 @Published wrapper accessors. That is what
+// puts lastBytesRead/videoDisplayCount/lastMediaTime AHEAD of the computed group.
 public class DynamicInfo: ObservableObject {
     private let metadataBlock: () -> [String: String]
     private let bytesReadBlock: () -> Int64
     private let audioBitrateBlock: () -> Int
     private let videoBitrateBlock: () -> Int
+    // Fields 5-6 — both `let`, both nil: slot 34 zeroes 32 bytes at self+0x50 in one shot
+    // (`movi v0.2D,#0x0` ; `stp q0,q0,[x27, #0x50]` @0x1019df170-174), i.e. two 16-byte nil closures.
+    // Types are the demangled raw field-record mangles (scripts/dump_field_type_mangles.py → swift-demangle):
+    //   `SaySo26AVPlayerItemAccessLogEventCGycSg` → (() -> [AVPlayerItemAccessLogEvent])?
+    //   `SfyYbScMYccSg`                           → (@MainActor @Sendable () -> Float)?
+    // ⚑ access level NOT binary-recoverable (a `let` emits no vtable slot) — mirrors the sibling blocks.
+    // ⚑ OPEN: the second initializer (vtable slot 35 @0x1019de4a8, not this unit) may take these two as
+    //   parameters, in which case the `= nil` defaults here move into that init's parameter defaults.
+    private let accessLogEvent: (() -> [AVPlayerItemAccessLogEvent])? = nil
+    private let displayFPSBlock: (@MainActor @Sendable () -> Float)? = nil
+    // Fields 7-9 — the first three stores slot 34 makes after swift_allocObject:
+    //   `str xzr,[x0, #0x70]`               → lastBytesRead = 0        (8 bytes)
+    //   `strb wzr,[x0, #0x78]`              → videoDisplayCount = 0    (1 byte ⇒ UInt8, field record)
+    //   `bl 0x103459d54 ; str d0,[x27,#0x80]` → lastMediaTime = CACurrentMediaTime()  (Double, field record)
+    // ⚑ lastBytesRead's type is a symref (0x10536e600) that lands outside the mapped image, so it is not
+    //   name-resolvable here. It is the SAME mangle as bytesReadBlock's return type (this class) and as
+    //   VideoToolboxDecode.startTime/maxTimestamp/lastTimestamp — every one of which is already declared
+    //   Int64 — and VideoToolboxDecode slot 32 writes -1 into one of them with a 64-bit `mov x8,#-0x1`
+    //   (an integer, not a Double bit pattern). Int64 is therefore consistent-by-construction, not a guess.
+    // ⚑ access level NOT binary-recoverable (`private` does not trim vtable slots) — `private` chosen to
+    //   match the other bookkeeping state; no in-source reader exists yet (the updater is slot 36).
+    private var lastBytesRead: Int64 = 0
+    private var videoDisplayCount: UInt8 = 0
+    private var lastMediaTime: Double = CACurrentMediaTime()
     public var metadata: [String: String] {
         metadataBlock()
     }
@@ -45,11 +78,30 @@ public class DynamicInfo: ObservableObject {
         videoBitrateBlock()
     }
 
+    // Fields 10-11 — slot 34 builds BOTH with the same `Published.init` (0x1034532bc) and the same
+    // `PTR___type_metadata_for_Swift_Float` (0x104111870), each from a 4-byte `str wzr` initial value:
+    //   @0x1019df104-11c  _displayFPS   = Published(initialValue: Float(0))
+    //   @0x1019df128-138  _networkSpeed = Published(initialValue: Float(0))
+    // ⚑ PRE-EXISTING DIVERGENCE, deliberately NOT fixed in this unit: `displayFPS` is Double here but
+    //   Published<Float> in the binary, and `audioVideoSyncDiff` is Double here but Float in the field
+    //   record (slot 34 zeroes it with a 4-byte `str wzr`, not `str xzr`). Correcting either one changes a
+    //   type that MEPlayerItem.swift:475 (`(dynamicInfo.audioVideoSyncDiff, type) = options.videoClockSync(…)`,
+    //   a Double-returning tuple) and KSVideoPlayerView.swift:690-691 consume, so it is a multi-file unit.
     @Published
     public var displayFPS = 0.0
+    // ⚑ access level NOT binary-recoverable; `public` mirrors its Published sibling displayFPS.
+    @Published
+    public var networkSpeed: Float = 0
     public var audioVideoSyncDiff = 0.0
     public var droppedVideoFrameCount = UInt32(0)
     public var droppedVideoPacketCount = UInt32(0)
+    /// Binary: vtable slot 34 @0x1019df094 (66 instructions) — the allocating entry point with the
+    /// designated init inlined (`swift_allocObject` 0x10345caf0, then every stored-property default above,
+    /// then the four closure stores). ⚑ parameter labels are NOT recoverable (stripped;
+    /// `recover_swift_function_name.py --addr 0x1019df094` finds no `#function` literal) — they are the
+    /// pre-existing source labels, kept. The four closures arrive in x0-x7 and land as
+    /// `stp x26,x25,[x27,#0x10]` / `[#0x20]` / `[#0x30]` / `[#0x40]`, which is the argument-to-field
+    /// mapping below. ⚑ OPEN: slot 35 @0x1019de4a8 is a SECOND initializer, not reconstructed here.
     init(metadata: @escaping () -> [String: String], bytesRead: @escaping () -> Int64, audioBitrate: @escaping () -> Int, videoBitrate: @escaping () -> Int) {
         metadataBlock = metadata
         bytesReadBlock = bytesRead
