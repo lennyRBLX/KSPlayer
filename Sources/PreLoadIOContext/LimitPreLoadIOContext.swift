@@ -106,6 +106,35 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
                    saveFile: saveFile, isReadComplete: isReadComplete)
     }
 
+    // --- computed accessor between the init and the methods (vtable slot 38) ---
+
+    // s38 @101b9dbf0 — `var cachedSize: UInt64` (name inferred, devirt). FAITHFUL (full):
+    //   vtable_walk puts the init at slot 37 and the first deep-IO method at slot 39, so
+    //   this lone getter is declared exactly here. It sums `size` over the inherited
+    //   `entryList`: a READ `swift_beginAccess` on +0x88 — source-pinned as entryList by
+    //   CacheIOContext.swift's own "entryList (self+0x88)" note, and corroborated by
+    //   CacheIOContext#slot27 @0x100a1335c being entryList's generated getter over that
+    //   same +0x88 with a `swift_bridgeObjectRetain` — then a straight `for` over its
+    //   elements, reading each entry's `size` through the
+    //   `CacheFileEntry::size` ivar-offset global (a `uint`, matching this file's sibling
+    //   declaration `var size: UInt32`) and accumulating.
+    //   Two details fix the types rather than guess them: the accumulator's add is
+    //   overflow-trapped at 64 bits (`CARRY8` → a SoftwareBreakpoint, i.e. Swift's UInt64
+    //   `+` trap), so the running total is UInt64 and each UInt32 `size` is widened; and
+    //   the loop is an explicit index walk with a bridged-array fallback
+    //   (`_CocoaArrayWrapper.endIndex` plus the element down-cast helper 0x101b95bfc,
+    //   which classify_compiler_helpers reports HELPER via value-witness membership), i.e.
+    //   plain `for` codegen over an Array of a class element — NOT a `reduce`, which would
+    //   have emitted a closure.
+    // ⚑[tool=prefetch_decompiles ref=LimitPreLoadIOContext.cachedSize.getter:0x101b9dbf0 result=body full; NAME inferred]
+    var cachedSize: UInt64 { // name inferred (devirt)
+        var total: UInt64 = 0
+        for entry in entryList {
+            total += UInt64(entry.size)
+        }
+        return total
+    }
+
     // --- methods (only the one cached small method; name devirt→inferred) ---
 
     // s21 @101b9d4dc — `func resetPlaybackPosition()` (name inferred, devirt; 40 instr).

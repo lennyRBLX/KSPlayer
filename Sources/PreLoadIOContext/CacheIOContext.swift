@@ -55,7 +55,26 @@ public class CacheIOContext: AbstractAVIOContext {
     //    the position-field pattern (siblings gate-confirmed).
     var end: UInt64 = 0 // ⚑ (gate UNCHECKED; position-pattern)
     // 3  urlPos: current position within the backing download/url. gate-confirmed.
-    var urlPos: UInt64 = 0
+    //    Forward gives it a `didSet` — the vtable setter (slot 10 @0x101b85f50) is NOT the
+    //    bare generated store its getter (slot 9) is: after `*(self+0x50) = newValue` it
+    //    watermarks `end` (self+0x48) up to the new position and calls s23
+    //    `updateDownloadSpeed` (@0x101b86044, the same body this file already reconstructs),
+    //    both guarded by `newValue != .max`. The `.max` sentinel is the binary's
+    //    `param_2 != 0xffffffffffffffff`; the `end` update is an unconditional store of
+    //    `max(end, urlPos)` (the binary selects then stores on both arms), not a
+    //    conditional assignment. Offsets are source-pinned, not decompiler-guessed:
+    //    entryList is documented below at self+0x88 and logicalPos at self+0x80, which
+    //    fixes end@+0x48 / urlPos@+0x50 / lastSpeedSampleTime@+0x58 exactly as the
+    //    lastSpeedSample* comments already record.
+    // ⚑[tool=vtable_walk ref=CacheIOContext.urlPos.setter:0x101b85f50 result=didSet recovered]
+    var urlPos: UInt64 = 0 {
+        didSet {
+            if urlPos != .max {
+                end = max(end, urlPos)
+                updateDownloadSpeed(urlPos)
+            }
+        }
+    }
     // 4  lastSpeedSampleTime: CFAbsoluteTime of the last speed sample (self+0x58).
     //    s23 reads it as a Double timestamp. field-record.
     var lastSpeedSampleTime: Double = 0

@@ -15,7 +15,14 @@ import Foundation
 //             own logic; symbols devirtualized → method NAMES inferred from the
 //             readable body shape (marked `name inferred`). Faithful spine; the
 //             intricate FileHandle/Data-helper details are flagged UNRESOLVED.
-final class CacheFileEntry {
+// superclass_conformance_gate reports the binary's own conformance list for this type as
+// ['CacheEntryProtocol', 'CustomStringConvertible'] (reverse-walk from the class
+// descriptor through each conformance descriptor's TypeRef). CustomStringConvertible is
+// declared here because its single requirement is now satisfied (see `description`
+// below). CacheEntryProtocol is still MISSING from this list — a pre-existing gate FLAG,
+// byte-identical at HEAD; its requirement set has not been recovered, so declaring it
+// would be a fabrication. Left for the owner phase.
+final class CacheFileEntry: CustomStringConvertible {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // file: backing FileHandle. s13/s14 fetch it at field offset 0x10 and drive
     //   NSFileHandle::_offset / seekToOffset:error: / _write / _read on it.
@@ -61,6 +68,41 @@ final class CacheFileEntry {
     //   position: UInt64 = param_2, maxSize: UInt32? = param_3 packed). Derives url via
     //   appendingPathComponent + creates a new FileHandle (deep Foundation IO). param_1 type unpinnable
     //   without guessing → do NOT declare. Real designated init deferred. — P2
+
+    // --- description (vtable slot 11, between the two inits at 9/10 and the three
+    //     methods at 12/13/14 — so it is declared here, after the inits) ---
+
+    // s11 @0x101b9049c — `var description: String`. The NAME is not inferred: no mangled
+    //   name survives (recover_swift_function_name → None), but
+    //   superclass_conformance_gate independently proves this type conforms to
+    //   CustomStringConvertible in the binary, and slot 11 is the only get-only String
+    //   property in the vtable — so `description` is the witness, established rather than
+    //   guessed. The BODY is byte-exact too: the
+    //   three literals are recovered from the small-string immediates the decompile
+    //   loads, so the format string is not a guess.
+    //     "position=" str 0x6e6f697469736f70 = "position", bridgeObject 0xe9…003d = count 9, 9th byte '='
+    //     ",size="    str 0x00003d657a69732c = ",size=",   bridgeObject 0xe6…0000 = count 6
+    //     ",maxSize=" str 0x657a695378616d2c = ",maxSize", bridgeObject 0xe9…003d = count 9, 9th byte '='
+    //   Interpolation kinds corroborate the field order independently: `position`
+    //   (UInt64) and `size` (UInt32) each go through
+    //   `CustomStringConvertible.description` — two `get_description` calls — while
+    //   `maxSize` (UInt32?, an Optional and therefore NOT CustomStringConvertible)
+    //   falls to the generic `appendInterpolation<T>` → `_print_unlocked` with the
+    //   DefaultStringInterpolation metadata/TextOutputStream witness pair. The
+    //   `grow(0x1e)` is the 30-byte literal reserve (9 + 6 + 9 = 24 plus slack).
+    //   Both field reads are `swift_beginAccess` on the ivar-offset globals
+    //   `CacheFileEntry::size` / `CacheFileEntry::maxSize`, i.e. this class's own
+    //   `size` and `maxSize`, not a sibling's.
+    // ⚑[tool=superclass_conformance_gate ref=CacheFileEntry.description.getter:0x101b9049c result=CustomStringConvertible witness]
+    //   Interpolating `maxSize` (a UInt32?) directly is what the binary does — the generic
+    //   `appendInterpolation<T>` → `_print_unlocked` path only exists because the value is
+    //   an Optional. Swift emits an "interpolation produces a debug description for an
+    //   optional value" WARNING for it; the warning is the faithful reading and is not
+    //   silenced (a `String(describing:)` or `?? default` rewrite would change the
+    //   emitted call and break the body diff).
+    var description: String {
+        "position=\(position),size=\(size),maxSize=\(maxSize)"
+    }
 
     // --- methods (CacheFileEntry's own; names devirtualized → inferred) ---
 

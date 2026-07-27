@@ -59,6 +59,45 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //    NSLock() (objc_allocWithZone + init on __NSLock).
     var _timeIndexLock: NSLock = NSLock()
 
+    // --- computed accessors ahead of the inits (vtable slot 20; slots 6, 7, 23-25 and
+    //     26 are covered by the PINs / the getter after the inits) ---
+
+    // s20 @101ba4298 — `var timeIndex: [TimeIndexEntry]` (name inferred, devirt).
+    //   FAITHFUL (full): vtable_walk puts the field triples at slots 8-19 and the two
+    //   inits at 21/22, so this lone getter is declared exactly here, between the last
+    //   stored field and the designated init. Straight-line, single exit: retain
+    //   _timeIndexLock, `objc lock`, READ `swift_beginAccess` (flags 0,0) on the
+    //   `_timeIndex` ivar-offset global, load the array word, `swift_bridgeObjectRetain`
+    //   (the +1 handed to the caller), `objc unlock`, return. PreLoadIOContext#slot20
+    //   @0x101ba78a4 carries the identical shape over its own `_timeIndex`/`_timeIndexLock`
+    //   — two sibling classes duplicating one locked-read surface, and the same
+    //   duplication that makes slots 6/23 literally shared function bodies below.
+    // ⚑[tool=prefetch_decompiles ref=LimitSeparatePreLoadIOContext.timeIndex.getter:0x101ba4298 result=body full; NAME inferred]
+    var timeIndex: [TimeIndexEntry] { // name inferred (devirt)
+        _timeIndexLock.lock()
+        let entries = _timeIndex
+        _timeIndexLock.unlock()
+        return entries
+    }
+
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot6.getter:0x101ba41f4 result=pinned]
+    //   Slots 6 and 7 are lone get-only computed properties sitting BETWEEN the
+    //   maxReadedFileSize triple (3-5) and the loadMoreBuffer triple (8-10). Slot 6's body
+    //   is fully readable — `urlPos == .max ? logicalPos : urlPos`, a READ beginAccess on
+    //   the inherited +0x50 and, only on the 0xffffffffffffffff sentinel, a second READ
+    //   beginAccess on the inherited +0x80 — and it is THE SAME FOLDED FUNCTION as
+    //   PreLoadIOContext#slot1, so the two vtable rows are one unit. NOT written: no name
+    //   or argument label survives (recover_swift_function_name → None), and the
+    //   declaration sits between two stored-field triples, so a guessed member would move
+    //   this class's field slots. Deferred, not guessed.
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot24.setter:0x101ba49f8 result=pinned]
+    //   Slots 23-25 are a triple whose GETTER is the folded bare urlPos getter shared with
+    //   CacheIOContext#slot9 and PreLoadIOContext#slot11 (all three vtable rows point at
+    //   0x100a4e368) and whose SETTER inlines urlPos' own didSet — end = max(end, newValue)
+    //   plus updateDownloadSpeed, both under `newValue != .max` — then mirrors the result
+    //   into this class's `fakeUrlPos`. Same body as PreLoadIOContext#slot12 @0x101ba6e04
+    //   against that class's fakeUrlPos. Name unrecoverable → deferred, not guessed.
+
     // --- inits ---
 
     // Designated init s22 @101ba4650 → inner FUN_101ba4650 (cached, READABLE). The
@@ -91,6 +130,26 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // UNRESOLVED → P8 (IO-completion): s21 init — devirtualized (`new-unresolved`); the binary has no
     //   readable body for it (the designated reconstructed above is s22). No body to
     //   reconstruct → not fabricated. — P2
+
+    // s26 @101ba4b68 — `var bufferedBytes: Int` (name inferred, devirt). FAITHFUL (full):
+    //   the lone getter between the slot 23-25 triple and the first method at slot 27, so
+    //   it is declared here, after the inits. Reads only this class's own `fakeUrlPos`
+    //   (exclusivity check elided — own field, no beginAccess emitted) and the inherited
+    //   `logicalPos`. logicalPos@+0x80 is source-pinned rather than decompiler-guessed:
+    //   CacheIOContext.swift documents entryList at self+0x88 with logicalPos immediately
+    //   before it, and CacheIOContext#slot24 @0x101b86138 is logicalPos' own generated
+    //   getter over that same +0x80. Shape: `fakeUrlPos == .max` (the binary's
+    //   0xffffffffffffffff sentinel) → 0; `logicalPos > fakeUrlPos` → 0; else the
+    //   difference clamped — the unsigned compare of the UInt64 difference against
+    //   0x8000000000000000 selecting 0x7fffffffffffffff (Int.max) is `Int(clamping:)`.
+    //   PreLoadIOContext#slot52 @0x101ba9e44 is the same property over that class's fields.
+    // ⚑[tool=prefetch_decompiles ref=LimitSeparatePreLoadIOContext.bufferedBytes.getter:0x101ba4b68 result=body full; NAME inferred]
+    var bufferedBytes: Int { // name inferred (devirt)
+        guard fakeUrlPos != .max, logicalPos <= fakeUrlPos else {
+            return 0
+        }
+        return Int(clamping: fakeUrlPos - logicalPos)
+    }
 
     // --- methods ---
 

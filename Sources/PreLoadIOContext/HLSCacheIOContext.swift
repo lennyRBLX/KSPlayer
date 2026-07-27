@@ -264,6 +264,24 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         return nil
     }
 
+    // s26 @101b9ad24 — `var subContextCount: Int` (name inferred, devirt). FAITHFUL
+    //   (full): the LAST vtable slot (vtable_walk: VTableSize=27, so slot 26 is declared
+    //   after the four sub-context methods above — hence its position here). Straight-line
+    //   body, no branches: retain subContextsLock into a register, `objc lock`, then a
+    //   READ `swift_beginAccess` (flags 0,0) on the `subContexts` ivar-offset global,
+    //   load `*(storage + 0x10)` — `count` in `__RawDictionaryStorage`, which sits right
+    //   after the 16-byte object header — then `objc unlock` and return that word. No
+    //   `defer`-shaped cleanup is discernible (there is exactly one exit), so the
+    //   lock/read/unlock is written straight-line to match; the siblings above use
+    //   `defer` only because they have early exits.
+    // ⚑[tool=prefetch_decompiles ref=HLSCacheIOContext.subContextCount.getter:0x101b9ad24 result=body full; NAME inferred]
+    var subContextCount: Int { // name inferred (devirt)
+        subContextsLock.lock()
+        let count = subContexts.count
+        subContextsLock.unlock()
+        return count
+    }
+
     // UNRESOLVED → later phase (do NOT reconstruct — declared nowhere beyond these
     //   markers; their bodies are deep/devirt and/or call stripped FFmpeg + DirectoryWatcher
     //   (1C.3) the P2 oracle names — fabrication risk):
