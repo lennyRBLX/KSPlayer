@@ -72,18 +72,23 @@ public class AudioDataBuffer {
     // mangled string as AudioBaseOutput's same-named UInt32 field.
     var currentRenderReadOffset: UInt32 = 0
 
-    // flush (slot 12 @0x101a11cb4, 8 instr, ⚑ name INFERRED — the P43 existence-check was
-    // RUN in session 46 and came back negative: no #function/#file literal, no witness-table
-    // anchor, no naming caller). Named by analogy to the sibling AudioBaseOutput.flush() in
-    // this same binary source file, which likewise drops the in-flight frame. Body: release
+    // flush (slot 12 @0x101a11cb4, 8 instr — the name is CONFIRMED, no longer inferred. The
+    // session-46 P43 check came back negative (no #function/#file literal, no witness-table
+    // anchor, no naming caller) and the name was chosen by analogy to AudioBaseOutput.flush().
+    // The analogy was right: the orphaned export trie maps 0x101a11cb4 directly to
+    // `KSPlayer.AudioDataBuffer.flush() -> ()`.
+    // ⚑[tool=export_trie_oracle ref=FUN_101a11cb4:0x101a11cb4 result=CONFIRMED AudioDataBuffer.flush()] Body: release
     // and clear currentRender; the unconditional didSet resets currentRenderReadOffset.
     // AudioDataBuffer has no lock field, so there is no os_unfair_lock here.
     public func flush() {
         currentRender = nil
     }
 
-    // sampleBuffer(nanoseconds:) (slot 13 @0x101a11cd4, 398 instr, ⚑ name INFERRED — same
-    // negative P43 result as slot 12; named for its behaviour and its `nanoseconds` argument).
+    // sampleBuffer(nanoseconds:) (slot 13 @0x101a11cd4, 398 instr, ⚑ name still INFERRED —
+    // and unlike slot 12 this one does NOT resolve: 0x101a11cd4 is absent from the export trie.
+    // That makes it a VERIFIED negative rather than an unverified one; named for its behaviour
+    // and its `nanoseconds` argument.
+    // ⚑[tool=export_trie_oracle ref=FUN_101a11cd4:0x101a11cd4 result=absent — VERIFIED negative, name remains inferred]
     //
     // ⚑ SIGNATURE CORRECTION (session 47): the session-46 decode recorded
     // `(CMTime) -> CMSampleBuffer?`. Disassembly disproves the parameter: the prologue saves

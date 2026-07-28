@@ -28,7 +28,12 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     public var isDownloading: Bool = false
     public var languageCode: String? = nil
     public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
-    // Plain stored var (no didSet). P43 existence-check RAN + FAILED (session 21): the base parse-trigger didSet
+    // Plain stored var (no didSet). RE-VERIFIED session 63 against the ORPHANED export trie — the tool
+    //   the session-21 check used could not see it, so the negative was sound but unproven. It now holds
+    //   on the stronger evidence: URLSubtitleInfo carries 0 `parse` symbols, 0 `parts` symbols, and ZERO
+    //   didSet/willSet observers (no `vW`/`vw`) anywhere in the class.
+    // ⚑[tool=export_trie_oracle ref=URLSubtitleInfo:parse/parts/vW result=VERIFIED negative — 0/0/0]
+    // P43 existence-check RAN + FAILED (session 21): the base parse-trigger didSet
     //   `didSet { if isEnabled, parts.isEmpty { Task { try? await parse(url:userAgent:) } } }` is GONE, not deferred —
     //   `URLSubtitleInfo.parse` has 0 binary symbols (removed), the `parts` field is gone (KSSubtitle-flatten), the
     //   init (0x101aa3310) never writes isEnabled (default-false zero-init, no observer), and no URLSubtitleInfo

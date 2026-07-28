@@ -17,7 +17,19 @@ public class AssImageParse: KSParseProtocol {
     //   symbolicated/app-context build or upstream Forward source; NOT further binary analysis — do NOT re-open as
     //   pending work). RE-VERIFY (P43): recover_swift_function_name → all 4 helpers 'npl'(spurious #file:None); the
     //   3 flag accessors FUN_1019b982c/98fc/99cc + shared reader FUN_101b1d474 → #function None.
-    //   ⚑[tool=recover_swift_function_name ref=FUN_1019b982c/98fc/99cc+FUN_101b1d474 result=FAILED-SEARCH]
+    //   ⚠️ THREE OF THE FOUR ARE NOW NAMED (session 63). `recover_swift_function_name` genuinely
+    //   fails on them, but the ORPHANED export trie carries an ADDRESS->symbol map, and the flags
+    //   are KSOptions statics, so the three accessors have real identities (each named in its own
+    //   marker below; together they supersede the FAILED-SEARCH pin). The fourth helper does NOT
+    //   resolve, which is now a VERIFIED negative rather than an unverified one.
+    //   ⚠️ WHICH accessor backs WHICH of the `flag150/151/152` placeholders in the spine below is
+    //   NOT established — the address list and the flag numbering appear in different orders and
+    //   nothing here pairs them. Deciding it needs the call sites read at 0x101a96b98. The three
+    //   names are evidence; the pairing would be a guess, so it is left open.
+    // ⚑[tool=export_trie_oracle ref=KSOptions.isASSUseImageRender.getter:0x1019b982c result=NAMED (static, Bool)]
+    // ⚑[tool=export_trie_oracle ref=KSOptions.isSRTUseImageRender.getter:0x1019b98fc result=NAMED (static, Bool)]
+    // ⚑[tool=export_trie_oracle ref=KSOptions.preferEffectSubtitle.getter:0x1019b99cc result=NAMED (static, Bool)]
+    // ⚑[tool=export_trie_oracle ref=AssImageParse.flagReaderHelper:0x101b1d474 result=absent from the export trie — VERIFIED negative, name unrecovered]
     //   canParse = FUN_101a96b98 (~298i, anchor-verified). Decoded spine:
     //     if flag151, scanner.string.contains(" --> ")  -> scanner.charactersToBeSkipped = nil; scanner.scanString("WEBVTT"); return true
     //     guard scanner.string.contains("Format: Name,") else { return false }

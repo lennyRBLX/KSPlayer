@@ -300,9 +300,17 @@ extension MEPlayerItem {
         //   EmbedDataSouce.swift; conformance witness 0x1041d7668) and passed to a KSOptions method at
         //   vtable[0x768], whose result gets a follow-on witness[+0x40](true) dispatch. That method is Forward-
         //   added: absent from source AND the origin/forward base, and statically unresolvable (metadata slot
-        //   md+0x768 is an unbound pattern value 0x105395200 with no function). Deferred — the P43 existence-check
-        //   RAN (source ✗, base ✗, static metadata ✗) and failed to name it.
-        //   ⚑[tool=get_function_by_address ref=KSOptions.vtable0x768:0x105395200 result=FAILED-SEARCH]
+        //   md+0x768 is an unbound pattern value 0x105395200 with no function).
+        //   ⚠️ NAMED (session 63) — the P43 negative above is REFUTED. It concluded "statically
+        //   unresolvable" from source ✗ / base ✗ / static metadata ✗; none of those three can see
+        //   the ORPHANED export trie, which carries exactly one KSOptions member taking a subtitle
+        //   track array:
+        //       KSPlayer.KSOptions.wantedSubtitle(tracks: [KSPlayer.SubtitleInfo]) -> KSPlayer.SubtitleInfo?
+        //   That signature matches this call site precisely: [any SubtitleInfo] in, an OPTIONAL out
+        //   feeding the follow-on witness[+0x40](true) dispatch. The body is still not reconstructed
+        //   — what changes is that the method is no longer nameless, and "absent from source AND the
+        //   origin/forward base" is now a Forward-ADDED method with a known signature.
+        // ⚑[tool=export_trie_oracle ref=KSOptions.wantedSubtitle(tracks:) result=NAMED — supersedes the get_function_by_address FAILED-SEARCH]
         // ⚑ UNRESOLVED (SLICE 3 — audio, closures FUN_101a36964/36cf0 + tail): audio sample-rate sampling
         //   (audioStreamBasicDescription) + max-reduction + the KSOptions.vtable[0x6f8] call + AudioPlayerItemTrack
         //   (FUN_101a383a8/33444) construction.
