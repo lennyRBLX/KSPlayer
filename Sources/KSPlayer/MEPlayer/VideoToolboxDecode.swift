@@ -14,10 +14,10 @@ import VideoToolbox
 
 class VideoToolboxDecode: DecodeProtocol {
     // P2 Task 3 field delta (reflection ORDER = layout; −lastPosition, +9 new). ⚑ = inferred/opaque → P3.
-    private var maxFrameCount: Int = 0 // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
-    private var codecID: AVCodecID = AV_CODEC_ID_NONE // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private let maxFrameCount: Int = 0 // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private let codecID: AVCodecID = AV_CODEC_ID_NONE // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
     private let options: KSOptions
-    private var flags: VTDecodeFrameFlags = [] // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private let flags: VTDecodeFrameFlags = [] // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
     private var startTime: Int64 = 0
     private var maxTimestamp: Int64 = 0
     private var lastTimestamp: Int64 = -1

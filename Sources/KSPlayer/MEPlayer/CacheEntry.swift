@@ -16,8 +16,8 @@ final class CacheEntry: Codable {
     // field types pinned from mangled property descriptors (authoritative — demangled):
     //   CacheEntry.logicalPos : Swift.UInt64  ·  .physicalPos : Swift.UInt64
     //   CacheEntry.size : Swift.UInt32  ·  .maxSize : Swift.UInt32?  ·  .eof : Swift.Bool
-    var logicalPos: UInt64   // +0x10, 8B  (mangled: logicalPoss6UInt64Vv)
-    var physicalPos: UInt64  // +0x18, 8B  (mangled: physicalPoss6UInt64Vv)
+    let logicalPos: UInt64   // +0x10, 8B  (mangled: logicalPoss6UInt64Vv)
+    let physicalPos: UInt64  // +0x18, 8B  (mangled: physicalPoss6UInt64Vv)
     var size: UInt32         // +0x20, 4B  (mangled: size...s6UInt32V; bounds-check compares UNSIGNED)
     var eof: Bool            // +0x24, 1B  (reflection `Sb`; init writes 0 = false)
     var maxSize: UInt32?     // +0x28 value / +0x2c discriminator (mangled: maxSizes6UInt32VSgv; encodeIfPresent)
