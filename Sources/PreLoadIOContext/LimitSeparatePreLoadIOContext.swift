@@ -49,7 +49,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     var loadMoreBuffer: UnsafeMutablePointer<UInt8>? // ⚑
     // 3  fakeUrlPos: synthetic url position used by the separate-download bookkeeping.
     //    Designated init zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
-    var fakeUrlPos: UInt64 = 0 // ⚑
+    private var fakeUrlPos: UInt64 = 0 // ⚑
     // 4  moreDownload: the secondary download feeding the load-more path. The designated
     //    init copies its x1 parameter into this field with FUN_1001263e0, which
     //    disassembles as an EXISTENTIAL-container copy, not a class-ref retain:
@@ -72,10 +72,10 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     let moreDownload: (any DownloadProtocol)? // ⚑ optionality inferred (a nil existential is a zero metadata word; unobservable here)
     // 5  moreUrlPos: current position within the secondary download. Designated init
     //    zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
-    var moreUrlPos: UInt64 = 0 // ⚑
+    private var moreUrlPos: UInt64 = 0 // ⚑
     // 6  _timeIndex: sorted-by-position index of (position,time) entries. Designated
     //    init defaults it to [] (PTR___swiftEmptyArrayStorage). field-record.
-    var _timeIndex: [TimeIndexEntry] = []
+    private var _timeIndex: [TimeIndexEntry] = []
     // 7  _timeIndexLock: serializes _timeIndex mutation. Designated init allocs
     //    NSLock() (objc_allocWithZone + init on __NSLock) — that store is the DECLARATION
     //    DEFAULT being materialized, not a user assignment, so it is spelled here.
@@ -89,7 +89,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //        (loadMoreBuffer, fakeUrlPos, moreUrlPos, _timeIndex, _timeIndexLock) and only
     //        then the param-derived ones — which is exactly the default-materialization
     //        prologue the compiler emits ahead of user statements.
-    let _timeIndexLock: NSLock = NSLock()
+    private let _timeIndexLock: NSLock = NSLock()
 
     // --- computed accessors ahead of the inits (vtable slot 20; slots 6, 7, 23-25 and
     //     26 are covered by the PINs / the getter after the inits) ---

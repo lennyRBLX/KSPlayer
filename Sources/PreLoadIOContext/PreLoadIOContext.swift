@@ -36,22 +36,22 @@ public class PreLoadIOContext: CacheIOContext {
     var loadMoreBuffer: UnsafeMutablePointer<UInt8>? = nil // ⚑ (composite; gate UNCHECKED)
     // 1  fakeUrlPos: the synthetic URL cursor the preload presents to the reader. ⚑
     //    width-inferred UInt64; init 0.
-    var fakeUrlPos: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
+    private var fakeUrlPos: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
     // 2  isPreloadPaused: whether the preload is paused (s55 short-circuits on it).
     //    init false.
     public var isPreloadPaused: Bool = false
     // 3  _timeIndex: the position↔time index entries, guarded by _timeIndexLock.
     //    init []. (TimeIndexEntry is in-module.)
-    var _timeIndex: [TimeIndexEntry] = []
+    private var _timeIndex: [TimeIndexEntry] = []
     // 4  _timeIndexLock: serializes _timeIndex access (s33 locks it). init NSLock().
-    let _timeIndexLock: NSLock = NSLock()
+    private let _timeIndexLock: NSLock = NSLock()
     // 5  _playbackSnapshot: last (time, position) reported by the player, guarded by
     //    _playbackSnapshotLock (s31 stores/nils it). ⚑ composite tuple-optional via
     //    decode_composite; init nil.
-    var _playbackSnapshot: (time: Double, position: UInt64)? = nil // ⚑ (composite; gate UNCHECKED)
+    private var _playbackSnapshot: (time: Double, position: UInt64)? = nil // ⚑ (composite; gate UNCHECKED)
     // 6  _playbackSnapshotLock: serializes _playbackSnapshot access (s31 locks it).
     //    init NSLock().
-    let _playbackSnapshotLock: NSLock = NSLock()
+    private let _playbackSnapshotLock: NSLock = NSLock()
     // 7  minBufferSecondsForThumbnail: min buffered seconds before a thumbnail fetch
     //    is allowed. init 5.0 (binary const).
     public var minBufferSecondsForThumbnail: Double = 5.0
@@ -59,10 +59,10 @@ public class PreLoadIOContext: CacheIOContext {
     public var videoDuration: Double = 0
     // 9  thumbnailFetchRequest: pending thumbnail fetch (byte offset + size). ⚑
     //    composite tuple-optional via decode_composite; init nil.
-    var thumbnailFetchRequest: (offset: UInt64, size: UInt32)? = nil // ⚑ (composite; gate UNCHECKED)
+    private var thumbnailFetchRequest: (offset: UInt64, size: UInt32)? = nil // ⚑ (composite; gate UNCHECKED)
     // 10 thumbnailFetchResult: outcome of the last thumbnail fetch. ⚑ Int32
     //    PLACEHOLDER (4-byte; real type likely an enum → P3/P6). init 0.
-    var thumbnailFetchResult: Int32 = 0 // ⚑ placeholder (4-byte; real type likely an enum — P3/P6)
+    private var thumbnailFetchResult: Int32 = 0 // ⚑ placeholder (4-byte; real type likely an enum — P3/P6)
 
     // --- computed accessors (vtable slots 0, 1, 11-13 and 20; only slot 20 is written —
     //     see the PINs below for the other three) ---

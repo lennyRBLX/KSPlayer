@@ -21,7 +21,7 @@ public class LimitCountPreLoadIOContext: LimitPreLoadIOContext {
     // the faithful `let` form drops it. Binding now matches the FieldRecord (flags 0x00000000).
     let maxMoreCount: UInt16  // ⚑ (width-inferred 2-byte; gate UNCHECKED)
     // moreCount: rounds used so far. init 0 (2-byte store). ⚑
-    var moreCount: UInt16 = 0 // ⚑ (width-inferred 2-byte; gate UNCHECKED)
+    private var moreCount: UInt16 = 0 // ⚑ (width-inferred 2-byte; gate UNCHECKED)
 
     // Labels AND order RECOVERED from the word-substituted mangled name (`010LimitCountabC0C`);
     // `maxMoreCount` is the LAST parameter, not the first, and the String label is `md5:`.

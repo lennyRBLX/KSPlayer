@@ -60,27 +60,27 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     public let hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
     // 5  m3u8Buffer: the downloaded m3u8 manifest bytes. init nil. ⚑ name + type inferred
     //    (two-word optional zeroed in the inner).
-    var m3u8Buffer: Data? = nil // ⚑ (name + type inferred; gate UNCHECKED)
+    private var m3u8Buffer: Data? = nil // ⚑ (name + type inferred; gate UNCHECKED)
     // 6  m3u8Parsed: whether the manifest has been parsed into `segments`. init false.
-    var m3u8Parsed: Bool = false
+    private var m3u8Parsed: Bool = false
     // 7  segments: the parsed HLS segment list. init []. ⚑ element type is the
     //    HLSSegment placeholder (UNRESOLVED).
     public var segments: [HLSSegment] = [] // ⚑ (element type placeholder; gate UNCHECKED)
     // 8  subContexts: per-segment-URL child cache contexts, guarded by subContextsLock.
     //    init [:].
-    var subContexts: [String: CacheIOContext] = [:]
+    private var subContexts: [String: CacheIOContext] = [:]
     // 9  subContextsLock: serializes subContexts access. init NSLock().
-    let subContextsLock: NSLock = NSLock()
+    private let subContextsLock: NSLock = NSLock()
     // 10 childHLSContexts: nested HLS cache contexts (variant playlists). init [].
-    var childHLSContexts: [HLSCacheIOContext] = []
+    private var childHLSContexts: [HLSCacheIOContext] = []
     // 11 prefetchCount: how many segments ahead to prefetch. init 3 (binary const).
-    let prefetchCount: Int = 3
+    private let prefetchCount: Int = 3
     // 12 prefetchQueue: concurrent queue driving segment prefetch. init
     //    DispatchQueue(label: "hls.prefetch", attributes: .concurrent) (binary string +
     //    get_concurrent + get_unspecified QoS).
-    let prefetchQueue: DispatchQueue = DispatchQueue(label: "hls.prefetch", attributes: .concurrent)
+    private let prefetchQueue: DispatchQueue = DispatchQueue(label: "hls.prefetch", attributes: .concurrent)
     // 13 isClosed: whether close() has run. init false.
-    var isClosed: Bool = false
+    private var isClosed: Bool = false
 
     // --- designated init (s18 @101b96cb0 → inner FUN_101b96cb0) ---
 

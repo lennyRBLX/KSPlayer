@@ -37,15 +37,15 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     // onlyCache: serve strictly from cache (no network). v4 concrete.
     let onlyCache: Bool = false
     // eof: whether the cached stream is at end. v4 concrete.
-    var eof: Bool = false
+    private var eof: Bool = false
     // end: logical end offset of the cached stream.
-    var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
+    private var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
     // logicalPos: current logical read cursor.
     public var logicalPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped; matches CacheOnlyIOContext.logicalPos)
     // urlPos: current position within the backing download.
-    var urlPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped)
+    private var urlPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped)
     // entryCache: the single backing cache entry. v4 concrete (references CacheFileEntry).
-    var entryCache: CacheFileEntry? // field-record concrete
+    private var entryCache: CacheFileEntry? // field-record concrete
 
     // UNRESOLVED: real inits → P2. Designated field-store init = descriptor slot 16
     //   DEVIRTUALIZED (addr=null, no body). Convenience inits s15 @101bacb8c + s17

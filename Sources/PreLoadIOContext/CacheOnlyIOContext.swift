@@ -36,14 +36,14 @@ public class CacheOnlyIOContext: AbstractAVIOContext {
     // logicalPos: current logical read cursor across the segment set.
     //   l2_field_gate binary property descriptor resolves UInt64 (brief's `Int64`
     //   ⚑ guess corrected — matches the known CacheEntry.logicalPos UInt64 shape).
-    var logicalPos: UInt64 = 0 // type inferred — ⚑ (brief said Int64; l2 gate → UInt64)
+    private var logicalPos: UInt64 = 0 // type inferred — ⚑ (brief said Int64; l2 gate → UInt64)
     // sourceContext: optional wrapped upstream context for network fallback.
     //   WEAK reference (binary uses _swift_weakInit/_swift_weakAssign on this field).
-    weak var sourceContext: AbstractAVIOContext? // type inferred — ⚑ (referent class not pinned; AbstractAVIOContext? retained best-effort)
+    weak private var sourceContext: AbstractAVIOContext? // type inferred — ⚑ (referent class not pinned; AbstractAVIOContext? retained best-effort)
     // allowNetworkFallback: whether misses may fall through to sourceContext. v4 concrete.
     public var allowNetworkFallback: Bool = false
     // requestedBytes: running count of bytes requested (for the byte budget).
-    var requestedBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
+    private var requestedBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
     // maxNetworkBytes: ceiling on bytes served via the network fallback path.
     public var maxNetworkBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
 

@@ -46,7 +46,7 @@ public final class CacheFileEntry: CustomStringConvertible {
     public let position: UInt64  // type inferred — ⚑ (brief said Int64; decompile shows ulong/unsigned → UInt64)
     // saveFile: whether the entry persists to disk. v4 concrete (gate PASS).
     //   (Not read by s12/s13/s14 in the cached set; consulted elsewhere.)
-    var saveFile: Bool = false
+    private var saveFile: Bool = false
     // size: bytes currently held by this entry. s13 increments it by the write
     //   length; s12 compares it against maxSize + a 32MiB ceiling. Accessed as
     //   `*(uint *)` with a CARRY4 (unsigned 32-bit overflow) trap → UInt32. Brief's

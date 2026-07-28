@@ -53,19 +53,19 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     public var playbackBytePosition: UInt64? = nil // ⚑ (composite Optional; gate-typed UInt64?)
     // 5  playbackBytePositionIsExact: whether playbackBytePosition is exact. init false
     //    (binary: byte = 0).
-    var playbackBytePositionIsExact: Bool = false
+    private var playbackBytePositionIsExact: Bool = false
     // 6  _lastSyncedTime: last time a sync occurred. init -1.0 (binary const
     //    0xbff0000000000000).
-    var _lastSyncedTime: Double = -1.0
+    private var _lastSyncedTime: Double = -1.0
     // 7  syncThreshold: min interval between syncs. init 1.0 (binary const
     //    0x3ff0000000000000).
-    let syncThreshold: Double = 1.0
+    private let syncThreshold: Double = 1.0
     // 8  lastCheckCacheSize: cache size at last delete-check. ⚑ width-inferred UInt64;
     //    init 0.
-    var lastCheckCacheSize: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
+    private var lastCheckCacheSize: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
     // 9  deleteCheckThreshold: cache growth before a delete-check. ⚑ width-inferred
     //    UInt64; init 4_194_304 (binary const 0x400000).
-    let deleteCheckThreshold: UInt64 = 4_194_304 // ⚑ (width-inferred; gate UNCHECKED)
+    private let deleteCheckThreshold: UInt64 = 4_194_304 // ⚑ (width-inferred; gate UNCHECKED)
     // 10 cachedDistribution: the cached byte-distribution snapshot produced by s44.
     //    NOT a placeholder and NOT inferred — the element NAMES, ORDER and TYPES are
     //    transcribed verbatim from this field's own MangledTypeName record
@@ -96,18 +96,18 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //    i.e. the demangler itself resolves the `0D10StartIndex` word substitution to
     //    `disconnectedStartIndex`.
     // ⚑[tool=dump_field_type_mangles ref=LimitPreLoadIOContext.cachedDistribution:0x103c38424 result=0233a74d00367265616465645f41413137636f6e746967756f75735072656c6f616441413132646973636f6e6e656374656453695367304431305374617274496e646578745367]
-    var cachedDistribution: (readed: UInt64, contiguousPreload: UInt64,
+    private var cachedDistribution: (readed: UInt64, contiguousPreload: UInt64,
                              disconnected: UInt64, disconnectedStartIndex: Int?)?
         // binary init: 4 zero words + `strh #0x100` at +32 ⇒ nil (implicit here).
     // 11 cachedDistributionLogicalPos: logical position the distribution covers. ⚑
     //    Int64; init -1 (binary const 0xffffffffffffffff).
-    var cachedDistributionLogicalPos: Int64 = -1 // ⚑ (composite/width-inferred; gate UNCHECKED)
+    private var cachedDistributionLogicalPos: Int64 = -1 // ⚑ (composite/width-inferred; gate UNCHECKED)
     // 12 cachedDistributionEntryCount: entries in the distribution. field-record Int;
     //    init -1 (binary const 0xffffffffffffffff).
-    var cachedDistributionEntryCount: Int = -1
+    private var cachedDistributionEntryCount: Int = -1
     // 13 lastKnownCachedSize: last observed cached size. ⚑ width-inferred UInt64;
     //    init 0.
-    var lastKnownCachedSize: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
+    private var lastKnownCachedSize: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
 
     // --- init (designated; s37 @101b9d748, READABLE) ---
     //

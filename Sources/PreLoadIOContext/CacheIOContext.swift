@@ -77,21 +77,21 @@ public class CacheIOContext: AbstractAVIOContext {
     }
     // 4  lastSpeedSampleTime: CFAbsoluteTime of the last speed sample (self+0x58).
     //    s23 reads it as a Double timestamp. field-record.
-    var lastSpeedSampleTime: Double = 0
+    private var lastSpeedSampleTime: Double = 0
     // 5  lastSpeedSamplePos: byte position at the last speed sample (self+0x60).
     //    ⚑ gate-UNCHECKED; UInt64 by the position-field pattern.
-    var lastSpeedSamplePos: UInt64 = 0 // ⚑ (gate UNCHECKED; position-pattern)
+    private var lastSpeedSamplePos: UInt64 = 0 // ⚑ (gate UNCHECKED; position-pattern)
     // 6  _downloadSpeed: most-recent measured download speed (self+0x68). field-record.
-    var _downloadSpeed: Double = 0
+    private var _downloadSpeed: Double = 0
     // 7  speedSampleInterval: min seconds between speed samples. Designated init sets
     //    self+0x70 to the const 0.5 — confirmed by s23's inlined 0.5 threshold.
-    let speedSampleInterval: Double = 0.5
+    private let speedSampleInterval: Double = 0.5
     // 8  maxReasonableSpeed: speed ceiling above which a sample is discarded.
     //    Designated init sets self+0x78 to the const 209715200.0 (200 MiB/s) —
     //    confirmed by s23's inlined 209715200.0 threshold. field-record.
-    let maxReasonableSpeed: Double = 209_715_200.0
+    private let maxReasonableSpeed: Double = 209_715_200.0
     // 9  logicalPos: current logical read cursor. gate-confirmed.
-    var logicalPos: UInt64 = 0
+    public var logicalPos: UInt64 = 0
     // 10 entryList: the on-disk cache segments (self+0x88; designated init defaults
     //    it to [] then the dir-scan populates it). field-record.
     public var entryList: [CacheFileEntry] = []
@@ -120,7 +120,7 @@ public class CacheIOContext: AbstractAVIOContext {
     var eof: Bool = false
     // 16 _isClosed: whether close() has run. Designated init defaults it false; s64
     //    returns !_isClosed. field-record.
-    var _isClosed: Bool = false
+    private var _isClosed: Bool = false
     // 17 downloadLock: serializes the download/cache mutation. NON-optional — the designated init
     //    allocs NSRecursiveLock() unconditionally (allocWithZone + init, no nil-branch), and l2 reads
     //    the binary field as non-optional NSRecursiveLock (the prior `?` was an over-cautious flag,
@@ -131,14 +131,14 @@ public class CacheIOContext: AbstractAVIOContext {
     public var urlRefreshHandler: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED
     // 19 formatContextOptions: FFmpeg format-context options. Designated init defaults
     //    it nil; convenience init sets it. field-record.
-    var formatContextOptions: [String: Any]? // field-record
+    private var formatContextOptions: [String: Any]? // field-record
     // 20 interrupt: the AVIOInterruptCB the reader polls to cancel (the L3 cancel
     //    field). Designated init defaults it; convenience init sets it (2 words).
     //    field-record (FFmpeg C — import FFmpegKit).
-    var interrupt: AVIOInterruptCB? // field-record (FFmpeg C)
+    private var interrupt: AVIOInterruptCB? // field-record (FFmpeg C)
     // 21 onCacheUpdated: callback fired when the cache grows. Designated init defaults
     //    it nil (2-word zero). ⚑ exact closure shape UNRESOLVED.
-    var onCacheUpdated: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED
+    public var onCacheUpdated: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED
     // 22 stopOnLimitReached: stop the download when a byte limit is hit. Designated
     //    init defaults it false; read() consults it before bumping fetchedSize.
     //    field-record.
@@ -148,16 +148,16 @@ public class CacheIOContext: AbstractAVIOContext {
     public var fetchedSize: Int64 = 0 // gate-confirmed (SIGNED)
     // 24 firstSeekTime: timestamp of the first seek. Designated init defaults it 0.
     //    field-record.
-    var firstSeekTime: Double = 0
+    private var firstSeekTime: Double = 0
     // 25 seekOffsets: recorded seek offsets. Designated init defaults it [] (empty
     //    array storage @ +0x80/0x88-region). ⚑ element type inferred.
-    var seekOffsets: [UInt64]? = [] // ⚑ array of offsets; element type inferred
+    private var seekOffsets: [UInt64]? = [] // ⚑ array of offsets; element type inferred
     // 26 isInterleaved: whether the stream is interleaved. Designated init defaults
     //    it nil (optional-Bool tag byte 2 = .none). field-record (optional).
-    var isInterleaved: Bool? // field-record (optional)
+    private var isInterleaved: Bool? // field-record (optional)
     // 27 isFirstFileSize: whether this is the first file-size probe. Designated init
     //    defaults it true. field-record.
-    var isFirstFileSize: Bool = true
+    private var isFirstFileSize: Bool = true
 
     // --- inits ---
 
