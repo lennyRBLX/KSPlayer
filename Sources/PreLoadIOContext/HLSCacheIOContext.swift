@@ -32,7 +32,12 @@ import FFmpegKit   // AVIOInterruptCB chain — subContexts holds CacheIOContext
 // AVIOInterruptCB resolves via `import FFmpegKit` (subContexts' CacheIOContext value
 // exposes it). Builds via `swift build --target PreLoadIOContext`.
 
-struct HLSSegment {}  // UNRESOLVED placeholder — real fields → owner phase (streaming)
+// ⚑ `public` is FORCED, not observed: HLSCacheIOContext.segments carries a property
+//   descriptor (public-exclusive), and a public stored property's type must be public.
+//   HLSSegment itself has NO owner-position symbol in the trie, so its own access is not
+//   directly observable — this is a deduction from `segments`, recorded as such.
+// ⚑[tool=export_trie_oracle ref=HLSCacheIOContext.segments:vpMV result=public ⇒ HLSSegment public by type-visibility rule]
+public struct HLSSegment {}  // UNRESOLVED placeholder — real fields → owner phase (streaming)
 
 public class HLSCacheIOContext: AbstractAVIOContext {
     // --- stored fields (brief table order + defaults; defaults are the inner init's
@@ -43,16 +48,16 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     let download: URLContextDownload
     // 1  mediaId: the media identifier (also the hlsCacheDir leaf). init-set (param;
     //    String two-word, bridge-retained).
-    let mediaId: String
+    public let mediaId: String
     // 2  baseURL: the manifest base URL for resolving relative segment URLs. init-set
     //    (param_4; copied via Foundation::URL value-witness). ⚑ optionality inferred.
-    let baseURL: URL? // ⚑ (optionality inferred; gate UNCHECKED)
+    public let baseURL: URL? // ⚑ (optionality inferred; gate UNCHECKED)
     // 3  formatContextOptions: FFmpeg format-context options for child contexts. init-set
     //    (param_5).
     let formatContextOptions: [String: Any]
     // 4  hlsCacheDir: on-disk cache dir (tmpDir/videoCache/<mediaId>/hls). init-derived
     //    + createDirectory. ⚑ optionality inferred.
-    let hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
+    public let hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
     // 5  m3u8Buffer: the downloaded m3u8 manifest bytes. init nil. ⚑ name + type inferred
     //    (two-word optional zeroed in the inner).
     var m3u8Buffer: Data? = nil // ⚑ (name + type inferred; gate UNCHECKED)
@@ -60,7 +65,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     var m3u8Parsed: Bool = false
     // 7  segments: the parsed HLS segment list. init []. ⚑ element type is the
     //    HLSSegment placeholder (UNRESOLVED).
-    var segments: [HLSSegment] = [] // ⚑ (element type placeholder; gate UNCHECKED)
+    public var segments: [HLSSegment] = [] // ⚑ (element type placeholder; gate UNCHECKED)
     // 8  subContexts: per-segment-URL child cache contexts, guarded by subContextsLock.
     //    init [:].
     var subContexts: [String: CacheIOContext] = [:]
@@ -277,7 +282,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //   lock/read/unlock is written straight-line to match; the siblings above use
     //   `defer` only because they have early exits.
     // ⚑[tool=prefetch_decompiles ref=HLSCacheIOContext.subContextCount.getter:0x101b9ad24 result=body full; NAME inferred]
-    var subContextCount: Int { // name inferred (devirt)
+    public var subContextCount: Int { // name inferred (devirt)
         subContextsLock.lock()
         let count = subContexts.count
         subContextsLock.unlock()

@@ -22,7 +22,7 @@ import Foundation
 // below). CacheEntryProtocol is still MISSING from this list — a pre-existing gate FLAG,
 // byte-identical at HEAD; its requirement set has not been recovered, so declaring it
 // would be a fabrication. Left for the owner phase.
-final class CacheFileEntry: CustomStringConvertible {
+public final class CacheFileEntry: CustomStringConvertible {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // file: backing FileHandle. s13/s14 fetch it at field offset 0x10 and drive
     //   NSFileHandle::_offset / seekToOffset:error: / _write / _read on it.
@@ -43,7 +43,7 @@ final class CacheFileEntry: CustomStringConvertible {
     //   s13/s14 compute `offset - position`; accessed as `*(ulong *)` with an
     //   UNSIGNED compare (`offset < position`) → 64-bit unsigned. Brief's `Int64`
     //   ⚑ guess corrected to UInt64 per the decompile width/signedness.
-    let position: UInt64  // type inferred — ⚑ (brief said Int64; decompile shows ulong/unsigned → UInt64)
+    public let position: UInt64  // type inferred — ⚑ (brief said Int64; decompile shows ulong/unsigned → UInt64)
     // saveFile: whether the entry persists to disk. v4 concrete (gate PASS).
     //   (Not read by s12/s13/s14 in the cached set; consulted elsewhere.)
     var saveFile: Bool = false
@@ -51,12 +51,12 @@ final class CacheFileEntry: CustomStringConvertible {
     //   length; s12 compares it against maxSize + a 32MiB ceiling. Accessed as
     //   `*(uint *)` with a CARRY4 (unsigned 32-bit overflow) trap → UInt32. Brief's
     //   `Int64` ⚑ guess corrected to UInt32 per the decompile width/signedness.
-    var size: UInt32 = 0 // type inferred — ⚑ (brief said Int64; decompile shows uint/CARRY4 → UInt32)
+    public var size: UInt32 = 0 // type inferred — ⚑ (brief said Int64; decompile shows uint/CARRY4 → UInt32)
     // maxSize: capacity ceiling for this entry. s12 compares size+delta against it
     //   as `*(uint *)` and reads its +4 tag byte (`(char)puVar1[1]`) → 5-byte
     //   optional. l2_field_gate binary property descriptor independently resolves
     //   `UInt32?`. Brief's `Int64` ⚑ guess corrected to UInt32? (2 binary signals).
-    var maxSize: UInt32? // type inferred — ⚑ (brief said Int64; l2 gate + decompile → UInt32?)
+    public var maxSize: UInt32? // type inferred — ⚑ (brief said Int64; l2 gate + decompile → UInt32?)
 
     // --- inits ---
     // s10 @101b900c4 → inner FUN_101b90114 (2 args; explicit field stores url=param_1, position=param_2).
@@ -108,7 +108,7 @@ final class CacheFileEntry: CustomStringConvertible {
     //   optional value" WARNING for it; the warning is the faithful reading and is not
     //   silenced (a `String(describing:)` or `?? default` rewrite would change the
     //   emitted call and break the body diff).
-    var description: String {
+    public var description: String {
         "position=\(position),size=\(size),maxSize=\(maxSize)"
     }
 

@@ -41,11 +41,11 @@ public class CacheOnlyIOContext: AbstractAVIOContext {
     //   WEAK reference (binary uses _swift_weakInit/_swift_weakAssign on this field).
     weak var sourceContext: AbstractAVIOContext? // type inferred — ⚑ (referent class not pinned; AbstractAVIOContext? retained best-effort)
     // allowNetworkFallback: whether misses may fall through to sourceContext. v4 concrete.
-    var allowNetworkFallback: Bool = false
+    public var allowNetworkFallback: Bool = false
     // requestedBytes: running count of bytes requested (for the byte budget).
     var requestedBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
     // maxNetworkBytes: ceiling on bytes served via the network fallback path.
-    var maxNetworkBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
+    public var maxNetworkBytes: Int64 = 0 // type inferred — ⚑ (unmapped int)
 
     // UNRESOLVED: real designated init s15 @101b95c6c → inner FUN_101b96a28 (1 arg = source, stored WEAK
     //   into sourceContext). Builds 3 closures (entryListProvider/endProvider/eofProvider @+0x18/+0x28/+0x38)

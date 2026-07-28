@@ -38,19 +38,19 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //     hand-write get/set) ---
 
     // 0  canPreload: whether preloading is permitted. init true (binary: byte = 1).
-    var canPreload: Bool = true
+    public var canPreload: Bool = true
     // 1  maxFileSize: cap on total file size to preload. init = init param.
-    var maxFileSize: UInt64
+    public var maxFileSize: UInt64
     // 2  maxReadedFileSize: cap on bytes read while preloading. init = init param.
-    var maxReadedFileSize: UInt64
+    public var maxReadedFileSize: UInt64
     // 3  moovProtectionSize: protected head window (moov atom). init 10_485_760
     //    (binary const 0xa00000).
-    var moovProtectionSize: UInt64 = 10_485_760
+    public var moovProtectionSize: UInt64 = 10_485_760
     // 4  playbackBytePosition: current playback byte position (exact-or-approx). ⚑
     //    UInt64? (9-byte: payload + tag) — l2_field_gate binary type (brief table had
     //    Int64?; per the brief's FLAG rule the integer is set to the gate's binary
     //    type). init nil per brief (binary s37/s21 store payload 0 + tag byte 1).
-    var playbackBytePosition: UInt64? = nil // ⚑ (composite Optional; gate-typed UInt64?)
+    public var playbackBytePosition: UInt64? = nil // ⚑ (composite Optional; gate-typed UInt64?)
     // 5  playbackBytePositionIsExact: whether playbackBytePosition is exact. init false
     //    (binary: byte = 0).
     var playbackBytePositionIsExact: Bool = false
@@ -159,7 +159,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //   plain `for` codegen over an Array of a class element — NOT a `reduce`, which would
     //   have emitted a closure.
     // ⚑[tool=prefetch_decompiles ref=LimitPreLoadIOContext.cachedSize.getter:0x101b9dbf0 result=body full; NAME inferred]
-    var cachedSize: UInt64 { // name inferred (devirt)
+    public var cachedSize: UInt64 { // name inferred (devirt)
         var total: UInt64 = 0
         for entry in entryList {
             total += UInt64(entry.size)

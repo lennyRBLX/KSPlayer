@@ -41,7 +41,7 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     // end: logical end offset of the cached stream.
     var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
     // logicalPos: current logical read cursor.
-    var logicalPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped; matches CacheOnlyIOContext.logicalPos)
+    public var logicalPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped; matches CacheOnlyIOContext.logicalPos)
     // urlPos: current position within the backing download.
     var urlPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped)
     // entryCache: the single backing cache entry. v4 concrete (references CacheFileEntry).

@@ -43,7 +43,7 @@ public class CacheIOContext: AbstractAVIOContext {
 
     // 0  bytesRead: running total of bytes returned to the reader. read() advances
     //    it (self+0x18 / unaff_x20[3]). gate-confirmed.
-    var bytesRead: UInt64 = 0
+    public var bytesRead: UInt64 = 0
     // 1  download: the AVIO that streams the source, held as its Forward-added `any DownloadProtocol`
     //    existential (a 40-byte NON-class existential @+0x20, NOT a concrete URLContextDownload — the
     //    designated init value-witness-copies it into +0x20, and urlContext recovers the concrete AVIO
@@ -94,7 +94,7 @@ public class CacheIOContext: AbstractAVIOContext {
     var logicalPos: UInt64 = 0
     // 10 entryList: the on-disk cache segments (self+0x88; designated init defaults
     //    it to [] then the dir-scan populates it). field-record.
-    var entryList: [CacheFileEntry] = []
+    public var entryList: [CacheFileEntry] = []
     // 11 tmpURL: temp staging URL for the cache write. ⚑ (Foundation; unmapped).
     // ⚑[tool=binding_gate ref=CacheIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
@@ -105,7 +105,7 @@ public class CacheIOContext: AbstractAVIOContext {
     //   RESOLVED in session 62: `saveFile` is now `let` — the designated init assigns it from
     //   its `saveFile` PARAMETER (the convenience init delegates, so it obligates nothing),
     //   making the `= false` default unobservable. `tmpURL` still stands.
-    var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped)
+    public var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped)
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
     //    defaults it true. field-record.
     var isJudgeEOF: Bool = true
@@ -128,7 +128,7 @@ public class CacheIOContext: AbstractAVIOContext {
     let downloadLock: NSRecursiveLock = NSRecursiveLock()
     // 18 urlRefreshHandler: callback to refresh an expired source URL. Designated
     //    init defaults it nil (2-word zero). ⚑ exact closure shape UNRESOLVED.
-    var urlRefreshHandler: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED
+    public var urlRefreshHandler: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED
     // 19 formatContextOptions: FFmpeg format-context options. Designated init defaults
     //    it nil; convenience init sets it. field-record.
     var formatContextOptions: [String: Any]? // field-record
@@ -142,10 +142,10 @@ public class CacheIOContext: AbstractAVIOContext {
     // 22 stopOnLimitReached: stop the download when a byte limit is hit. Designated
     //    init defaults it false; read() consults it before bumping fetchedSize.
     //    field-record.
-    var stopOnLimitReached: Bool = false
+    public var stopOnLimitReached: Bool = false
     // 23 fetchedSize: bytes fetched into the cache (SIGNED — gate-confirmed Int64,
     //    NOT UInt64). read() advances it (self+fetchedSize) with a SIGNED SCARRY8.
-    var fetchedSize: Int64 = 0 // gate-confirmed (SIGNED)
+    public var fetchedSize: Int64 = 0 // gate-confirmed (SIGNED)
     // 24 firstSeekTime: timestamp of the first seek. Designated init defaults it 0.
     //    field-record.
     var firstSeekTime: Double = 0

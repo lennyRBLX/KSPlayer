@@ -39,7 +39,7 @@ public class PreLoadIOContext: CacheIOContext {
     var fakeUrlPos: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
     // 2  isPreloadPaused: whether the preload is paused (s55 short-circuits on it).
     //    init false.
-    var isPreloadPaused: Bool = false
+    public var isPreloadPaused: Bool = false
     // 3  _timeIndex: the position↔time index entries, guarded by _timeIndexLock.
     //    init []. (TimeIndexEntry is in-module.)
     var _timeIndex: [TimeIndexEntry] = []
@@ -54,9 +54,9 @@ public class PreLoadIOContext: CacheIOContext {
     let _playbackSnapshotLock: NSLock = NSLock()
     // 7  minBufferSecondsForThumbnail: min buffered seconds before a thumbnail fetch
     //    is allowed. init 5.0 (binary const).
-    var minBufferSecondsForThumbnail: Double = 5.0
+    public var minBufferSecondsForThumbnail: Double = 5.0
     // 8  videoDuration: known media duration in seconds. init 0.
-    var videoDuration: Double = 0
+    public var videoDuration: Double = 0
     // 9  thumbnailFetchRequest: pending thumbnail fetch (byte offset + size). ⚑
     //    composite tuple-optional via decode_composite; init nil.
     var thumbnailFetchRequest: (offset: UInt64, size: UInt32)? = nil // ⚑ (composite; gate UNCHECKED)
@@ -79,7 +79,7 @@ public class PreLoadIOContext: CacheIOContext {
     //   face is the same pairing LimitSeparatePreLoadIOContext#slot20 @0x101ba4298 carries
     //   with its own `_timeIndex`/`_timeIndexLock` — two independent classes, same shape.
     // ⚑[tool=prefetch_decompiles ref=PreLoadIOContext.timeIndex.getter:0x101ba78a4 result=body full; NAME inferred]
-    var timeIndex: [TimeIndexEntry] { // name inferred (devirt)
+    public var timeIndex: [TimeIndexEntry] { // name inferred (devirt)
         _timeIndexLock.lock()
         let entries = _timeIndex
         _timeIndexLock.unlock()

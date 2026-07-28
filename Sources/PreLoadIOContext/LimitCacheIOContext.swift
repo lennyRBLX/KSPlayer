@@ -6,7 +6,7 @@ import KSPlayer   // AbstractAVIOContext (superclass chain via CacheIOContext)
 // inherited from CacheIOContext.
 public class LimitCacheIOContext: CacheIOContext {
     // maxFileSize: byte cap for this cache context. init stores param (8-byte) → UInt64.
-    var maxFileSize: UInt64 = 0 // ⚑ (field-record unmapped; UInt64 by width + position-field pattern)
+    public var maxFileSize: UInt64 = 0 // ⚑ (field-record unmapped; UInt64 by width + position-field pattern)
 
     // s3 @101b9c388 → inner FUN_101b9c388: stores maxFileSize (explicit) then delegates to
     //   CacheIOContext's designated init. The maxFileSize store + super-delegation are

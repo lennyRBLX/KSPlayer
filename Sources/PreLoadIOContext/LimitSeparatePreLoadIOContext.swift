@@ -40,10 +40,10 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
 
     // 0  maxFileSize: byte cap for this context. Designated init param-fed (param_7,
     //    8-byte store at +maxFileSize).
-    var maxFileSize: UInt64 = 0
+    public var maxFileSize: UInt64 = 0
     // 1  maxReadedFileSize: cap on bytes read. Designated init param-fed (param_8,
     //    8-byte store at +maxReadedFileSize).
-    var maxReadedFileSize: UInt64 = 0
+    public var maxReadedFileSize: UInt64 = 0
     // 2  loadMoreBuffer: scratch buffer for the separate "load-more" download path.
     //    Designated init zeroes it (nil). ⚑ (element/optionality inferred; pointer width).
     var loadMoreBuffer: UnsafeMutablePointer<UInt8>? // ⚑
@@ -107,7 +107,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   — two sibling classes duplicating one locked-read surface, and the same
     //   duplication that makes slots 6/23 literally shared function bodies below.
     // ⚑[tool=prefetch_decompiles ref=LimitSeparatePreLoadIOContext.timeIndex.getter:0x101ba4298 result=body full; NAME inferred]
-    var timeIndex: [TimeIndexEntry] { // name inferred (devirt)
+    public var timeIndex: [TimeIndexEntry] { // name inferred (devirt)
         _timeIndexLock.lock()
         let entries = _timeIndex
         _timeIndexLock.unlock()
