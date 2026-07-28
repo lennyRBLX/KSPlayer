@@ -25,11 +25,17 @@ import KSPlayer
 public class ReadCacheIOContext: AbstractAVIOContext {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // download: the URLContextDownload the convenience inits build (FUN_101b90c58).
+    // ⚑[tool=binding_gate ref=ReadCacheIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • download, tmpURL — assigned after super.init(); a `let` must be set before it
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     var download: URLContextDownload? // type inferred — ⚑ (built via the shared URLContextDownload init)
     // tmpURL: staging URL for the cache write.
     var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped in field-records)
     // onlyCache: serve strictly from cache (no network). v4 concrete.
-    var onlyCache: Bool = false
+    let onlyCache: Bool = false
     // eof: whether the cached stream is at end. v4 concrete.
     var eof: Bool = false
     // end: logical end offset of the cached stream.

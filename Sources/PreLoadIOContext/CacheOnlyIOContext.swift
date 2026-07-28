@@ -22,6 +22,12 @@ import KSPlayer
 public class CacheOnlyIOContext: AbstractAVIOContext {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // entryListProvider: supplies the cached segments backing this context.
+    // ⚑[tool=binding_gate ref=CacheOnlyIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • endProvider, entryListProvider, eofProvider — assigned after super.init(); a `let` must be set before it
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     var entryListProvider: (() -> [CacheFileEntry])? // type inferred — ⚑ (closure shape not visible in s15 thunk)
     // endProvider: supplies the logical end offset of the cached stream.
     var endProvider: (() -> Int64)? // type inferred — ⚑ (closure)

@@ -28,16 +28,16 @@ import Network
 /// `final` + prop_c's identity/type are not deterministically recoverable.
 class LocalHLSServer {
     // 7 reflection fields (order = layout). Mutability kept `var` (M1 under-claim; l2 mutability partial).
-    private var port: UInt16                          // init param; self+0x10 (__uint16)
+    private let port: UInt16                          // init param; self+0x10 (__uint16)
     private var listener: NWListener                  // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
     // ⚑ [String: (URL) -> Void] — value CORRECTED from M1's ()->Void: slot13 invokes the block with the
     // request's file URL (blr, x0 = fileURL; context in x20). Keep-alive block per directory-path key (self+0x20).
     private var keepAliveBlockMap: [String: (URL) -> Void] = [:]
-    private var rootDirectory: URL                    // ⚑ init param (URL value-witness copy) — was temporaryDirectory (M1 bug)
-    private var queue: DispatchQueue = DispatchQueue(label: "com.localhlsserver.queue")  // label @0x103d3df80
+    private let rootDirectory: URL                    // ⚑ init param (URL value-witness copy) — was temporaryDirectory (M1 bug)
+    private let queue: DispatchQueue = DispatchQueue(label: "com.localhlsserver.queue")  // label @0x103d3df80
     // HTTP status table — 6 pairs recovered from the static dict literal (keys read as Int; values
     // 400/403/404 inline-confirmed, 405/500/503 length-matched to the standard messages).
-    private var statusMessages: [Int: String] = [
+    private let statusMessages: [Int: String] = [
         400: "Bad Request", 403: "Forbidden", 404: "Not Found",
         405: "Method Not Allowed", 500: "Internal Server Error", 503: "Service Unavailable",
     ]

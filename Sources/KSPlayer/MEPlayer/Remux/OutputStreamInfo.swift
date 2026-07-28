@@ -23,6 +23,13 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // stream_index which is C `int`; field-record key = stdlib symref, libswiftCore-walled).
     public var assetTrackMap: [Int32: FFmpegAssetTrack] = [:]      // +0x10  key Int32 (stream_index) ⚑ value confirmed
     public var transcodeMap:  [Int32: any TranscodeProtocol] = [:] // +0x18
+    // ⚑[tool=binding_gate ref=OutputStreamInfo:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • formatName, frameRate, removeADTS, streamMapping, timeBaseMap, url — has a default AND is assigned in init ('may only be initialized once')
+    //   • outPacket — passed as an inout argument
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     public var timeBaseMap:   [Int32: AVRational] = [:]            // +0x20
     public var frameRate:     Int = 0                            // v4 concrete `Si`
     public var url:           String = ""                        // v4 concrete `SS`

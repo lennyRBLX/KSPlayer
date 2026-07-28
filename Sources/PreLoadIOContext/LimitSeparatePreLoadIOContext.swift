@@ -51,7 +51,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // 4  moreDownload: the secondary URLContextDownload feeding the load-more path.
     //    Designated init copies a value into it (FUN_1001263e0 value-copy from param_2).
     //    ⚑ (name + shape inferred; copied, not retained-as-new).
-    var moreDownload: URLContextDownload? // ⚑
+    let moreDownload: URLContextDownload? // ⚑
     // 5  moreUrlPos: current position within the secondary download. Designated init
     //    zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
     var moreUrlPos: UInt64 = 0 // ⚑
@@ -60,6 +60,12 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     var _timeIndex: [TimeIndexEntry] = []
     // 7  _timeIndexLock: serializes _timeIndex mutation. Designated init allocs
     //    NSLock() (objc_allocWithZone + init on __NSLock).
+    // ⚑[tool=binding_gate ref=LimitSeparatePreLoadIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • _timeIndexLock — has a default AND is assigned in init ('may only be initialized once')
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     var _timeIndexLock: NSLock = NSLock()
 
     // --- computed accessors ahead of the inits (vtable slot 20; slots 6, 7, 23-25 and

@@ -158,8 +158,8 @@ public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
 
 // §7.2 — recon `URLSubtitleDataSouce` class → ConstantURLSubtitleDataSource (→ URL, now HAS searchSubtitle).
 public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
-    public var infos: [URLSubtitleInfo]
-    public var url: URL // ⚑ optionality §7.5 (mangle reads non-optional; recon init(urls:) built infos from [URL]) → M2 verify
+    public let infos: [URLSubtitleInfo]
+    public let url: URL // ⚑ optionality §7.5 (mangle reads non-optional; recon init(urls:) built infos from [URL]) → M2 verify
     // ⚑ init shape inferred → M2 witness-verify
     public init(url: URL, infos: [URLSubtitleInfo]) {
         self.url = url

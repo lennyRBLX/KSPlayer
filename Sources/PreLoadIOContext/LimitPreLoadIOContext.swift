@@ -59,13 +59,13 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     var _lastSyncedTime: Double = -1.0
     // 7  syncThreshold: min interval between syncs. init 1.0 (binary const
     //    0x3ff0000000000000).
-    var syncThreshold: Double = 1.0
+    let syncThreshold: Double = 1.0
     // 8  lastCheckCacheSize: cache size at last delete-check. ⚑ width-inferred UInt64;
     //    init 0.
     var lastCheckCacheSize: UInt64 = 0 // ⚑ (width-inferred; gate UNCHECKED)
     // 9  deleteCheckThreshold: cache growth before a delete-check. ⚑ width-inferred
     //    UInt64; init 4_194_304 (binary const 0x400000).
-    var deleteCheckThreshold: UInt64 = 4_194_304 // ⚑ (width-inferred; gate UNCHECKED)
+    let deleteCheckThreshold: UInt64 = 4_194_304 // ⚑ (width-inferred; gate UNCHECKED)
     // 10 cachedDistribution: the cached byte-distribution snapshot produced by s44.
     //    NOT a placeholder and NOT inferred — the element NAMES, ORDER and TYPES are
     //    transcribed verbatim from this field's own MangledTypeName record

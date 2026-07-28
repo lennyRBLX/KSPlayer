@@ -18,14 +18,20 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     var startPlayTime: Double? = nil   // internal (was `private`): ConversionInfo.didUpdateCurrentTime reads it directly (FUN_101b6a40c @remuxerIOAction+0x10/+0x18) — cross-file same-module access is binary-arbitrated; modifier under-included (§1/P34-style)
     private var outputStreamInfo: OutputStreamInfo             // binary non-optional — RETIRED from IUO (init assigns via Self.write; reconstruct() reassigns)
-    var formatContext: FormatContext                          // internal (was private, P34): ConversionInfo.init reads it cross-file for assetTracks/duration/DemuxerIO; binary non-optional — RETIRED from IUO (init assigns = param_1)
-    private var dir: URL                                      // binary non-optional (symref; decompile: URL) — RETIRED from IUO (init assigns = param_2)
-    var subtitles: [FFmpegAssetTrack] = []                    // internal (was private, P34): ConversionInfo.init maps it → its own subtitles
+    let formatContext: FormatContext                          // internal (was private, P34): ConversionInfo.init reads it cross-file for assetTracks/duration/DemuxerIO; binary non-optional — RETIRED from IUO (init assigns = param_1)
+    private let dir: URL                                      // binary non-optional (symref; decompile: URL) — RETIRED from IUO (init assigns = param_2)
+    let subtitles: [FFmpegAssetTrack] = []                    // internal (was private, P34): ConversionInfo.init maps it → its own subtitles
     weak var delegate: RemuxerIOActionDelegate? = nil          // internal (was private, P34): ConversionInfo.init sets it = self; weak optional (mangle _pSgXw)
+    // ⚑[tool=binding_gate ref=RemuxerIOAction:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • formatContextOptions, masterM3U8Context, packet — has a default AND is assigned in init ('may only be initialized once')
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     private var formatContextOptions: [String: Any] = [:]
     private var masterM3U8Context: String = ""
     private var packet: UnsafeMutablePointer<AVPacket>? = nil
-    private var directoryWatcher: DirectoryWatcher! = nil       // ⚑ binary non-optional; KSPlayer (now public); IUO M1 stand-in → M2
+    private let directoryWatcher: DirectoryWatcher! = nil       // ⚑ binary non-optional; KSPlayer (now public); IUO M1 stand-in → M2
 
     /// Designated init — binary `FUN_101b81b18` (351i, cached + disasm-read; reachable via the alloc site
     /// FUN_101b6e31c → swift_allocObject → bl 0x101b81b18). Constructs the fields then builds

@@ -16,6 +16,12 @@ import KSPlayer
 final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // binary conformances (conf@0x1035711a8/0x103571198); reqs → M2
     // 11 reflection fields (order = layout). Types: field-record mangle token-walk (Sg/Xw/_p suffix
     // authoritative for optionality); refs are non-optional (single symref, no Sg) → IUO M1 stand-ins.
+    // ⚑[tool=binding_gate ref=ConversionInfo:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • assetTracks, duration, maxBufferDuration, subtitles — has a default AND is assigned in init ('may only be initialized once')
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     private var assetTracks: [FFmpegAssetTrack] = []
     private var duration: Double = 0
     private var subtitles: [MediaPlayerTrack] = []        // existential array (mangle Say…_pG; non-optional)
@@ -25,10 +31,10 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     private var currentPlaybackTime: Double = 0
     var maxBufferDuration: Double = 0   // internal (was private, P34): ProAVPlayer.conversionDidReachEnd reads m3u8Info.maxBufferDuration cross-file
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
-    var remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
-    private var demuxerIO: DemuxerIO
-    private var server: LocalHLSServer
-    private var directoryWatcher: DirectoryWatcher  // KSPlayer (public type fe13053; init→public this pass, P34)
+    let remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
+    private let demuxerIO: DemuxerIO
+    private let server: LocalHLSServer
+    private let directoryWatcher: DirectoryWatcher  // KSPlayer (public type fe13053; init→public this pass, P34)
 
     // MARK: Designated init — `FUN_101b6b2a4` (M2)
 

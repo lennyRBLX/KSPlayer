@@ -55,14 +55,14 @@ public final class FormatContext {
     public let ioContext: AbstractAVIOContext?                // +0x20  (init param 5)
     public let duration: Double                               // +0x28  (init param 1; see DIVERGENCE note in init)
     public let fileSize: Int64                                // +0x30  (init param 3) — external/unmapped stdlib symref; NOT Int
-    public var bitrate: Int64                                 // +0x38  DERIVED — external/unmapped; NOT Int
-    public var assetTracks: [FFmpegAssetTrack]                // +0x40  default [] (binary builds from a stream loop)
-    public var formatName: String                            // +0x48  DERIVED (from formatCtx->iformat->name)
-    public var seekByBytes: Bool                             // +0x58  DERIVED (conditionally 0/1 across branches; default false)
-    public var byteSeek: Bool                               // +0x59  DERIVED (from format flags + name compare)
-    public var startTime: CMTime                            // +0x5c  DERIVED (from formatCtx->start_time / kCMTimeZero)
-    public var maxFrameDuration: Int                        // +0x78  DERIVED (3600 or 10 from format flags); field-record sugar `Si` — NOT Double
-    public var fontsDir: URL?                               // (sym)  (init param 6) → triggers font registration side-effect
+    public let bitrate: Int64                                 // +0x38  DERIVED — external/unmapped; NOT Int
+    public let assetTracks: [FFmpegAssetTrack]                // +0x40  default [] (binary builds from a stream loop)
+    public let formatName: String                            // +0x48  DERIVED (from formatCtx->iformat->name)
+    public let seekByBytes: Bool                             // +0x58  DERIVED (conditionally 0/1 across branches; default false)
+    public let byteSeek: Bool                               // +0x59  DERIVED (from format flags + name compare)
+    public let startTime: CMTime                            // +0x5c  DERIVED (from formatCtx->start_time / kCMTimeZero)
+    public let maxFrameDuration: Int                        // +0x78  DERIVED (3600 or 10 from format flags); field-record sugar `Si` — NOT Double
+    public let fontsDir: URL?                               // (sym)  (init param 6) → triggers font registration side-effect
 
     // Inner init `0x101a350bc`. 6 params (register order → field):
     //   p1 duration(double), p2 formatCtx(ptr), p3 fileSize(ulong/Int64),

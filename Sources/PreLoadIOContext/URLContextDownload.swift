@@ -30,11 +30,17 @@ public class URLContextDownload: AbstractAVIOContext {
     // context: the FFmpeg URLContext driving the download. v4 concrete.
     var context: UnsafeMutablePointer<URLContext>?
     // keepAlive: whether the connection is kept open after a read. v4 concrete.
-    var keepAlive: Bool = false
+    let keepAlive: Bool = false
     // isReadComplete: whether the download has reached completion. v4 concrete.
-    var isReadComplete: Bool = false
+    let isReadComplete: Bool = false
     // url: the source URL of the download. Inner init copies it via Foundation::URL
     //   type-metadata + value-witness (dispositive → URL, not String).
+    // ⚑[tool=binding_gate ref=URLContextDownload:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • url — assigned after super.init(); a `let` must be set before it
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     var url: URL? // type URL; optionality inferred — ⚑
 
     // UNRESOLVED: real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (7 args; also reused by

@@ -44,14 +44,14 @@ public class PreLoadIOContext: CacheIOContext {
     //    init []. (TimeIndexEntry is in-module.)
     var _timeIndex: [TimeIndexEntry] = []
     // 4  _timeIndexLock: serializes _timeIndex access (s33 locks it). init NSLock().
-    var _timeIndexLock: NSLock = NSLock()
+    let _timeIndexLock: NSLock = NSLock()
     // 5  _playbackSnapshot: last (time, position) reported by the player, guarded by
     //    _playbackSnapshotLock (s31 stores/nils it). ⚑ composite tuple-optional via
     //    decode_composite; init nil.
     var _playbackSnapshot: (time: Double, position: UInt64)? = nil // ⚑ (composite; gate UNCHECKED)
     // 6  _playbackSnapshotLock: serializes _playbackSnapshot access (s31 locks it).
     //    init NSLock().
-    var _playbackSnapshotLock: NSLock = NSLock()
+    let _playbackSnapshotLock: NSLock = NSLock()
     // 7  minBufferSecondsForThumbnail: min buffered seconds before a thumbnail fetch
     //    is allowed. init 5.0 (binary const).
     var minBufferSecondsForThumbnail: Double = 5.0

@@ -40,19 +40,19 @@ public class HLSCacheIOContext: AbstractAVIOContext {
 
     // 0  download: the URLContextDownload that streams the manifest/segments. init-set
     //    (param; the inner retains it via _swift_retain).
-    var download: URLContextDownload
+    let download: URLContextDownload
     // 1  mediaId: the media identifier (also the hlsCacheDir leaf). init-set (param;
     //    String two-word, bridge-retained).
-    var mediaId: String
+    let mediaId: String
     // 2  baseURL: the manifest base URL for resolving relative segment URLs. init-set
     //    (param_4; copied via Foundation::URL value-witness). ⚑ optionality inferred.
-    var baseURL: URL? // ⚑ (optionality inferred; gate UNCHECKED)
+    let baseURL: URL? // ⚑ (optionality inferred; gate UNCHECKED)
     // 3  formatContextOptions: FFmpeg format-context options for child contexts. init-set
     //    (param_5).
-    var formatContextOptions: [String: Any]
+    let formatContextOptions: [String: Any]
     // 4  hlsCacheDir: on-disk cache dir (tmpDir/videoCache/<mediaId>/hls). init-derived
     //    + createDirectory. ⚑ optionality inferred.
-    var hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
+    let hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
     // 5  m3u8Buffer: the downloaded m3u8 manifest bytes. init nil. ⚑ name + type inferred
     //    (two-word optional zeroed in the inner).
     var m3u8Buffer: Data? = nil // ⚑ (name + type inferred; gate UNCHECKED)
@@ -65,15 +65,15 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //    init [:].
     var subContexts: [String: CacheIOContext] = [:]
     // 9  subContextsLock: serializes subContexts access. init NSLock().
-    var subContextsLock: NSLock = NSLock()
+    let subContextsLock: NSLock = NSLock()
     // 10 childHLSContexts: nested HLS cache contexts (variant playlists). init [].
     var childHLSContexts: [HLSCacheIOContext] = []
     // 11 prefetchCount: how many segments ahead to prefetch. init 3 (binary const).
-    var prefetchCount: Int = 3
+    let prefetchCount: Int = 3
     // 12 prefetchQueue: concurrent queue driving segment prefetch. init
     //    DispatchQueue(label: "hls.prefetch", attributes: .concurrent) (binary string +
     //    get_concurrent + get_unspecified QoS).
-    var prefetchQueue: DispatchQueue = DispatchQueue(label: "hls.prefetch", attributes: .concurrent)
+    let prefetchQueue: DispatchQueue = DispatchQueue(label: "hls.prefetch", attributes: .concurrent)
     // 13 isClosed: whether close() has run. init false.
     var isClosed: Bool = false
 

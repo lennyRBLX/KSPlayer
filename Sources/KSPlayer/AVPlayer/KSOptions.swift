@@ -97,7 +97,7 @@ open class KSOptions {
     public var ioContext: AbstractAVIOContext?
     public var decoderOptions = [String: Any]()
     public var lowres = UInt8(0)
-    public var useSystemHTTPProxy = KSOptions.useSystemHTTPProxy
+    public let useSystemHTTPProxy = KSOptions.useSystemHTTPProxy
     public var referer: String? {
         didSet {
             if let referer {
@@ -142,8 +142,8 @@ open class KSOptions {
     // sutile
     public var autoSelectEmbedSubtitle = true
     public var isSeekImageSubtitle = false
-    public var yadifMode = KSOptions.yadifMode
-    public var deInterlaceAddIdet = KSOptions.deInterlaceAddIdet
+    public let yadifMode = KSOptions.yadifMode
+    public let deInterlaceAddIdet = KSOptions.deInterlaceAddIdet
     public var dynamicRange = DynamicRange.sdr
     public var doviProfile: Int?
     public var audioCodecName: String?

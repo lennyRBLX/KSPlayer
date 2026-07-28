@@ -44,8 +44,14 @@ actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitlePr
     private let uuid: UUID = UUID()                                                  // ⚑ UUID inferred (GOT-indirect) → recon/mangle-evidenced
     private var header: String?
     private var subtitles: [(subtitle: String, start: Double, duration: Double)] = [] // §8.6
+    // ⚑[tool=binding_gate ref=AssIncrementImageRenderer:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • fontsDir — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     private var fontsDir: String?
-    private let renderer: AssImageRenderer
+    private var renderer: AssImageRenderer
     private var basicFontSize: Int = 0
     // ⚑ init shape inferred → M2 witness-verify
     init(renderer: AssImageRenderer) {

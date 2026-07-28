@@ -26,11 +26,18 @@ final class CacheFileEntry: CustomStringConvertible {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // file: backing FileHandle. s13/s14 fetch it at field offset 0x10 and drive
     //   NSFileHandle::_offset / seekToOffset:error: / _write / _read on it.
+    // ⚑[tool=binding_gate ref=CacheFileEntry:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • position — has a default AND is assigned in init ('may only be initialized once')
+    //   • file — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     var file: FileHandle! // ⚑ IUO: field-record mangle `So12NSFileHandleC` carries NO `Sg` ⇒ non-optional
     //   (nil until init opens it; `guard let file` binds it). The prior `?` was an inferred guess; the
     //   binary is authoritative. FileHandle erases to NSFileHandle (Foundation.apinotes SwiftName).
     // url: source/destination URL of the cache file.
-    var url: URL? // type inferred — ⚑ (Foundation; unmapped in field-records)
+    let url: URL? // type inferred — ⚑ (Foundation; unmapped in field-records)
     // position: base byte offset of this entry within the underlying stream.
     //   s13/s14 compute `offset - position`; accessed as `*(ulong *)` with an
     //   UNSIGNED compare (`offset < position`) → 64-bit unsigned. Brief's `Int64`

@@ -41,9 +41,9 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var isFirst = true                                     // 15
     private var isSeek = false                                     // 16
     private var needRecordTimeIndex = false                        // 17
-    private var playbackSnapshotRecordInterval = 0.5               // 18
+    private let playbackSnapshotRecordInterval = 0.5               // 18
     private var lastPlaybackSnapshotRecordTime: Double?            // 19
-    private var timeIndexRecordInterval = 1.0                      // 20
+    private let timeIndexRecordInterval = 1.0                      // 20
     private var lastTimeIndexRecordTime: Double?                   // 21
     private var needSeekItemTrack = true                          // 22
     private var allPlayerItemTracks = [PlayerItemTrackProtocol]()  // 23
@@ -89,7 +89,7 @@ public final class MEPlayerItem: @unchecked Sendable {
         }
     }
     private var timer: Timer?                                // 39 Forward NSTimer? nil-init (base was `lazy var timer: Timer = .scheduledTimer`); scheduling site pending. Timer === NSTimer (reflection emits NSTimer)
-    private var preloadClock = ContinuousClock()            // 40 ⚑ init calls Swift.ContinuousClock.init(); ContinuousClock vs .Instant pending
+    private let preloadClock = ContinuousClock()            // 40 ⚑ init calls Swift.ContinuousClock.init(); ContinuousClock vs .Instant pending
     private var lastPacketMediaType: AVFoundation.AVMediaType = .video // 41 init AVMediaTypeVideo (AVFoundation constant; codebase disambiguates from FFmpeg AVMediaType)
     weak var delegate: MEPlayerDelegate?                    // 42
 

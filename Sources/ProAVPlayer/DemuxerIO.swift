@@ -103,7 +103,7 @@ actor DemuxerIO {
 
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     // formatContext: binary NON-optional (l2 IUO_STANDIN discharged this pass); set in init from FUN_101b6b184 param_1 (@0x70).
-    private var formatContext: FormatContext
+    private let formatContext: FormatContext
     private var currentTime: Double = 0
     // ⚑ Failure type UNRES (libswiftCore wall) → M2. decode_composite = Task<(), UNRES>? (optional confirmed).
     private var ioTask: Task<Void, Never>? = nil
@@ -113,6 +113,12 @@ actor DemuxerIO {
     private var seekTime: Double = 0
     private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)? = nil
     // ⚑ optionality UNRES (decode_composite=None, mangle truncated) → M2. symref → DemuxerIOAction.
+    // ⚑[tool=binding_gate ref=DemuxerIO:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • ioAction — has a default AND is assigned in init ('may only be initialized once')
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     private var ioAction: DemuxerIOAction? = nil
     private var retryCount: Int = 0                              // ⚑ type symref-unresolved (likely Swift.Int, non-opt) → M2
     private weak var delegate: DemuxerIODelegate? = nil          // weak optional (mangle _pSgXw)

@@ -73,11 +73,17 @@ class VideoSwresample: FrameChange {
     private var height: Int32 = 0
     private var width: Int32 = 0
     private var pool: CVPixelBufferPool?
-    private var dstHeight: Int32?
-    private var dstWidth: Int32?
+    private let dstHeight: Int32?
+    private let dstWidth: Int32?
     private let dstFormat: AVPixelFormat?
     private let fps: Float
     // Forward-NEW DV/HDR fields (declared in reflection order after `fps`).
+    // ⚑[tool=binding_gate ref=VideoSwresample:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • dovi — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     private var dovi: DOVIDecoderConfigurationRecord?
     // P3a: KSDOVIMetadata = the serializer's flattened 3008-byte DV GPU buffer (DOVIRPUShim,
     // opaque). Binary +0x60 is EXACTLY 3008 B (=0xBC0), leaving no room for a nil tag in an
@@ -315,10 +321,10 @@ class AudioSwresample: FrameChange {
 
 public class AudioDescriptor: Equatable {
 //    static let defaultValue = AudioDescriptor()
-    public let sampleRate: Int32
+    public var sampleRate: Int32
     public private(set) var audioFormat: AVAudioFormat
     fileprivate(set) var channel: AVChannelLayout
-    fileprivate let sampleFormat: AVSampleFormat
+    fileprivate var sampleFormat: AVSampleFormat
     fileprivate var outChannel: AVChannelLayout
 
     private convenience init() {

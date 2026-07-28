@@ -21,6 +21,20 @@ public final class KSMEPlayer: NSObject {
     private var playerItem: MEPlayerItem
     public let audioOutput: AudioOutput
     private var options: KSOptions
+    // ⚑[tool=binding_gate ref=KSMEPlayer.videoOutput:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   The ONLY one of session 60's 95 binding mismatches that the compiler REFUTED. The
+    //   binary's FieldRecord flags word is 0x00000000 (= `let`; a real `var` such as the
+    //   sibling `options` reads 0x00000002), but this declaration cannot be `let`:
+    //     • it carries a `didSet` — "'let' declarations cannot be observing properties";
+    //     • `private(set)` is meaningless on a read-only property;
+    //     • and it is assigned at three sites (:195 nil, :319 nil, :321 constructed).
+    //   So EITHER Forward's videoOutput really is immutable — which would mean this whole
+    //   replace-and-invalidate lifecycle (oldValue.invalidate + removeFromSuperview) is
+    //   modelled wrongly and the three assignments belong somewhere else — OR the flag is not
+    //   saying what it appears to. Both readings are substantive and neither is settled by the
+    //   flag alone, so this is left as `var` and deferred as its own unit rather than forced.
+    //   One of 33 such refutations across 15 classes; 62 of the 95 mismatches WERE fixed.
+    //   Detail + the full 33, categorised: reconstruction/binding_refuted_s61.json
     public private(set) var videoOutput: (VideoOutput & UIView)? {
         didSet {
             oldValue?.invalidate()

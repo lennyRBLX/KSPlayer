@@ -85,17 +85,24 @@ public class CacheIOContext: AbstractAVIOContext {
     var _downloadSpeed: Double = 0
     // 7  speedSampleInterval: min seconds between speed samples. Designated init sets
     //    self+0x70 to the const 0.5 — confirmed by s23's inlined 0.5 threshold.
-    var speedSampleInterval: Double = 0.5
+    let speedSampleInterval: Double = 0.5
     // 8  maxReasonableSpeed: speed ceiling above which a sample is discarded.
     //    Designated init sets self+0x78 to the const 209715200.0 (200 MiB/s) —
     //    confirmed by s23's inlined 209715200.0 threshold. field-record.
-    var maxReasonableSpeed: Double = 209_715_200.0
+    let maxReasonableSpeed: Double = 209_715_200.0
     // 9  logicalPos: current logical read cursor. gate-confirmed.
     var logicalPos: UInt64 = 0
     // 10 entryList: the on-disk cache segments (self+0x88; designated init defaults
     //    it to [] then the dir-scan populates it). field-record.
     var entryList: [CacheFileEntry] = []
     // 11 tmpURL: temp staging URL for the cache write. ⚑ (Foundation; unmapped).
+    // ⚑[tool=binding_gate ref=CacheIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • saveFile — has a default AND is assigned in init ('may only be initialized once')
+    //   • tmpURL — assigned after super.init(); a `let` must be set before it
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
     var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped)
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
     //    defaults it true. field-record.
@@ -116,7 +123,7 @@ public class CacheIOContext: AbstractAVIOContext {
     //    allocs NSRecursiveLock() unconditionally (allocWithZone + init, no nil-branch), and l2 reads
     //    the binary field as non-optional NSRecursiveLock (the prior `?` was an over-cautious flag,
     //    surfaced + corrected by the l2 gate on this touch).
-    var downloadLock: NSRecursiveLock = NSRecursiveLock()
+    let downloadLock: NSRecursiveLock = NSRecursiveLock()
     // 18 urlRefreshHandler: callback to refresh an expired source URL. Designated
     //    init defaults it nil (2-word zero). ⚑ exact closure shape UNRESOLVED.
     var urlRefreshHandler: (() -> Void)? // ⚑ closure — exact shape UNRESOLVED

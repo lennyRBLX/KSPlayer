@@ -10,7 +10,7 @@ import Foundation
 // (primary/secondary) SubtitleModel search. Fields reflection-ordered; conforms KSSubtitleProtocol (§8.5).
 public actor SubtitleActor: KSSubtitleProtocol {
     var parts: [SubtitlePart] = []
-    var info: any SubtitleInfo
+    let info: any SubtitleInfo
     var searchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
     var latestQueryTime: Double?
     // init(info:) — witness-verified against the inlined construction at BOTH willSets (FUN_101ab2540
