@@ -13,13 +13,15 @@ import FFmpegKit  // FFmpeg C types reachable through the CacheIOContext chain
 //             class) and flagged `// ⚑`. All CacheIOContext fields are inherited.
 //   inits   — designated s22 @101ba4650 (cached, READABLE): sets all 8 own fields
 //             directly (loadMoreBuffer=nil, fakeUrlPos=0, moreUrlPos=0, _timeIndex=[],
-//             _timeIndexLock=NSLock(), moreDownload=param-copied, maxFileSize=param_7,
-//             maxReadedFileSize=param_8) then delegates to CacheIOContext's designated
-//             init FUN_101b86d38. Arity/param-order inferred (no mangled init symbol);
-//             the field stores + super-delegation are explicit in the decompile.
+//             _timeIndexLock=NSLock(), moreDownload=param-copied, maxFileSize=x6,
+//             maxReadedFileSize=x7) then delegates to CacheIOContext's designated
+//             init FUN_101b86d38. PARAM ORDER is no longer inferred — session 62
+//             recovered it from the super-delegation register map (see the init).
 //           — s21 @101ba4308 is a THROWING CONVENIENCE init with a full 210-instruction
 //             body (the earlier "devirtualized, no readable body" note was WRONG and is
-//             corrected below); PINNED on its argument labels, not on its shape.
+//             corrected below). Session 62 reconstructed it as a faithful spine: two
+//             URLContextDownloads off ONE URL, separated by one AVOption write, then
+//             the s22 delegation. Only its argument LABELS remain pinned.
 //   methods — s27 @101ba4bd0 (cached, 109 instr; name devirt→inferred): a locked,
 //             sorted insert-or-update into _timeIndex keyed by position. Faithful
 //             spine; the Swift-synthesized stdlib Array internals (COW / insert /
@@ -48,10 +50,26 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // 3  fakeUrlPos: synthetic url position used by the separate-download bookkeeping.
     //    Designated init zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
     var fakeUrlPos: UInt64 = 0 // ⚑
-    // 4  moreDownload: the secondary URLContextDownload feeding the load-more path.
-    //    Designated init copies a value into it (FUN_1001263e0 value-copy from param_2).
-    //    ⚑ (name + shape inferred; copied, not retained-as-new).
-    let moreDownload: URLContextDownload? // ⚑
+    // 4  moreDownload: the secondary download feeding the load-more path. The designated
+    //    init copies its x1 parameter into this field with FUN_1001263e0, which
+    //    disassembles as an EXISTENTIAL-container copy, not a class-ref retain:
+    //    `x2=src[0x18]; dst[0x18]=x2; x8=src[0x20]; dst[0x20]=x8; call *(*(x2-8))(dst,src,x2)`
+    //    — i.e. it copies the metadata word at +0x18, the witness-table word at +0x20,
+    //    and then runs the payload metadata's VWT[0] (initializeBufferWithCopyOfBuffer)
+    //    over the 3-word inline buffer. That is the 5-word `any P` layout, and it is the
+    //    SAME helper CacheIOContext's designated init uses for its `download`, which is
+    //    already declared `(any DownloadProtocol)?`. dump_binary_field_types also reports
+    //    this field as fr_category=`complex` (not a concrete class ref).
+    //    The convenience init below builds the container explicitly and proves the
+    //    protocol: payload[0] = a URLContextDownload instance, +0x18 = URLContextDownload's
+    //    metadata, +0x20 = witness table 0x1041d5330, which decode_witness_table resolves
+    //    to `AbstractAVIOContext : DownloadProtocol` (the conformance is declared on the
+    //    superclass, so the subclass instance rides the inherited witness table).
+    //    Session 62 retyped this from `URLContextDownload?`, which was an 8-byte class ref
+    //    and could not have been value-copied by FUN_1001263e0.
+    // ⚑[tool=disassemble_function ref=outlined_existential_copy:0x1001263e0 result=CONFIRMED — copies metadata@+0x18 + witness@+0x20 + VWT[0] buffer copy]
+    // ⚑[tool=decode_witness_table ref=AbstractAVIOContext:DownloadProtocol:0x1041d5330 result=CONFIRMED (conf_desc 0x103568820, 8 requirements)]
+    let moreDownload: (any DownloadProtocol)? // ⚑ optionality inferred (a nil existential is a zero metadata word; unobservable here)
     // 5  moreUrlPos: current position within the secondary download. Designated init
     //    zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
     var moreUrlPos: UInt64 = 0 // ⚑
@@ -120,32 +138,65 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // decompile sets all 8 own fields directly:
     //   loadMoreBuffer = nil (+loadMoreBuffer = 0), fakeUrlPos = 0, moreUrlPos = 0,
     //   _timeIndex = [] (PTR___swiftEmptyArrayStorage), _timeIndexLock = NSLock()
-    //     (allocWithZone(__NSLock) + init), moreDownload = param_2 (value-copied via
-    //     FUN_1001263e0), maxFileSize = param_7, maxReadedFileSize = param_8,
-    // then delegates to CacheIOContext's designated init FUN_101b86d38 with the
-    // download value (param_1, value-copied) + cacheKey/bufferSize/saveFile/
-    // isReadComplete (param_3..param_6, param_9). Arity/param-order inferred (no
-    // mangled init symbol); the field stores + the super-delegation are explicit in
-    // the decompile and transcribed here. The `moreDownload` and `download` values are
-    // copied (FUN_1001263e0) rather than freshly built — reflected as plain params.
-    public init(download: URLContextDownload?, moreDownload: URLContextDownload?,
+    //     (allocWithZone(__NSLock) + init), moreDownload = x1 (existential value-copied
+    //     via FUN_1001263e0), maxFileSize = x6, maxReadedFileSize = x7,
+    // then delegates to CacheIOContext's designated init FUN_101b86d38.
+    //
+    // PARAM ORDER — RESOLVED in session 62; the previous declaration was WRONG here and
+    // carried an explicit OPEN QUESTION saying so. It is now read straight off the
+    // super-delegation register map at 0x101ba4724-0x101ba4748, which is dispositive
+    // because CacheIOContext's own designated init order is already established:
+    //     ours x0        -> super x0        = download        (existential, indirect)
+    //     ours x1        -> (field)         = moreDownload    (existential, indirect)
+    //     ours x2,x3     -> super x1,x2     = cacheKey        (String)
+    //     ours w4        -> super w3        = bufferSize      (Int32)
+    //     ours w5        -> super w4        = saveFile        (Bool)
+    //     ours x6        -> (field)         = maxFileSize     (UInt64)
+    //     ours x7        -> (field)         = maxReadedFileSize (UInt64)
+    //     ours [x29+0x10] (STACK, ldrb w26) -> super x5 = isReadComplete (Bool)
+    // The two Bools were previously guessed to be adjacent (saveFile, isReadComplete in
+    // positions 5 and 6); the binary separates them by the two UInt64s, and the one that
+    // reaches super's saveFile slot (w4) is ours w5 while the one that reaches super's
+    // isReadComplete slot (x5) is the STACK argument. So the Bool ambiguity the old note
+    // called "NOT determinable from the binary" IS determinable — through the delegation.
+    //
+    // maxFileSize vs maxReadedFileSize is likewise no longer positional guesswork. The
+    // x6 store goes through ivar-offset GOT slot 0x104c639a8 and the x7 store through
+    // 0x104c639b0; get_xrefs_to shows 0x104c639a8 is the slot read by vtable slots 0/1/2
+    // and 0x104c639b0 the one read by slots 3/4/5 — i.e. the accessor triples of stored
+    // fields 1 and 2 — and canPreload (s31) reads the same two globals under Ghidra's
+    // own symbol names `…LimitSeparatePreLoadIOContext::maxFileSize` /
+    // `::maxReadedFileSize`. So x6 = maxFileSize and x7 = maxReadedFileSize, named.
+    // ⚑[tool=get_xrefs_to ref=LimitSeparatePreLoadIOContext.maxFileSize.ivarOffset:0x104c639a8 result=CONFIRMED — read by slots 0/1/2 + the x6 store @0x101ba4710]
+    // ⚑[tool=get_xrefs_to ref=LimitSeparatePreLoadIOContext.maxReadedFileSize.ivarOffset:0x104c639b0 result=CONFIRMED — read by slots 3/4/5 + the x7 store @0x101ba471c]
+    //
+    // Argument LABELS remain inferred (no mangled init symbol survives); the ORDER and
+    // the TYPES above are transcribed, not guessed. `download`/`moreDownload` are
+    // existentials because both arrive indirectly and are destroyed on exit with the
+    // outlined existential destroy 0x100012a78 (@in/owned indirect params, the same
+    // convention the convenience init below uses for its URL).
+    public init(download: (any DownloadProtocol)?, moreDownload: (any DownloadProtocol)?,
                 cacheKey: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool,
-                isReadComplete: Bool, maxFileSize: UInt64, maxReadedFileSize: UInt64) {
+                maxFileSize: UInt64, maxReadedFileSize: UInt64, isReadComplete: Bool) {
         self.loadMoreBuffer = nil          // binary: *(self+loadMoreBuffer) = 0
         self.fakeUrlPos = 0                // binary: *(self+fakeUrlPos) = 0
         self.moreUrlPos = 0                // binary: *(self+moreUrlPos) = 0
         self._timeIndex = []               // binary: *(self+_timeIndex) = swiftEmptyArrayStorage
-        self.moreDownload = moreDownload   // binary: FUN_1001263e0 value-copy of param_2
-        self.maxFileSize = maxFileSize     // binary: *(self+maxFileSize) = param_7
-        self.maxReadedFileSize = maxReadedFileSize // binary: *(self+maxReadedFileSize) = param_8
+        self.moreDownload = moreDownload   // binary: FUN_1001263e0 existential copy of x1 @0x101ba4708
+        self.maxFileSize = maxFileSize     // binary: *(self+0x104c639a8) = x6 @0x101ba4714
+        self.maxReadedFileSize = maxReadedFileSize // binary: *(self+0x104c639b0) = x7 @0x101ba4720
         super.init(download: download, cacheKey: cacheKey, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38
     }
 
-    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot21:0x101ba4308 result=pinned — throwing convenience init; 8 labels unrecoverable]
-    //   CORRECTION: the previous note here ("devirtualized, the binary has no readable
-    //   body") is FALSE. Slot 21 is a 210-instruction, fully readable function. It is
-    //   PINNED because its argument LABELS are unrecoverable, NOT because it is empty.
+    // Convenience init s21 @101ba4308 (210 instr — init_thunk_probe: NOT_A_PLAIN_THUNK).
+    //   FAITHFUL SPINE + UNRESOLVED → P8 on the two download builds and the cacheKey.
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot21:0x101ba4308 result=Init slot, 210 instr; body written below, 7 argument LABELS still unrecoverable]
+    //   CORRECTION: an older note here ("devirtualized, the binary has no readable body")
+    //   is FALSE. Slot 21 is a 210-instruction, fully readable function. Session 61 then
+    //   PINNED it whole on the grounds that "eight argument labels and three parameter
+    //   TYPES" were unknown; session 62 resolved the types (below), so what remains
+    //   unrecoverable is the labels alone, and the body is written.
     //
     //   What is proven about it:
     //   • It is an ALLOCATING init entry: `self` rides x20 as a METATYPE, and the body's
@@ -181,12 +232,26 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //     allocas), so the convenience init's first parameter is a URL.
     // ⚑[tool=vtable_walk ref=type_metadata_accessor_for_URLContextDownload:0x101b90c44 result=desc 0x1039f5a64 = URLContextDownload (classmap)]
     // ⚑[tool=prefetch_decompiles ref=URLContextDownload.init.inner:0x101b90c58 result=shared 7-arg inner init, per URLContextDownload.swift]
-    // ⚑[tool=disassemble_function ref=FUN_101a08224:0x101a08224 result=pinned — unnamed; called (optionsReceiver, GOT[0x104112ce0]+8), 1-word result passed by address to the URLContextDownload init then outlined-destroyed]
-    // ⚑[tool=disassemble_function ref=FUN_100029440:0x100029440 result=pinned — unnamed; source operand is a 24-byte Any box (Int 100000 payload, Swift.Int metadata at +0x18)]
-    // ⚑[tool=disassemble_function ref=FUN_101b9b5ac:0x101b9b5ac result=pinned — unnamed; receiver in x20, args = the "rw_timeout" small string + a swift_isUniquelyReferenced_nonNull_native flag + an INDIRECT value]
-    // ⚑[tool=disassemble_function ref=FUN_1019f0d98:0x1019f0d98 result=pinned — unnamed; String→String, its result is the String passed in the designated init's cacheKey position]
-    // ⚑[tool=disassemble_function ref=FUN_101b86a2c:0x101b86a2c result=pinned — unnamed; called with the incoming URL's address in the self register x20, returns the String fed to 0x1019f0d98]
-    // ⚑[tool=disassemble_function ref=FUN_10323b034:0x10323b034 result=pinned — outlined destroy, called on the address of that 1-word value]
+    // ⚑[tool=disassemble_function ref=Dictionary.avOptions_builder:0x101a08224 result=LOCATED — zeroes a 1-word slot, captures its ADDRESS into a forEach closure context, runs Sequence.forEach over the dictionary in x20, returns the slot. That is AVFFmpegExtension.swift:447 `[String:Any].avOptions`, which inserts each entry into an OpaquePointer? dictionary — the C entry point it calls is that file's claim to name, not this one's (no address for it is observable here). Its extra x1 = GOT[0x104112ce0]+8, an unresolved metadata operand — the generic Value witness — ⚑ pinned]
+    // ⚑[tool=disassemble_function ref=outlined_Any_copy:0x100029440 result=LOCATED — 4-instruction outlined copy of a 32-byte Any; here it moves the Int-100000 box into the value operand, and 0x101b9b5ac tail-calls it to store into the bucket]
+    // ⚑[tool=disassemble_function ref=Dictionary.subscript.setter_specialized:0x101b9b5ac result=CONFIRMED — `ldr x20,[x20]` inout receiver, find(key) @0x100020444, count+!found vs capacity, resize @0x101b9bc80, makeUnique @0x101b9b840, hit → values base `[x4,#0x38] + bucket<<5` (STRIDE 0x20 = a 32-byte Any) destroy-then-assign, miss → insert @0x100035948]
+    // ⚑[tool=disassemble_function ref=FUN_1019f0d98:0x1019f0d98 result=pinned — unnamed; String→String, its result is the String passed in the designated init's cacheKey position. HLSCacheIOContext.swift:172 independently records it as the `String(UTF8View,count)` re-encode in ITS cache-key derivation]
+    // ⚑[tool=disassemble_function ref=FUN_101b86a2c:0x101b86a2c result=pinned — unnamed; called with the incoming URL's address in the self register x20, returns the String fed to 0x1019f0d98. HLSCacheIOContext.swift:171 independently records it as the segment cache-key String builder (URLComponents queryItems/url, 651B)]
+    // ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
+    // ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]  (already CONFIRMED at
+    //   FormatContext.swift:31/212 for this same address — carried here, not re-derived)
+    //   CORRECTION (session 62): the previous note called 0x10323b034 an "outlined
+    //   destroy". It is av_dict_free, and the repo had ALREADY confirmed that at
+    //   FormatContext.swift:263 and OutputStreamInfo.swift:72/136 — this file was
+    //   contradicting a settled fact. The disassembly is textbook av_dict_free:
+    //   `m = *pm; if (m) { while (m->count--) { av_freep(&elems[count].key);
+    //   av_freep(&elems[count].value); } av_freep(&m->elems); } av_freep(pm)` — the
+    //   16-byte AVDictionaryEntry stride (`add x0,x9,w8,SXTW #4`), count at +0, elems at
+    //   +8, and av_freep @0x103253ed0 on every edge including the tail. It is in the
+    //   oracle's 28-name candidate set for this address, so the structural match names it.
+    //   This RETYPES the 1-word slot at [x29-0x88]: it is an `AVDictionary *`, built by
+    //   0x101a08224 from the options dictionary, passed BY ADDRESS (`AVDictionary **`) to
+    //   the URLContextDownload init, and freed after each of the two builds.
     //   • Between the two, it sets ONE FFmpeg AVOption on an options dictionary:
     //     key "rw_timeout" — recovered from the small-string immediates
     //     `mov x1,#0x7772; movk …#0x745f,#0x6d69,#0x6f65` = "rw_timeo" and
@@ -200,22 +265,80 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   • The delegating call passes bufferSize = `mov w4,#0x40000` (262144 = 256 KiB),
     //     NOT the 32 KiB default.
     //
-    //   Why it is NOT written: eight argument labels and three parameter TYPES
-    //   (`FUN_101a08224`, `FUN_100029440`, `FUN_101b9b5ac`, `FUN_1019f0d98`,
-    //   `FUN_101b86a2c` are all unnamed, and recover_swift_function_name @0x101ba4308
-    //   returns None with no labels), so every label would be invented. Deferred, not
-    //   guessed. — P2
+    //   PARAMETERS — recovered in session 62 from the entry register saves at
+    //   0x101ba432c-0x101ba4344 and the two places each value is consumed:
+    //     x0    URL, indirect. Copied TWICE with Foundation.URL's VWT+0x10
+    //           `initializeWithCopy` into two `__chkstk_darwin` allocas (one per download),
+    //           and DESTROYED by this function on every exit path via VWT+8 on the
+    //           caller's own pointer @0x101ba443c / 0x101ba45fc ⇒ @in/owned, the same
+    //           convention the designated init uses for its two existentials.
+    //     x1    [String: Any], @owned. It is `swift_isUniquelyReferenced_nonNull_native`d,
+    //           subscript-set through an inout address in x20, and released with
+    //           `swift_bridgeObjectRelease` — and exactly ONE dictionary value is owned at
+    //           a time (error edge 1 releases the pre-mutation value in x24, error edge 2
+    //           and the success epilogue release the post-mutation value), which is a
+    //           single mutable binding, not two locals. It is NOT Optional: the uniqueness
+    //           check and the subscript set are unconditional, with no nil test anywhere
+    //           between 0x101ba4444 and 0x101ba44a8.
+    //     x2,x3 two TRIVIAL words — never retained, never released, forwarded verbatim to
+    //           BOTH URLContextDownload inits in the x3/x4 argument positions. ⚑ TYPE
+    //           INFERRED as `AVIOInterruptCB` (FFmpeg's {callback, opaque}, 2 pointers,
+    //           trivial) from that argument position: HLSCacheIOContext.swift:136 already
+    //           types the same URLContextDownload-building surface as
+    //           `(url:flags:options:interrupt:)` with `interrupt: AVIOInterruptCB`, and
+    //           the init's w1=1 / x2=&AVDictionary* line up with `flags` / `options`.
+    //           A 2-word trivial pair is all the binary itself proves.
+    //     w4    Bool  -> delegated into slot 22's saveFile position (w5).
+    //     x5    UInt64 -> delegated into slot 22's maxFileSize position (x6).
+    //     x6    UInt64 -> delegated into slot 22's maxReadedFileSize position (x7).
+    //     w7    Bool  -> delegated onto the STACK = slot 22's isReadComplete position.
+    //   The last four are named by the delegation, not guessed — see the register map on
+    //   the designated init above. bufferSize is NOT forwarded: it is the literal
+    //   `mov w4,#0x40000`.
     //
-    //   OPEN QUESTION for the owner phase (evidence, not a change made here): the
-    //   delegating call at 0x101ba45cc loads `ldp x6,x7,[x29,#-0xf0]` — TWO 64-bit values
-    //   in x6/x7 — and pushes a Bool onto the stack (`strb w9,[sp,#-0x10]!`), with the
-    //   other Bool in w5 and bufferSize in w4. That register assignment fits the order
-    //   (…, bufferSize: Int32, <Bool>, <UInt64>, <UInt64>, <Bool>) and NOT the order
-    //   declared above (…, bufferSize, saveFile, isReadComplete, maxFileSize,
-    //   maxReadedFileSize), which would place the two Bools in w5/w6. Which Bool is
-    //   `saveFile` and which is `isReadComplete` is NOT determinable from the binary
-    //   (both are 1-bit), so the declaration above is left untouched rather than
-    //   reordered on a guess.
+    //   ORDER OF OPERATIONS (this is the load-bearing part, and it is explicit):
+    //   download #1 is built from `FUN_101a08224(x24 = the ORIGINAL dictionary)`
+    //   @0x101ba43bc, i.e. BEFORE the AVOption write; the "rw_timeout" subscript set runs
+    //   @0x101ba44a4; download #2 is built from `FUN_101a08224(x23)` @0x101ba44b8 where
+    //   `ldur x23,[x29,#-0xb0]` @0x101ba44a8 reloads the dictionary the setter just
+    //   rewrote. So the SECOND download is the one that carries rw_timeout, and the
+    //   secondary/"load-more" download is therefore the timeout-bounded one.
+    //
+    //   STILL PINNED — the argument LABELS. recover_swift_function_name @0x101ba4308
+    //   returns None with no labels and no mangled init symbol survives, so the seven
+    //   labels written below are INFERRED from the roles above and from the names this
+    //   repo already uses for the same surfaces. The order and the types are transcribed.
+    // ⚑[tool=recover_swift_function_name ref=LimitSeparatePreLoadIOContext.slot21.convenienceInit:0x101ba4308 result=UNRESOLVED — no name, no argument labels; the 7 labels below are inferred]
+    //
+    // UNRESOLVED → P8 (IO-completion): the two `URLContextDownload(url:flags:options:
+    //   interrupt:…)` builds are the SHARED inner init FUN_101b90c58, which
+    //   URLContextDownload.swift leaves deferred (it opens an FFmpeg URLContext). They are
+    //   NOT reconstructed here; `nil` is delegated in their place, exactly as
+    //   CacheIOContext.swift:203-210 does for the same call. — P2
+    // UNRESOLVED → P8 (IO-completion): the cacheKey is derived from `url` by
+    //   FUN_101b86a2c → FUN_1019f0d98 (both unnamed; HLSCacheIOContext.swift:171-172
+    //   pins the same pair in its own cache-key derivation). NOT reconstructed — the
+    //   placeholder below is marked and is NOT the binary's value. — P2
+    public convenience init(url: URL, options: [String: Any], interrupt: AVIOInterruptCB,
+                            saveFile: Bool, maxFileSize: UInt64,
+                            maxReadedFileSize: UInt64, isReadComplete: Bool) throws {
+        // binary: one owned dictionary, mutated in place between the two download builds.
+        var options = options
+        // UNRESOLVED → P8: download = try URLContextDownload(url: url, flags: 1,
+        //   options: &options.avOptions, interrupt: interrupt) — binary @0x101ba43bc-
+        //   0x101ba4420: avOptions built from the PRE-mutation dictionary, the
+        //   AVDictionary** passed as x2, then av_dict_free(&avOptions) @0x101ba444c.
+        options["rw_timeout"] = 100_000 // binary: Dictionary<String,Any> subscript set @0x101ba44a4
+        // UNRESOLVED → P8: moreDownload = try URLContextDownload(url: url, flags: 1,
+        //   options: &options.avOptions, interrupt: interrupt) — binary @0x101ba44b8-
+        //   0x101ba4508 over the POST-mutation dictionary, av_dict_free @0x101ba4540.
+        _ = options // the mutated dictionary feeds the deferred second build above
+        let cacheKey = "" // ⚑ PLACEHOLDER — NOT the binary's value; see the UNRESOLVED cacheKey marker
+        self.init(download: nil, moreDownload: nil, cacheKey: cacheKey,
+                  bufferSize: 256 * 1024, // binary: mov w4,#0x40000 — NOT the 32 KiB default
+                  saveFile: saveFile, maxFileSize: maxFileSize,
+                  maxReadedFileSize: maxReadedFileSize, isReadComplete: isReadComplete)
+    }
 
     // s26 @101ba4b68 — `var bufferedBytes: Int` (name inferred, devirt). FAITHFUL (full):
     //   the lone getter between the slot 23-25 triple and the first method at slot 27, so
