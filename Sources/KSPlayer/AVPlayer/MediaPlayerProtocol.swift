@@ -43,9 +43,19 @@ public class DynamicInfo: ObservableObject {
     // Types are the demangled raw field-record mangles (scripts/dump_field_type_mangles.py → swift-demangle):
     //   `SaySo26AVPlayerItemAccessLogEventCGycSg` → (() -> [AVPlayerItemAccessLogEvent])?
     //   `SfyYbScMYccSg`                           → (@MainActor @Sendable () -> Float)?
+    // Which of the two 16-byte slots is which is fixed by the slot-36 updater @0x1019df7d8: it reads
+    // self+0x50 as an optional closure and sums `numberOfDroppedVideoFrames` over the array it returns
+    // (⇒ accessLogEvent), and reads self+0x60 as an optional @MainActor closure whose result is stored
+    // straight into the Float-typed `_displayFPS` Published (⇒ displayFPSBlock).
     // ⚑ access level NOT binary-recoverable (a `let` emits no vtable slot) — mirrors the sibling blocks.
-    // ⚑ OPEN: the second initializer (vtable slot 35 @0x1019de4a8, not this unit) may take these two as
-    //   parameters, in which case the `= nil` defaults here move into that init's parameter defaults.
+    // ⚑ OPEN — now CONFIRMED, still deferred: the second initializer is a DISTINCT DESIGNATED init
+    //   (vtable slot 35 @0x1019de4a8 is the allocating entry; its initializing entry is 0x1019df2f0) and
+    //   it ASSIGNS both of these — x2:x3 → self+0x50, x0:x1 → self+0x60.
+    //   ⚑[tool=disassemble_function ref=DynamicInfo.init#2-initializing-entry:0x1019df2f0 result=CONFIRMED]
+    //   ⚑[tool=init_thunk_probe ref=DynamicInfo.init#2-allocating-entry:0x1019de4a8 result=LOCATED]
+    //   When that init is reconstructed these two `= nil` defaults MUST be dropped (a `let` carrying a
+    //   default cannot be re-assigned by a second init) and the slot-34 init below must then assign `nil`
+    //   explicitly. Not done here — slot 35 is a separate unit and writing half of it would not build.
     private let accessLogEvent: (() -> [AVPlayerItemAccessLogEvent])? = nil
     private let displayFPSBlock: (@MainActor @Sendable () -> Float)? = nil
     // Fields 7-9 — the first three stores slot 34 makes after swift_allocObject:
@@ -82,26 +92,35 @@ public class DynamicInfo: ObservableObject {
     // `PTR___type_metadata_for_Swift_Float` (0x104111870), each from a 4-byte `str wzr` initial value:
     //   @0x1019df104-11c  _displayFPS   = Published(initialValue: Float(0))
     //   @0x1019df128-138  _networkSpeed = Published(initialValue: Float(0))
-    // ⚑ PRE-EXISTING DIVERGENCE, deliberately NOT fixed in this unit: `displayFPS` is Double here but
-    //   Published<Float> in the binary, and `audioVideoSyncDiff` is Double here but Float in the field
-    //   record (slot 34 zeroes it with a 4-byte `str wzr`, not `str xzr`). Correcting either one changes a
-    //   type that MEPlayerItem.swift:475 (`(dynamicInfo.audioVideoSyncDiff, type) = options.videoClockSync(…)`,
-    //   a Double-returning tuple) and KSVideoPlayerView.swift:690-691 consume, so it is a multi-file unit.
+    // Double-vs-Float, carried unsettled since the first pass, is now SETTLED — both are Float, and the
+    // three signals agree: (1) the field records (scripts/dump_field_type_mangles.py DynamicInfo) read
+    // `<Published>ySfG` at idx 10-11 and a bare `Sf` at idx 12; (2) BOTH inits zero audioVideoSyncDiff with
+    // a 4-byte `str wzr` (@0x1019df144 in slot 34, @0x1019df3dc in the slot-35 body), never `str xzr`;
+    // (3) the slot-36 updater @0x1019df7d8 feeds `Published._set_subscript` from a 32-bit float temp for
+    // both _displayFPS and _networkSpeed. The two are not annotated for style — an unannotated `var x = 0.0`
+    // reads back as UNCHECKED in l2_field_gate, which is exactly how a Double survived here.
     @Published
-    public var displayFPS = 0.0
+    public var displayFPS: Float = 0
     // ⚑ access level NOT binary-recoverable; `public` mirrors its Published sibling displayFPS.
     @Published
     public var networkSpeed: Float = 0
-    public var audioVideoSyncDiff = 0.0
-    public var droppedVideoFrameCount = UInt32(0)
-    public var droppedVideoPacketCount = UInt32(0)
+    public var audioVideoSyncDiff: Float = 0
+    public var droppedVideoFrameCount: UInt32 = 0
+    public var droppedVideoPacketCount: UInt32 = 0
     /// Binary: vtable slot 34 @0x1019df094 (66 instructions) — the allocating entry point with the
     /// designated init inlined (`swift_allocObject` 0x10345caf0, then every stored-property default above,
     /// then the four closure stores). ⚑ parameter labels are NOT recoverable (stripped;
     /// `recover_swift_function_name.py --addr 0x1019df094` finds no `#function` literal) — they are the
     /// pre-existing source labels, kept. The four closures arrive in x0-x7 and land as
     /// `stp x26,x25,[x27,#0x10]` / `[#0x20]` / `[#0x30]` / `[#0x40]`, which is the argument-to-field
-    /// mapping below. ⚑ OPEN: slot 35 @0x1019de4a8 is a SECOND initializer, not reconstructed here.
+    /// mapping below. All eight of x0-x7 are read (parked in x26…x19 across the alloc) and x8 is only
+    /// WRITTEN, from the x20 metatype — so there is no ninth word and no indirect return, which is what
+    /// pins the arity at exactly these four closures. The standalone initializing entry for the same init
+    /// is 0x1019df19c — the same stores in the same order, so slot 34 is the allocating entry with that
+    /// body inlined, not a stub.
+    /// ⚑ OPEN: slot 35 @0x1019de4a8 is a SECOND, DISTINCT DESIGNATED init (it allocates and forwards to
+    /// initializing entry 0x1019df2f0, which writes every stored property itself and never delegates to
+    /// this one; arity = 4 words in x0-x3). Not reconstructed here — it is its own unit.
     init(metadata: @escaping () -> [String: String], bytesRead: @escaping () -> Int64, audioBitrate: @escaping () -> Int, videoBitrate: @escaping () -> Int) {
         metadataBlock = metadata
         bytesReadBlock = bytesRead

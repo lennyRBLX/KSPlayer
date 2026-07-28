@@ -180,12 +180,20 @@ public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
 
 // §7.2 — Souce→Source + FileURL→URL. Stateless (dropped the recon's stored `infos`, §5.1).
 public class DirectorySubtitleDataSource: URLSubtitleDataSource {
-    // The class's ONLY vtable entry (slot 0, kind=init) is @0x10084c444, a one-instruction
-    // `b 0x10008090c`; that target is the whole allocating init and it is
-    // `swift_allocObject(metadata, size: 0x10, alignMask: 7)` tail-called with nothing after it.
-    // Size 0x10 == the bare object header, so the class carries NO stored property — a second,
-    // independent confirmation of the §5.1 "dropped the recon's stored `infos`" finding, and the
-    // reason the initializing init left no separate body (an empty `init()` inlines away).
+    // ⚑[tool=vtable_walk+get_xrefs_to+init_thunk_probe ref=FUN_10008090c:0x10008090c result=CONFIRMED]
+    //   The class's ONLY vtable entry (slot 0, kind=Init) is @0x10084c444, a one-instruction
+    //   `b 0x10008090c` (Ghidra names it thunk_). ⚠️ That target is NOT this class's own body: it is a
+    //   linker-FOLDED body shared 34 ways (33 DATA refs + this thunk) — ShooterSubtitleDataSource, also a
+    //   stateless `init()`, points its slot-0 impl @0x1039f1c7c straight at it with no thunk. Do not
+    //   attribute that body, or any of its xrefs, to this class. Its 4 instructions are
+    //   `mov x0,x20 · mov w1,#0x10 · mov w2,#7 · b _swift_allocObject`: the allocator is TAIL-called
+    //   (`b`, not `bl`), so it allocates and returns with ZERO field stores, and it reads none of x0-x7
+    //   ⇒ arity 0, i.e. `init()`.
+    //   Because the body is shared, its `#0x10` sizes every class that folded into it, not this one.
+    //   The class-SPECIFIC no-stored-property proofs are two independent ones: __swift5_fieldmd carries
+    //   0 field records (dump_binary_field_types), and metadata VTableOffset=10 words vs Assrt 12 /
+    //   Open 13 (the field-offset vector holds one word per stored property; 10+n fits all six
+    //   datasources). Both confirm the §5.1 "dropped the recon's stored `infos`" finding.
     public init() {}
     // FUN_101aa5c5c → FUN_101aac684 (setup) → FUN_101aac728 (isFileURL + contentsOfDirectory + filter) → FUN_101aa4844
     //   (in-place mergeSort by URLSubtitleInfo.name). Binary-pinned: isFileURL guard, contentsOfDirectory(at:

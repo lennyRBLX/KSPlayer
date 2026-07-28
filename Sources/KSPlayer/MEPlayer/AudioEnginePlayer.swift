@@ -222,9 +222,22 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     //
     // init: entry 15 @0x101a0df64 is the allocating entry — swift_allocObject(size: 0x7c,
     // alignMask: 7), which independently corroborates the 6-field layout and the 0x50
-    // subclass boundary — tail-calling the designated body @0x101a0df98. That body sets
-    // the own fields, then runs the inlined super.init() (zeroes 0x10..0x4f and seeds
-    // outputLatencySystem), then attaches timePitch and installs the render notify.
+    // subclass boundary. It then `bl 0x101a0df98` into the designated body and returns the
+    // instance (`mov x0,x20 ; ret`) — a call and a return, NOT a tail branch.
+    //
+    // ARITY 0 is proven rather than assumed: across all 13 instructions the entry reads only
+    // x20 (the metatype); w1/w2 are WRITTEN with the size and align mask and no argument
+    // register is read anywhere. That refutes a DEFAULTED parameter as well as a declared
+    // one, because a default-argument generator runs at the CALL site and its value would
+    // still have to arrive in an argument register here.
+    //
+    // The body @0x101a0df98 sets the own fields, then runs the inlined super.init() (zeroes
+    // 0x10..0x4f and seeds outputLatencySystem), then attaches timePitch and installs the
+    // render notify. `mov x2,x20` at 0x101a0e080 is what puts self into
+    // AudioUnitAddRenderNotify's refCon (Ghidra elides that third argument, so read it off
+    // the disassembly, not the decompile). It is passUnretained and not passRetained: the
+    // body's only swift_retain/swift_release pair on self — 0x101a0e040 / 0x101a0e08c —
+    // closes before the return, so no +1 escapes into the refCon.
     // The upstream `outputLatency = ...` line is gone: AudioBaseOutput.init does it.
     public required override init() {
         super.init()

@@ -65,6 +65,27 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     // AudioBaseOutput.init() and satisfies AudioOutput's init requirement. super.init() seeds
     // the base storage (incl. outputLatencySystem from AVAudioSession on iOS/tvOS), which is
     // why the upstream `outputLatency = AVAudioSession...` line is gone from here.
+    //
+    // The alloc entry is swift_allocObject(size: 0x71, alignMask: 7) then `bl 0x101a15270`
+    // and `mov x0,x20 ; ret` — 13 instructions, identical in shape to the other two audio
+    // players. 0x71 over the shared 0x50 base leaves 0x21, which is exactly the six own
+    // fields in the header's layout (8+8+8+1, pad, 4+1 ⇒ 0x50…0x70 inclusive). ARITY 0 is
+    // proven, not assumed: across those 13 instructions the entry reads only x20 (the
+    // metatype), and w1/w2 are written with the size and align mask rather than read. No
+    // argument register is read anywhere, which refutes a DEFAULTED parameter as well as a
+    // declared one — a default-argument generator runs at the CALL site, so its value would
+    // still have to arrive in an argument register here.
+    //
+    // super.init() runs FIRST, exactly as written: the body seeds the six own fields from
+    // their declared defaults, then falls straight into the inlined base storage zeroing,
+    // and only then builds the description. That ordering is legal precisely because every
+    // own field has a default, so phase 1 is complete before the super call.
+    //
+    // descriptionForOutput is a folded compile-time constant: 16 bytes @0x103564590 —
+    // 'auou' 'rioc' 'appl' 0 (type, subType, manufacturer, flags), byte-verified — with
+    // componentFlagsMask stored as a separate inline zero. 'rioc' is RemoteIO, i.e. the
+    // `#else` arm below is the one this build compiled; the macOS `kAudioUnitSubType_
+    // HALOutput` arm is unverifiable from this binary, not contradicted.
     public required override init() {
         super.init()
         var descriptionForOutput = AudioComponentDescription()

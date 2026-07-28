@@ -46,17 +46,60 @@ class LocalHLSServer {
     private var retryDelayMap: [URL: Int] = [:]
 
     /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).
-    /// ⚑ param labels inferred (stripped). URL param + `throws` are binary facts (URL value-witness copy
-    /// into rootDirectory; NWListener(using:on:) throws → `_swift_willThrow`/`deallocPartialClassInstance`).
     /// vtable slot 6 @0x101b70274 is the compiler-emitted ALLOCATING entry point for this init and has no
     /// source of its own — whole body (20 instr, disasm): save x0/x1 → `ldr w1,[x20,#0x30]` /
     /// `ldrh w2,[x20,#0x34]` (instanceSize / alignMask off the metadata in x20) → `bl 0x10345caf0`
     /// (swift_allocObject) → restore x0 (URL), x1 (port) → `bl 0x101b705ec` → ret. It also round-trips the
     /// swifterror register (`mov x19,x21` on entry, `mov x21,x19` before the call), which is a SECOND,
-    /// independent binary witness for `throws` here.
+    /// independent binary witness for `throws` here (the third is the error path's
+    /// `_swift_willThrow` + `_swift_deallocPartialClassInstance` @0x101b70b0c).
+    ///
+    /// ⚑[tool=recover_swift_function_name.py ref=LocalHLSServer.init(rootDirectory:port:):0x101b705ec result=CONFIRMED]
+    /// PARAM LABELS ARE RECOVERED, NOT INFERRED — this supersedes the earlier "labels inferred (stripped)"
+    /// pin. The throw path materializes this init's own `#function` literal @0x103d3e3e0, count 25, whose
+    /// bytes read exactly `init(rootDirectory:port:)`; the paired `#file` @0x103d3e3b0, count 32, reads
+    /// `ProAVPlayer/LocalHLSServer.swift`, and the call passes line 0x2f = 47. 2 labels == the 2 argument
+    /// registers the thunk reads → P28-clean.
+    /// ARITY 2 is pinned by the ABI: the thunk reads only x0/x1 and leaves x2..x7 untouched, which also
+    /// refutes a third DEFAULTED parameter — a default-argument generator runs at the CALL site and its
+    /// value would still arrive in x2.
+    ///
+    /// ⚑ NO STATIC INSTANCE SIZE EXISTS FOR THIS CLASS — a binary fact, not a tool gap, and the reason
+    /// `init_thunk_probe.py` reports `size=-` here while it reads a constant for every sibling. The thunk
+    /// loads size/align from the metadata at runtime (`ldr w1,[x20,#0x30]`/`ldrh w2,[x20,#0x34]`) instead
+    /// of the usual constant `mov w1,#<size>`, because `rootDirectory: URL` is a RESILIENT Foundation
+    /// struct whose size is unknown at compile time: its metadata accessor @0x103452464 is
+    /// `URL default typeMetadataAccessor`, and the argument arrives INDIRECTLY as a pointer that is copied
+    /// in through the value witness `initializeWithCopy` (VWT+0x10) rather than by a plain store.
+    /// Three further witnesses agree, so no number could be written here without fabricating it:
+    ///   (a) only the fields BEFORE `rootDirectory` store at constant offsets — port self+0x10 (`strh`,
+    ///       decompiled as `__uint16`), listener self+0x18, keepAliveBlockMap self+0x20 — while every
+    ///       field from `rootDirectory` on indexes through a runtime FIELD-OFFSET global, and all four of
+    ///       those globals read as ZERO in the file (they are filled in by swift_initClassMetadata at
+    ///       load): 0x1044f2a78 queue · 0x1044f2a80 statusMessages · 0x1044f2b40 retryDelayMap ·
+    ///       0x1044f2b48 rootDirectory. (Ghidra names all four `_TtC11ProAVPlayer14LocalHLSServer::<field>`,
+    ///       which is an independent confirmation of that mapping.)
+    ///   (b) the metadata comes from a SINGLETON accessor (FUN_101b75858) over a cache @0x1044f2b90 that
+    ///       is likewise null in the file, keyed on descriptor 0x1039f5198.
+    ///   (c) the error path re-reads +0x30/+0x34 off the LIVE metadata to size the partial dealloc.
+    /// Field ORDER is still pinned (declaration order above); only the byte offsets of the last four
+    /// fields are runtime-determined, and the instance size is not a constant in any build.
+    ///
+    /// ⚑ ORDER-ONLY (semantically inert, weak evidence): the binary stores `port` before `rootDirectory`.
+    /// The four defaulted stored properties are emitted ahead of both, in declaration order, which shows
+    /// this function did not have its initializing stores reordered — so the two explicit assignments are
+    /// written in the observed order. Both are `let`, assigned once, with no interdependency; nothing but
+    /// the store order distinguishes the alternatives.
+    /// ⚠️ That is a PRESENTATION choice, not a recovery: under -O the optimiser may freely reorder two
+    /// independent stores to distinct `let` fields, so the emitted order is NOT evidence of the order the
+    /// source wrote them in. (This is exactly where user statements differ from DEFAULT materialization,
+    /// which the compiler emits in declaration order in a fixed prologue — that IS probative, and is what
+    /// the session-62 `packet` / `_timeIndexLock` findings rest on. Do not carry the inference across.)
+    /// ⚑ a log-level-gated KSLog on the throw path (`1 < logLevel`, error bridged via
+    /// `Foundation.__convertErrorToNSError`) is omitted — KSLog form UNRESOLVED, as elsewhere in the class.
     init(rootDirectory: URL, port: UInt16) throws {
-        self.rootDirectory = rootDirectory
         self.port = port
+        self.rootDirectory = rootDirectory
         let params = NWParameters.tcp                            // Network::NWParameters::get_tcp
         params.allowLocalEndpointReuse = true                   // set_allowLocalEndpointReuse(true)
         self.listener = try NWListener(using: params,

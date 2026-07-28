@@ -778,15 +778,48 @@ public class OSLog: LogHandler {
     // init @0x1019e19ec: swift_allocObject(size 0x28 = 16 header + 16 String @self+0x10/+0x18 (the
     // `lable` argument) + 8 @self+0x20), [[NSDateFormatter alloc] init] stored to self+0x20, then
     // -[NSDateFormatter setDateFormat:] with the SAME 18-char literal FileLog uses (see below).
+    // Shape is ALLOCATING_INIT_INLINED, not a forwarding thunk: it stores fields directly after the
+    // swift_allocObject call site (`str x21,[x20,#0x10]` / `stp x19,x0,[x20,#0x18]`). The call
+    // COUNT is not the discriminator — this init makes seven calls after that alloc site (eight
+    // `bl` in total) and still inlines; a session-61 golden mislabelled it a thunk on call count.
+    // `mov w1,#0x28; mov w2,#0x7` pins instance size 40 / align mask 7, which is exactly the two
+    // fields above and leaves room for no third. ARITY: only x0/x1 are read (the one String);
+    // x2/x3 are never read, which refutes a second parameter AND a defaulted one, since a
+    // default-argument generator would still have to materialise its value at the call site.
+    // The class ref for the formatter is __objc_classrefs 0x1044105B0 = NSDateFormatter, so the
+    // declaration-site default really is `DateFormatter()`.
+    // ⚑[tool=nm ref=OSLog.init(lable:):0x1019e19ec result=UNRESOLVED] the argument LABEL `lable`
+    // (the upstream typo) is carried from the base source and is NOT recoverable here: this binary
+    // is stripped to 7609 symbols with no `5OSLogC`/`7FileLogC` entry, and Swift argument labels
+    // appear in no reflection section. Only the label's TYPE and count are proven above.
     public let formatter = DateFormatter()
     public init(lable: String) {
         label = lable
         formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
     }
 
+    // log @0x1019e3460 (vtable slot 1). The os_log format is a StaticString passed as x3 =
+    // 0x103d34f80 with `mov w4,#0x17` = 23 UTF-8 bytes; read raw those 23 bytes are
+    // "%@ %@ %@: %@:%d %@ | %@" (NUL at +23) — SEVEN specifiers, not the six of the base. The
+    // argument array confirms seven independently: it is a 0x138-byte allocation = 0x20 array
+    // header + 7 * 0x28 CVarArg existentials (payload +0x00, metadata +0x18, witness +0x20), and
+    // every element's metadata word names its type — Swift.String (__got 0x104111500 =
+    // _$sSSN) for six, Swift.UInt (0x104111B08 = _$sSuN, witness 0x104111B30 =
+    // _$sSus7CVarArgsWP) for `line`, which is what pins `line` as UInt rather than Int. Element
+    // order, by store offset into that array:
+    //   +0x20   formatter.string(from: Date()) — self+0x20 is loaded, then Date.init ->
+    //           Date._bridgeToObjectiveC -> -[NSDateFormatter stringFromDate:] ->
+    //           String._unconditionallyBridgeFromObjectiveC. This leading timestamp is the seventh
+    //           argument the base is missing, and it is why OSLog carries a formatter at all.
+    //   +0x48   level.description   +0x70  label (self+0x10)   +0x98  file (params x2/x3)
+    //   +0xC0   line (param x6)     +0xE8  function (params x4/x5)
+    //   +0x110  message.description (via the CustomStringConvertible witness getter @0x103459364)
+    // `dso:` and `log:` are DEFAULTED at this call site, so neither is spelled here: x1 =
+    // 0x100000000 is #dsohandle and x2 comes from OSLog.default's getter @0x1034587c4 — a
+    // default-argument generator runs at the CALL site, which is exactly what these are.
     @inlinable
     public func log(level: LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt) {
-        os_log(level.logType, "%@ %@: %@:%d %@ | %@", level.description, label, file, line, function, message.description)
+        os_log(level.logType, "%@ %@ %@: %@:%d %@ | %@", formatter.string(from: Date()), level.description, label, file, line, function, message.description)
     }
 }
 
@@ -803,7 +836,15 @@ public class FileLog: LogHandler {
         // file's FileLog.log @0x1019e38d0: identical `add #0xfa0; sub #0x20` shape with count
         // 0x14 = 20, where the add result 0x103d34fa0 holds "%@ %@ %@:%d %@ | %@\n" (exactly 20
         // chars) while the sub result 0x103d34f80 holds a 23-char string — so the ADD result is the
-        // literal. Both lengths therefore agree only for the add-side reading.
+        // literal. Both lengths therefore agree only for the add-side reading. (That 23-char
+        // neighbour is now identified: it is OSLog.log's own format string. The wrong-bias read of
+        // THIS literal would land on "ReadCacheIOContext", which is also 18 characters — length
+        // alone would not have caught it, so the count field is checked against the add side.)
+        // Shape is ALLOCATING_INIT_INLINED: stores land after the swift_allocObject call site as
+        // `stp x19,x0,[x20,#0x10]` — fileHandle at self+0x10, formatter at self+0x18.
+        // `mov w1,#0x20; mov w2,#0x7` pins instance size 32 / align mask 7 = exactly two pointers.
+        // ARITY: only x0 is read; x1/x2/x3 are never read, refuting both a second parameter and a
+        // defaulted one. Formatter class ref is __objc_classrefs 0x1044105B0 = NSDateFormatter.
         formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
     }
 

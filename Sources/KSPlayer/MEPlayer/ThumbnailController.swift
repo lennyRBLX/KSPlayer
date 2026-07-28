@@ -24,6 +24,38 @@ public protocol ThumbnailControllerDelegate: AnyObject {
 public class ThumbnailController {
     public weak var delegate: ThumbnailControllerDelegate?
     private let thumbnailCount: Int
+
+    /// Binary: vtable slot 0 @0x101a6c49c — ALLOCATING_INIT_INLINED (18 instr). The initializing body is
+    /// inlined into the allocating entry, so there is no separate inner body and the whole layout reads
+    /// straight off this one function. Everything below is disasm + decompile, in agreement:
+    /// ⚑[tool=init_thunk_probe.py ref=ThumbnailController.init:0x101a6c49c result=CONFIRMED]
+    ///
+    /// `mov w1,#0x28` / `mov w2,#0x7` → `_swift_allocObject(size 0x28 = 40, alignMask 7)`. Unlike the
+    /// resilient-layout case, that size is a CONSTANT in the binary, so it pins the field layout exactly:
+    /// 40 = 16 header + 16 + 8, and both members are accounted for with nothing left over —
+    ///   · `delegate` occupies self+0x10..0x1f as a weak CLASS EXISTENTIAL (two words): `str xzr,[x0,#0x18]`
+    ///     zeroes the witness-table word and `_swift_unknownObjectWeakInit(self+0x10, 0)` @0x10345d174
+    ///     zeroes the object word. The implicit `nil` IS that weakInit — there is no source initializer to
+    ///     recover. `unknownObject` (rather than the native-only entry) means the referent may be an
+    ///     Objective-C object, which independently corroborates the class-bound `: AnyObject` on the
+    ///     protocol above — a non-class-bound protocol could not be held `weak` at all.
+    ///   · `thumbnailCount` is the single `Int` at self+0x20 (`str x19,[x20,#0x20]`, a full 64-bit store of
+    ///     the saved x0; `dump_binary_field_types.py` independently types it `Swift.Int`).
+    ///
+    /// ARITY 1: x0 is the only argument register read — x1..x7 are untouched. That refutes a second
+    /// parameter AND a second DEFAULTED one, since a default-argument generator runs at the CALL site and
+    /// its value would still arrive in x1. NON-THROWING: no swifterror (x21) round-trip and no error path.
+    ///
+    /// ⚑ the `= 100` default is NEITHER confirmed NOR refuted here, and is retained from upstream rather
+    /// than recovered: the constant is materialized by a default-argument generator at the call site, and
+    /// `get_xrefs_to 0x101a6c49c` returns DATA references only (0x1039f06a4, 0x1044eb718, 0x10506e399) —
+    /// there is no in-binary call site to read a literal 100 out of, and an uncalled generator is
+    /// dead-stripped under -O WMO. The label `thumbnailCount:` is likewise upstream, not recovered: this
+    /// init contains no logging, so it materializes no `#function` literal to read a signature from.
+    /// ⚑ NO dependency on the ABSENT sibling types (ThumbnailQueue / ThumbnailSession) — this init
+    /// allocates nothing and calls nothing but `_swift_allocObject` and `_swift_unknownObjectWeakInit`.
+    /// Checked deliberately: standing up a type that has no source declaration would be a different and
+    /// much larger unit than reconstructing an init.
     public init(thumbnailCount: Int = 100) {
         self.thumbnailCount = thumbnailCount
     }

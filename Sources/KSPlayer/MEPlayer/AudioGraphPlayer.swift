@@ -102,6 +102,33 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
     // AudioBaseOutput.init() and satisfies AudioOutput's init requirement. super.init() seeds
     // the base storage (incl. outputLatencySystem from AVAudioSession on iOS/tvOS), which is
     // why the upstream `outputLatency = AVAudioSession...` line is gone from here.
+    //
+    // The alloc entry is swift_allocObject(size: 0x7c, alignMask: 7) then `bl 0x101a10918`
+    // and `mov x0,x20 ; ret` — 13 instructions, identical in shape to AudioEnginePlayer's.
+    // 0x7c over the 0x50 base leaves 0x2c, which is exactly the six own fields listed in the
+    // file header. ARITY 0 is proven, not assumed: across those 13 instructions the entry
+    // reads only x20 (the metatype), and w1/w2 are written with the size and align mask
+    // rather than read. No argument register is read anywhere, which refutes a DEFAULTED
+    // parameter as well as a declared one — a default-argument generator runs at the CALL
+    // site, so its value would still have to arrive in an argument register here.
+    //
+    // super.init() runs where it is written below, AFTER the graph is fully built: the
+    // inlined base storage zeroing sits at the END of the body, past all four
+    // AUGraphNodeInfo calls. It must at least follow the two assignments to `graph` (+0x58)
+    // and `audioUnitForDynamicsProcessor` (+0x50): neither carries a default, so Swift phase
+    // 1 is not complete until both are stored, and the binary stores both before it.
+    //
+    // Each AudioComponentDescription is a compile-time constant the optimiser folded whole:
+    // 16 bytes (componentType, componentSubType, componentManufacturer, componentFlags = 0)
+    // copied from .rodata, with componentFlagsMask stored as a separate inline zero. Read as
+    // FourCCs, byte-verified:
+    //   descriptionForTimePitch          @0x103564570  'aufc' 'nutp' 'appl' 0
+    //   descriptionForDynamicsProcessor  @0x1035644f0  'aufx' 'dcmp' 'appl' 0
+    //   descriptionForMixer              @0x103564580  'aumx' 'mcmx' 'appl' 0
+    //   descriptionForOutput             @0x103564590  'auou' 'rioc' 'appl' 0
+    // 'mcmx' and 'rioc' are the MultiChannelMixer / RemoteIO subtypes, i.e. the `#else`
+    // (non-macOS) arms below are the ones this build compiled; the macOS arms are
+    // unverifiable from it, not contradicted.
     public required override init() {
         var newGraph: AUGraph!
         NewAUGraph(&newGraph)
