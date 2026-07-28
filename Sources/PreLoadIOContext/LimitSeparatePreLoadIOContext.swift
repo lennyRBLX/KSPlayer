@@ -148,7 +148,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // because CacheIOContext's own designated init order is already established:
     //     ours x0        -> super x0        = download        (existential, indirect)
     //     ours x1        -> (field)         = moreDownload    (existential, indirect)
-    //     ours x2,x3     -> super x1,x2     = cacheKey        (String)
+    //     ours x2,x3     -> super x1,x2     = md5             (String)
     //     ours w4        -> super w3        = bufferSize      (Int32)
     //     ours w5        -> super w4        = saveFile        (Bool)
     //     ours x6        -> (field)         = maxFileSize     (UInt64)
@@ -185,7 +185,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
         self.moreDownload = moreDownload   // binary: FUN_1001263e0 existential copy of x1 @0x101ba4708
         self.maxFileSize = maxFileSize     // binary: *(self+0x104c639a8) = x6 @0x101ba4714
         self.maxReadedFileSize = maxReadedFileSize // binary: *(self+0x104c639b0) = x7 @0x101ba4720
-        super.init(download: download, cacheKey: md5, bufferSize: bufferSize,
+        super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38
     }
 

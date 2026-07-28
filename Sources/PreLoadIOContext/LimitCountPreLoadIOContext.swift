@@ -23,12 +23,16 @@ public class LimitCountPreLoadIOContext: LimitPreLoadIOContext {
     // moreCount: rounds used so far. init 0 (2-byte store). ⚑
     var moreCount: UInt16 = 0 // ⚑ (width-inferred 2-byte; gate UNCHECKED)
 
-    init(maxMoreCount: UInt16, download: URLContextDownload?, cacheKey: String,
-         bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool,
-         maxFileSize: UInt64, maxReadedFileSize: UInt64) {
+    // Labels AND order RECOVERED from the word-substituted mangled name (`010LimitCountabC0C`);
+    // `maxMoreCount` is the LAST parameter, not the first, and the String label is `md5:`.
+    // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext010LimitCountabC0C8download3md510bufferSize8saveFile03maxkI00l6ReadedkI014isReadComplete0l4MoreE0AC8KSPlayer16DownloadProtocol_p_SSs5Int32VSbs6UInt64VAQSbs6UInt16VtKcfc result=labels+order RECOVERED]
+    init(download: URLContextDownload?, md5: String,
+         bufferSize: Int32 = 32 * 1024, saveFile: Bool,
+         maxFileSize: UInt64, maxReadedFileSize: UInt64, isReadComplete: Bool,
+         maxMoreCount: UInt16) {
         self.maxMoreCount = maxMoreCount   // binary s3: self.maxMoreCount = param; moreCount defaults 0
-        super.init(download: download, cacheKey: cacheKey, bufferSize: bufferSize,
-                   saveFile: saveFile, isReadComplete: isReadComplete,
-                   maxFileSize: maxFileSize, maxReadedFileSize: maxReadedFileSize)
+        super.init(download: download, md5: md5, bufferSize: bufferSize,
+                   saveFile: saveFile, maxFileSize: maxFileSize,
+                   maxReadedFileSize: maxReadedFileSize, isReadComplete: isReadComplete)
     }
 }

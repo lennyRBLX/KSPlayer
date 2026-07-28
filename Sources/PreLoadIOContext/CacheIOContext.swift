@@ -14,7 +14,7 @@ import FFmpegKit   // AVIOInterruptCB (FFmpeg C struct — the L3 cancel field)
 //             ones are best-effort (unmapped stdlib int / Foundation / in-module
 //             class / closure / FFmpeg-C) and flagged `// type inferred — ⚑`.
 //   inits   — designated s61 → inner FUN_101b86d38 (cached): sets ALL 28 fields to
-//             their defaults, then takes download/cacheKey/bufferSize/saveFile/
+//             their defaults, then takes download/md5/bufferSize/saveFile/
 //             isReadComplete as explicit param→field stores. The Foundation
 //             cache-directory scan (enumerate videoCache dir → build entryList →
 //             sum fetchedSize) is deep Foundation with unnamed helpers → its body
@@ -165,21 +165,24 @@ public class CacheIOContext: AbstractAVIOContext {
     // init symbol): the EXPLICIT param→field stores in the inner init are
     //   param_1 → download (the `any DownloadProtocol` existential value-witness-copied into +0x20 —
     //     a 40-byte existential, not an 8-byte retained class ptr),
-    //   param_2/param_3 → a Swift String cacheKey (the appendingPathComponent base),
+    //   param_2/param_3 → the Swift String `md5` (the appendingPathComponent base),
     //   param_4 → bufferSize (stored into base +0x14 → super.init(bufferSize:)),
     //   param_5 → saveFile (char store), param_6 → isReadComplete (char store).
-    // The String param's role/name is not deterministically resolvable beyond "Swift
-    // String used to derive the per-source cache subdirectory" → named cacheKey,
-    // best-effort. All 28 field defaults are transcribed above as property
-    // initializers (so a stored-property-only init body is faithful to the defaults).
-    public init(download: (any DownloadProtocol)?, cacheKey: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
+    // The String param is `md5:` — RECOVERED, not inferred. It was previously "not
+    // deterministically resolvable ... → named cacheKey, best-effort"; the orphaned export
+    // trie carries the full mangled name with its argument labels. The class is word-
+    // substituted (`05CacheC0C` re-uses words spelled by the module name), which is why no
+    // literal search for it ever hit.
+    // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc result=labels RECOVERED]
+    // ⚑[tool=export_trie_oracle ref=CacheIOContext.init:throws result=the mangled name ends `tKcfc` — the K is `throws`, which this declaration does NOT carry; body+callers unchanged this batch, PINNED as its own unit]
+    public init(download: (any DownloadProtocol)?, md5: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
         self.download = download
         self.saveFile = saveFile          // binary: explicit (char)param_5 store
         self.isReadComplete = isReadComplete // binary: explicit param_6 store
         super.init(bufferSize: bufferSize) // binary: *(self+0x14) = param_4
-        _ = cacheKey
+        _ = md5
         // UNRESOLVED → P8 (IO-completion): the Foundation cache-directory scan in FUN_101b86d38 —
-        //   NSTemporaryDirectory()/appendingPathComponent("videoCache")/<cacheKey>,
+        //   NSTemporaryDirectory()/appendingPathComponent("videoCache")/<md5>,
         //   fileExists + createDirectory, contentsOfDirectory enumeration building
         //   the entryList CacheFileEntry segments (via unnamed helpers FUN_101b87a48
         //   / FUN_101b88374 / FUN_101b91580) and summing fetchedSize. Deep Foundation
@@ -200,11 +203,12 @@ public class CacheIOContext: AbstractAVIOContext {
     //   stripped calls only the P2 oracle names. The determinable post-delegation
     //   field stores (formatContextOptions, interrupt) are shown here as the faithful
     //   spine; the download-build is the delegated call, not fabricated.
+    // ⚑[tool=export_trie_oracle ref=CacheIOContext.init(url:formatContextOptions:interrupt:saveFile:isReadComplete:) result=DIVERGENT — the trie carries this convenience at ARITY 5 with `url:` as the first label and NO `bufferSize:`; this declaration has 6 params led by `cacheKey:`. Signature + body are a unit of their own (dropping a parameter changes the delegation), so it is PINNED rather than half-applied here]
     public convenience init(cacheKey: String, formatContextOptions: [String: Any]?, interrupt: AVIOInterruptCB?, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
         // UNRESOLVED → P8 (IO-completion): download = URLContextDownload(<FFmpeg URLContext open via
         //   FUN_101b90c58>) — the shared inner init opens the libavformat URLContext;
         //   deep FFmpeg, not reconstructed. Delegated as nil here (compilable spine).
-        self.init(download: nil, cacheKey: cacheKey, bufferSize: bufferSize, saveFile: saveFile, isReadComplete: isReadComplete)
+        self.init(download: nil, md5: cacheKey, bufferSize: bufferSize, saveFile: saveFile, isReadComplete: isReadComplete)
         self.formatContextOptions = formatContextOptions // binary: store at +formatContextOptions
         self.interrupt = interrupt                       // binary: 2-word store at +interrupt
     }

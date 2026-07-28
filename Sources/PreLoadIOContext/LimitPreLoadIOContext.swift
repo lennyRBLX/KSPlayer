@@ -115,12 +115,17 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     // The constant fields carry the declared defaults above, so the init body sets only
     // the two caps from params and delegates to super; the super call is
     // CacheIOContext's designated init (PreLoadIOContext has no own init → inherited).
-    // Arity/order of the leading params is inferred (no init mangled symbol); the field
-    // stores (maxFileSize/maxReadedFileSize) and the super-delegation are explicit and
-    // grounded in the decompile (param_6 → maxFileSize, param_7 → maxReadedFileSize;
-    // FUN_101b86d38 = CacheIOContext's designated init).
-    init(download: URLContextDownload?, cacheKey: String, bufferSize: Int32 = 32 * 1024,
-         saveFile: Bool, isReadComplete: Bool, maxFileSize: UInt64, maxReadedFileSize: UInt64) {
+    // Labels AND order are RECOVERED — the comment here used to say "Arity/order of the
+    // leading params is inferred (no init mangled symbol)". The symbol exists; the class name
+    // is word-substituted (`05LimitabC0C`), which is why no literal search found it. The field
+    // stores (maxFileSize/maxReadedFileSize) and the super-delegation remain as decompiled
+    // (param_6 → maxFileSize, param_7 → maxReadedFileSize; the super-delegation target is
+    // CacheIOContext's designated init). `isReadComplete` is LAST, not fifth.
+    // ⚑[tool=export_trie_oracle ref=FUN_101b86d38:0x101b86d38 result=IDENTIFIED as $s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc — CacheIOContext's designated init, INITIALIZING entry (`cfc`). It was a raw FUN_ only because the class name is word-substituted]
+    // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext05LimitabC0C8download3md510bufferSize8saveFile03maxjH00k6ReadedjH014isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VSbs6UInt64VAPSbtKcfc result=labels+order RECOVERED]
+    init(download: URLContextDownload?, md5: String, bufferSize: Int32 = 32 * 1024,
+         saveFile: Bool, maxFileSize: UInt64, maxReadedFileSize: UInt64,
+         isReadComplete: Bool) {
         self.maxFileSize = maxFileSize            // binary s37: self.maxFileSize = param_6
         self.maxReadedFileSize = maxReadedFileSize // binary s37: self.maxReadedFileSize = param_7
         // binary s37: the remaining 12 own fields are set to the constants carried as the
@@ -129,7 +134,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         //   flattening the chain and belong to PreLoadIOContext — NOT re-set here.
         // binary s37: delegates to CacheIOContext's designated init (FUN_101b86d38),
         //   inherited through PreLoadIOContext.
-        super.init(download: download, cacheKey: cacheKey, bufferSize: bufferSize,
+        super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete)
     }
 
