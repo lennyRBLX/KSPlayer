@@ -176,7 +176,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // outlined existential destroy 0x100012a78 (@in/owned indirect params, the same
     // convention the convenience init below uses for its URL).
     public init(download: (any DownloadProtocol)?, moreDownload: (any DownloadProtocol)?,
-                cacheKey: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool,
+                md5: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool,
                 maxFileSize: UInt64, maxReadedFileSize: UInt64, isReadComplete: Bool) {
         self.loadMoreBuffer = nil          // binary: *(self+loadMoreBuffer) = 0
         self.fakeUrlPos = 0                // binary: *(self+fakeUrlPos) = 0
@@ -185,7 +185,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
         self.moreDownload = moreDownload   // binary: FUN_1001263e0 existential copy of x1 @0x101ba4708
         self.maxFileSize = maxFileSize     // binary: *(self+0x104c639a8) = x6 @0x101ba4714
         self.maxReadedFileSize = maxReadedFileSize // binary: *(self+0x104c639b0) = x7 @0x101ba4720
-        super.init(download: download, cacheKey: cacheKey, bufferSize: bufferSize,
+        super.init(download: download, cacheKey: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38
     }
 
@@ -308,7 +308,16 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   returns None with no labels and no mangled init symbol survives, so the seven
     //   labels written below are INFERRED from the roles above and from the names this
     //   repo already uses for the same surfaces. The order and the types are transcribed.
-    // ⚑[tool=recover_swift_function_name ref=LimitSeparatePreLoadIOContext.slot21.convenienceInit:0x101ba4308 result=UNRESOLVED — no name, no argument labels; the 7 labels below are inferred]
+    // ⚑[tool=export_trie_oracle ref=LimitSeparatePreLoadIOContext.slot21.convenienceInit:0x101ba4308 result=CONFIRMED — labels RECOVERED, no longer inferred]
+    //   The session-62 pin here said "no name, no argument labels; the 7 labels below are inferred".
+    //   That was wrong: `recover_swift_function_name` and `nm` cannot see this symbol, but the
+    //   ORPHANED region of LC_DYLD_EXPORTS_TRIE holds the full mangled name —
+    //     …C3url20formatContextOptions9interrupt8saveFile03maxL4Size0m6ReadedlN014isReadComplete
+    //       AC10Foundation3URLV_SDySSypGSo15AVIOInterruptCBVSbs6UInt64VARSbtKcfC
+    //   which CORRECTS one label (`options:` → `formatContextOptions:`) and independently
+    //   CONFIRMS the `interrupt` type as `AVIOInterruptCB` (`So15AVIOInterruptCBV`), which was
+    //   itself pinned as a name inference. The designated init above is corrected the same way
+    //   (`cacheKey:` → `md5:`, from `…C8download12moreDownload3md510bufferSize…`).
     //
     // UNRESOLVED → P8 (IO-completion): the two `URLContextDownload(url:flags:options:
     //   interrupt:…)` builds are the SHARED inner init FUN_101b90c58, which
@@ -319,11 +328,11 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   FUN_101b86a2c → FUN_1019f0d98 (both unnamed; HLSCacheIOContext.swift:171-172
     //   pins the same pair in its own cache-key derivation). NOT reconstructed — the
     //   placeholder below is marked and is NOT the binary's value. — P2
-    public convenience init(url: URL, options: [String: Any], interrupt: AVIOInterruptCB,
+    public convenience init(url: URL, formatContextOptions: [String: Any], interrupt: AVIOInterruptCB,
                             saveFile: Bool, maxFileSize: UInt64,
                             maxReadedFileSize: UInt64, isReadComplete: Bool) throws {
         // binary: one owned dictionary, mutated in place between the two download builds.
-        var options = options
+        var options = formatContextOptions
         // UNRESOLVED → P8: download = try URLContextDownload(url: url, flags: 1,
         //   options: &options.avOptions, interrupt: interrupt) — binary @0x101ba43bc-
         //   0x101ba4420: avOptions built from the PRE-mutation dictionary, the
@@ -334,7 +343,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
         //   0x101ba4508 over the POST-mutation dictionary, av_dict_free @0x101ba4540.
         _ = options // the mutated dictionary feeds the deferred second build above
         let cacheKey = "" // ⚑ PLACEHOLDER — NOT the binary's value; see the UNRESOLVED cacheKey marker
-        self.init(download: nil, moreDownload: nil, cacheKey: cacheKey,
+        self.init(download: nil, moreDownload: nil, md5: cacheKey,
                   bufferSize: 256 * 1024, // binary: mov w4,#0x40000 — NOT the 32 KiB default
                   saveFile: saveFile, maxFileSize: maxFileSize,
                   maxReadedFileSize: maxReadedFileSize, isReadComplete: isReadComplete)
