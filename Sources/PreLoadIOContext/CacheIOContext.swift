@@ -99,17 +99,19 @@ public class CacheIOContext: AbstractAVIOContext {
     // ⚑[tool=binding_gate ref=CacheIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • saveFile — has a default AND is assigned in init ('may only be initialized once')
     //   • tmpURL — assigned after super.init(); a `let` must be set before it
     //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
     //   reconstruction/binding_refuted_s61.json
+    //   RESOLVED in session 62: `saveFile` is now `let` — the designated init assigns it from
+    //   its `saveFile` PARAMETER (the convenience init delegates, so it obligates nothing),
+    //   making the `= false` default unobservable. `tmpURL` still stands.
     var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped)
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
     //    defaults it true. field-record.
     var isJudgeEOF: Bool = true
     // 13 saveFile: whether segments persist to disk. Designated init param-fed
     //    (explicit store from param_5). field-record.
-    var saveFile: Bool = false
+    let saveFile: Bool
     // 14 isReadComplete: whether the download reached completion. Designated init
     //    param-fed (explicit store from param_6); s67 sets it true. field-record.
     var isReadComplete: Bool = false

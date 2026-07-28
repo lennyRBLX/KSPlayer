@@ -59,14 +59,19 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //    init defaults it to [] (PTR___swiftEmptyArrayStorage). field-record.
     var _timeIndex: [TimeIndexEntry] = []
     // 7  _timeIndexLock: serializes _timeIndex mutation. Designated init allocs
-    //    NSLock() (objc_allocWithZone + init on __NSLock).
-    // ⚑[tool=binding_gate ref=LimitSeparatePreLoadIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • _timeIndexLock — has a default AND is assigned in init ('may only be initialized once')
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    var _timeIndexLock: NSLock = NSLock()
+    //    NSLock() (objc_allocWithZone + init on __NSLock) — that store is the DECLARATION
+    //    DEFAULT being materialized, not a user assignment, so it is spelled here.
+    //    Session 62 resolved the session-61 `let` refusal (was: default AND init assignment).
+    //    Two facts pick the declaration-default form over `let x: NSLock` + an init store —
+    //    both emit the same alloc inside the init, so the store alone cannot decide it:
+    //      • the sibling PreLoadIOContext.swift:47 carries the identical field as
+    //        `let _timeIndexLock: NSLock = NSLock()` with NO init assignment, already
+    //        committed and gate-clean ("two independent classes, same shape");
+    //      • the designated init's stores run non-param defaults FIRST in declaration order
+    //        (loadMoreBuffer, fakeUrlPos, moreUrlPos, _timeIndex, _timeIndexLock) and only
+    //        then the param-derived ones — which is exactly the default-materialization
+    //        prologue the compiler emits ahead of user statements.
+    let _timeIndexLock: NSLock = NSLock()
 
     // --- computed accessors ahead of the inits (vtable slot 20; slots 6, 7, 23-25 and
     //     26 are covered by the PINs / the getter after the inits) ---
@@ -130,7 +135,6 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
         self.fakeUrlPos = 0                // binary: *(self+fakeUrlPos) = 0
         self.moreUrlPos = 0                // binary: *(self+moreUrlPos) = 0
         self._timeIndex = []               // binary: *(self+_timeIndex) = swiftEmptyArrayStorage
-        self._timeIndexLock = NSLock()     // binary: allocWithZone(__NSLock) + init
         self.moreDownload = moreDownload   // binary: FUN_1001263e0 value-copy of param_2
         self.maxFileSize = maxFileSize     // binary: *(self+maxFileSize) = param_7
         self.maxReadedFileSize = maxReadedFileSize // binary: *(self+maxReadedFileSize) = param_8
