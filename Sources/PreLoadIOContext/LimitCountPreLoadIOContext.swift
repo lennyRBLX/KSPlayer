@@ -15,13 +15,11 @@ import FFmpegKit  // AVIOInterruptCB (inherited interrupt chain)
 //            symbol); the maxMoreCount store + super-delegation are explicit in the decompile.
 public class LimitCountPreLoadIOContext: LimitPreLoadIOContext {
     // maxMoreCount: cap on load-more rounds. init = param (2-byte store). ⚑
-    // ⚑[tool=binding_gate ref=LimitCountPreLoadIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • maxMoreCount — has a default AND is assigned in init ('may only be initialized once')
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    var maxMoreCount: UInt16 = 0 // ⚑ (width-inferred 2-byte; gate UNCHECKED)
+    // Session 62 RESOLVED the session-61 `let` refusal for maxMoreCount: its `= 0` default was
+    // always overwritten by the designated init (which assigns the `maxMoreCount` PARAMETER —
+    // not expressible in a declaration initializer), so the default was never observable and
+    // the faithful `let` form drops it. Binding now matches the FieldRecord (flags 0x00000000).
+    let maxMoreCount: UInt16  // ⚑ (width-inferred 2-byte; gate UNCHECKED)
     // moreCount: rounds used so far. init 0 (2-byte store). ⚑
     var moreCount: UInt16 = 0 // ⚑ (width-inferred 2-byte; gate UNCHECKED)
 

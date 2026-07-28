@@ -22,15 +22,23 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     private let dir: URL                                      // binary non-optional (symref; decompile: URL) — RETIRED from IUO (init assigns = param_2)
     let subtitles: [FFmpegAssetTrack] = []                    // internal (was private, P34): ConversionInfo.init maps it → its own subtitles
     weak var delegate: RemuxerIOActionDelegate? = nil          // internal (was private, P34): ConversionInfo.init sets it = self; weak optional (mangle _pSgXw)
-    // ⚑[tool=binding_gate ref=RemuxerIOAction:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • formatContextOptions, masterM3U8Context, packet — has a default AND is assigned in init ('may only be initialized once')
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    private var formatContextOptions: [String: Any] = [:]
-    private var masterM3U8Context: String = ""
-    private var packet: UnsafeMutablePointer<AVPacket>? = nil
+    // Session 62 RESOLVED the session-61 `let` refusal for all three. formatContextOptions and
+    // masterM3U8Context are assigned from PARAMETERS, so their defaults were never observable
+    // and the faithful `let` form drops them. `packet` went the other way — see its declaration
+    // below: the binary's store sits in the default-materialization prologue, so the
+    // initializer belongs ON the declaration and the init assignment was the artifact.
+    private let formatContextOptions: [String: Any]
+    private let masterM3U8Context: String
+    // `packet`: session 62 resolved the session-61 `let` refusal. The binary's init allocates
+    // the packet (L70-72) INSIDE the default-materialization prologue — the stores at L64-76
+    // are exactly the non-param fields, emitted in DECLARATION order (startPlayTime@19,
+    // delegate@24, packet@33, directoryWatcher@34) ahead of every param-derived store
+    // (formatContext L77 … masterM3U8Context L84-86). A declaration default is what the
+    // compiler emits there, so the initializer belongs on the declaration and the old
+    // `= nil` was the artifact. `let x: T?` + an init store emits the same alloc, so this is
+    // an ORDER argument, not a store-presence one.
+    // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
+    private let packet: UnsafeMutablePointer<AVPacket>? = av_packet_alloc()
     private let directoryWatcher: DirectoryWatcher! = nil       // ⚑ binary non-optional; KSPlayer (now public); IUO M1 stand-in → M2
 
     /// Designated init — binary `FUN_101b81b18` (351i, cached + disasm-read; reachable via the alloc site
@@ -49,8 +57,8 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
          formatContextOptions: [String: Any], masterM3U8Context: String) throws {
         self.startPlayTime = nil                              // L64-65 (payload 0, tag 1 = nil)
         // delegate stays nil (weak init, L66-69); directoryWatcher stays nil IUO (L73-76 ctor args UNRESOLVED)
-        // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
-        self.packet = av_packet_alloc()                       // L70-72 — FUN_102d61878
+        // packet: allocated by its DECLARATION default (binary L70-72); see the declaration
+        // for the marker and for why that store is the prologue's, not this init's.
         self.formatContext = formatContext                    // L77 (@0x28 = param_1, retained)
         self.dir = dir                                        // L78-81 (URL value-witness init-copy of param_2)
         self.formatContextOptions = formatContextOptions      // L82-83 (param_4)

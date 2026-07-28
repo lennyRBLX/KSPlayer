@@ -113,13 +113,11 @@ actor DemuxerIO {
     private var seekTime: Double = 0
     private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)? = nil
     // ⚑ optionality UNRES (decode_composite=None, mangle truncated) → M2. symref → DemuxerIOAction.
-    // ⚑[tool=binding_gate ref=DemuxerIO:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • ioAction — has a default AND is assigned in init ('may only be initialized once')
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    private var ioAction: DemuxerIOAction? = nil
+    // Session 62 RESOLVED the session-61 `let` refusal for ioAction: its `= nil` default was
+    // always overwritten by the designated init (which assigns the `ioAction` PARAMETER — not
+    // expressible in a declaration initializer), so the default was never observable and the
+    // faithful `let` form drops it. Binding now matches the FieldRecord (flags 0x00000000).
+    private let ioAction: DemuxerIOAction?
     private var retryCount: Int = 0                              // ⚑ type symref-unresolved (likely Swift.Int, non-opt) → M2
     private weak var delegate: DemuxerIODelegate? = nil          // weak optional (mangle _pSgXw)
 

@@ -24,14 +24,16 @@ class SubtitleDecode: DecodeProtocol {
     // ⚑[tool=binding_gate ref=SubtitleDecode:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • isASS, startTime — has a default AND is assigned in init ('may only be initialized once')
     //   • assParse — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
     //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
     //   reconstruction/binding_refuted_s61.json
-    private var startTime: Double = 0
+    //   RESOLVED in session 62: isASS and startTime are now `let` — both were assigned from
+    //   the init's `assetTrack` PARAMETER, so their defaults were never observable and the
+    //   faithful `let` form drops them. `assParse` deliberately still stands.
+    private let startTime: Double
     private var assParse: AssParse?
     private let assetTrack: FFmpegAssetTrack
-    private var isASS: Bool = false
+    private let isASS: Bool
     private let fontsDir: String?
     private var subtitleHeader: String?
     private var pendingASSImageSubtitles: [(subtitle: String, start: Double, duration: Double)] = [] // §8.6

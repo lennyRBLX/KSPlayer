@@ -48,12 +48,14 @@ final class Phase2RemuxTest: XCTestCase {
         let outStream = avformat_new_stream(fmt, nil)!          // → index 0
         outStream.pointee.codecpar.pointee.codec_id = codecID
 
-        let osi = OutputStreamInfo(formatCtx: fmt)
         // BUILD path: leave assetTrackMap EMPTY (assetTrackMap[0] == nil).
-        osi.streamMapping[0] = 0
-        osi.timeBaseMap[0] = AVRational(num: 1, den: 1000)
+        // streamMapping/timeBaseMap/removeADTS are passed at construction, not mutated after:
+        // the binary spells all three `let`, so they are immutable once initialized.
+        let osi = OutputStreamInfo(formatCtx: fmt,
+                                   streamMapping: [0: 0],
+                                   timeBaseMap: [0: AVRational(num: 1, den: 1000)],
+                                   removeADTS: removeADTS)
         osi.outPacket = av_packet_alloc()
-        osi.removeADTS = removeADTS
         return osi
     }
 

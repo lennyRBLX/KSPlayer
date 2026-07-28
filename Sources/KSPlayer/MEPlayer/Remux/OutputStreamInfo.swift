@@ -26,20 +26,26 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // ⚑[tool=binding_gate ref=OutputStreamInfo:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • formatName, frameRate, removeADTS, streamMapping, timeBaseMap, url — has a default AND is assigned in init ('may only be initialized once')
     //   • outPacket — passed as an inout argument
     //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
     //   reconstruction/binding_refuted_s61.json
-    public var timeBaseMap:   [Int32: AVRational] = [:]            // +0x20
-    public var frameRate:     Int = 0                            // v4 concrete `Si`
-    public var url:           String = ""                        // v4 concrete `SS`
-    public var streamMapping: [Int32: Int32] = [:]                 // +0x40  ⚑ value width inferred (verify)
+    //   RESOLVED in session 62: formatName, frameRate, removeADTS, streamMapping, timeBaseMap
+    //   and url are now `let`. The designated init assigns all six from init-locals computed
+    //   over its parameters, so their defaults were never observable. What had blocked them
+    //   was OUR OWN Phase-1 test scaffold init (below), which left them to those defaults —
+    //   a second designated init doing that cannot compile against a `let`, so the binary's
+    //   bindings independently confirm the scaffold is not in the original. It now takes the
+    //   three values the test varies as parameters instead. `outPacket` still stands.
+    public let timeBaseMap:   [Int32: AVRational]  // +0x20
+    public let frameRate:     Int  // v4 concrete `Si`
+    public let url:           String  // v4 concrete `SS`
+    public let streamMapping: [Int32: Int32]  // +0x40  ⚑ value width inferred (verify)
     public var lastDTSMap:    [Int32: Int64] = [:]                 // +0x48  key Int32; value Int64 (DTS)
     public var hasWriteTrailer: Bool = false                     // v4 concrete `Sb`
     public let formatCtx:     UnsafeMutablePointer<AVFormatContext>  // v4 concrete (non-optional → init param)
     public var outPacket:     UnsafeMutablePointer<AVPacket>? = nil  // v4 concrete (optional)
-    public var formatName:    String = ""                        // v4 concrete `SS`
-    public var removeADTS:    Bool = false                       // v4 concrete `Sb`
+    public let formatName:    String  // v4 concrete `SS`
+    public let removeADTS:    Bool  // v4 concrete `Sb`
 
     // ── The REAL designated init (= FUN_101a1d014, the SOLE OSI construction site; ~1382-line devirt
     //    decompile: reconstruction/decompiles/OSI_factory_101a1d014.txt). Reconstructed C1-C4. ────────
@@ -156,8 +162,23 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots
     //    13/14/15 in isolation without the full factory. The binary's SOLE construction is the designated
     //    init above (FUN_101a1d014). Not used in any reconstructed path. ──────────────────────────────
-    init(formatCtx: UnsafeMutablePointer<AVFormatContext>) {   // ⚑ test scaffold, not in binary
+    //    ⚑ It must assign EVERY `let` field, which is why it takes the three the test varies
+    //    as parameters instead of letting the test mutate them afterwards. Six of this
+    //    class's fields have FieldRecord flags 0x00000000 (= `let`) in the binary; a
+    //    designated init that left any of them to a default would not compile, which is
+    //    itself independent confirmation that no such second init exists in the original —
+    //    this one is ours. The literals below are scaffold values, NOT binary-grounded.
+    init(formatCtx: UnsafeMutablePointer<AVFormatContext>,   // ⚑ test scaffold, not in binary
+         streamMapping: [Int32: Int32] = [:],
+         timeBaseMap: [Int32: AVRational] = [:],
+         removeADTS: Bool = false) {
         self.formatCtx = formatCtx
+        self.streamMapping = streamMapping
+        self.timeBaseMap = timeBaseMap
+        self.removeADTS = removeADTS
+        self.url = ""            // ⚑ scaffold-only value
+        self.frameRate = 0       // ⚑ scaffold-only value
+        self.formatName = ""     // ⚑ scaffold-only value
     }
 
     // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────
