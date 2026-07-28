@@ -35,12 +35,25 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
         "Subtile Group start=\(start) end=\(end) text=\(String(describing: render))"
     }
 
-    public init(start: Double, end: Double, render: Either<SubtitleImageInfo, SubtitleTextInfo>) {
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer12SubtitlePartV__6renderACSd_SdAA6EitherOyAA0B9ImageInfoVAA0b4TextG0VGtcfC result=start/end are UNLABELLED (`__6render`), RECOVERED]
+    public init(_ start: Double, _ end: Double, render: Either<SubtitleImageInfo, SubtitleTextInfo>) {
         self.start = start
         self.end = end
         self.render = render
     }
-    // No convenience inits — P43 existence-check RAN + FAILED (session 21), so DROPPED not fabricated.
+    // ⚠️ THE "NO CONVENIENCE INITS" FINDING IS REFUTED. The session-21 P43 existence-check ran in
+    // good faith with `nm` + reflection symbols, and those tools cannot see the ORPHANED export
+    // trie. Its premise — "0 SubtitlePart init reflection symbols" — is false FIVE times over; the
+    // trie carries four convenience inits besides the designated one, including the very
+    // `init(_:_:attributedString:)` the note below says was removed:
+    //   $s8KSPlayer12SubtitlePartV__16attributedStringACSd_SdSo012NSAttributedE0CtcfC
+    //   $s8KSPlayer12SubtitlePartV__4textACSd_SdAA0B8TextInfoVtcfC
+    //   $s8KSPlayer12SubtitlePartV__5imageACSd_SdAA0B9ImageInfoVtcfC
+    //   $s8KSPlayer12SubtitlePartVyACSd_SdSStcfC          (fully unlabelled, third param String)
+    // They are NOT added here: each needs a body reconstructed from its own decompile, which is a
+    // unit of its own. What is corrected now is the CLAIM that they do not exist.
+    // ⚑[tool=export_trie_oracle ref=SubtitlePart.init x4 result=EXIST — supersedes the session-21 P43 negative]
+    // --- superseded session-21 note, kept for provenance: ---
     // The base class inits init(_:_:_string:)/init(_:_:attributedString:) built the removed `text`.
     // Evidence Forward has no replacement init: 0 SubtitlePart init reflection symbols (only search(with:));
     // the type-metadata accessor 0x101abf1e0 has 0 CODE construction xrefs (2 DATA self/stdlib); every caller
@@ -625,7 +638,7 @@ open class SubtitleModel: ObservableObject {
             // FRESH 1-element array (0x101ab62b0–63cc _set_subscript keypaths d1e8/d210 → @Published parts).
             var newTextInfo = textInfo
             newTextInfo.text = attributed
-            let translatedPart = SubtitlePart(start: first.start, end: first.end, render: .right(newTextInfo))
+            let translatedPart = SubtitlePart(first.start, first.end, render: .right(newTextInfo))
             // 5aa8: RE-RUN the resume tail after the translate await, then publish the fresh 1-element array
             // (0x101ab6360 re-guard → 0x63cc _set_subscript).
             publishIfCurrent([translatedPart], generation: generation, sequence: sequence)

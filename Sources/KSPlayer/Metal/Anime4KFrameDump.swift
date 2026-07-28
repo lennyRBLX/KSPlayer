@@ -52,17 +52,20 @@ public enum Anime4KFrameDump {
     /// default qos, empty attributes → serial). Storage DAT_1044ebd00. ⚑ name inferred.
     static let queue = DispatchQueue(label: "Anime4KFrameDump")
 
-    /// Public config entry — ⚑ method + param names INFERRED ⚑[tool=recover_swift_function_name ref=0x101a775c0 result=None].
+    /// Public config entry. The method name and ALL FIVE parameter labels are RECOVERED, not
+    /// inferred — `recover_swift_function_name` returned None here, but the orphaned export trie
+    /// carries the full mangled name. Every one of the five inferred labels was wrong.
+    /// ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.configure(enabled:maxFrames:outputDirectory:dumpDecoded:dumpRendered:) result=labels RECOVERED, superseding the `recover_swift_function_name ref=0x101a775c0 result=None` pin]
     /// Sets the enable flag, the frame limit and the two sub-toggles, optionally overrides the export
     /// directory, and resets the frame counter under `stateLock`. Reconstructed from @0x101a775c0.
-    public static func configure(enable: Bool, limit: Int, directory: URL?, notify: Bool, readback: Bool) {
-        isEnabled = enable
-        frameLimit = limit
-        if let directory {
-            Anime4KFrameDump.directory = directory
+    public static func configure(enabled: Bool, maxFrames: Int, outputDirectory: URL?, dumpDecoded: Bool, dumpRendered: Bool) {
+        isEnabled = enabled
+        frameLimit = maxFrames
+        if let outputDirectory {
+            Anime4KFrameDump.directory = outputDirectory
         }
-        notifyEnabled = notify
-        readbackEnabled = readback
+        notifyEnabled = dumpDecoded
+        readbackEnabled = dumpRendered
         stateLock.lock()
         frameCounter = 0
         stateLock.unlock()

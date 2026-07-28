@@ -163,7 +163,7 @@ class SubtitleDecode: DecodeProtocol {
             // small-string), NOT a field load; the trim receiver is x20=&"" while x0=x22 holds the .whitespaces
             // CharacterSet (get_whitespaces' x8-indirect result), so trimming "" is a no-op and the cue renders empty.
             // (Supersedes the s33 <s>-unresolved deferral: x22 was misread as the receiver — it is the CharacterSet.)
-            parts.append(SubtitlePart(start: start, end: end, render: .right(SubtitleTextInfo(text: NSAttributedString(string: "".trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "")), position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
+            parts.append(SubtitlePart(start, end, render: .right(SubtitleTextInfo(text: NSAttributedString(string: "".trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "")), position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
         }
         // ⚑[tool=ffmpeg_name_oracle ref=avsubtitle_free:0x10294d330 result=CONFIRMED] — freed after text() extracts the
         // rect data into parts (Forward moves this before delivery; base freed it after the loop). FUN_101a69f54 @0x101a6a1ac.
@@ -227,7 +227,7 @@ class SubtitleDecode: DecodeProtocol {
                         // stripping attributes. Styled/positioned parts go standalone (the else branch).
                         attributedString?.append(NSAttributedString(string: textInfo.text.string))
                     } else {
-                        parts.append(SubtitlePart(start: start, end: end, render: part.render))
+                        parts.append(SubtitlePart(start, end, render: part.render))
                     }
                 }
             } else if rect.type == SUBTITLE_BITMAP, let bitmap = rect.data.0, let palette = rect.data.1 {
@@ -250,12 +250,12 @@ class SubtitleDecode: DecodeProtocol {
             }
         }
         if let attributedString {
-            parts.append(SubtitlePart(start: start, end: end, render: .right(SubtitleTextInfo(text: attributedString, position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
+            parts.append(SubtitlePart(start, end, render: .right(SubtitleTextInfo(text: attributedString, position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
         }
         // Merge the bitmap-subtitle images (built above) as .left parts, stamped with the packet start/end — the text
         // accumulator part is emitted first, then the images. FUN_101a6a568 cache 992-1104 (stride 0x78 -> 0x88, .left).
         for image in images {
-            parts.append(SubtitlePart(start: start, end: end, render: .left(image)))
+            parts.append(SubtitlePart(start, end, render: .left(image)))
         }
         return parts
     }

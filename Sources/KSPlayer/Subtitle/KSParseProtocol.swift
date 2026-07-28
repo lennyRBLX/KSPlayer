@@ -216,7 +216,7 @@ public class AssParse: KSParseProtocol {
             styleRole: .primary, // =0 (audit-confirmed)
             usesForcedPosition: false // =0 (audit-confirmed)
         )
-        return [SubtitlePart(start: start, end: end, render: .right(textInfo))]
+        return [SubtitlePart(start, end, render: .right(textInfo))]
     }
 }
 
@@ -522,7 +522,7 @@ private func makeTextSubtitlePart(start: Double, end: Double, text: String) -> S
         styleRole: .primary,
         usesForcedPosition: false
     )
-    return SubtitlePart(start: start, end: end, render: .right(textInfo))
+    return SubtitlePart(start, end, render: .right(textInfo))
 }
 
 public class SrtParse: KSParseProtocol {
