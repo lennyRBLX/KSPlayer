@@ -53,11 +53,26 @@ public class DynamicInfo: ObservableObject {
     //   it ASSIGNS both of these — x2:x3 → self+0x50, x0:x1 → self+0x60.
     //   ⚑[tool=disassemble_function ref=DynamicInfo.init#2-initializing-entry:0x1019df2f0 result=CONFIRMED]
     //   ⚑[tool=init_thunk_probe ref=DynamicInfo.init#2-allocating-entry:0x1019de4a8 result=LOCATED]
-    //   When that init is reconstructed these two `= nil` defaults MUST be dropped (a `let` carrying a
-    //   default cannot be re-assigned by a second init) and the slot-34 init below must then assign `nil`
-    //   explicitly. Not done here — slot 35 is a separate unit and writing half of it would not build.
-    private let accessLogEvent: (() -> [AVPlayerItemAccessLogEvent])? = nil
-    private let displayFPSBlock: (@MainActor @Sendable () -> Float)? = nil
+    //   DONE (session 62 audit): the two `= nil` defaults are dropped and the slot-34 init below assigns
+    //   `nil` explicitly, which is what the binary says AND what lets slot 35 land later without a
+    //   re-write. The defaults were not merely inconvenient, they were REFUTED, and the decisive proof
+    //   needs no symbol table at all: slot 35 @0x1019df2f0 ASSIGNS both fields from its parameters
+    //   (`stp x23,x22,[x20,#0x60]` → displayFPSBlock, `stp x21,x19,[x20,#0x50]` → accessLogEvent), and
+    //   in Swift no initializer may assign a `let` that carries a declaration default. Corroborated by
+    //   the export trie: a stored property with a default emits a `<name>…vpfi` (variable initialization
+    //   expression) symbol, DynamicInfo emits exactly EIGHT, and they are exactly the eight stored
+    //   properties this file gives defaults — the six closure `let`s emit no symbol of any kind. That
+    //   8-for-8 correspondence is the evidence; an earlier note here said "five", which was an artifact
+    //   of substring-searching a PREFIX-COMPRESSED trie (`audioVideoSyncDiffSfv` carries `pfi` in a
+    //   CHILD edge, so a raw grep misses it — the trie must be walked structurally, not grepped).
+    //   Absence is meaningful because it is calibrated on the `let` case specifically: `Chapter.start/
+    //   end/title` are `let`s WITHOUT defaults and emit no vpfi, while `CircularBuffer.condition` and
+    //   `MEPlayerItem.ioWaiterLock` are `let`s WITH defaults and do — so vpfi ⟺ declaration default,
+    //   independent of let/var and of access level. ICF folds vpfi bodies but preserves distinct trie
+    //   entries, so folding cannot explain an absence either.
+    //   ⚑[tool=export_trie ref=DynamicInfo.accessLogEvent+displayFPSBlock:vpfi-absent result=CONFIRMED]
+    private let accessLogEvent: (() -> [AVPlayerItemAccessLogEvent])?
+    private let displayFPSBlock: (@MainActor @Sendable () -> Float)?
     // Fields 7-9 — the first three stores slot 34 makes after swift_allocObject:
     //   `str xzr,[x0, #0x70]`               → lastBytesRead = 0        (8 bytes)
     //   `strb wzr,[x0, #0x78]`              → videoDisplayCount = 0    (1 byte ⇒ UInt8, field record)
@@ -67,10 +82,21 @@ public class DynamicInfo: ObservableObject {
     //   VideoToolboxDecode.startTime/maxTimestamp/lastTimestamp — every one of which is already declared
     //   Int64 — and VideoToolboxDecode slot 32 writes -1 into one of them with a 64-bit `mov x8,#-0x1`
     //   (an integer, not a Double bit pattern). Int64 is therefore consistent-by-construction, not a guess.
-    // ⚑ access level NOT binary-recoverable (`private` does not trim vtable slots) — `private` chosen to
-    //   match the other bookkeeping state; no in-source reader exists yet (the updater is slot 36).
+    // Access level IS binary-recoverable here, and the old note claiming otherwise was wrong. Swift
+    // mangles a `private`/`fileprivate` declaration with a per-file discriminator (`33_<hash>LL`), and
+    // the export trie carries these three in the same class and the same file:
+    //     lastBytesRead      …33_063281FC2A6ACCAECDC86E734AD47AE7LL s5Int64V vpfi   → private ✓
+    //     lastMediaTime      …33_063281FC2A6ACCAECDC86E734AD47AE7LL Sd      vpfi   → private ✓
+    //     videoDisplayCount   17videoDisplayCount                   s5UInt8V vpfi   → NOT private
+    // Two of the three guesses were right; `videoDisplayCount` was not, so its modifier is dropped.
+    // `internal` is POSITIVELY proven, not merely "not private": the class's three genuinely public
+    // stored vars each carry {vg, vgTq, vpMV, vpWvd, vpfi}, whereas videoDisplayCount carries {vpfi}
+    // alone — the same symbol shape as the private siblings. Not private AND not public ⇒ internal.
+    // ⚑ `internal private(set)` remains indistinguishable from `internal` here; unresolvable, not a
+    //   divergence.
+    // ⚑[tool=export_trie ref=DynamicInfo.videoDisplayCount:no-private-discriminator result=CONFIRMED]
     private var lastBytesRead: Int64 = 0
-    private var videoDisplayCount: UInt8 = 0
+    var videoDisplayCount: UInt8 = 0
     private var lastMediaTime: Double = CACurrentMediaTime()
     public var metadata: [String: String] {
         metadataBlock()
@@ -126,6 +152,11 @@ public class DynamicInfo: ObservableObject {
         bytesReadBlock = bytesRead
         audioBitrateBlock = audioBitrate
         videoBitrateBlock = videoBitrate
+        // Explicit, because the declarations carry no default (see the vpfi evidence above). The binary
+        // zero-fills both slots here; spelling it is what a `let` with no default requires, and it is
+        // what leaves slot 35 free to assign its own values.
+        accessLogEvent = nil
+        displayFPSBlock = nil
     }
 }
 
