@@ -9,12 +9,21 @@ import AVKit
 import Combine
 import CoreServices
 import MediaPlayer
+import Network
 import UIKit
 
 open class IOSVideoPlayerView: VideoPlayerView {
     private weak var originalSuperView: UIView?
     private var originalframeConstraints: [NSLayoutConstraint]?
     private var originalFrame = CGRect.zero
+    // ⚑[tool=export_trie_oracle ref=IOSVideoPlayerView.originalOrientations:none result=absent-from-binary]
+    // This field is in SOURCE and in NO part of the binary: it has no __swift5_fieldmd record (the
+    // class reflects 65, and this is not among them), no `vpfi`, and no getter/setter/modify symbol
+    // anywhere in the orphaned export trie — a genuine negative from the one tool that can see the
+    // orphan (`nm` and reflection cannot, so every pre-s63 negative taken with those is suspect, P133).
+    // Kept rather than deleted: it is READ at `updateUI(isFullScreen:)` below, so removing it means
+    // reconstructing that body against the binary, which is a separate unit with its own evidence.
+    // Deleting the field and inventing replacement logic would be fabrication; this is the deferral.
     private var originalOrientations: UIInterfaceOrientationMask?
     private weak var fullScreenDelegate: PlayerViewFullScreenDelegate?
     private var isVolume = false
@@ -29,6 +38,126 @@ open class IOSVideoPlayerView: VideoPlayerView {
     /// Image view to show video cover
     public var maskImageView = UIImageView()
     public var landscapeButton: UIControl = UIButton()
+    // Fields 14-62 of 65 in __swift5_fieldmd order. NAME/ORDER from the field records, ACCESS from
+    // the export trie, let/var from each FieldRecord's Flags bit (IsVar 0x2), and every initializer
+    // EXPRESSION from that property's own `vpfi` (variable initialization expression) function —
+    // the compiler emits one per declaration default, and its body IS the expression. Recovered with
+    // scripts/vpfi_initializer_oracle.py; independently re-derived by two audit agents from
+    // llvm-objdump + dyld_info fixups, with compiled controls for every enum raw value.
+    // ⚠️ `UIButton(type: .system)` is NOT interchangeable with `UIButton()`: they are distinct vpfi
+    // bodies (`+buttonWithType:` with x2=1 vs `allocWithZone`+`-init`), and backButton/landscapeButton
+    // above sit in the `UIButton()` body — which is what makes these eleven decidable rather than
+    // assumed. `.roundedRect` is also raw value 1, so the binary cannot distinguish that spelling.
+    public var aspectFillButton = UIButton(type: .system)
+    public var screenShotButton = UIButton(type: .system)
+    public let previousButton = UIButton(type: .system)
+    public let toolBarPlayButton = UIButton(type: .system)
+    public let nextButton = UIButton(type: .system)
+    public let audioMenuButton = UIButton(type: .system)
+    public let subtitleMenuButton = UIButton(type: .system)
+    public let unifiedSettingsButton = UIButton(type: .system)
+    public let jumpbackButton = UIButton(type: .system)
+    public let playPauseButton = UIButton(type: .system)
+    public let jumpForwardButton = UIButton(type: .system)
+    // The four background vpfi bodies are bit-identical, so each of these four declarations has
+    // exactly this effect. Written out rather than routed through a shared factory: a WMO-inlined
+    // helper would emit the same four bodies, so the binary cannot distinguish the two spellings and
+    // inventing a helper would add a declaration the evidence does not require.
+    private let topLeftBackground: UIView = {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.alpha = 0.4
+        return view
+    }()
+
+    private let topRightBackground: UIView = {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.alpha = 0.4
+        return view
+    }()
+
+    private let bottomBackground: UIView = {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.alpha = 0.4
+        return view
+    }()
+
+    private let leftBackgroundView: UIView = {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.alpha = 0.4
+        return view
+    }()
+
+    private var topStatusBar: UIStackView?
+    private var currentItemTitleLabel: UILabel?
+    private var codecLabel: UILabel?
+    private var resolutionLabel: UILabel?
+    private var fpsLabel: UILabel?
+    private var bitrateLabel: UILabel?
+    private var networkSpeedLabel: UILabel?
+    private var networkStatusImageView: UIImageView?
+    private var batteryImageView: UIImageView?
+    private var displayTitleLabel: UILabel?
+    private let videoInfoContainer: UIStackView = {
+        let stack = UIStackView()
+        stack.axis = .horizontal
+        stack.spacing = 8
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }()
+
+    private var watchedProgress: Double = 0
+    private var itemId: String?
+    public var title: String?
+    // `MediaPlayerTrack` is a class-bound protocol, so this existential is 2 words — which the vpfi
+    // corroborates independently: its body zeroes BOTH x0 and x1, unlike the 1-word nil the
+    // class-reference optionals below get.
+    var selectedAudioTrack: (any MediaPlayerTrack)?
+    let monitor = NWPathMonitor()
+    private var screenshotPreviewView: UIView?
+    private var bottomSlimProgressView: UIView?
+    private var bottomSlimProgressSlider: KSSlider?
+    // `backgroundColor` is never set here — a positively-established absence (all 54 instructions of
+    // the vpfi are accounted for), not an omission.
+    private let promptLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.textAlignment = .center
+        label.font = .systemFont(ofSize: 14)
+        label.layer.cornerRadius = 5
+        label.clipsToBounds = true
+        label.alpha = 0
+        return label
+    }()
+
+    private var customDelayItem: DispatchWorkItem?
+    private let jumpButtonConfig = UIImage.SymbolConfiguration(pointSize: 32, weight: .bold)
+    private let playButtonConfig = UIImage.SymbolConfiguration(pointSize: 32, weight: .bold)
+    private let toolBarPlayButtonConfig = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+    private var topStatusLeadingConstraint: NSLayoutConstraint?
+    private var topStatusTrailingConstraint: NSLayoutConstraint?
+    private var topLeftBackgroundLeadingConstraint: NSLayoutConstraint?
+    private var topRightBackgroundTrailingConstraint: NSLayoutConstraint?
+    private var leftBackgroundViewLeadingConstraint: NSLayoutConstraint?
+    private var bottomBackgroundLeadingConstraint: NSLayoutConstraint?
+    private var bottomBackgroundTrailingConstraint: NSLayoutConstraint?
+    private var bottomBackgroundHeightConstraint: NSLayoutConstraint?
+    private var speedUpdateTimer: Timer?
+    private var smoothedSpeed: Double = 0
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer18IOSVideoPlayerViewC026$__lazy_storage_$_settingsD033_99D4461AEE15ECA71DEBF361B80F60DDLLAA08SettingsD0CSgvpfi:0x10002d9d4 result=pinned]
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer18IOSVideoPlayerViewC032$__lazy_storage_$_customProgressD033_99D4461AEE15ECA71DEBF361B80F60DDLLAA06CustomhD0CSgvpfi:0x10002d9d4 result=pinned]
+    // Field slots 63 and 65 are `private lazy var settingsView: SettingsView` and
+    // `private lazy var customProgressView: CustomProgressView` — names AND exact types recovered
+    // from their getter/setter/modify signatures in the orphan trie. NOT declared here because
+    // neither class exists in the reconstruction yet (they are part of the 11-unit SettingsView /
+    // CustomProgressView stand-up), so declaring them could not compile. This is a pinned deferral,
+    // not an unknown: it refutes the standing note that those two are "NOT_IN_TRIE — no class AND no
+    // recoverable name". Both are gate-invisible either way (l2_field_gate drops `$`-prefixed records
+    // on the binary side and `lazy` on the source side, symmetrically).
     override open var isMaskShow: Bool {
         didSet {
             fullScreenDelegate?.player(isMaskShow: isMaskShow, isFullScreen: landscapeButton.isSelected)
