@@ -132,10 +132,13 @@ open class KSOptions {
     // Slot 128 @0x10002db34 is PINNED: `mov x0,#0x0; mov x1,#0x0; ret` (3 instructions) — a
     // 16-byte all-zero direct result and nothing else. recover_swift_function_name --addr returns
     // #function None. The body is a LINKER-FOLDED (ICF) stub, so it carries no identifying
-    // information whatsoever: it has 16 xrefs, spread across a dozen unrelated class metadata
-    // objects (0x10411eb30, 0x10412b500, 0x104137858, 0x10413c0c0, 0x104147208, 0x10417c970,
-    // 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068, 0x1044e5a38) plus two call sites, whereas the
-    // KSOptions descriptor claims only 0x1039ec904. Position is exact; identity is not derivable.
+    // information whatsoever: it is 586-way ICF-folded (export_trie_oracle n_syms=586). dyld_info
+    // -fixups shows exactly 12 rebases — the 12 class-metadata vtable slots that hold this address
+    // (0x10411eb30, 0x10412b500, 0x104137858, 0x10413c0c0, 0x104147208, 0x10417c970,
+    // 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068, 0x1044e5a38) — whereas the KSOptions
+    // descriptor claims only 0x1039ec904. Position is exact; identity is not derivable.
+    // (s68: corrected a prior "16 xrefs plus two call sites" tally that did not decompose; the
+    //  independently verified count is 12 rebases — resolve_fun_pins verdict FOLDED_AMBIGUOUS.)
     // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_10002db34:0x10002db34 result=LOCATED pinned=member-identity-undetermined]
     internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     public var audioRecognizes: [AudioRecognize] = []
