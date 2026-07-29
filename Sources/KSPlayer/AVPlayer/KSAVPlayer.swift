@@ -93,17 +93,17 @@ open class KSAVPlayer {
     //   to `(cancellable in _96682D5E1A2F36FD0BE1DC3A2D928BC7)`, so those four are NOT `private` in Forward. Left
     //   spelled `private` here on purpose: mangling cannot separate internal from public, and widening the access
     //   level re-scopes their l2 field checks from UNCHECKED to CHECKED for a reason unrelated to this batch.
-    private var cancellable: AnyCancellable?
-    private var periodicTimeObserver: Any?
+    var cancellable: AnyCancellable?
+    var periodicTimeObserver: Any?
     private let playerView: KSAVPlayerView = KSAVPlayerView()
-    private var io: Either<URL, AVAsset>
-    private var shouldSeekTo: Double?
-    private var playerLooper: AVPlayerLooper?
-    private var mediaPlayerTracks: [any MediaPlayerTrack] = []
-    private var subtitleTracks: [any MediaPlayerTrack] = []
-    private var observerCancellables: Set<AnyCancellable> = []
-    private var observerPlayerItemCancellables: Set<AnyCancellable> = []
-    private var observerLoopCancellables: Set<AnyCancellable> = []
+    public var io: Either<URL, AVAsset>
+    public var shouldSeekTo: Double?
+    var playerLooper: AVPlayerLooper?
+    var mediaPlayerTracks: [any MediaPlayerTrack] = []
+    public var subtitleTracks: [any MediaPlayerTrack] = []
+    var observerCancellables: Set<AnyCancellable> = []
+    var observerPlayerItemCancellables: Set<AnyCancellable> = []
+    var observerLoopCancellables: Set<AnyCancellable> = []
     // ⚑ DIVERGENCE-DEFERRED (user-gated s16): binary field 11 `pipController` is `(any KSPictureInPictureProtocol)?`
     //   — a NEW protocol absent from recon (field-record `KSPictureInPictureProtocol_pSg`). Kept the recon concrete type to
     //   avoid a MediaPlayerProtocol version-ripple; l2 UNCHECKED (no class-scoped symbol). → MediaPlayerProtocol-version follow-on.
@@ -139,8 +139,8 @@ open class KSAVPlayer {
     //  on the false premise that both spellings emit the same three slots. Convention lost to compilation.)
     public var chapters: [Chapter] = []
     public var naturalSize: CGSize = .zero
-    private var shouldResumePlayback: Bool = false
-    private var options: KSOptions {
+    var shouldResumePlayback: Bool = false
+    public var options: KSOptions {
         didSet {
             player.currentItem?.preferredForwardBufferDuration = options.preferredForwardBufferDuration
             cancellable = options.$preferredForwardBufferDuration.sink { [weak self] newValue in
@@ -149,7 +149,7 @@ open class KSAVPlayer {
         }
     }
 
-    private var error: Error? {
+    public var error: Error? {
         didSet {
             if let error {
                 delegate?.finish(player: self, error: error)

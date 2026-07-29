@@ -137,7 +137,7 @@ open class KSOptions {
     // 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068, 0x1044e5a38) plus two call sites, whereas the
     // KSOptions descriptor claims only 0x1039ec904. Position is exact; identity is not derivable.
     // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_10002db34:0x10002db34 result=LOCATED pinned=member-identity-undetermined]
-    public var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path
+    internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path
     public var audioRecognizes: [AudioRecognize] = []
     // sutile
     public var autoSelectEmbedSubtitle = true

@@ -103,13 +103,13 @@ actor DemuxerIO {
 
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     // formatContext: binary NON-optional (l2 IUO_STANDIN discharged this pass); set in init from FUN_101b6b184 param_1 (@0x70).
-    private let formatContext: FormatContext
-    private var currentTime: Double = 0
+    public let formatContext: FormatContext
+    public var currentTime: Double = 0
     // ⚑ Failure type UNRES (libswiftCore wall) → M2. decode_composite = Task<(), UNRES>? (optional confirmed).
     private var ioTask: Task<Void, Never>? = nil
     // ⚑ Failure type UNRES → M2. decode_composite = CheckedContinuation<(), UNRES>? (optional confirmed).
     private var ioWaiter: CheckedContinuation<Void, Error>? = nil
-    private var state: State = .ready                             // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
+    public var state: State = .ready                             // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
     private var seekTime: Double = 0
     private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)? = nil
     // ⚑ optionality UNRES (decode_composite=None, mangle truncated) → M2. symref → DemuxerIOAction.

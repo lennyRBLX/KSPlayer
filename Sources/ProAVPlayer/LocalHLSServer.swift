@@ -28,11 +28,11 @@ import Network
 /// `final` + prop_c's identity/type are not deterministically recoverable.
 class LocalHLSServer {
     // 7 reflection fields (order = layout). Mutability kept `var` (M1 under-claim; l2 mutability partial).
-    private let port: UInt16                          // init param; self+0x10 (__uint16)
-    private var listener: NWListener                  // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
+    public let port: UInt16                          // init param; self+0x10 (__uint16)
+    public var listener: NWListener                  // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
     // ⚑ [String: (URL) -> Void] — value CORRECTED from M1's ()->Void: slot13 invokes the block with the
     // request's file URL (blr, x0 = fileURL; context in x20). Keep-alive block per directory-path key (self+0x20).
-    private var keepAliveBlockMap: [String: (URL) -> Void] = [:]
+    public var keepAliveBlockMap: [String: (URL) -> Void] = [:]
     private let rootDirectory: URL                    // ⚑ init param (URL value-witness copy) — was temporaryDirectory (M1 bug)
     private let queue: DispatchQueue = DispatchQueue(label: "com.localhlsserver.queue")  // label @0x103d3df80
     // HTTP status table — 6 pairs recovered from the static dict literal (keys read as Int; values

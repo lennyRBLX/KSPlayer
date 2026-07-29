@@ -62,7 +62,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     public var options: KSOptions
     public weak var renderSource: OutputRenderSourceDelegate?
     // AVSampleBufferAudioRenderer AVSampleBufferRenderSynchronizer AVSampleBufferDisplayLayer
-    var displayView = AVSampleBufferDisplayView() {
+    private var displayView = AVSampleBufferDisplayView() {
         didSet {
             displayLayerDelegate?.change(displayLayer: displayView.displayLayer)
         }
@@ -244,7 +244,7 @@ class MetalView: UIView {
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { CAMetalLayer.self }
     #endif
-    var metalLayer: CAMetalLayer {
+    public var metalLayer: CAMetalLayer {
         // swiftlint:disable force_cast
         layer as! CAMetalLayer
         // swiftlint:enable force_cast

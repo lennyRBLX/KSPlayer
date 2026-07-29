@@ -187,7 +187,7 @@ open class KSPlayerLayer: NSObject {
     }
 
     private var urls = [URL]()
-    private var isAutoPlay: Bool
+    var isAutoPlay: Bool
     private var isWirelessRouteActive = false
     private var bufferedCount = 0
     private var shouldSeekTo: TimeInterval = 0

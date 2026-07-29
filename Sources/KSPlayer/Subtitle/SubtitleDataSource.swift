@@ -24,8 +24,8 @@ public class EmptySubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
 // +searchProtocol/isDownloading/languageCode/renderMode vs recon. Conforms KSSubtitleProtocol+SubtitleInfo
 // directly (§8.5). The recon isEnabled-didSet parse-trigger + init download/rename logic → P4 M2.
 public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
-    public var searchProtocol: (any KSSubtitleProtocol)? = nil // §8.6
-    public var isDownloading: Bool = false
+    private var searchProtocol: (any KSSubtitleProtocol)? = nil // §8.6
+    private var isDownloading: Bool = false
     public var languageCode: String? = nil
     public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
     // Plain stored var (no didSet). RE-VERIFIED session 63 against the ORPHANED export trie — the tool
@@ -101,7 +101,7 @@ public protocol ConstantSubtitleDataSource: SubtitleDataSource {
 }
 
 public extension KSOptions {
-    nonisolated(unsafe) static var subtitleDataSources: [any SubtitleDataSource] = [DirectorySubtitleDataSource()]
+    internal nonisolated(unsafe) static var subtitleDataSources: [any SubtitleDataSource] = [DirectorySubtitleDataSource()]
 }
 
 // §7.2 — Souce→Source. Fields srtCacheInfoPath, srtInfoCaches (dropped the recon's stored `infos`, §5.1).

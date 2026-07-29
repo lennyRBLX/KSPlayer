@@ -30,7 +30,7 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     // Written by prepare(audioFormat:), read by play(): the timestamp the play()
     // debounce measures against (the "从多声道切换到2声道马上调用start会不生效" workaround —
     // a play() within minDelayAfterPrepare of the last prepare is deferred).
-    var lastPrepareTime: Double = 0
+    private var lastPrepareTime: Double = 0
     // ⚑ `let` (IsVar clear), init 0.15 (=0x3fc3333333333333). Because it is a `let`, every
     // read constant-folds — play() compares against an inline 0.15 and this field is loaded
     // nowhere in the binary. Access is underdetermined (a `let` carries no vtable entry at any

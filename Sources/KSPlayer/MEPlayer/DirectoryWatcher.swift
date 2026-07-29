@@ -61,7 +61,7 @@ public actor DirectoryWatcher {
     // MARK: slot 3 @0x101a04e10 — isWatching (4 instr) · name inferred
 
     /// `true` while a source is installed. Binary: `return *(self+0x70) != 0`.
-    var isWatching: Bool {
+    public var isWatching: Bool {
         return source != nil
     }
 

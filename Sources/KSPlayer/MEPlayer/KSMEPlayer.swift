@@ -13,14 +13,15 @@ import UIKit
 import AppKit
 #endif
 
+// ⚑[tool=export_trie_oracle ref=MEPlayerItem.delegate:vpMV result=public ⇒ MEPlayerDelegate public ⇒ these five witness methods must be public too (Swift requires a witness to be at least as visible as its requirement). A forced consequence, not five independent observations]
 public final class KSMEPlayer: NSObject {
     // Forward 1.3.17 stored fields — reflection order (desc 0x1039ef750); reconstructed session 16c (KSMEPlayer M1 fields).
     // Explicit `: Type` on every field. bufferingCountDownTimer removed (source-extra); seekable computed→stored;
     // shouldResumePlayback added; _pipController lazy→stored pipController; bufferingProgress Int→UInt8.
     private var loopCount: Int = 1
-    private var playerItem: MEPlayerItem
+    public var playerItem: MEPlayerItem
     public let audioOutput: AudioOutput
-    private var options: KSOptions
+    public var options: KSOptions
     // ⚑[tool=binding_gate ref=KSMEPlayer.videoOutput:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   The ONLY one of session 60's 95 binding mismatches that the compiler REFUTED. The
     //   binary's FieldRecord flags word is 0x00000000 (= `let`; a real `var` such as the
@@ -121,7 +122,8 @@ public final class KSMEPlayer: NSObject {
         }
     }
 
-    public private(set) var shouldResumePlayback: Bool = false // ⚑ M2: binary sets this (NEW field, absent from recon)
+    // ⚑[tool=export_trie_oracle ref=KSMEPlayer.shouldResumePlayback result=no property descriptor ⇒ the GETTER is not public; private(set) is preserved because the binary speaks to the getter only]
+    private(set) var shouldResumePlayback: Bool = false // ⚑ M2: binary sets this (NEW field, absent from recon)
 
     public required init(url: URL, options: KSOptions) {
         KSOptions.setAudioSession()
@@ -200,7 +202,7 @@ private extension KSMEPlayer {
 }
 
 extension KSMEPlayer: MEPlayerDelegate {
-    func sourceDidOpened() {
+    public func sourceDidOpened() {
         isReadyToPlay = true
         options.readyTime = CACurrentMediaTime()
         let vidoeTracks = tracks(mediaType: .video)
@@ -223,14 +225,14 @@ extension KSMEPlayer: MEPlayerDelegate {
         }
     }
 
-    func sourceDidFailed(error: NSError?) {
+    public func sourceDidFailed(error: NSError?) {
         runOnMainThread { [weak self] in
             guard let self else { return }
             self.delegate?.finish(player: self, error: error)
         }
     }
 
-    func sourceDidFinished() {
+    public func sourceDidFinished() {
         runOnMainThread { [weak self] in
             guard let self else { return }
             if self.options.isLoopPlay {
@@ -244,7 +246,7 @@ extension KSMEPlayer: MEPlayerDelegate {
         }
     }
 
-    func sourceDidChange(loadingState: LoadingState) {
+    public func sourceDidChange(loadingState: LoadingState) {
         if loadingState.isEndOfFile {
             playableTime = duration
         } else {
@@ -292,7 +294,7 @@ extension KSMEPlayer: MEPlayerDelegate {
         }
     }
 
-    func sourceDidChange(oldBitRate: Int64, newBitrate: Int64) {
+    public func sourceDidChange(oldBitRate: Int64, newBitrate: Int64) {
         KSLog("oldBitRate \(oldBitRate) change to newBitrate \(newBitrate)")
     }
 }

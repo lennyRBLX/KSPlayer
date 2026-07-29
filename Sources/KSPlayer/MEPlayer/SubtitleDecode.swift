@@ -18,7 +18,7 @@ import AppKit
 // The recon's VideoSwresample `scale` bitmap path is GONE — the binary uses the ASS-image pipeline
 // (assImageRenderer/pendingASSImageSubtitles); +assetTrack/isASS/fontsDir/subtitleHeader. Bodies → P4 M2.
 class SubtitleDecode: DecodeProtocol {
-    private var assImageRenderer: AssIncrementImageRenderer?
+    var assImageRenderer: AssIncrementImageRenderer?
     private var codecContext: UnsafeMutablePointer<AVCodecContext>?
     private var subtitle: AVSubtitle = AVSubtitle()
     // ⚑[tool=binding_gate ref=SubtitleDecode:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]

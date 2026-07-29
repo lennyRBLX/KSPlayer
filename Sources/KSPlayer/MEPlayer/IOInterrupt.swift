@@ -22,7 +22,7 @@ import Foundation
 /// (mangled `_TtC8KSPlayer18IOInterruptContext`).
 public final class IOInterruptContext {
     // FAITHFUL fields (binary reflection, alloc 0x30):
-    var flag: Bool                          // @ +0x10
+    public var flag: Bool                          // @ +0x10
     let block: (@Sendable () -> Bool)?      // 2-word closure @ +0x18 (fn) / +0x20 (ctx)
     // `fileprivate` required by Swift: this public class exposes a property whose
     // type (IOInterruptToken) is private. Field name/type are FAITHFUL; only the

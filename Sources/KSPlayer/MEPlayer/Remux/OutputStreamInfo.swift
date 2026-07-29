@@ -40,10 +40,10 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     public let frameRate:     Int  // v4 concrete `Si`
     public let url:           String  // v4 concrete `SS`
     public let streamMapping: [Int32: Int32]  // +0x40  ⚑ value width inferred (verify)
-    public var lastDTSMap:    [Int32: Int64] = [:]                 // +0x48  key Int32; value Int64 (DTS)
-    public var hasWriteTrailer: Bool = false                     // v4 concrete `Sb`
+    private var lastDTSMap:    [Int32: Int64] = [:]                 // +0x48  key Int32; value Int64 (DTS)
+    private var hasWriteTrailer: Bool = false                     // v4 concrete `Sb`
     public let formatCtx:     UnsafeMutablePointer<AVFormatContext>  // v4 concrete (non-optional → init param)
-    public var outPacket:     UnsafeMutablePointer<AVPacket>? = nil  // v4 concrete (optional)
+    private var outPacket:     UnsafeMutablePointer<AVPacket>? = nil  // v4 concrete (optional)
     public let formatName:    String  // v4 concrete `SS`
     public let removeADTS:    Bool  // v4 concrete `Sb`
 

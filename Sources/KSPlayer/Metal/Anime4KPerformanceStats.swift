@@ -16,10 +16,10 @@
 //      ref=Anime4KPerformanceStats result=local-symbols-stripped] (sibling convention: MPVShader).
 //
 public struct Anime4KPerformanceStats {
-    let lastFrameTime: Double
-    let averageFrameTime: Double
-    let estimatedFPS: Double
-    let isDropping: Bool
-    let supported: Bool
-    let preset: Anime4KPreset
+    public let lastFrameTime: Double
+    public let averageFrameTime: Double
+    public let estimatedFPS: Double
+    public let isDropping: Bool
+    public let supported: Bool
+    public let preset: Anime4KPreset
 }

@@ -123,7 +123,7 @@ private extension KSVideoPlayerViewBuilder {
         #endif
     }
 
-    static var speakerSystemName: String {
+    public static var speakerSystemName: String {
         #if os(xrOS)
         "speaker.fill"
         #else
@@ -131,7 +131,7 @@ private extension KSVideoPlayerViewBuilder {
         #endif
     }
 
-    static var speakerDisabledSystemName: String {
+    public static var speakerDisabledSystemName: String {
         #if os(xrOS)
         "speaker.slash.fill"
         #else

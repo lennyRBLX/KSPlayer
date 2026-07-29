@@ -24,8 +24,8 @@ public final class MEPlayerItem: @unchecked Sendable {
     //   // ⚑ UNRESOLVED (field-record None ⟹ l2 UNCHECKED, non-blocking). The 17 base fields are
     //   removed; every method that used them is stubbed // ⚑ UNRESOLVED pending its Forward-body commit.
     private var io: Either<URL, AbstractAVIOContext>                 // 1 ⚑[tool=name_type_at_addr ref=io:0x103566d40 result=Either<_,AbstractAVIOContext>] first param URL (sibling KSAVPlayer.io)
-    private let options: KSOptions                                   // 2
-    private var isPreload = false                                    // 3
+    public let options: KSOptions                                   // 2
+    public var isPreload = false                                    // 3
     private var ioTask: Task<Void, Never>?                           // 4 ⚑ UNRESOLVED generics (Task confirmed, nil-init)
     private let ioWaiterLock = NSLock()                              // 5
     private var ioWaiter: CheckedContinuation<Void, Never>?          // 6 ⚑[tool=name_type_at_addr ref=ioWaiter:0x1035647f8 result=ScC<(),_>] error-param pending
@@ -91,7 +91,7 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var timer: Timer?                                // 39 Forward NSTimer? nil-init (base was `lazy var timer: Timer = .scheduledTimer`); scheduling site pending. Timer === NSTimer (reflection emits NSTimer)
     private let preloadClock = ContinuousClock()            // 40 ⚑ init calls Swift.ContinuousClock.init(); ContinuousClock vs .Instant pending
     private var lastPacketMediaType: AVFoundation.AVMediaType = .video // 41 init AVMediaTypeVideo (AVFoundation constant; codebase disambiguates from FFmpeg AVMediaType)
-    weak var delegate: MEPlayerDelegate?                    // 42
+    public weak var delegate: MEPlayerDelegate?                    // 42
 
     public var currentPlaybackTime: TimeInterval {
         state == .seeking ? seekTime : mainClock().time.seconds // ⚑ UNRESOLVED: base subtracted removed `startTime`
@@ -103,7 +103,7 @@ public final class MEPlayerItem: @unchecked Sendable {
     //   formatContext.assetTracks directly — resolved when KSMEPlayer.tracks migrates).
     var assetTracks: [FFmpegAssetTrack] { formatContext?.assetTracks ?? [] }
 
-    lazy var dynamicInfo = DynamicInfo {
+    public lazy var dynamicInfo = DynamicInfo {
         toDictionary(nil) // ⚑ UNRESOLVED: base read self.formatCtx.pointee.metadata (removed field); FormatContext raw-ptr accessor pending
     } bytesRead: {
         0 // ⚑ UNRESOLVED: base read self.formatCtx.pointee.pb.pointee.bytes_read (removed field)

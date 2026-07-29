@@ -347,7 +347,7 @@ open class SubtitleModel: ObservableObject {
     // ⚑ P28: the property's own name is stripped (recover_swift_function_name 0x101ab05e8 → no #function,
     //   no labels) → recon-named for the type it yields.
     @available(iOS 18, macOS 15, *)
-    private var translationSession: TranslationSession? {
+    public var translationSession: TranslationSession? {
         get { _translationSession as? TranslationSession }
         set {
             _translationSession = newValue
@@ -367,7 +367,7 @@ open class SubtitleModel: ObservableObject {
         }
     }
     #endif
-    public var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
+    private var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
     @Published public private(set) var subtitleInfos: [any SubtitleInfo] = []
     @Published public private(set) var searchedSubtitleInfos: [URLSubtitleInfo] = []
     // slots 30/31/32 (keypaths d1e8/d210) + the `$parts` projection 33/34/35 — all Combine machinery.
@@ -379,12 +379,12 @@ open class SubtitleModel: ObservableObject {
     @Published public var subtitleTranslateY: Float = 0
     public var playRatio: Double = 1
     @Published public var screenSize: CGSize = .zero
-    public var subtitleSearchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
-    public var subtitleSearchSequence: Int = 0 // ⚑ Int store-evidenced (§7.5)
-    public var latestPrimarySubtitleQueryTime: Double?
-    public var latestSecondarySubtitleQueryTime: Double?
+    private var subtitleSearchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
+    private var subtitleSearchSequence: Int = 0 // ⚑ Int store-evidenced (§7.5)
+    private var latestPrimarySubtitleQueryTime: Double?
+    private var latestSecondarySubtitleQueryTime: Double?
     public var url: URL? // ⚑ §7.5: mangle reads NON-optional; recon URL? w/ search didSet → M2 verify
-    public var firstSubtitleActor: SubtitleActor?
+    private var firstSubtitleActor: SubtitleActor?
     // FUN_101ab2540 — selectedSubtitleInfo willSet (P67: 11 assign-site callers, call-before-store w/ newValue;
     // the prior recon guess @Published+didSet was wrong — binary is plain-stored with a willSet).
     public var selectedSubtitleInfo: (any SubtitleInfo)? {
@@ -423,7 +423,7 @@ open class SubtitleModel: ObservableObject {
             }
         }
     }
-    public var secondarySubtitleActor: SubtitleActor?
+    private var secondarySubtitleActor: SubtitleActor?
     // FUN_101ab2de4 — secondarySubtitleInfo willSet (P67: 10 callers). Analogous to the primary minus the
     // primary-only translation box; targets secondarySubtitleActor.
     public var secondarySubtitleInfo: (any SubtitleInfo)? {
@@ -444,7 +444,7 @@ open class SubtitleModel: ObservableObject {
             }
         }
     }
-    public var searchInfos: [URLSubtitleInfo] = []
+    private var searchInfos: [URLSubtitleInfo] = []
     // ⚑ init shape inferred → M2 witness-verify
     public init(options: KSOptions) {
         self.options = options

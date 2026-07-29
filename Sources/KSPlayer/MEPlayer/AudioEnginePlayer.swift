@@ -129,7 +129,7 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     // slots 0-2 (setter @0x101a0dc20 — getter/_modify were eliminated). Not private:
     // a private stored property gets no vtable entry, and this one has a triple.
     // The setter stores the node then mirrors the current volume into it.
-    var sourceNode: AVAudioSourceNode? {
+    private var sourceNode: AVAudioSourceNode? {
         didSet {
             sourceNode?.volume = volume
         }
@@ -139,7 +139,7 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
 
     // slots 3-5, all eliminated. Written by prepare(audioFormat:) and read by play();
     // it is the timestamp the play() debounce measures against.
-    var lastPrepareTime: Double = 0
+    private var lastPrepareTime: Double = 0
 
     // ⚑ `let` (IsVar flag clear) initialised to 0.15 — init seeds both Doubles from one
     // 16-byte constant @0x103564560 (0.0, 0.15). Because it is a `let`, every read is

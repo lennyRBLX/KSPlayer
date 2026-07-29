@@ -15,8 +15,8 @@ protocol MetalDrawable {}
 // MetalSubtitleView @0x1039f229c — :MTKView (superclass-read So7MTKViewC). 7 fields reflection-ordered,
 // types §8.3/§8.6. Bodies → P4 M2.
 class MetalSubtitleView: MTKView {
-    private var metalDrawable: (any MetalDrawable)? // §8.6
-    private var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2
+    public var metalDrawable: (any MetalDrawable)? // §8.6
+    public var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2
     private var cancellables: Set<AnyCancellable> = []
     private var subtitleImages: [SubtitleImageInfo] = []
     private var pendingTexts: [SubtitleTextInfo] = []

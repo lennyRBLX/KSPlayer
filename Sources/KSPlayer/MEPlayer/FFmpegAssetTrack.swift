@@ -15,7 +15,11 @@ import Libavformat
 //   own class-constraint flag reads Any, so the class layout comes from the field-site `& AnyObject`,
 //   not the protocol — kept faithful to the descriptor.
 // ⚑[tool=name_type_at_addr ref=BitStreamFilter:0x1039f0820 result=protocol(kind=3,non-class-constrained)]
-protocol BitStreamFilter {}
+// ⚑ `public` is FORCED by type visibility: FFmpegAssetTrack.bitStreamFilter carries a
+//   property descriptor (public-exclusive), and a public stored property's type must be
+//   public. The protocol's own access is not separately observable.
+// ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter:vpMV result=public ⇒ BitStreamFilter public by the type-visibility rule]
+public protocol BitStreamFilter {}
 
 public class FFmpegAssetTrack: MediaPlayerTrack {
     // ⚑ Field-layout migration (session 37, commit-1): the 37 stored properties in Forward binary order
@@ -26,7 +30,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     //   trailing, read by the H.264 NAL-size path.
     public private(set) var trackID: Int32 = 0
     public let codecName: String
-    var profileName: String?                        // ⚑ 3 NEW · init population deferred (codec profile name via FUN_102e676a0); layout-first nil
+    public var profileName: String?                        // ⚑ 3 NEW · init population deferred (codec profile name via FUN_102e676a0); layout-first nil
     public var name: String = ""
     public private(set) var languageCode: String?
     public var nominalFrameRate: Float = 0
@@ -36,31 +40,34 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     public let mediaType: AVFoundation.AVMediaType
     public let formatName: String?
     public let bitDepth: Int32
-    private var stream: UnsafeMutablePointer<AVStream>?
+    public var stream: UnsafeMutablePointer<AVStream>?
     package var startTime = CMTime.zero        // ⚑ package (Forward-fidelity): RemuxerIOAction (ProAVPlayer module) reads this cross-module — binary-arbitrated; exact modifier under-included §1 (could be public)
-    var codecpar: UnsafeMutablePointer<AVCodecParameters>   // ⚑ retyped value→pointer (+0xb8); designated init derefs via `let codecpar = codecparPtr.pointee`
+    public var codecpar: UnsafeMutablePointer<AVCodecParameters>   // ⚑ retyped value→pointer (+0xb8); designated init derefs via `let codecpar = codecparPtr.pointee`
     package var timebase: Timebase = .defaultValue  // ⚑ package: see startTime — cross-module read by RemuxerIOAction.performRead/ptsToSeconds (FUN_101a32e28)
     let bitsPerRawSample: Int32
     public let formatDescription: CMFormatDescription?   // moved up to bin +0xd0 (before audioDescriptor)
     public let audioDescriptor: AudioDescriptor?
-    var audioFormat: AVAudioFormat?                 // ⚑ 20 NEW · init population deferred (audio branch AVAudioFormat(cmAudioFormatDescription:))
+    public var audioFormat: AVAudioFormat?                 // ⚑ 20 NEW · init population deferred (audio branch AVAudioFormat(cmAudioFormatDescription:))
     public let isImageSubtitle: Bool
     public var delay: TimeInterval = 0
-    var scale: Float = 1.0                          // ⚑ 23 NEW · prologue init 1.0 (0x3f800000) — confirmed unconditional
-    var translateY: Float = 0                       // ⚑ 24 NEW · prologue init 0 — confirmed unconditional
+    public var scale: Float = 1.0                          // ⚑ 23 NEW · prologue init 1.0 (0x3f800000) — confirmed unconditional
+    public var translateY: Float = 0                       // ⚑ 24 NEW · prologue init 0 — confirmed unconditional
     var subtitle: SyncPlayerItemTrack<SubtitleFrame>?
-    var subtitleRender: (any KSSubtitleProtocol)?   // ⚑ 26 NEW · 40b optional existential (+0x108..+0x130); protocol resolved via name_type_at_addr
+    public var subtitleRender: (any KSSubtitleProtocol)?   // ⚑ 26 NEW · 40b optional existential (+0x108..+0x130); protocol resolved via name_type_at_addr
     public private(set) var rotation: Int16 = 0     // ⚑ bin field-record reads UInt16 (unmapped/UNCHECKED); kept Int16 — MediaPlayerProtocol requires `var rotation: Int16`, layout-identical (2b)
     public var dovi: DOVIDecoderConfigurationRecord?
     public let fieldOrder: FFmpegFieldOrder
-    var isImage: Bool = false                       // ⚑ 30 NEW · init population deferred (disposition/side-data)
-    var isStillImage: Bool = false                  // ⚑ 31 NEW · init population deferred
+    public var isImage: Bool = false                       // ⚑ 30 NEW · init population deferred (disposition/side-data)
+    public var isStillImage: Bool = false                  // ⚑ 31 NEW · init population deferred
     var closedCaptionsTrack: FFmpegAssetTrack?
-    var bitStreamFilter: (any BitStreamFilter & AnyObject)?   // ⚑ 33 NEW · 16b class-existential (+0x148..+0x158); BitStreamFilter Forward-added (declared above)
-    var reorderSize: Int32 = 0                      // ⚑ 34 NEW · init param[0x1e]; population deferred
+    // ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter result=TYPE DIVERGENCE — the binary spells this
+    //   `KSPlayer.BitStreamFilter.Type?`, a METATYPE, where this declares `(any BitStreamFilter & AnyObject)?`, an
+    //   existential. Those are different things; changing it rewrites every use site, so it is PINNED as its own unit]
+    public var bitStreamFilter: (any BitStreamFilter & AnyObject)?   // ⚑ 33 NEW · 16b class-existential (+0x148..+0x158); BitStreamFilter Forward-added (declared above)
+    public var reorderSize: Int32 = 0                      // ⚑ 34 NEW · init param[0x1e]; population deferred
     var seekByBytes = false
-    var isDefault: Bool = false                     // ⚑ 36 NEW · init population deferred (disposition)
-    var isBilingual: Bool = false                   // ⚑ 37 NEW · init population deferred
+    public var isDefault: Bool = false                     // ⚑ 36 NEW · init population deferred (disposition)
+    public var isBilingual: Bool = false                   // ⚑ 37 NEW · init population deferred
     let isConvertNALSize: Bool                      // ⚑ source-only: Forward dropped this stored field (binary lacks it; l2 WARNs extra, non-blocking). Kept — read by H.264 NAL-size path.
     public var description: String {
         var description = codecName

@@ -357,7 +357,7 @@ public class AirplayStatusView: UIView {
 
 public extension KSOptions {
     /// func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask
-    nonisolated(unsafe) static var supportedInterfaceOrientations = UIInterfaceOrientationMask.portrait
+    internal nonisolated(unsafe) static var supportedInterfaceOrientations = UIInterfaceOrientationMask.portrait
 }
 
 extension UIApplication {

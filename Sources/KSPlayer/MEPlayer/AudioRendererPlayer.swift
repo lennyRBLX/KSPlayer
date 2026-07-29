@@ -24,7 +24,7 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
     // outputLatency @+0x38 (field 1) — subtracted from the reported audio time (play() + the
     // periodic-observer callback both guard `if outputLatency != 0`). init = 0. Non-private: it
     // carries the vtable accessor triple at slots 0-2.
-    var outputLatency: TimeInterval = 0
+    public var outputLatency: TimeInterval = 0
     // playbackRate @+0x40 (field 2). vtable setter @0x101a1320c.
     public var playbackRate: Float = 1 {
         didSet {

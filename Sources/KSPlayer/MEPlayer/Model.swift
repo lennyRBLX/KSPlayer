@@ -72,7 +72,11 @@ protocol CodecCapacityDelegate: AnyObject {
     func codecDidFinished(track: some CapacityProtocol)
 }
 
-protocol MEPlayerDelegate: AnyObject {
+// ⚑ `public` is FORCED by type visibility: MEPlayerItem.delegate carries a property
+//   descriptor, so its type must be public. Not separately observed — MEPlayerDelegate
+//   has ZERO owner-position symbols in the export trie.
+// ⚑[tool=export_trie_oracle ref=MEPlayerItem.delegate:vpMV result=public ⇒ MEPlayerDelegate public by the type-visibility rule]
+public protocol MEPlayerDelegate: AnyObject {
     func sourceDidChange(loadingState: LoadingState)
     func sourceDidOpened()
     func sourceDidFailed(error: NSError?)
@@ -92,7 +96,7 @@ public protocol ObjectQueueItem {
 }
 
 extension ObjectQueueItem {
-    var seconds: TimeInterval { cmtime.seconds }
+    public var seconds: TimeInterval { cmtime.seconds }
     var cmtime: CMTime { timebase.cmtime(for: timestamp) }
 }
 
@@ -226,12 +230,14 @@ extension Timebase {
 }
 
 final class Packet: ObjectQueueItem {
-    var duration: Int64 = 0
-    var timestamp: Int64 = 0
-    var position: Int64 = 0
-    var size: Int32 = 0
-    private(set) var corePacket = av_packet_alloc()
-    var timebase: Timebase {
+    public var duration: Int64 = 0
+    public var timestamp: Int64 = 0
+    public var position: Int64 = 0
+    public var size: Int32 = 0
+    // ⚑[tool=export_trie_oracle ref=Packet.corePacket:vpMV result=property descriptor present ⇒ the GETTER is public; the private setter is unobservable and is kept as reconstructed]
+    // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o, instr 16 / size 64)
+    public private(set) var corePacket = av_packet_alloc()
+    public var timebase: Timebase {
         assetTrack.timebase
     }
 
@@ -243,7 +249,7 @@ final class Packet: ObjectQueueItem {
         }
     }
 
-    var assetTrack: FFmpegAssetTrack! {
+    public var assetTrack: FFmpegAssetTrack! {
         didSet {
             guard let packet = corePacket?.pointee else {
                 return
@@ -455,22 +461,22 @@ public final class VideoVTBFrame: MEFrame {
     // Forward-NEW vs upstream: pixelBuffer (RENAMED from corePixelBuffer), adjustBuffer,
     // isKeyFrame, dovi, doviData, rpuBuffer. Types reflection/field-record-resolved.
     public var timebase: Timebase = Timebase.defaultValue
-    var pixelBuffer: PixelBufferProtocol? // @+0x18 (was corePixelBuffer)
+    public var pixelBuffer: PixelBufferProtocol? // @+0x18 (was corePixelBuffer)
     // 交叉视频的duration会不准，直接减半了
     public var duration: Int64 = 0
     public var position: Int64 = 0
     public var timestamp: Int64 = 0
     public let fps: Float
     public var size: Int32 = 0
-    var adjustBuffer: MTLBuffer? // @+0x48, field-record So9MTLBuffer_pSg; render-side, nil here
+    public var adjustBuffer: MTLBuffer? // @+0x48, field-record So9MTLBuffer_pSg; render-side, nil here
     public var edrMetaData: EDRMetaData? = nil
-    var isKeyFrame: Bool = false
-    var dovi: DOVIDecoderConfigurationRecord?
+    public var isKeyFrame: Bool = false
+    public var dovi: DOVIDecoderConfigurationRecord?
     public let isDovi: Bool
     // KSDOVIMetadata = opaque 3008 B inline (DOVIRPUShim). Field-record name `KSDOVIMetadata?`;
     // an opaque blob has no nil-tag inhabitant in 3008 B → NON-optional + optionality flagged → DV-render.
     var doviData: KSDOVIMetadata = KSDOVIMetadata()
-    var rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
+    public var rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
     init(fps: Float, isDovi: Bool) {
         self.fps = fps
         self.isDovi = isDovi
