@@ -511,39 +511,26 @@ open class KSOptions {
     // 0x1019b6828, inside this function's extent (0x1019b66c4..0x1019b6974). `deinterlace` was
     // already listed in member_missing_s63.json as a member the binary names and the source never
     // declares; this is why. Two independent agents reached the same pairing.
-    // ⚑ BODY DIVERGENT — verdict KSOptions_deinterlace_1019b66c4.json (CRITICAL). NOT fixed here:
-    //   (a) the binary stores `hardwareDecode = false` UNCONDITIONALLY as its first act
-    //       (`strb wzr,[x19,x21]` @0x1019b6704, no preceding branch); the source guards it;
-    //   (b) the block commented out at lines 507-515 is LIVE in the binary;
-    //   (c) `yadifMode`/`deInterlaceAddIdet` are read as STORED INSTANCE properties, not the
-    //       statics this source reads;
-    //   (d) the tail sets `isDoubleRefreshRate = true` rather than doubling `nominalFrameRate`.
-    // Rewriting it is its own unit; the rename is applied because it is independently established.
+    // ⚑ BODY RECONSTRUCTED from 0x1019b66c4 (172 instr; verified via llvm-objdump, session 67).
+    //   Straight-line, no mediaType/fieldOrder guard: (a) `hardwareDecode = false` unconditionally
+    //   first (`strb wzr,[x19,x21]` @0x1019b6704, no preceding branch); (b) `if deInterlaceAddIdet`
+    //   then append the "idet" literal (built @0x1019b6770 = 0x74656469); (c) yadifMode and
+    //   deInterlaceAddIdet are read as STORED INSTANCE properties (`[x19,off]`), not statics;
+    //   (d) yadifMode decremented when nominalFrameRate>30 (`ldr s0,[x20,#0x58]`; fcmp #30.0);
+    //   (e) append "yadif=mode=\(yadifMode)" + ":parity=-1:deint=1" (18-char literal @0x103d34540);
+    //   (f) tail sets `isDoubleRefreshRate = true` when yadifMode∈{1,3}. Verdict flipped FAITHFUL.
     open func deinterlace(assetTrack: FFmpegAssetTrack) {
-        if assetTrack.mediaType == .video {
-            if [FFmpegFieldOrder.bb, .bt, .tt, .tb].contains(assetTrack.fieldOrder) {
-                // todo 先不要用yadif_videotoolbox，不然会crash。这个后续在看下要怎么解决
-                hardwareDecode = false
-                asynchronousDecompression = false
-                let yadif = hardwareDecode ? "yadif_videotoolbox" : "yadif"
-                var yadifMode = KSOptions.yadifMode
-//                if let assetTrack = assetTrack as? FFmpegAssetTrack {
-//                    if assetTrack.realFrameRate.num == 2 * assetTrack.avgFrameRate.num, assetTrack.realFrameRate.den == assetTrack.avgFrameRate.den {
-//                        if yadifMode == 1 {
-//                            yadifMode = 0
-//                        } else if yadifMode == 3 {
-//                            yadifMode = 2
-//                        }
-//                    }
-//                }
-                if KSOptions.deInterlaceAddIdet {
-                    videoFilters.append("idet")
-                }
-                videoFilters.append("\(yadif)=mode=\(yadifMode):parity=-1:deint=1")
-                if yadifMode == 1 || yadifMode == 3 {
-                    assetTrack.nominalFrameRate = assetTrack.nominalFrameRate * 2
-                }
-            }
+        hardwareDecode = false
+        if deInterlaceAddIdet {
+            videoFilters.append("idet")
+        }
+        var yadifMode = self.yadifMode
+        if assetTrack.nominalFrameRate > 30, yadifMode == 1 || yadifMode == 3 {
+            yadifMode -= 1
+        }
+        videoFilters.append("yadif=mode=\(yadifMode):parity=-1:deint=1")
+        if yadifMode == 1 || yadifMode == 3 {
+            isDoubleRefreshRate = true
         }
     }
 
