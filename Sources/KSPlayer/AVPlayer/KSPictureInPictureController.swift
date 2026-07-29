@@ -22,11 +22,32 @@ public class KSPictureInPictureController: AVPictureInPictureController {
     //     ⚑[tool=ghidra ref=stopPictureInPicture:0x1019c7648 result=pinned]
     //   Both selectors are dispatched EXACTLY ONCE binary-wide (get_xrefs_to on each stub returns a single
     //   UNCONDITIONAL_CALL, from the slot itself), so no larger method contains these calls. The three methods
-    //   are not @objc — baseMethodList @0x103471e38 has count=1, imp 0x1019c7588, which is none of them — and
-    //   recover_swift_function_name.py returns no name for any of the three. Their Swift member names are
-    //   therefore unrecoverable from this binary; do NOT infer them from what a PiP controller "would" have.
-    //   The declarations below are a later, larger revision (5 stored properties, 2 multi-statement methods).
-    //   Reconciling them is a class-level task, not a per-slot one.
+    //   are not @objc — baseMethodList @0x103471e38 has count=1, imp 0x1019c7588, which is none of them.
+    //
+    //   ⚠️ SESSION 64 — THE "NAMES ARE UNRECOVERABLE" CONCLUSION ABOVE IS REFUTED, AND IT WAS WRONG THE SAME
+    //   WAY THE SubtitlePart NEGATIVE WAS (P133/P135): it rested on nm / reflection / recover_swift_function_name,
+    //   none of which can see the ORPHANED EXPORT TRIE. All three slots resolve there by address, and so does a
+    //   fourth member the vtable does not carry:
+    //     slot 0 @0x1019c75cc  start(layer: KSComplexPlayerLayer) -> ()
+    //     slot 1 @0x1019c75d4  didStart(layer: KSComplexPlayerLayer) -> ()
+    //     slot 2 @0x1019c7648  stop(restoreUserInterface: Swift.Bool) -> ()
+    //     static               play(layer: KSComplexPlayerLayer) -> ()
+    //     init(contentSource: AVPictureInPictureControllerContentSource), deinit — and NOTHING else.
+    //   ⚑[tool=export_trie_oracle ref=KSPictureInPictureController.start:0x1019c75cc result=name-recovered]
+    //   ⚑[tool=export_trie_oracle ref=KSPictureInPictureController.didStart:0x1019c75d4 result=name-recovered]
+    //   ⚑[tool=export_trie_oracle ref=KSPictureInPictureController.stop:0x1019c7648 result=name-recovered]
+    //   `didStart` corroborates independently: the s63 member sweep already listed it as a name the binary
+    //   carries and this source does not declare.
+    //
+    //   ⛔ THE BODIES ARE AUDITED DIVERGENT AND THE FIX IS BLOCKED — DO NOT REDUCE THEM.
+    //   start and stop are each a bare 2-instruction ObjC tail call against the 8- and 9-statement bodies
+    //   below (verdicts KSPictureInPictureController_slot0_1019c75cc / _slot2_1019c7648). The reason is
+    //   structural: the binary class has ZERO stored properties, and THREE of its four methods take
+    //   `KSComplexPlayerLayer` — a type carrying 44 symbols in the binary and ZERO occurrences anywhere in
+    //   this reconstruction. In 1.3.17 this class was gutted into a thin wrapper and its state moved into
+    //   that type. Deleting the logic below before locating where the state went would destroy information,
+    //   so it stays until KSComplexPlayerLayer is reconstructed. That is the unblocking step, and it is a
+    //   new-class job, not a per-slot one.
     nonisolated(unsafe) private static var pipController: KSPictureInPictureController?
     private var originalViewController: UIViewController?
     private var view: KSPlayerLayer?

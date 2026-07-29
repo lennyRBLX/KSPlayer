@@ -382,8 +382,14 @@ open class KSOptions {
         nil
     }
 
-    open func videoFrameMaxCount(fps _: Float, naturalSize _: CGSize, isLive: Bool) -> UInt8 {
-        isLive ? 4 : 16
+    // Forward 1.3.17 takes a 4th argument and branches on IT, not on `isLive`:
+    //   cmp w1,#0x2 · mov w8,#4 · mov w9,#8 · csel w0,w9,w8,gt · ret
+    // w1 is `reorderSize` (fps/naturalSize consume FP registers, `isLive` takes w0, self is x20);
+    // w0 is only the csel DESTINATION, never a source operand, and a Swift Bool cannot make
+    // `cmp #2 / csel gt` non-constant — so the tested value is provably not `isLive`.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.videoFrameMaxCount:0x1019bea54 result=signature+body-recovered]
+    open func videoFrameMaxCount(fps _: Float, naturalSize _: CGSize, isLive _: Bool, reorderSize: Int32) -> UInt8 {
+        reorderSize > 2 ? 8 : 4
     }
 
     open func audioFrameMaxCount(fps: Float, channelCount: Int) -> UInt8 {
