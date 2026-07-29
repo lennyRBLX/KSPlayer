@@ -68,7 +68,7 @@ public final class Remuxer {
         // Ensure the per-stream context exists and RUN it (OSI.s13). The completion is the write-output
         // callback: ctx.transcode produces the filtered/copied packet, then calls completion(outputPacket)
         // to emit it. Binary: callback FUN_101a660d0 + a closure box capturing self+idx (DAT_1041d9368).
-        outputStreamInfo.buildTranscodeContext(packet) { [self] outputPacket in   // FUN_101a1ab5c (File-1 slot13)
+        outputStreamInfo.buildTranscodeContext(packet) { [self] outputPacket in   // FUN_101a1ab5c (File-1 slot13)  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
             writeOutputPacket(outputPacket, streamIndex: idx)
         }
     }
