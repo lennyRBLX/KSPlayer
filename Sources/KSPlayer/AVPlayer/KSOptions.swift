@@ -483,8 +483,16 @@ open class KSOptions {
     //   VideoToolbox can't hardware-decode. Binary: `assetTrack as? FFmpegAssetTrack` (WMO-optimized to
     //   an exact object_getClass compare vs the FFmpegAssetTrack metadata) then reads codecpar.pointee
     //   .profile (AVCodecParameters+0x40, FFmpegKit-8.1.1 header) == 244 = AV_PROFILE_H264_HIGH_444_PREDICTIVE
-    //   (defs.h:122). Access modifier not binary-determinable → internal (same-module caller).
-    func processHardwareDecode(assetTrack: some MediaPlayerTrack) {
+    //   (defs.h:122).
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer9KSOptionsC7process10assetTrackyx_tAA16MediaPlayerTrack_pRzlF:0x1019b5fe0 result=RENAMED]
+    // NAME CORRECTED (session 65): this body was called `processHardwareDecode`, a name that occurs
+    // ZERO times in the binary's 57k-symbol index. The trie names 0x1019b5fe0 — the address this
+    // body's own FAITHFUL verdict audited — `process<A: MediaPlayerTrack>(assetTrack: A)`. The old
+    // name was invented, and the prose above it ("Access modifier not binary-determinable →
+    // internal") is refuted by the method descriptor at 0x1039ec800 and by two `Components`
+    // subclasses overriding it, so it is `open`. Independently derived by two agents that did not
+    // share findings. The body is unchanged; only the identity was wrong.
+    open func process(assetTrack: some MediaPlayerTrack) {
         // 244 = AV_PROFILE_H264_HIGH_444_PREDICTIVE (a C `#define`, not bridged into Swift → literal,
         //   as the binary compares `cmp w8, #0xf4`).
         if let assetTrack = assetTrack as? FFmpegAssetTrack,
@@ -496,7 +504,22 @@ open class KSOptions {
     /**
             在创建解码器之前可以对KSOptions和assetTrack做一些处理。例如判断fieldOrder为tt或bb的话，那就自动加videofilters
      */
-    open func process(assetTrack: some MediaPlayerTrack) {
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer9KSOptionsC11deinterlace10assetTrackyAA17FFmpegAssetTrackC_tF:0x1019b66c4 result=RENAMED]
+    // NAME + PARAMETER TYPE CORRECTED (session 65): this body was called `process(assetTrack:)`,
+    // but the binary calls it `deinterlace(assetTrack: FFmpegAssetTrack)` — concrete, not generic.
+    // Proven by the ONLY reference to the `:parity=-1:deint=1` literal (0x103d34560), which sits at
+    // 0x1019b6828, inside this function's extent (0x1019b66c4..0x1019b6974). `deinterlace` was
+    // already listed in member_missing_s63.json as a member the binary names and the source never
+    // declares; this is why. Two independent agents reached the same pairing.
+    // ⚑ BODY DIVERGENT — verdict KSOptions_deinterlace_1019b66c4.json (CRITICAL). NOT fixed here:
+    //   (a) the binary stores `hardwareDecode = false` UNCONDITIONALLY as its first act
+    //       (`strb wzr,[x19,x21]` @0x1019b6704, no preceding branch); the source guards it;
+    //   (b) the block commented out at lines 507-515 is LIVE in the binary;
+    //   (c) `yadifMode`/`deInterlaceAddIdet` are read as STORED INSTANCE properties, not the
+    //       statics this source reads;
+    //   (d) the tail sets `isDoubleRefreshRate = true` rather than doubling `nominalFrameRate`.
+    // Rewriting it is its own unit; the rename is applied because it is independently established.
+    open func deinterlace(assetTrack: FFmpegAssetTrack) {
         if assetTrack.mediaType == .video {
             if [FFmpegFieldOrder.bb, .bt, .tt, .tb].contains(assetTrack.fieldOrder) {
                 // todo 先不要用yadif_videotoolbox，不然会crash。这个后续在看下要怎么解决
@@ -601,7 +624,16 @@ open class KSOptions {
         }
     }
 
-    open func availableDynamicRange(_ contentRange: DynamicRange?) -> DynamicRange? {
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer9KSOptionsC21availableDynamicRangeAA07DynamicF0OSgyF:0x1019bee0c result=SIGNATURE_CORRECTED]
+    // The binary takes NO parameter (35-instruction body @0x1019bee0c; the descriptor at
+    // 0x1039ecc48 confirms the arity, and the body touches no argument register). The source's
+    // `contentRange` is removed; its only call site passed `nil`, so dropping it invents nothing.
+    // ⚑ BODY DIVERGENT — verdict KSOptions_availableDynamicRange_1019bee0c.json (HIGH). The binary
+    // is `guard let destinationDynamicRange else { return nil }` / `if available.contains(d) { return d }`
+    // / `return available.first` over a native Array of 1-byte DynamicRange; the source's
+    // four-branch AVPlayer.HDRMode OptionSet cascade is absent, and the empty and nil cases return
+    // `nil` rather than `.sdr`/`contentRange`. Body rewrite is a separate unit.
+    open func availableDynamicRange() -> DynamicRange? {
         #if canImport(UIKit)
         let availableHDRModes = AVPlayer.availableHDRModes
         if let preferedDynamicRange = destinationDynamicRange {
@@ -610,17 +642,13 @@ open class KSOptions {
                 return .sdr
             } else if availableHDRModes.contains(preferedDynamicRange.hdrMode) {
                 return preferedDynamicRange
-            } else if let contentRange,
-                      availableHDRModes.contains(contentRange.hdrMode)
-            {
-                return contentRange
             } else if preferedDynamicRange != .sdr { // trying update to HDR mode
                 return availableHDRModes.dynamicRange
             }
         }
-        return contentRange
+        return nil
         #else
-        return destinationDynamicRange ?? contentRange
+        return destinationDynamicRange
         #endif
     }
 

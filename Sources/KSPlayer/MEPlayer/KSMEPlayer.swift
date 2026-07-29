@@ -589,7 +589,7 @@ extension KSMEPlayer: DisplayLayerDelegate {
 
 public extension KSMEPlayer {
     func startRecord(url: URL) {
-        playerItem.startRecord(url: url)
+        playerItem.startRecord(url: url, mediaType: nil)
     }
 
     func stoptRecord() {

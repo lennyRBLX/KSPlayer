@@ -24,7 +24,11 @@ class VideoToolboxDecode: DecodeProtocol {
     private var needReconfig: Bool = false
     // P3a (Phase A): KSDOVIMetadata = opaque 3008-byte inline DV buffer (DOVIRPUShim). Field-record name
     // `KSDOVIMetadata?`; an opaque blob has no nil-tag inhabitant in 3008B → NON-optional + optionality flagged → DV-render.
-    private var doviData: KSDOVIMetadata = KSDOVIMetadata()
+    // ⚑[tool=vpfi_initializer_oracle ref=VideoToolboxDecode.doviData:0x10199afc8 result=CONFIRMED]
+    // Field record says `KSDOVIMetadata?` (Optional); the declaration default is NOT nil — its vpfi
+    // is a 15-instruction body that constructs a value and memcpys 0xbc0 bytes, so the Optional is
+    // initialised non-nil. Both halves are needed: the `?` alone would imply `= nil`.
+    private var doviData: KSDOVIMetadata? = KSDOVIMetadata()
     // P3a (Phase A): DOVIContext = FFmpeg's private DV parser context, opaque 224-byte inline @+0xc10 (DOVIRPUShim).
     // Caller-owned inline value that the raw ff_dovi_*(&doviContext) calls populate/release (decodeFrame crash-loop → Phase B).
     private var doviContext: DOVIContext = DOVIContext()
@@ -250,7 +254,7 @@ class DecompressionSession {
             VTSessionSetProperty(decompressionSession, key: kVTDecompressionPropertyKey_PropagatePerFrameHDRDisplayMetadata,
                                  value: kCFBooleanTrue)
         }
-        if let destinationDynamicRange = options.availableDynamicRange(nil) {
+        if let destinationDynamicRange = options.availableDynamicRange() {
             let pixelTransferProperties = [kVTPixelTransferPropertyKey_DestinationColorPrimaries: destinationDynamicRange.colorPrimaries,
                                            kVTPixelTransferPropertyKey_DestinationTransferFunction: destinationDynamicRange.transferFunction,
                                            kVTPixelTransferPropertyKey_DestinationYCbCrMatrix: destinationDynamicRange.yCbCrMatrix]

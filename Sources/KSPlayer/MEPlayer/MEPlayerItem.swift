@@ -246,11 +246,26 @@ extension MEPlayerItem {
     //   a static method cannot form a C function pointer in Swift 6, so `formatCtx.io_open = MEPlayerItem.ioOpen`
     //   does not compile — a top-level func does. openAndFindStream installs them (@convention(c) thunks).
 
-    func startRecord(url: URL) {
-        // ⚑ UNRESOLVED (commit-1 stub): base body used the removed outputFormatCtx/streamMapping/outputPacket
-        //   + formatCtx fields. Forward routes recording through `remuxer: Remuxer?` (field 8). Deferred to
-        //   the remuxer migration commit.
-    }
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer12MEPlayerItemC11startRecord3url9mediaTypey10Foundation3URLV_So07AVMediaF0aSgtF:0x101a483d4 result=SIGNATURE_CORRECTED]
+    // The `mediaType:` parameter is established three ways and is LIVE in the binary: the body's own
+    // `#function` literal (0x103d366d0) decodes to "startRecord(url:mediaType:)"; x1 is stored to
+    // Remuxer+0x20 with `objc_retain` @0x101a484b4 and forwarded as x7; and Remuxer field 3 is
+    // `mediaType: AVMediaType?`. The sole caller passes nil — MEASURED (`mov x1,#0x0` immediately
+    // before `bl 0x101a483d4` at KSMEPlayer.startRecord @0x101a444b8), not assumed.
+    // ⚑ BODY UNRESOLVED — verdict MEPlayerItem_startRecord_101a483d4.json (HIGH). The binary has a
+    // complete 183-instruction body (guard formatContext → tear down the old remuxer → build one
+    // inline → install; on throw, deallocPartialClassInstance + KSLog(.error)). It is NOT written
+    // here because it depends on two things the reconstruction cannot yet express:
+    // ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=LOCATED]
+    //   — `URL.ffmpegString` exists in the binary and is ABSENT from our source; and
+    // ⚑[tool=function_sizes ref=FUN_101a1d014:0x101a1d014 result=INFERRED]
+    //   — the throwing callee takes 9 argument slots with an object in x7, which the reconstructed
+    //   `OutputStreamInfo.init(formatContext:filename:…)` has no parameter able to receive, so the
+    //   two cannot both be right. Guessing either would fabricate; this is the pinned deferral.
+    // `AVFoundation.AVMediaType`, not FFmpeg's `AVMediaType` C enum — the two collide in this module
+    // and the binary disambiguates them: x1 is stored with `objc_retain` @0x101a484b4, so it is the
+    // ObjC NSString-backed type, not a plain C int.
+    func startRecord(url _: URL, mediaType _: AVFoundation.AVMediaType?) {}
 
     // createCodec() = FUN_101a53c44 (~2145 lines w/ 3 inline closures FUN_101a556b0/36964/36cf0). ARGLESS —
     //   reads self.formatContext (the commit-1 `formatCtx:` param was the BASE signature; Forward is argless).
@@ -670,10 +685,23 @@ private final class PBClass {
 }
 
 extension AbstractAVIOContext {
-    func getContext() -> UnsafeMutablePointer<AVIOContext> {
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer19AbstractAVIOContextC10getContext8writableSpySo07AVIOD0VGSgSb_tF:0x1019e258c result=SIGNATURE_CORRECTED]
+    // The previous comment here ("Forward removed `writable`; upstream default false → 0") is
+    // REFUTED at instruction level: `mov x19, x0` @0x1019e259c captures the incoming Bool and
+    // `and w2, w19, #0x1` @0x1019e25c4 feeds it to avio_alloc_context's write_flag — register-
+    // derived, not a constant. The return is OPTIONAL (`cbz x0` → nil path, no force-unwrap trap),
+    // and the opaque pointer is passed UNRETAINED: the whole 39-instruction extent contains three
+    // `bl`s and ZERO swift_retain, so `passRetained` was wrong.
+    // ⚑ BODY DIVERGENT — verdict AbstractAVIOContext_getContext_1019e258c.json (CRITICAL). Still
+    // missing an entire statement: on the non-nil path a `_swift_once` builds a 0x50-byte static
+    // descriptor whose name string is the C literal "AbstractAVIOContext" (0x103568b30), with a
+    // child-enumeration thunk at +0x38, and stores a pointer to it into the freshly allocated
+    // context's first word (`str x8, [x0]` @0x1019e25f0). Writing that statement requires
+    // reconstructing that descriptor type and is its own unit.
+    func getContext(writable: Bool) -> UnsafeMutablePointer<AVIOContext>? {
         // 需要持有ioContext，不然会被释放掉,等到shutdown在清空
-        // write_flag 0 — Forward removed `writable`; upstream default false → 0; getContext binary unresolved (UNRESOLVED-if-Forward-differs).
-        avio_alloc_context(av_malloc(Int(bufferSize)), bufferSize, 0, Unmanaged.passRetained(self).toOpaque()) { opaque, buffer, size -> Int32 in
+        // ⚑[tool=ffmpeg_name_oracle ref=av_malloc:0x103253d30 result=CONFIRMED] (avutil/mem.o)
+        avio_alloc_context(av_malloc(Int(bufferSize)), bufferSize, writable ? 1 : 0, Unmanaged.passUnretained(self).toOpaque()) { opaque, buffer, size -> Int32 in
             let value = Unmanaged<AbstractAVIOContext>.fromOpaque(opaque!).takeUnretainedValue()
             let ret = value.read(buffer: buffer, size: size)
             return Int32(ret)
