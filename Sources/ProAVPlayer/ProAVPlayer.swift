@@ -38,9 +38,9 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     /// `player.currentTime` → `seekToTime` + advance the remuxer live-window `startPlayTime` by the last seekable
     /// range; then, on the main thread, rebuild the `ProPlayerItem` from the current asset and install it.
     /// Disasm-confirmed: needSeek block is `tbz w21,#0`-guarded (@0x101b7c260); `self.player` = KSAVPlayer's
-    /// public accessor (FUN_1019a1730); the item-swap runs via `runOnMainThread` (FUN_101a03e88).
+    /// public accessor (FUN_1019a1730); the item-swap runs via `runOnMainThread` (FUN_101a03e88).  ⚑[tool=resolve_fun_pins ref=FUN_1019a1730:0x1019a1730 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.player.getter : __C.AVQueuePlayer  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()
     func replaceCurrentItem(needSeek: Bool) {
-        // ⚑ leading gated KSLog (base playback state > 2, FUN_1019b4074/c0094) omitted — KSLog form UNRESOLVED (class convention)
+        // ⚑ leading gated KSLog (base playback state > 2, FUN_1019b4074/c0094) omitted — KSLog form UNRESOLVED (class convention)  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
         if needSeek {                                                        // [tbz w21,#0 @0x101b7c260]
             seekToTime = player.currentTime()                               // self.player.currentTime() → seekToTime (CMTime?)
             if let lastRange = player.currentItem?.seekableTimeRanges.last?.timeRangeValue,
@@ -51,7 +51,7 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                     (m3u8Info.remuxerIOAction.startPlayTime ?? 0) + lastRange.start.seconds  // *(remux+0x10); tag=0 (.some)
             }
         }
-        runOnMainThread { [weak self] in                                    // FUN_101a03e88 = Utility.runOnMainThread; weak-self capture (0x1041e1198)
+        runOnMainThread { [weak self] in                                    // FUN_101a03e88 = Utility.runOnMainThread; weak-self capture (0x1041e1198)  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()
             guard let self,
                   let asset = player.currentItem?.asset as? AVURLAsset else { return }  // currentItem.asset as? AVURLAsset
             let item: ProPlayerItem
@@ -68,7 +68,7 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                 m3u8Info.updateCurrentPlaybackTime(m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0))
             }
             player.automaticallyWaitsToMinimizeStalling = false
-            (self as KSAVPlayer).replaceCurrentItem(playerItem: item)     // KSAVPlayer.replaceCurrentItem(playerItem:) — FUN_1019a563c (P34: private→internal). Upcast resolves the base-name shadow from the needSeek: overload (super-in-closure unsupported); ProAVPlayer doesn't override it ⇒ same dispatch as the binary.
+            (self as KSAVPlayer).replaceCurrentItem(playerItem: item)     // KSAVPlayer.replaceCurrentItem(playerItem:) — FUN_1019a563c (P34: private→internal). Upcast resolves the base-name shadow from the needSeek: overload (super-in-closure unsupported); ProAVPlayer doesn't override it ⇒ same dispatch as the binary.  ⚑[tool=resolve_fun_pins ref=FUN_1019a563c:0x1019a563c result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.replaceCurrentItem(playerItem: __C.AVPlayerItem?) -> ()
         }
     }
 
@@ -76,17 +76,17 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     //    req1 101b7cc80 / req2 101b7d3b4). ProAVPlayer receives the coordinator's lifecycle callbacks.
     //    Names inferred from ConversionInfo's forwards; behaviors reconstructed from the witness bodies.
 
-    /// req0 witness `FUN_101b7cc78` = `FUN_101b7c164(0)` — refresh the current item without seeking.
+    /// req0 witness `FUN_101b7cc78` = `FUN_101b7c164(0)` — refresh the current item without seeking.  ⚑[tool=resolve_fun_pins ref=FUN_101b7cc78:0x101b7cc78 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.reconstructComplete() -> ()
     func conversionDidUpdate() {
         replaceCurrentItem(needSeek: false)
     }
 
-    /// req1 witness `FUN_101b7cc80` — mark end-of-stream; if the un-drained lead
+    /// req1 witness `FUN_101b7cc80` — mark end-of-stream; if the un-drained lead  ⚑[tool=resolve_fun_pins ref=FUN_101b7cc80:0x101b7cc80 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.endOfStream() -> ()
     /// (`currentItem.duration - remuxerIOAction.startPlayTime`) exceeds `maxBufferDuration`, schedule the
     /// end-of-stream item work on the main actor.
     func conversionDidReachEnd() {
         hasEndOfStream = true                                            // [*(self+hasEndOfStream)=1]
-        guard let currentItem = player.currentItem else { return }       // [player=FUN_1019a1730; currentItem==0 -> return]
+        guard let currentItem = player.currentItem else { return }       // [player=FUN_1019a1730; currentItem==0 -> return]  ⚑[tool=resolve_fun_pins ref=FUN_1019a1730:0x1019a1730 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.player.getter : __C.AVQueuePlayer
         if let m3u8Info {                                                // self.m3u8Info != nil
             if m3u8Info.maxBufferDuration < currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) {  // [+0x48 < duration.seconds - startPlayTime]
                 Task { @MainActor in                                    // [true: MainActor Task; alloc 0x38 @0x1041e1328]
@@ -104,7 +104,7 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
         }
     }
 
-    /// req2 witness `FUN_101b7d3b4` = a thunk to `KSAVPlayer.prepareToPlay()` (FUN_1019a9e20) — on conversion
+    /// req2 witness `FUN_101b7d3b4` = a thunk to `KSAVPlayer.prepareToPlay()` (FUN_1019a9e20) — on conversion  ⚑[tool=resolve_fun_pins ref=FUN_101b7d3b4:0x101b7d3b4 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.failed(error: Swift.Error) -> ()  ⚑[tool=resolve_fun_pins ref=FUN_1019a9e20:0x1019a9e20 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.prepareToPlay() -> ()
     /// failure, re-prepare the player. `error` is received by the protocol req but unused (the witness thunk
     /// drops it; `prepareToPlay()` takes no args).
     func conversionDidFail(_ error: any Error) {

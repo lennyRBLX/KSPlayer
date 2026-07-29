@@ -8,10 +8,10 @@ public class LimitCacheIOContext: CacheIOContext {
     // maxFileSize: byte cap for this cache context. init stores param (8-byte) → UInt64.
     public var maxFileSize: UInt64 = 0 // ⚑ (field-record unmapped; UInt64 by width + position-field pattern)
 
-    // s3 @101b9c388 → inner FUN_101b9c388: stores maxFileSize (explicit) then delegates to
+    // s3 @101b9c388 → inner FUN_101b9c388: stores maxFileSize (explicit) then delegates to  ⚑[tool=resolve_fun_pins ref=FUN_101b9c388:0x101b9c388 result=RESOLVES_UNIQUELY] = PreLoadIOContext.LimitCacheIOContext.__allocating_init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, maxFileSize: Swift.UInt64, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.LimitCacheIOContext
     //   CacheIOContext's designated init. The maxFileSize store + super-delegation are
     //   explicit in the decompile.
-    // ⚑[tool=export_trie_oracle ref=FUN_101b86d38:0x101b86d38 result=IDENTIFIED as $s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc — CacheIOContext's designated init, INITIALIZING entry (`cfc`). It was a raw FUN_ only because the class name is word-substituted]
+    // ⚑[tool=export_trie_oracle ref=FUN_101b86d38:0x101b86d38 result=IDENTIFIED as $s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc — CacheIOContext's designated init, INITIALIZING entry (`cfc`). It was a raw FUN_ only because the class name is word-substituted]  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     // Labels AND parameter order are now RECOVERED, not inferred — the comment here used to
     // read "Arity/param-order inferred (no mangled init symbol)". There IS a mangled init
     // symbol; it was unreachable because the class name is word-substituted (`010LimitCacheC0C`).

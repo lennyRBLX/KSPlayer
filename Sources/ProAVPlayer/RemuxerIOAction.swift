@@ -50,9 +50,9 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     ///   the subtitles/track source — an up-chain-UN-TYPED class (`*(coordinator+0x420)`; it has a `+0x768`
     ///   vtable method + a tracks keyPath) → typed `AnyObject` (under-included, §1) + its uses DEFERRED.
     /// ⚑ DEFERRED (L97-203, own follow-up unit): `subtitles` = flatMap over `source`'s tracks (keyPath +
-    ///   Sequence.flatMap); the post-write `outputStreamInfo.<slot1 +0xb8>(FUN_101a36488(source))` +
-    ///   `source.<+0x768>()` + the subtitles iteration. `directoryWatcher` construction (FUN_101a06ce0 /
-    ///   FUN_101a04e20 args UNRESOLVED) → stays IUO default. `subtitles` stays [].
+    ///   Sequence.flatMap); the post-write `outputStreamInfo.<slot1 +0xb8>(FUN_101a36488(source))` +  ⚑[tool=resolve_fun_pins ref=FUN_101a36488:0x101a36488 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.subtitleAssetTrackMap(options: KSPlayer.KSOptions) -> [Swift.Int32 : KSPlayer.FFmpegAssetTrack]
+    ///   `source.<+0x768>()` + the subtitles iteration. `directoryWatcher` construction (FUN_101a06ce0 /  ⚑[tool=resolve_fun_pins ref=FUN_101a06ce0:0x101a06ce0 result=RESOLVES_UNIQUELY] = type metadata accessor for KSPlayer.DirectoryWatcher
+    ///   FUN_101a04e20 args UNRESOLVED) → stays IUO default. `subtitles` stays [].  ⚑[tool=resolve_fun_pins ref=FUN_101a04e20:0x101a04e20 result=RESOLVES_UNIQUELY] = KSPlayer.DirectoryWatcher.__allocating_init() -> KSPlayer.DirectoryWatcher
     init(formatContext: FormatContext, dir: URL, source: AnyObject,
          formatContextOptions: [String: Any], masterM3U8Context: String) throws {
         self.startPlayTime = nil                              // L64-65 (payload 0, tag 1 = nil)
@@ -130,7 +130,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         if packet.pointee.dts != .min { pts = packet.pointee.dts }   // plVar17[2] (+0x10)
         if packet.pointee.pts != .min { pts = packet.pointee.pts }   // plVar17[1] (+0x08); pts overrides dts
 
-        // [L123-194] PTS→seconds over self.formatContext's streams (FUN_101a32e28), gated by an
+        // [L123-194] PTS→seconds over self.formatContext's streams (FUN_101a32e28), gated by an  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         //   index-match + a String compare on the matched stream.
         // ⚑ STREAM-MATCH PARTITION — hand-derived (P31). The caller pre-walks self.formatContext's stream
         //   array (`*(self+0x28)+0x40`) [L123-181]; for the stream whose `stream.index (+0x10) == streamIndex`
@@ -141,21 +141,21 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //     • strings EQUAL  (L166 `SVar25 == SVar26`, or compare-true L177) → `LAB_101b825b4`: skip/EOF
         //       result (value=0, isEnd=1).
         //     • strings differ (compare-false, L176)                          → `LAB_101b824ec`: compute
-        //       seconds via FUN_101a32e28.
+        //       seconds via FUN_101a32e28.  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         //   No index match anywhere also falls through to `LAB_101b824ec` [L183-186].
-        // FUN_101a32e28 (PTS→seconds): re-walk streams, find `stream.index == streamIndex`, then
+        // FUN_101a32e28 (PTS→seconds): re-walk streams, find `stream.index == streamIndex`, then  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         //   `CMTime(value: pts * stream.timebase.num (+0xc0), timescale: stream.timebase.den (+0xc4))
         //    - stream.startTime (+0xa0..+0xb0)`, take `.seconds`, clamp to >= 0. Its second return lane is a
-        //   flag (1 = "no match / sentinel pts" → treated as skip/EOF). [FUN_101a32e28 L72-96 / L103-104]
+        //   flag (1 = "no match / sentinel pts" → treated as skip/EOF). [FUN_101a32e28 L72-96 / L103-104]  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         var value: Double
         var isEnd: Bool
-        // ⚑ The seconds computation + the skip/EOF flag are produced together (FUN_101a32e28 returns
+        // ⚑ The seconds computation + the skip/EOF flag are produced together (FUN_101a32e28 returns  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         //   (Double, flag); flag==1 ⇒ isEnd). Modeled here as the PTS→seconds helper below.
         (value, isEnd) = ptsToSeconds(streamIndex: streamIndex, pts: pts)
 
         // [L197-278] Debug log on the ok path: "packet index=…, size=…, flags=…, timestamp=…, duration=…"
         //   (fields: streamIndex, size=(Int32)plVar17[4], flags=(Int32)plVar17[5], timestamp=pts, duration=plVar17[8]).
-        //   Gated by a log-level check (FUN_1019b4074 → `*pbVar7 > 2`).
+        //   Gated by a log-level check (FUN_1019b4074 → `*pbVar7 > 2`).  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
         // ⚑ KSLog(...) — form UNRESOLVED (class-wide). Debug packet-trace omitted.
 
         // [L279-283] Write the packet through outputStreamInfo (vtable method @+0x118), returning an Int32.
@@ -193,7 +193,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     }
 
     /// PTS→seconds for the asset track matching `streamIndex`, plus the not-found/skip flag.
-    /// Binary FUN_101a32e28 (a shared leaf, 2 callers; `self` = RemuxerIOAction via the inherited swiftself x20 —
+    /// Binary FUN_101a32e28 (a shared leaf, 2 callers; `self` = RemuxerIOAction via the inherited swiftself x20 —  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
     /// no `mov x20` at the call site — linker-placed in the base __text range). Reconstructed on the EXISTING
     /// KSPlayer API (P19 — source is ground truth): iterate `self.subtitles` (`self+0x40` = the sole
     /// `[FFmpegAssetTrack]` field), match `track.trackID (@+0x10) == streamIndex`, compute
@@ -202,9 +202,9 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     /// or no match ⇒ `(0, isEnd=true)`. The `timebase`/`startTime`/`cmtime(for:)` reads cross the
     /// ProAVPlayer→KSPlayer module boundary (binary-arbitrated) → made `package` in KSPlayer (§1 modifier flagged).
     /// ⚑ iterated array `subtitles` is offset-derived (self+0x40, the only `[FFmpegAssetTrack]`); ⚑ helper NAME
-    ///   inferred (no #function on FUN_101a32e28).
+    ///   inferred (no #function on FUN_101a32e28).  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
     private func ptsToSeconds(streamIndex: Int32, pts: Int64) -> (value: Double, isEnd: Bool) {
-        guard pts != .min else { return (0, true) }                  // AV_NOPTS_VALUE (Int64.min) [FUN_101a32e28 L36,103]
+        guard pts != .min else { return (0, true) }                  // AV_NOPTS_VALUE (Int64.min) [FUN_101a32e28 L36,103]  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         for track in subtitles where track.trackID == streamIndex {  // index match @+0x10 [L48-72]
             let seconds = (track.timebase.cmtime(for: pts) - track.startTime).seconds  // [L74-96]
             return (max(seconds, 0), false)                          // clamp >= 0 [L92-95]
@@ -222,7 +222,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         // ── Body DEFERRED to owner-phase (blocked on OutputStreamInfo's devirt API + RemuxerIOActionDelegate).
         //    Grounded control flow from FUN_101b7e2f4 (239i; prefetch-cached + disasm-verified — NOT live code, to
         //    avoid fabricating the OutputStreamInfo interface / mis-placing the swifterror-guarded resets, P32/P36):
-        //    1. [KSLog debug gate: `if logLevel > 2` (FUN_1019b4074) — form UNRESOLVED, class-wide]
+        //    1. [KSLog debug gate: `if logLevel > 2` (FUN_1019b4074) — form UNRESOLVED, class-wide]  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
         //    2. Tear down the current output — THROWING devirt calls on self.outputStreamInfo (@0x20):
         //       `<+0xb0>()` ; `<+0xb8>([])` ; `<+0x128>()`  (OutputStreamInfo vtable; owner-phase API — not fabricated).
         //    3. Rebuild: `let new = try self.write(formatContext:dir:formatContextOptions:masterM3U8Context:)`
@@ -231,7 +231,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //       "OutputStreamInfo build" — same mislabel, CORRECTED.
         //    4. guard(no swifterror from 2–3 — `cbz x21` @0x101b7e4ec) else early-out (bridgeObjectRelease). No-error path:
         //         `self.outputStreamInfo = new` (release old) ; `new.<+0xb8>(old)`
-        //         `for track in subtitles { <per-element FUN_101a20fb0> }`   // iteration recoverable; per-element UNRESOLVED
+        //         `for track in subtitles { <per-element FUN_101a20fb0> }`   // iteration recoverable; per-element UNRESOLVED  ⚑[tool=resolve_fun_pins ref=FUN_101a20fb0:0x101a20fb0 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.flush() -> ()
         //         `startPlayTime = nil`                                       // str xzr@+0x10 + tag=1@+0x18 (disasm-confirmed; no-error path ONLY)
         //         `if completion == nil { delegate?.<notify>(2) }`           // weak RemuxerIOActionDelegate req (undeclared) — UNRESOLVED
         //         `Task { completion?() }`                                   // async completion spawn (FUN_101b76920, &DAT_103571988) — UNRESOLVED
@@ -252,7 +252,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         do {
             try FileManager.default.removeItem(at: dir)   // NSFileManager.removeItemAtURL(dir._bridgeToObjectiveC()) — removes the output
         } catch {
-            // ⚑ on failure: KSLog(error) gated `logLevel > 1` (FUN_1019b4074 → `*level < 2` skips the log, just
+            // ⚑ on failure: KSLog(error) gated `logLevel > 1` (FUN_1019b4074 → `*level < 2` skips the log, just  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
             //   releases the error) — KSLog form UNRESOLVED (class-wide); the error is caught + swallowed (cancel does NOT throw).
         }
     }
@@ -261,10 +261,10 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     /// (recover_swift_function_name HIGH, 4 labels, #file ProAVPlayer/RemuxerIO.swift). The OSI-PRODUCING
     /// method both the designated init and reconstruct() call: sets up the HLS output dir, writes the master
     /// playlist, configures the HLS segment-filename muxer option, then builds + returns the OutputStreamInfo
-    /// via its real designated init (thunk FUN_101a19724 → factory FUN_101a1d014). `throws -> OutputStreamInfo`
+    /// via its real designated init (thunk FUN_101a19724 → factory FUN_101a1d014). `throws -> OutputStreamInfo`  ⚑[tool=resolve_fun_pins ref=FUN_101a19724:0x101a19724 result=RESOLVES_UNIQUELY] = static KSPlayer.FFmpegUtility.write(formatContext: KSPlayer.FormatContext, to: Swift.String, isMergeStream: Swift.Bool, formatContextOptions: [Swift.String : Any]?, outFormat: Swift.String?, mediaType: __C.AVMediaType?, allowAudioCodecs: [__C.AVCodecID]?) throws -> KSPlayer.OutputStreamInfo
     /// — P44 disasm-confirmed (reconstruct() does `str x0,[x23,#0x20]` = store the return into
     /// outputStreamInfo@0x20). No FFmpeg calls (verified: 0 `bl` in the FFmpeg range). NOW LIVE (the OSI init
-    /// landed 21c9d6a). ⚑ flagged-compiling residuals: the OSI filename is `FUN_1019f59c4`-computed
+    /// landed 21c9d6a). ⚑ flagged-compiling residuals: the OSI filename is `FUN_1019f59c4`-computed  ⚑[tool=resolve_fun_pins ref=FUN_1019f59c4:0x1019f59c4 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Foundation.URL.ffmpegString.getter : Swift.String
     /// (approximated as dir/playlist_%v.m3u8); the factory's p9 = a static `[AVCodecID]` allowlist
     /// (&DAT_1044f3788) passed `[]` here; the exact options-dict threading is decompiler-plumbing-approximate;
     /// KSLog debug (L194-214) omitted (class-wide UNRESOLVED).
@@ -288,9 +288,9 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         options["hls_segment_filename"] = base + "segment_%v_%05d.ts"
         // 5. write the master playlist ("master.m3u8" @0x103d3ea?, atomically, .utf8) [L183-190]
         try masterM3U8Context.write(to: dir.appendingPathComponent("master.m3u8"), atomically: true, encoding: .utf8)
-        // 6. KSLog debug gate (logLevel > 2, FUN_1019b4074) — form UNRESOLVED (class-wide) [L194-214]
+        // 6. KSLog debug gate (logLevel > 2, FUN_1019b4074) — form UNRESOLVED (class-wide) [L194-214]  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
         // 7. build + return the OSI via its real designated init [L244-247]
-        let filename = dir.appendingPathComponent("playlist_%v.m3u8").path   // ⚑ FUN_1019f59c4-computed (approximated)
+        let filename = dir.appendingPathComponent("playlist_%v.m3u8").path   // ⚑ FUN_1019f59c4-computed (approximated)  ⚑[tool=resolve_fun_pins ref=FUN_1019f59c4:0x1019f59c4 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Foundation.URL.ffmpegString.getter : Swift.String
         return try OutputStreamInfo(formatContext: formatContext,
                                     filename: filename,
                                     forceTranscode: false,                  // p4 = 0

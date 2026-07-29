@@ -77,7 +77,7 @@ public class AudioDataBuffer {
     // anchor, no naming caller) and the name was chosen by analogy to AudioBaseOutput.flush().
     // The analogy was right: the orphaned export trie maps 0x101a11cb4 directly to
     // `KSPlayer.AudioDataBuffer.flush() -> ()`.
-    // ⚑[tool=export_trie_oracle ref=FUN_101a11cb4:0x101a11cb4 result=CONFIRMED AudioDataBuffer.flush()] Body: release
+    // ⚑[tool=export_trie_oracle ref=FUN_101a11cb4:0x101a11cb4 result=CONFIRMED AudioDataBuffer.flush()] Body: release  ⚑[tool=resolve_fun_pins ref=FUN_101a11cb4:0x101a11cb4 result=RESOLVES_UNIQUELY] = KSPlayer.AudioDataBuffer.flush() -> ()
     // and clear currentRender; the unconditional didSet resets currentRenderReadOffset.
     // AudioDataBuffer has no lock field, so there is no os_unfair_lock here.
     public func flush() {

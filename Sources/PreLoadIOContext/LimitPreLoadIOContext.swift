@@ -121,7 +121,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     // stores (maxFileSize/maxReadedFileSize) and the super-delegation remain as decompiled
     // (param_6 → maxFileSize, param_7 → maxReadedFileSize; the super-delegation target is
     // CacheIOContext's designated init). `isReadComplete` is LAST, not fifth.
-    // ⚑[tool=export_trie_oracle ref=FUN_101b86d38:0x101b86d38 result=IDENTIFIED as $s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc — CacheIOContext's designated init, INITIALIZING entry (`cfc`). It was a raw FUN_ only because the class name is word-substituted]
+    // ⚑[tool=export_trie_oracle ref=FUN_101b86d38:0x101b86d38 result=IDENTIFIED as $s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc — CacheIOContext's designated init, INITIALIZING entry (`cfc`). It was a raw FUN_ only because the class name is word-substituted]  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext05LimitabC0C8download3md510bufferSize8saveFile03maxjH00k6ReadedjH014isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VSbs6UInt64VAPSbtKcfc result=labels+order RECOVERED]
     init(download: URLContextDownload?, md5: String, bufferSize: Int32 = 32 * 1024,
          saveFile: Bool, maxFileSize: UInt64, maxReadedFileSize: UInt64,
@@ -132,7 +132,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         //   declared defaults above; PreLoadIOContext's inlined field inits in the
         //   decompile (loadMoreBuffer/_timeIndex/_playbackSnapshot/etc.) are the compiler
         //   flattening the chain and belong to PreLoadIOContext — NOT re-set here.
-        // binary s37: delegates to CacheIOContext's designated init (FUN_101b86d38),
+        // binary s37: delegates to CacheIOContext's designated init (FUN_101b86d38),  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
         //   inherited through PreLoadIOContext.
         super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete)
@@ -211,7 +211,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //        result through it as 4 words + one byte at +32 ⇒ a 33-byte INDIRECT return,
     //        exactly the tuple payload (the outer Optional's tag byte at +33 is NOT
     //        written here);
-    //     2. caller FUN_101b9f9a0 sets the sret dest, calls, reads the 33 bytes back and
+    //     2. caller FUN_101b9f9a0 sets the sret dest, calls, reads the 33 bytes back and  ⚑[tool=resolve_fun_pins ref=FUN_101b9f9a0:0x101b9f9a0 result=RESOLVES_UNIQUELY] = PreLoadIOContext.LimitPreLoadIOContext.reuseEntry(pos: Swift.UInt64, size: Swift.Int32) -> PreLoadIOContext.CacheFileEntry?
     //        re-stores them followed by `strb wzr,[…,#0x21]` — i.e. it wraps the result in
     //        `.some` before assigning it to the Optional field;
     //     3. the four accumulators' arithmetic matches the four labels one-for-one

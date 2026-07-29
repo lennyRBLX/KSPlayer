@@ -81,7 +81,7 @@ public final class FormatContext {
         //    startTime alignment in the loop needs the container startTime — so it reads the LOCAL. ──
 
         // +0x5c = CMTime from formatCtx.start_time (== AV_NOPTS_VALUE(Int64.min) ? .zero :
-        //   CMTime(value:, timescale: AV_TIME_BASE)). FUN_101a350bc prologue @unaff_x20+0x5c; MEPlayerItem:238-239 idiom.
+        //   CMTime(value:, timescale: AV_TIME_BASE)). FUN_101a350bc prologue @unaff_x20+0x5c; MEPlayerItem:238-239 idiom.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         let startTimeValue: CMTime = formatCtx.pointee.start_time != Int64.min
             ? CMTime(value: formatCtx.pointee.start_time, timescale: AV_TIME_BASE)
             : .zero
@@ -91,15 +91,15 @@ public final class FormatContext {
         //   `duration` PARAM instead (and mutates formatCtx.duration) — deferred with the PlayList protocol.
         let durationSecondsInt = max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE)
         let durationValue = Double(durationSecondsInt)
-        // +0x48 = String(cString: iformat.name). FUN_101a350bc reads *(*(formatCtx+8)); MEPlayerItem:236 idiom.
+        // +0x48 = String(cString: iformat.name). FUN_101a350bc reads *(*(formatCtx+8)); MEPlayerItem:236 idiom.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         let formatNameValue = String(cString: formatCtx.pointee.iformat.pointee.name)
         // +0x59 = (flags & AVFMT_NO_BYTE_SEEK == 0) && (flags & (AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS) != 0) &&
-        //   formatName != "ogg". FUN_101a350bc @0x101a35494-0x101a354e8 disasm-verified (and #0x280; "ogg" 0x67676f).
+        //   formatName != "ogg". FUN_101a350bc @0x101a35494-0x101a354e8 disasm-verified (and #0x280; "ogg" 0x67676f).  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         let iformatFlags = formatCtx.pointee.iformat.pointee.flags
         let byteSeekValue = (iformatFlags & AVFMT_NO_BYTE_SEEK == 0)
             && (iformatFlags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0)
             && (formatNameValue != "ogg")
-        // +0x78 = (flags & AVFMT_TS_DISCONT) ? 10 : 3600. FUN_101a350bc reads (flags & 0x200); MEPlayerItem:233-234 (here Int, `Si`).
+        // +0x78 = (flags & AVFMT_TS_DISCONT) ? 10 : 3600. FUN_101a350bc reads (flags & 0x200); MEPlayerItem:233-234 (here Int, `Si`).  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         let maxFrameDurationValue = iformatFlags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
 
         // ── +0x40 assetTracks: per-stream loop over formatCtx.streams[0..<nb_streams] (MEPlayerItem:283-284 idiom).
@@ -122,7 +122,7 @@ public final class FormatContext {
             } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_ATTACHMENT {
                 // Embedded-font attachment: codec_id ∈ {NONE, 0x18000 TTF, 0x18006 OTF} — raw compare = the binary's
                 //   `iVar3 == 0 || == 0x18000 || == 0x18006`. Extract extradata → Data, write under fontsDir, register
-                //   with CoreText, then av_freep the extradata. FUN_101a350bc @0x101a35540-0x101a35840 font block.
+                //   with CoreText, then av_freep the extradata. FUN_101a350bc @0x101a35540-0x101a35840 font block.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext  ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]
                 let codecpar = stream.pointee.codecpar.pointee
                 let codecID = codecpar.codec_id
                 if codecID == AV_CODEC_ID_NONE || codecID.rawValue == 0x18000 || codecID.rawValue == 0x18006,
@@ -151,7 +151,7 @@ public final class FormatContext {
         //   else (or no .video track) → 1. The selector M = .video, recovered by disasm @0x101a35fc4 (loads
         //   GOT[0x104108740] — the AVMediaType slot the decompiler dropped, adjacent to Audio@0x104108730 /
         //   Subtitle@0x104108738) + elimination (FFmpegAssetTrack.mediaType ∈ {audio,video,subtitle}). It is a FIRST-
-        //   match on mediaType, NOT contains-any-positive (@0x101a35fd0-0x101a36114). FUN_101a350bc @0x101a35e00-0x101a361cc.
+        //   match on mediaType, NOT contains-any-positive (@0x101a35fd0-0x101a36114). FUN_101a350bc @0x101a35e00-0x101a361cc.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         let bitrateValue: Int64
         if durationValue > 0, fileSize >= 1 {
             let bps = (fileSize * 8) / durationSecondsInt
@@ -180,7 +180,7 @@ public final class FormatContext {
         self.bitrate = bitrateValue
     }
 
-    // ⚑ chapters — computed getter, body = FUN_101a362d0. Self reads self+0x18 (= formatCtx) via RAW offsets
+    // ⚑ chapters — computed getter, body = FUN_101a362d0. Self reads self+0x18 (= formatCtx) via RAW offsets  ⚑[tool=resolve_fun_pins ref=FUN_101a362d0:0x101a362d0 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.chapters() -> [KSPlayer.Chapter]
     //   (Ghidra anchors MEPlayerItem's fields symbolically; these are raw ⟹ owner is FormatContext, not
     //   MEPlayerItem). Forward moved the base MEPlayerItem.openThread chapters loop onto the wrapper.
     //   Timebase.cmtime(for:) = CMTime(value: start*num, timescale: den) matches the decompile's inlined
@@ -200,14 +200,14 @@ public final class FormatContext {
         return result
     }
 
-    // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,
+    // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     //   no deep pins): (1) raise the interrupt flag to cancel any in-flight IO; (2) if fonts were registered,
     //   unregister each embedded font (the init's CTFontManagerRegisterFontsForURL mirror, .process scope) and
     //   delete the temp fontsDir — both file ops `try?` (the binary __convertNSErrorToError + willThrow +
     //   errorRelease is a swallowed throw); (3) if a custom ioContext is installed, close it (AbstractAVIOContext
     //   vtable +0xa0) and hand-free its AVIOContext (pb) — buffer via av_freep, struct via avio_context_free,
     //   which FFmpeg leaves to the caller under AVFMT_FLAG_CUSTOM_IO; (4) close the format context.
-    // ⚑[tool=disassemble ref=FUN_101a3302c:0x101a3302c result=interrupt.flag=1 → fontsDir cleanup → (ioContext close + pb free) → format-context teardown]
+    // ⚑[tool=disassemble ref=FUN_101a3302c:0x101a3302c result=interrupt.flag=1 → fontsDir cleanup → (ioContext close + pb free) → format-context teardown]  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     // ⚑[tool=read_memory ref=AbstractAVIOContext.close:0x10000e52c result=vtable +0xa0=close() (metadata 0x1044e69b0+0xa0 word=0x10000e52c, coalesced w/ seek@+0x90; +0xa8=urlContext 0x10002d9d4 anchors the slot)]
     // ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]
     // ⚑[tool=ffmpeg_name_oracle ref=avio_context_free:0x1030c1358 result=CONFIRMED]
@@ -250,7 +250,7 @@ public final class FormatContext {
 //  grounded. Both names ⚑ P28 (IRREDUCIBLE — free-func + param names are not in reflection).
 //
 //  Signature P42-disasm-grounded (@0x101a392a0 register map d0=time, x0=url, x1=interrupt, x2=options,
-//  x3:x4=cacheKey; the last pinned via the sole non-nil caller FUN_101a34e54 @0x101a34f00, str+bridge = String?).
+//  x3:x4=cacheKey; the last pinned via the sole non-nil caller FUN_101a34e54 @0x101a34f00, str+bridge = String?).  ⚑[tool=resolve_fun_pins ref=FUN_101a34e54:0x101a34e54 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.__allocating_init(io: KSPlayer.Either<Foundation.URL, KSPlayer.AbstractAVIOContext>, options: KSPlayer.KSOptions?, inFormat: Swift.String?, interruptBlock: (@Sendable () -> Swift.Bool)?) throws -> KSPlayer.FormatContext
 //  Interrupt-context type recovered from reflection:
 //    ⚑[tool=read_memory ref=metadata:0x1044e9d20→desc:0x1039ef584→name:0x10356ab00 result="class IOInterruptContext"]
 //

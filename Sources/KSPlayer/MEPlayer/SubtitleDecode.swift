@@ -37,7 +37,7 @@ class SubtitleDecode: DecodeProtocol {
     private let fontsDir: String?
     private var subtitleHeader: String?
     private var pendingASSImageSubtitles: [(subtitle: String, start: Double, duration: Double)] = [] // §8.6
-    // init(assetTrack:options:) — Batch 4 Tier 3a. FUN_101a6914c (via __allocating_init thunk 0x101a69100). Base
+    // init(assetTrack:options:) — Batch 4 Tier 3a. FUN_101a6914c (via __allocating_init thunk 0x101a69100). Base  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     // cce7002 init is the adaptation reference, reworked for Forward's added fields (assetTrack/isASS/fontsDir/
     // subtitleHeader §8.3) + a codecContext time_base set (like FFmpegDecode). isASS = codec_id in {SSA/ASS/EIA_608}
     // (DAT_1044eb330/334/338 read = 0x17004/0x17016/0x1700a). Only the non-optional stored field (assetTrack) needs
@@ -54,7 +54,7 @@ class SubtitleDecode: DecodeProtocol {
     //   un-nameable KSOptions private static Bools DAT_104c63150/151/152 as AssImageParse.canParse={false}; with the
     //   feature off (always-current) the ASS-header falls through to assParse.canParse below. Not fabricated (cardinal rule).
     // ⚑ P55 REFINEMENT (session 32): `options` is `KSOptions?` (was non-optional — a Tier-3a faithfulness error).
-    //   Forward's binary FUN_101a6914c guards `if options == nil { fontsDir = String?.none }` (disasm @0x101a692a8);
+    //   Forward's binary FUN_101a6914c guards `if options == nil { fontsDir = String?.none }` (disasm @0x101a692a8);  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     //   the FFmpegSubtitle.init caller passes nil (`mov x1,#0x0` @0x101a9f5d8). Nullable options flows to createContext
     //   (already `KSOptions?`). Other caller MEPlayerItemTrack:304 passes non-nil (binds unchanged).
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions?) {
@@ -89,9 +89,9 @@ class SubtitleDecode: DecodeProtocol {
 
     // decodeFrame(from:) — FUN_101a69f54, `SubtitleDecode.decodeFrame(from:) -> ([SubtitlePart], Int64, Timebase)?`.
     // Forward SPLIT the base's single completion-handler decodeFrame into this SYNCHRONOUS decode core + a
-    // completion-handler wrapper (decodeFrame(from:completionHandler:) below = FUN_101a69de8, which calls this). The
+    // completion-handler wrapper (decodeFrame(from:completionHandler:) below = FUN_101a69de8, which calls this). The  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
     // split lets the subtitle-sidecar path (FFmpegSubtitle.init) and search(with:) accumulate [SubtitlePart] directly.
-    // THREE callers (get_function_xrefs 0x101a69f54): FUN_101a69de8 (completion — uses .parts + .timebase, captured
+    // THREE callers (get_function_xrefs 0x101a69f54): FUN_101a69de8 (completion — uses .parts + .timebase, captured  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
     // @0x101a69e24 x2), FUN_101a9f27c=FFmpegSubtitle.init (uses .parts), FUN_101a9fa34=search(with:) async (deferred stub).
     // Takes the RAW AVPacket* (FFmpegSubtitle.init passes its allocated packet pointer directly; pts@+0x08 / dts@+0x10 /
     // duration@+0x40 read here) — NOT a Packet wrapper. Base cce7002 decodeFrame is the adaptation reference (P19/P61),
@@ -171,8 +171,8 @@ class SubtitleDecode: DecodeProtocol {
         return (parts, timestamp, timebase)
     }
 
-    // decodeFrame(from:completionHandler:) — FUN_101a69de8, the DecodeProtocol witness. Calls the synchronous
-    // decodeFrame(from:) above on packet.corePacket, then delivers each part as a SubtitleFrame. FUN_101a69de8
+    // decodeFrame(from:completionHandler:) — FUN_101a69de8, the DecodeProtocol witness. Calls the synchronous  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
+    // decodeFrame(from:) above on packet.corePacket, then delivers each part as a SubtitleFrame. FUN_101a69de8  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
     // @0x101a69e24 captures the tuple's .timebase (x2) and passes it to the frame-init getPosition helper (FUN_101a63adc,
     // outlined into the frame build); the tuple's .timestamp (x1) is unused here (frame timing derives from part.start).
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
@@ -260,7 +260,7 @@ class SubtitleDecode: DecodeProtocol {
         return parts
     }
 
-    // FUN_101a6a3ac — doFlushCodec() (Forward ADDITION; base cce7002 = empty `{}`). Flush the subtitle
+    // FUN_101a6a3ac — doFlushCodec() (Forward ADDITION; base cce7002 = empty `{}`). Flush the subtitle  ⚑[tool=resolve_fun_pins ref=FUN_101a6a3ac:0x101a6a3ac result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.doFlushCodec() -> ()
     // decoder's buffers. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avcodec_flush_buffers @0x10294d260
     // (self+0x18 `codecContext`). ⚑ UNRESOLVED → Batch 5 (spine-preserved-by-omission, cardinal rule):
     //   the binary ALSO spawns a `Task { }` (FUN_101a03fd4) capturing self+0x10 `assImageRenderer` to
@@ -273,7 +273,7 @@ class SubtitleDecode: DecodeProtocol {
         }
     }
 
-    // FUN_101a6a4ec — shutdown() (base-adapted, P19/P61: base cce7002 body MINUS the removed
+    // FUN_101a6a4ec — shutdown() (base-adapted, P19/P61: base cce7002 body MINUS the removed  ⚑[tool=resolve_fun_pins ref=FUN_101a6a4ec:0x101a6a4ec result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.shutdown() -> ()
     // VideoSwresample `scale.shutdown()` — Forward dropped the `scale` field, §8.3). Frees the decoded
     // subtitle then the codec context. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avsubtitle_free
     // @0x10294d330 (self+0x20 `subtitle`), avcodec_free_context @0x102d53ac8 (self+0x18 `codecContext`).

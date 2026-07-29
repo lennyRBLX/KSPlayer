@@ -15,7 +15,7 @@ import FFmpegKit   // AVIOInterruptCB chain — subContexts holds CacheIOContext
 //             UNCHECKs them (expected 0 FLAG). HLSSegment is an UNRESOLVED placeholder
 //             — its real fields belong to the streaming owner phase, NOT fabricated here.
 //   init    — the designated init s18 @101b96cb0 delegates to the inner field-store
-//             init FUN_101b96cb0 (cached); reconstructed from that inner: it stores all
+//             init FUN_101b96cb0 (cached); reconstructed from that inner: it stores all  ⚑[tool=resolve_fun_pins ref=FUN_101b96cb0:0x101b96cb0 result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.init(download: PreLoadIOContext.URLContextDownload, mediaId: Swift.String, baseURL: Foundation.URL, formatContextOptions: [Swift.String : Any]) throws -> PreLoadIOContext.HLSCacheIOContext
 //             14 fields (defaults below; download/mediaId/baseURL/formatContextOptions
 //             from params), then derives hlsCacheDir =
 //             NSTemporaryDirectory()/"videoCache"/<mediaId>/"hls" and createDirectory's
@@ -82,7 +82,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     // 13 isClosed: whether close() has run. init false.
     private var isClosed: Bool = false
 
-    // --- designated init (s18 @101b96cb0 → inner FUN_101b96cb0) ---
+    // --- designated init (s18 @101b96cb0 → inner FUN_101b96cb0) ---  ⚑[tool=resolve_fun_pins ref=FUN_101b96cb0:0x101b96cb0 result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.init(download: PreLoadIOContext.URLContextDownload, mediaId: Swift.String, baseURL: Foundation.URL, formatContextOptions: [Swift.String : Any]) throws -> PreLoadIOContext.HLSCacheIOContext
 
     // Reconstructed from the inner field-store init: the param-fed fields (download,
     // mediaId, baseURL, formatContextOptions) are stored, every other field takes its
@@ -118,7 +118,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //   to its manifest/segment `download` (a CONCRETE URLContextDownload — a direct field
     //   load, no cast) and returns download.context. The decompile loads self.download
     //   (self+0x18), then does a checked-exclusivity read of download.context (its +0x18).
-    // ⚑[tool=prefetch_decompiles ref=FUN_101b99cac:0x101b99cac result=lVar1=*(self+0x18)[download];beginAccess(lVar1+0x18);return*(lVar1+0x18) == download.context]
+    // ⚑[tool=prefetch_decompiles ref=FUN_101b99cac:0x101b99cac result=lVar1=*(self+0x18)[download];beginAccess(lVar1+0x18);return*(lVar1+0x18) == download.context]  ⚑[tool=resolve_fun_pins ref=FUN_101b99cac:0x101b99cac result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.nextAVOptions() -> Swift.UnsafeMutableRawPointer?
     public override var urlContext: UnsafeMutablePointer<URLContext>? { download.context }
 
     // addSub (base slot +0xb0) — the io_open sub-URL router; the SOLE concrete +0xb0 override (every
@@ -135,9 +135,9 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //   points and the markers below characterize the real non-nil return. NOT fabricated. (The decompiler
     //   showed `return 0` on every path — an x0 value-residue across the materialization helper; the
     //   disassembly + the ioOpen caller arbitrate the true non-nil-AVIOContext contract, P28.)
-    // ⚑[tool=disassemble ref=FUN_101b97b2c:0x101b97b2c result=ext=url.pathExtension.lowercased(); route (ext=="m3u8"||ext=="m3u"||url.absoluteString.contains(".m3u8"))→child-HLS else→segment-cache; success returns the sub-context AVIOContext* else nil (epilogue mov x0,#0)]
-    // ⚑[tool=get_function_by_address ref=FUN_101b90c58:0x101b90c58 result=URLContextDownload designated-init inner (s3) — deferred to P8/IO-completion per URLContextDownload.swift; the child download build in both branches]
-    // ⚑[tool=decompile ref=FUN_1019e258c:0x1019e258c result=AVIOContext materialization — avio_alloc_context-style (bufferSize@self+0x14, write-flag, read/write/seek callbacks, class 0x104c63590); shared KSPlayer outlined helper; the success-path return residue]
+    // ⚑[tool=disassemble ref=FUN_101b97b2c:0x101b97b2c result=ext=url.pathExtension.lowercased(); route (ext=="m3u8"||ext=="m3u"||url.absoluteString.contains(".m3u8"))→child-HLS else→segment-cache; success returns the sub-context AVIOContext* else nil (epilogue mov x0,#0)]  ⚑[tool=resolve_fun_pins ref=FUN_101b97b2c:0x101b97b2c result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.addSub(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB) -> Swift.UnsafeMutablePointer<__C.AVIOContext>?
+    // ⚑[tool=get_function_by_address ref=FUN_101b90c58:0x101b90c58 result=URLContextDownload designated-init inner (s3) — deferred to P8/IO-completion per URLContextDownload.swift; the child download build in both branches]  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
+    // ⚑[tool=decompile ref=FUN_1019e258c:0x1019e258c result=AVIOContext materialization — avio_alloc_context-style (bufferSize@self+0x14, write-flag, read/write/seek callbacks, class 0x104c63590); shared KSPlayer outlined helper; the success-path return residue]  ⚑[tool=resolve_fun_pins ref=FUN_1019e258c:0x1019e258c result=RESOLVES_UNIQUELY] = KSPlayer.AbstractAVIOContext.getContext(writable: Swift.Bool) -> Swift.UnsafeMutablePointer<__C.AVIOContext>?
     public override func addSub(url: URL, flags: Int32, options: UnsafeMutablePointer<OpaquePointer?>?, interrupt: AVIOInterruptCB) -> UnsafeMutablePointer<AVIOContext>? {
         let ext = url.pathExtension.lowercased()
         if ext == "m3u8" || ext == "m3u" || url.absoluteString.contains(".m3u8") {
@@ -149,7 +149,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
             //   AVIOContext materialization are the deferred residuals (see the class-level markers), so the
             //   child is not built here and the childHLSContexts.append + non-nil return are characterized
             //   only. The routing/classification spine above is faithful.
-            // ⚑[tool=disassemble ref=FUN_101b96cb0:0x101b96cb0 result=HLSCacheIOContext designated init (this file) — the child (download:, mediaId:, baseURL:url, formatContextOptions:) construction, called after the P8 URLContextDownload build]
+            // ⚑[tool=disassemble ref=FUN_101b96cb0:0x101b96cb0 result=HLSCacheIOContext designated init (this file) — the child (download:, mediaId:, baseURL:url, formatContextOptions:) construction, called after the P8 URLContextDownload build]  ⚑[tool=resolve_fun_pins ref=FUN_101b96cb0:0x101b96cb0 result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.init(download: PreLoadIOContext.URLContextDownload, mediaId: Swift.String, baseURL: Foundation.URL, formatContextOptions: [Swift.String : Any]) throws -> PreLoadIOContext.HLSCacheIOContext
             return nil
         }
         // media segment: consult the per-segment child cache under subContextsLock, creating it on a miss.
@@ -173,10 +173,10 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         //   trailing segment-match loop over `segments` (its element URL read goes through the HLSSegment
         //   placeholder layout, like segmentIndex) are NOT reconstructed; the AVIOContext materialization +
         //   non-nil return are characterized only. The lock discipline + miss-path spine above are faithful.
-        // ⚑[tool=get_function_by_address ref=FUN_101b86a2c:0x101b86a2c result=segment cache-key String builder (URLComponents queryItems/url, 651B)]
-        // ⚑[tool=get_function_by_address ref=FUN_1019f0d98:0x1019f0d98 result=String(UTF8View,count) re-encode in the cache-key derivation]
+        // ⚑[tool=get_function_by_address ref=FUN_101b86a2c:0x101b86a2c result=segment cache-key String builder (URLComponents queryItems/url, 651B)]  ⚑[tool=resolve_fun_pins ref=FUN_101b86a2c:0x101b86a2c result=RESOLVES_UNIQUELY] = (extension in PreLoadIOContext):Foundation.URL.sortQueryString.getter : Swift.String
+        // ⚑[tool=get_function_by_address ref=FUN_1019f0d98:0x1019f0d98 result=String(UTF8View,count) re-encode in the cache-key derivation]  ⚑[tool=resolve_fun_pins ref=FUN_1019f0d98:0x1019f0d98 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Swift.String.md5() -> Swift.String
         // ⚑[tool=get_function_by_address ref=FUN_101b9b45c:0x101b9b45c result=subContexts keyed insert (same helper setSubContext pins, 335B)]
-        // ⚑[tool=disassemble ref=FUN_101b86d38:0x101b86d38 result=CacheIOContext designated init (in-module/done, CacheIOContext.swift:147); addSub calls it with bufferSize=0x40000 saveFile=true isReadComplete=false]
+        // ⚑[tool=disassemble ref=FUN_101b86d38:0x101b86d38 result=CacheIOContext designated init (in-module/done, CacheIOContext.swift:147); addSub calls it with bufferSize=0x40000 saveFile=true isReadComplete=false]  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
         return nil
     }
 

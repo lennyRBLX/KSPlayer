@@ -271,7 +271,7 @@ open class SubtitleModel: ObservableObject {
 
     nonisolated(unsafe) public static var textFontSize = SubtitleModel.Size.standard.rawValue
     nonisolated(unsafe) public static var textBold = false
-    // ⚑ DAT_104c63248 (module-level static Bool; get FUN_1019bb6c0 / set FUN_1019bb700) — read in the iOS-18
+    // ⚑ DAT_104c63248 (module-level static Bool; get FUN_1019bb6c0 / set FUN_1019bb700) — read in the iOS-18  ⚑[tool=resolve_fun_pins ref=FUN_1019bb6c0:0x1019bb6c0 result=RESOLVES_UNIQUELY] = static KSPlayer.KSOptions.showTranslateSourceText.getter : Swift.Bool  ⚑[tool=resolve_fun_pins ref=FUN_1019bb700:0x1019bb700 result=RESOLVES_UNIQUELY] = static KSPlayer.KSOptions.showTranslateSourceText.setter : Swift.Bool
     //   translate success funclet 5aa8@0x6148: when true, the translated subtitle prepends the ORIGINAL text
     //   ("original\ntranslation"). Exact source name/owner unrecoverable (P28) → recon-named here.
     nonisolated(unsafe) public static var showsOriginalWithTranslation = false
@@ -401,7 +401,7 @@ open class SubtitleModel: ObservableObject {
                 // idiom; P62 concurrency escape — under-included per §1, not a logic change).
                 nonisolated(unsafe) let info = newValue
                 firstSubtitleActor = SubtitleActor(info: info)
-                didSelectSubtitle(info)                 // FUN_101ab8250 (shared with secondary); name P28
+                didSelectSubtitle(info)                 // FUN_101ab8250 (shared with secondary); name P28  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
                 #if canImport(Translation) && !os(tvOS) && !os(watchOS)
                 // FUN_101ab2540 translation branch: build a Configuration from the new subtitle's language and the
                 // current locale, skipping when they already match (nothing to translate).
@@ -496,7 +496,7 @@ open class SubtitleModel: ObservableObject {
         }
     }
 
-    // FUN_101ab8250 — shared helper invoked by BOTH select willSets on the newly-selected info (2 call sites).
+    // FUN_101ab8250 — shared helper invoked by BOTH select willSets on the newly-selected info (2 call sites).  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
     // Activates it, registers it (addSubtitle reselect:false to avoid re-select recursion), and caches a remote /
     // iCloud-ubiquitous download via a CacheSubtitleDataSource. ⚑ method name unrecoverable (P28).
     // Forward divergence (P59): base cached only `!isFileURL`; Forward also caches (isFileURL && isUbiquitousItem).
@@ -515,7 +515,7 @@ open class SubtitleModel: ObservableObject {
     }
 
     #if canImport(Translation) && !os(tvOS) && !os(watchOS)
-    // FUN_101aaffa0 — store the new Configuration into `_translationSessionConf` (self+0x18), then drop the live
+    // FUN_101aaffa0 — store the new Configuration into `_translationSessionConf` (self+0x18), then drop the live  ⚑[tool=resolve_fun_pins ref=FUN_101aaffa0:0x101aaffa0 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.translationSessionConf.setter : Translation.TranslationSession.Configuration?
     // `_translationSession` (self+0x38) when the new config is nil/empty (forcing a rebuild). The binary reads NO
     // prior value: the clear fires on a value-witness `==` of the new config against an empty one, NOT new-vs-old.
     // ⚑ exact `==` spelling M2-verify (reconstructed to the proven behavior: clear-when-nil).
@@ -618,7 +618,7 @@ open class SubtitleModel: ObservableObject {
             // BEFORE any translation work — a supersession race during the translate await abandons here.
             guard stillCurrent(newParts, generation: generation, sequence: sequence) else { return }
             // 5aa8 success. Adapt the stored config's source language to the detected one when they differ
-            // (self._translationSessionConf, self+0x18, via a _modify coroutine FUN_101ab03c8; get/set_source
+            // (self._translationSessionConf, self+0x18, via a _modify coroutine FUN_101ab03c8; get/set_source  ⚑[tool=resolve_fun_pins ref=FUN_101ab03c8:0x101ab03c8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.translationSessionConf.modify : Translation.TranslationSession.Configuration?
             // 0x103452c98/ca4, Response.get_sourceLanguage 0x103452cd4, Locale.Language ==_infix 0x1034573f0@0x6448).
             if var conf = _translationSessionConf as? TranslationSession.Configuration,
                conf.source != response.sourceLanguage {
@@ -661,7 +661,7 @@ open class SubtitleModel: ObservableObject {
         currentTime - (secondarySubtitleInfo?.delay ?? 0) - subtitleDelay
     }
 
-    // query.size (438c/4c54 @0x469c): integer-truncated aspect fit of screenSize to playRatio (FUN_1019e7800 —
+    // query.size (438c/4c54 @0x469c): integer-truncated aspect fit of screenSize to playRatio (FUN_1019e7800 —  ⚑[tool=resolve_fun_pins ref=FUN_1019e7800:0x1019e7800 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):__C.CGSize.within(ratio: Swift.Double) -> __C.CGSize
     // letterbox when playRatio ≤ height/width, else pillarbox). ⚑ gated in-binary by an `actor.info` Bool witness
     // (info wtable+0x50) whose identity is UNVERIFIED, so the size-fit region of 438c/4c54 is a known divergence
     // pending that decode; represented unconditionally here.
@@ -704,7 +704,7 @@ open class SubtitleModel: ObservableObject {
         if stillCurrent(items, generation: generation, sequence: sequence) { parts = items }
     }
 
-    // FUN_101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a
+    // FUN_101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a  ⚑[tool=resolve_fun_pins ref=FUN_101ab68d8:0x101ab68d8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(invalidateParts in _912797C474A4D482F764324552AD86D2)() -> ()
     // generation-invalidation + actor-reset trigger. The text `query`/`languages` are UNUSED here — the
     // network search moved into the per-track SubtitleActors (lazy). Bumps the model generation/sequence,
     // resets both query-times + `parts`, then resets both actors (FUN_101ab6acc→6b5c/6bc4/6c2c chain).

@@ -95,7 +95,7 @@ actor DemuxerIO {
         case close
     }
 
-    /// slot0 vtable getter (get-only computed): `state == .endOfStream` (FUN_101b7e6b8 — reads state, cmp == 4).
+    /// slot0 vtable getter (get-only computed): `state == .endOfStream` (FUN_101b7e6b8 — reads state, cmp == 4).  ⚑[tool=resolve_fun_pins ref=FUN_101b7e6b8:0x101b7e6b8 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.isEndOfStream.getter : Swift.Bool
     /// ⚑ NAME INFERRED — the getter carries no #function literal (`recover_swift_function_name` = None); declared
     /// first to occupy vtable slot0 (declaration order inferred from the slot position). Access level not
     /// binary-recoverable (manual §1 — under-include; `var` = internal).
@@ -158,7 +158,7 @@ actor DemuxerIO {
         }
     }
 
-    /// slot27 vtable method — `FUN_101b7fed8` (7i, sync actor-isolated, method-kind).
+    /// slot27 vtable method — `FUN_101b7fed8` (7i, sync actor-isolated, method-kind).  ⚑[tool=resolve_fun_pins ref=FUN_101b7fed8:0x101b7fed8 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.update(delegate: ProAVPlayer.DemuxerIODelegate?) -> ()
     /// Weak delegate setter: stores the witness (delegate+8) then tail-calls `_swift_unknownObjectWeakAssign`
     /// for the object — i.e. `self.delegate = <existential>`. Kind=Method (NOT a synthesized Setter — delegate
     /// skips an accessor triple, later·49); dispatched via vtable only (3 DATA xrefs, no code caller).
@@ -169,7 +169,7 @@ actor DemuxerIO {
         self.delegate = delegate
     }
 
-    /// slot26 vtable method — `FUN_101b7e9d0` (721i, sync actor-isolated) — the demuxer's Event dispatcher /
+    /// slot26 vtable method — `FUN_101b7e9d0` (721i, sync actor-isolated) — the demuxer's Event dispatcher /  ⚑[tool=resolve_fun_pins ref=FUN_101b7e9d0:0x101b7e9d0 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.send(ProAVPlayer.DemuxerIO.Event) -> ()
     /// state machine: an `Event` → state transition + delegate notify + async Task spawn.
     /// ⚑ NAME INFERRED — recover_swift_function_name = `rcl` labels=0 vs the 4-arg ABI ⇒ MISMATCH → UNRESOLVED
     ///   (P28); `process` inferred from role. ⚑ access-level not binary-recoverable (§1) — internal (vtable slot).
@@ -218,7 +218,7 @@ actor DemuxerIO {
                 seekTime = to
                 state = .seeking
                 seekingCompletionHandler = completion
-                process(.startReading)                                   // recursive [FUN_101b7e9d0(0,0,0,2)]
+                process(.startReading)                                   // recursive [FUN_101b7e9d0(0,0,0,2)]  ⚑[tool=resolve_fun_pins ref=FUN_101b7e9d0:0x101b7e9d0 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.send(ProAVPlayer.DemuxerIO.Event) -> ()
             case .failed:
                 seekTime = to
                 seekingCompletionHandler = completion
@@ -281,14 +281,14 @@ actor DemuxerIO {
     ///   4th DemuxerIODelegate requirement, no-arg ABI-confirmed).
     /// ⚑ UNRESOLVED (honest-deferral P36): the `await t.value` resumption (continuation `FUN_101b814f8`) +
     ///   the tail jumptable ("Too many branches") + the teardown callees (release ioAction `FUN_10002abb8`;
-    ///   `FUN_101b82c04` module-new / `FUN_101a3302c` base).
+    ///   `FUN_101b82c04` module-new / `FUN_101a3302c` base).  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     func cancelReading() async {
         if let task = ioTask {
             task.cancel()
             _ = await task.value
         }
         ioTask = nil
-        // ⚑ UNRESOLVED — teardown: release ioAction (FUN_10002abb8) + FUN_101b82c04 / FUN_101a3302c cleanup
+        // ⚑ UNRESOLVED — teardown: release ioAction (FUN_10002abb8) + FUN_101b82c04 / FUN_101a3302c cleanup  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
         delegate?.demuxerDidClose()
     }
 

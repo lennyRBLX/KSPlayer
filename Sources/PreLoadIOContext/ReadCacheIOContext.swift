@@ -12,7 +12,7 @@ import KSPlayer
 //   inits   — the DESIGNATED field-store init is DEVIRTUALIZED (descriptor slot 16 =
 //             new-unresolved, addr=null, NO readable body). The two readable inits
 //             (s15 @101bacb8c, s17 @101bacd64) are CONVENIENCE thunks that build the
-//             `download` (via the shared URLContextDownload init FUN_101b90c58) then
+//             `download` (via the shared URLContextDownload init FUN_101b90c58) then  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
 //             DELEGATE to the devirt slot-16 — so the 8-field store has no readable
 //             body to reconstruct. → all real inits UNRESOLVED→P8 (IO-completion) (cardinal: no body,
 //             never fabricate). `init(bufferSize:)` is the inherited compilable spine.
@@ -24,7 +24,7 @@ import KSPlayer
 // read body deferred to P2 (devirt recovery + the FFmpeg oracle).
 public class ReadCacheIOContext: AbstractAVIOContext {
     // --- stored fields (binary __swift5_fieldmd order) ---
-    // download: the URLContextDownload the convenience inits build (FUN_101b90c58).
+    // download: the URLContextDownload the convenience inits build (FUN_101b90c58).  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     // ⚑[tool=binding_gate ref=ReadCacheIOContext:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.

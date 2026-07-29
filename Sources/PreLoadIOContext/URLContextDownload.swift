@@ -10,7 +10,7 @@ import Libavformat
 //   fields — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative);
 //            `context`/`keepAlive`/`isReadComplete` are v4 concrete (transcribed
 //            verbatim); `url` is ⚑ best-effort (confirmed via l2_field_gate).
-//   init   — real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (cached;
+//   init   — real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (cached;  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
 //            7-arg, also reused by CacheIOContext/ReadCacheIOContext to build their
 //            `download`). Opens an FFmpeg URLContext (deep IO; stripped calls named
 //            only by the P2 oracle) → UNRESOLVED→P8 (IO-completion); inherited init(bufferSize:) is
@@ -43,7 +43,7 @@ public class URLContextDownload: AbstractAVIOContext {
     //   reconstruction/binding_refuted_s61.json
     var url: URL? // type URL; optionality inferred — ⚑
 
-    // UNRESOLVED: real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (7 args; also reused by
+    // UNRESOLVED: real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (7 args; also reused by  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     //   CacheIOContext/ReadCacheIOContext to build their `download`). Opens an FFmpeg URLContext
     //   (multiple_requests option, avio open) — deep FFmpeg IO whose stripped calls only the P2 oracle names.
     //   Not reconstructed; inherited init(bufferSize:) is the compilable spine. — P2

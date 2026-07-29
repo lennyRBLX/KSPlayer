@@ -20,7 +20,7 @@ import Libavformat
 public final class MEPlayerItem: @unchecked Sendable {
     // ⚑ Field-layout migration (commit-1): the 42 stored properties in Forward binary order
     //   (scripts/dump_binary_field_types.py MEPlayerItem). Types from MEPlayerItem.init
-    //   (FUN_101a4bae0) + name_type_at_addr; residual generic/closure exactness flagged
+    //   (FUN_101a4bae0) + name_type_at_addr; residual generic/closure exactness flagged  ⚑[tool=resolve_fun_pins ref=FUN_101a4bae0:0x101a4bae0 result=RESOLVES_UNIQUELY] = KSPlayer.MEPlayerItem.init(io: KSPlayer.Either<Foundation.URL, KSPlayer.AbstractAVIOContext>, options: KSPlayer.KSOptions) -> KSPlayer.MEPlayerItem
     //   // ⚑ UNRESOLVED (field-record None ⟹ l2 UNCHECKED, non-blocking). The 17 base fields are
     //   removed; every method that used them is stubbed // ⚑ UNRESOLVED pending its Forward-body commit.
     private var io: Either<URL, AbstractAVIOContext>                 // 1 ⚑[tool=name_type_at_addr ref=io:0x103566d40 result=Either<_,AbstractAVIOContext>] first param URL (sibling KSAVPlayer.io)

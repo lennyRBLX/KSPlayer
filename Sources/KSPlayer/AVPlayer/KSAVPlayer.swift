@@ -313,7 +313,7 @@ extension KSAVPlayer {
         delegate?.changeLoadState(player: self)
     }
 
-    public func replaceCurrentItem(playerItem: AVPlayerItem?) {   // public (was private, P34): ProAVPlayer (separate module) slot15 item-swap closure installs its ProPlayerItem via this cross-module call (FUN_1019a563c)
+    public func replaceCurrentItem(playerItem: AVPlayerItem?) {   // public (was private, P34): ProAVPlayer (separate module) slot15 item-swap closure installs its ProPlayerItem via this cross-module call (FUN_1019a563c)  ⚑[tool=resolve_fun_pins ref=FUN_1019a563c:0x1019a563c result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.replaceCurrentItem(playerItem: __C.AVPlayerItem?) -> ()
         player.currentItem?.cancelPendingSeeks()
         if options.isLoopPlay {
             playerLooper?.disableLooping()
@@ -580,7 +580,7 @@ extension KSAVPlayer: SubtitleDataSource {}
 // main-actor `subtitleTracks` directly (matching the binary) and satisfy the nonisolated protocol req — it relaxes the
 // non-Sendable [any SubtitleInfo] boundary that strict-concurrency (xcodebuild) rejects for a plain @MainActor witness.
 extension KSAVPlayer: @preconcurrency ConstantSubtitleDataSource {
-    // Task 6 (session 20). Witness 0x1019aba18 (async trampoline) → FUN_1019ab818 (task_switch hop) → FUN_1019ab830:
+    // Task 6 (session 20). Witness 0x1019aba18 (async trampoline) → FUN_1019ab818 (task_switch hop) → FUN_1019ab830:  ⚑[tool=resolve_fun_pins ref=FUN_1019ab818:0x1019ab818 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.infos() async throws -> [KSPlayer.SubtitleInfo]
     // reads the stored `subtitleTracks: [any MediaPlayerTrack]` (_swift_beginAccess) and collects the SubtitleInfo
     // conformers (_swift_getObjectType + _swift_conformsToProtocol per element). Return element PROVEN `[any SubtitleInfo]`,
     // NOT rippled to [URLSubtitleInfo] (P55/P60, opposite of the Search/URL siblings): each element is stored as a 2-word

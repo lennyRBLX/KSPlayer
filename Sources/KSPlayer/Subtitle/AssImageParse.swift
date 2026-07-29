@@ -16,7 +16,7 @@ public class AssImageParse: KSParseProtocol {
     //   HOLDS; name recovery EXHAUSTED — safe `false` fallback per the cardinal rule, NOT fabricated. Unblock needs a
     //   symbolicated/app-context build or upstream Forward source; NOT further binary analysis — do NOT re-open as
     //   pending work). RE-VERIFY (P43): recover_swift_function_name → all 4 helpers 'npl'(spurious #file:None); the
-    //   3 flag accessors FUN_1019b982c/98fc/99cc + shared reader FUN_101b1d474 → #function None.
+    //   3 flag accessors FUN_1019b982c/98fc/99cc + shared reader FUN_101b1d474 → #function None.  ⚑[tool=resolve_fun_pins ref=FUN_1019b982c:0x1019b982c result=RESOLVES_UNIQUELY] = static KSPlayer.KSOptions.isASSUseImageRender.getter : Swift.Bool
     //   ⚠️ THREE OF THE FOUR ARE NOW NAMED (session 63). `recover_swift_function_name` genuinely
     //   fails on them, but the ORPHANED export trie carries an ADDRESS->symbol map, and the flags
     //   are KSOptions statics, so the three accessors have real identities (each named in its own

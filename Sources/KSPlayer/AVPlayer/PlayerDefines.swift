@@ -371,7 +371,7 @@ public extension FixedWidthInteger {
 
 // Forward-only enum (binary-confirmed name `DecodeType`). Binary reflection (__swift5_fieldmd via the field-record
 // oracle, desc @0x1039edfec): 5 no-payload cases in this ORDER, 1-byte storage. Case indices are binary-pinned —
-// KSOptions.init (FUN_1019b2f7c) stores `decodeType = 1` = `.avplayer`. `vulka` is the binary's exact case name
+// KSOptions.init (FUN_1019b2f7c) stores `decodeType = 1` = `.avplayer`. `vulka` is the binary's exact case name  ⚑[tool=resolve_fun_pins ref=FUN_1019b2f7c:0x1019b2f7c result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.init() -> KSPlayer.KSOptions
 // (reflection-read; reads like a truncation of "vulkan" but is what Forward ships — searched, no standalone "vulkan").
 public enum DecodeType {
     case asynchronousHardware

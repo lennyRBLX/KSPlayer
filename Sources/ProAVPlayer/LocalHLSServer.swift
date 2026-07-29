@@ -3,7 +3,7 @@
 //  ProAVPlayer
 //
 //  P3b M2 (bodies) — Forward-new local HLS HTTP server. init + startListen SPINE reconstructed
-//  (FUN_101b705ec init, FUN_101b7138c=slot10 startListen); deeper serve/connection bodies → later commits.
+//  (FUN_101b705ec init, FUN_101b7138c=slot10 startListen); deeper serve/connection bodies → later commits.  ⚑[tool=resolve_fun_pins ref=FUN_101b705ec:0x101b705ec result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer
 //  Binary: desc=0x1039f5198, vtable=20; accessors slots0/3/4/5 compiler-synthesized (no source).
 //
 //  M1→M2 CORRECTIONS (binary-confirmed): init was `init(port:)` — real is `init(rootDirectory:port:) throws`
@@ -45,7 +45,7 @@ class LocalHLSServer {
     // key via URL:Hashable (FUN_101b835bc → Hashable._rawHashValue on a URL). Per-URL backoff delay.
     private var retryDelayMap: [URL: Int] = [:]
 
-    /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).
+    /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).  ⚑[tool=resolve_fun_pins ref=FUN_101b705ec:0x101b705ec result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer  ⚑[tool=resolve_fun_pins ref=FUN_101b70274:0x101b70274 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.__allocating_init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer
     /// vtable slot 6 @0x101b70274 is the compiler-emitted ALLOCATING entry point for this init and has no
     /// source of its own — whole body (20 instr, disasm): save x0/x1 → `ldr w1,[x20,#0x30]` /
     /// `ldrh w2,[x20,#0x34]` (instanceSize / alignMask off the metadata in x20) → `bl 0x10345caf0`
@@ -79,7 +79,7 @@ class LocalHLSServer {
     ///       load): 0x1044f2a78 queue · 0x1044f2a80 statusMessages · 0x1044f2b40 retryDelayMap ·
     ///       0x1044f2b48 rootDirectory. (Ghidra names all four `_TtC11ProAVPlayer14LocalHLSServer::<field>`,
     ///       which is an independent confirmation of that mapping.)
-    ///   (b) the metadata comes from a SINGLETON accessor (FUN_101b75858) over a cache @0x1044f2b90 that
+    ///   (b) the metadata comes from a SINGLETON accessor (FUN_101b75858) over a cache @0x1044f2b90 that  ⚑[tool=resolve_fun_pins ref=FUN_101b75858:0x101b75858 result=RESOLVES_UNIQUELY] = type metadata accessor for ProAVPlayer.LocalHLSServer
     ///       is likewise null in the file, keyed on descriptor 0x1039f5198.
     ///   (c) the error path re-reads +0x30/+0x34 off the LIVE metadata to size the partial dealloc.
     /// Field ORDER is still pinned (declaration order above); only the byte offsets of the last four
@@ -151,7 +151,7 @@ class LocalHLSServer {
         listener.start(queue: queue)
     }
 
-    /// Binary: FUN_101b70b64 (vtable slot7) → outlined body FUN_101b753e8.
+    /// Binary: FUN_101b70b64 (vtable slot7) → outlined body FUN_101b753e8.  ⚑[tool=resolve_fun_pins ref=FUN_101b70b64:0x101b70b64 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.ping() -> ()
     /// ⚑ name UNRESOLVED — the ABI proves this method takes no params (disasm: x0..x7 unread on
     /// entry, self in x20), which rules out the only nearby name-string "probeListener(block:)"
     /// (@0x103d3e750, takes a `block:`) as this method's name; that string names the sibling
@@ -199,7 +199,7 @@ class LocalHLSServer {
         }
     }
 
-    /// Binary: FUN_101b70d3c (vtable slot8). ⚑ name from the debug-log string "stop()".
+    /// Binary: FUN_101b70d3c (vtable slot8). ⚑ name from the debug-log string "stop()".  ⚑[tool=resolve_fun_pins ref=FUN_101b70d3c:0x101b70d3c result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.stop() -> ()
     /// Cancels the listener and clears the retry / keep-alive maps.
     func stop() {
         listener.cancel()
@@ -208,7 +208,7 @@ class LocalHLSServer {
         // ⚑ trailing debug log ("stop HLS Server" / "stop()") omitted — KSLog form UNRESOLVED.
     }
 
-    /// Binary: FUN_101b70ed4 (vtable slot9), `throws`. ⚑ name/param-labels inferred (stripped).
+    /// Binary: FUN_101b70ed4 (vtable slot9), `throws`. ⚑ name/param-labels inferred (stripped).  ⚑[tool=resolve_fun_pins ref=FUN_101b70ed4:0x101b70ed4 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.getURL(for: Foundation.URL, local: Swift.Bool) throws -> Foundation.URL
     /// Builds the local-server URL for a file in the HLS output directory:
     ///   http://<host>:<port>/<fileURL's path relative to rootDirectory>
     /// host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1"). Throws Forward's
@@ -245,7 +245,7 @@ class LocalHLSServer {
         return nil
     }
 
-    /// Binary: FUN_1019f501c (slot9-private helper — new; not an existing KSPlayer URL ext). ⚑ names
+    /// Binary: FUN_1019f501c (slot9-private helper — new; not an existing KSPlayer URL ext). ⚑ names  ⚑[tool=resolve_fun_pins ref=FUN_1019f501c:0x1019f501c result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Foundation.URL.relativePath(base: Foundation.URL) -> Swift.String
     /// inferred. `to`'s path relative to `from`: when they share scheme + host, drop the common leading
     /// standardized path components and join the remainder with "/"; otherwise `to.path`.
     private func relativePath(from: URL, to: URL) -> String {

@@ -15,7 +15,7 @@ import FFmpegKit  // FFmpeg C types reachable through the CacheIOContext chain
 //             directly (loadMoreBuffer=nil, fakeUrlPos=0, moreUrlPos=0, _timeIndex=[],
 //             _timeIndexLock=NSLock(), moreDownload=param-copied, maxFileSize=x6,
 //             maxReadedFileSize=x7) then delegates to CacheIOContext's designated
-//             init FUN_101b86d38. PARAM ORDER is no longer inferred — session 62
+//             init FUN_101b86d38. PARAM ORDER is no longer inferred — session 62  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
 //             recovered it from the super-delegation register map (see the init).
 //           — s21 @101ba4308 is a THROWING CONVENIENCE init with a full 210-instruction
 //             body (the earlier "devirtualized, no readable body" note was WRONG and is
@@ -134,13 +134,13 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
 
     // --- inits ---
 
-    // Designated init s22 @101ba4650 → inner FUN_101ba4650 (cached, READABLE). The
+    // Designated init s22 @101ba4650 → inner FUN_101ba4650 (cached, READABLE). The  ⚑[tool=resolve_fun_pins ref=FUN_101ba4650:0x101ba4650 result=RESOLVES_UNIQUELY] = PreLoadIOContext.LimitSeparatePreLoadIOContext.__allocating_init(download: KSPlayer.DownloadProtocol, moreDownload: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, maxFileSize: Swift.UInt64, maxReadedFileSize: Swift.UInt64, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.LimitSeparatePreLoadIOContext
     // decompile sets all 8 own fields directly:
     //   loadMoreBuffer = nil (+loadMoreBuffer = 0), fakeUrlPos = 0, moreUrlPos = 0,
     //   _timeIndex = [] (PTR___swiftEmptyArrayStorage), _timeIndexLock = NSLock()
     //     (allocWithZone(__NSLock) + init), moreDownload = x1 (existential value-copied
     //     via FUN_1001263e0), maxFileSize = x6, maxReadedFileSize = x7,
-    // then delegates to CacheIOContext's designated init FUN_101b86d38.
+    // then delegates to CacheIOContext's designated init FUN_101b86d38.  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     //
     // PARAM ORDER — RESOLVED in session 62; the previous declaration was WRONG here and
     // carried an explicit OPEN QUESTION saying so. It is now read straight off the
@@ -186,7 +186,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
         self.maxFileSize = maxFileSize     // binary: *(self+0x104c639a8) = x6 @0x101ba4714
         self.maxReadedFileSize = maxReadedFileSize // binary: *(self+0x104c639b0) = x7 @0x101ba4720
         super.init(download: download, md5: md5, bufferSize: bufferSize,
-                   saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38
+                   saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     }
 
     // Convenience init s21 @101ba4308 (210 instr — init_thunk_probe: NOT_A_PLAIN_THUNK).
@@ -220,12 +220,12 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //     register, so it proved x21==0 on that edge.)
     //   • It builds TWO URLContextDownloads before delegating — which is exactly this
     //     class's `download` + `moreDownload` pair. That identification is not a guess:
-    //     `FUN_101b90c44(0)` is a metadata accessor
+    //     `FUN_101b90c44(0)` is a metadata accessor  ⚑[tool=resolve_fun_pins ref=FUN_101b90c44:0x101b90c44 result=RESOLVES_UNIQUELY] = type metadata accessor for PreLoadIOContext.URLContextDownload
     //     (`adrp x1,cache; adrp x2,0x1039f5a64; b swift_getSingletonMetadata`) and
     //     descriptor 0x1039f5a64 is URLContextDownload's own entry in
     //     classmap_1.3.17.jsonl, which independently records 0x101b90c44 as its accessor;
     //     its result then feeds `swift_allocObject(md,[md+0x30],[md+0x34])`, and
-    //     `FUN_101b90c58` is the initializing init URLContextDownload.swift already
+    //     `FUN_101b90c58` is the initializing init URLContextDownload.swift already  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     //     documents as the SHARED 7-arg inner init. Each gets a value-witness COPY of the
     //     SAME incoming Foundation.URL (`Foundation::URL` type-metadata accessor
     //     @0x103452464, then VWT+0x10 `initializeWithCopy` into two `__chkstk_darwin`
@@ -235,8 +235,8 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     // ⚑[tool=disassemble_function ref=Dictionary.avOptions_builder:0x101a08224 result=LOCATED — zeroes a 1-word slot, captures its ADDRESS into a forEach closure context, runs Sequence.forEach over the dictionary in x20, returns the slot. That is AVFFmpegExtension.swift:447 `[String:Any].avOptions`, which inserts each entry into an OpaquePointer? dictionary — the C entry point it calls is that file's claim to name, not this one's (no address for it is observable here). Its extra x1 = GOT[0x104112ce0]+8, an unresolved metadata operand — the generic Value witness — ⚑ pinned]
     // ⚑[tool=disassemble_function ref=outlined_Any_copy:0x100029440 result=LOCATED — 4-instruction outlined copy of a 32-byte Any; here it moves the Int-100000 box into the value operand, and 0x101b9b5ac tail-calls it to store into the bucket]
     // ⚑[tool=disassemble_function ref=Dictionary.subscript.setter_specialized:0x101b9b5ac result=CONFIRMED — `ldr x20,[x20]` inout receiver, find(key) @0x100020444, count+!found vs capacity, resize @0x101b9bc80, makeUnique @0x101b9b840, hit → values base `[x4,#0x38] + bucket<<5` (STRIDE 0x20 = a 32-byte Any) destroy-then-assign, miss → insert @0x100035948]
-    // ⚑[tool=disassemble_function ref=FUN_1019f0d98:0x1019f0d98 result=pinned — unnamed; String→String, its result is the String passed in the designated init's cacheKey position. HLSCacheIOContext.swift:172 independently records it as the `String(UTF8View,count)` re-encode in ITS cache-key derivation]
-    // ⚑[tool=disassemble_function ref=FUN_101b86a2c:0x101b86a2c result=pinned — unnamed; called with the incoming URL's address in the self register x20, returns the String fed to 0x1019f0d98. HLSCacheIOContext.swift:171 independently records it as the segment cache-key String builder (URLComponents queryItems/url, 651B)]
+    // ⚑[tool=disassemble_function ref=FUN_1019f0d98:0x1019f0d98 result=pinned — unnamed; String→String, its result is the String passed in the designated init's cacheKey position. HLSCacheIOContext.swift:172 independently records it as the `String(UTF8View,count)` re-encode in ITS cache-key derivation]  ⚑[tool=resolve_fun_pins ref=FUN_1019f0d98:0x1019f0d98 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Swift.String.md5() -> Swift.String
+    // ⚑[tool=disassemble_function ref=FUN_101b86a2c:0x101b86a2c result=pinned — unnamed; called with the incoming URL's address in the self register x20, returns the String fed to 0x1019f0d98. HLSCacheIOContext.swift:171 independently records it as the segment cache-key String builder (URLComponents queryItems/url, 651B)]  ⚑[tool=resolve_fun_pins ref=FUN_101b86a2c:0x101b86a2c result=RESOLVES_UNIQUELY] = (extension in PreLoadIOContext):Foundation.URL.sortQueryString.getter : Swift.String
     // ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
     // ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]  (already CONFIRMED at
     //   FormatContext.swift:31/212 for this same address — carried here, not re-derived)
@@ -297,9 +297,9 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   `mov w4,#0x40000`.
     //
     //   ORDER OF OPERATIONS (this is the load-bearing part, and it is explicit):
-    //   download #1 is built from `FUN_101a08224(x24 = the ORIGINAL dictionary)`
+    //   download #1 is built from `FUN_101a08224(x24 = the ORIGINAL dictionary)`  ⚑[tool=resolve_fun_pins ref=FUN_101a08224:0x101a08224 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Swift.Dictionary< where A == Swift.String>.avOptions.getter : Swift.OpaquePointer?
     //   @0x101ba43bc, i.e. BEFORE the AVOption write; the "rw_timeout" subscript set runs
-    //   @0x101ba44a4; download #2 is built from `FUN_101a08224(x23)` @0x101ba44b8 where
+    //   @0x101ba44a4; download #2 is built from `FUN_101a08224(x23)` @0x101ba44b8 where  ⚑[tool=resolve_fun_pins ref=FUN_101a08224:0x101a08224 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Swift.Dictionary< where A == Swift.String>.avOptions.getter : Swift.OpaquePointer?
     //   `ldur x23,[x29,#-0xb0]` @0x101ba44a8 reloads the dictionary the setter just
     //   rewrote. So the SECOND download is the one that carries rw_timeout, and the
     //   secondary/"load-more" download is therefore the timeout-bounded one.
@@ -320,12 +320,12 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   (`cacheKey:` → `md5:`, from `…C8download12moreDownload3md510bufferSize…`).
     //
     // UNRESOLVED → P8 (IO-completion): the two `URLContextDownload(url:flags:options:
-    //   interrupt:…)` builds are the SHARED inner init FUN_101b90c58, which
+    //   interrupt:…)` builds are the SHARED inner init FUN_101b90c58, which  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     //   URLContextDownload.swift leaves deferred (it opens an FFmpeg URLContext). They are
     //   NOT reconstructed here; `nil` is delegated in their place, exactly as
     //   CacheIOContext.swift:203-210 does for the same call. — P2
     // UNRESOLVED → P8 (IO-completion): the cacheKey is derived from `url` by
-    //   FUN_101b86a2c → FUN_1019f0d98 (both unnamed; HLSCacheIOContext.swift:171-172
+    //   FUN_101b86a2c → FUN_1019f0d98 (both unnamed; HLSCacheIOContext.swift:171-172  ⚑[tool=resolve_fun_pins ref=FUN_101b86a2c:0x101b86a2c result=RESOLVES_UNIQUELY] = (extension in PreLoadIOContext):Foundation.URL.sortQueryString.getter : Swift.String  ⚑[tool=resolve_fun_pins ref=FUN_1019f0d98:0x1019f0d98 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Swift.String.md5() -> Swift.String
     //   pins the same pair in its own cache-key derivation). NOT reconstructed — the
     //   placeholder below is marked and is NOT the binary's value. — P2
     public convenience init(url: URL, formatContextOptions: [String: Any], interrupt: AVIOInterruptCB,

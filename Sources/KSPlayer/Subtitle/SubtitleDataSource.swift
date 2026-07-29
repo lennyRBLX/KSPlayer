@@ -77,7 +77,7 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
 public protocol SubtitleDataSource: AnyObject {}
 
 public protocol SearchSubtitleDataSource: SubtitleDataSource {
-    // return element PINNED [URLSubtitleInfo] (Task 5, session 20, P55/P60): the Assrt witness FUN_101aa6c50 →
+    // return element PINNED [URLSubtitleInfo] (Task 5, session 20, P55/P60): the Assrt witness FUN_101aa6c50 →  ⚑[tool=resolve_fun_pins ref=FUN_101aa6c50:0x101aa6c50 result=RESOLVES_UNIQUELY] = KSPlayer.AssrtSubtitleDataSource.searchSubtitle(query: Swift.String, languages: [Swift.String]) async throws -> [KSPlayer.URLSubtitleInfo]
     // loadDetails builds concrete URLSubtitleInfo (FUN_101aa7290); result.append(contentsOf:) uses element stride 8
     // (class refs, FUN_1019c7d88); the result array is returned directly (no array-map / existential boxing);
     // corroborated by SubtitleModel [URLSubtitleInfo] collectors (§7.3). Same requirement for both conformers (Assrt/Open).
@@ -171,7 +171,7 @@ public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
         self.infos = infos
     }
 
-    // FUN_101aa5b4c → cont FUN_101aa5b64 (P42-disasm): returns infos iff url == the requested fileURL, else [].
+    // FUN_101aa5b4c → cont FUN_101aa5b64 (P42-disasm): returns infos iff url == the requested fileURL, else [].  ⚑[tool=resolve_fun_pins ref=FUN_101aa5b4c:0x101aa5b4c result=RESOLVES_UNIQUELY] = KSPlayer.ConstantURLSubtitleDataSource.searchSubtitle(fileURL: Foundation.URL) async throws -> [KSPlayer.URLSubtitleInfo]
     //   Guard = Foundation URL.== on self.url vs fileURL @0x101aa5b88 (tbz w0); true → retain+return self.infos,
     //   false → __swiftEmptyArrayStorage. Element [URLSubtitleInfo] (self.infos returned directly, no boxing).
     //   ⚑ optional-compare form (url:URL vs fileURL:URL?) via Swift optional promotion — minor, audit-confirmed.
@@ -200,7 +200,7 @@ public class DirectorySubtitleDataSource: URLSubtitleDataSource {
     //   Open 13 (the field-offset vector holds one word per stored property; 10+n fits all six
     //   datasources). Both confirm the §5.1 "dropped the recon's stored `infos`" finding.
     public init() {}
-    // FUN_101aa5c5c → FUN_101aac684 (setup) → FUN_101aac728 (isFileURL + contentsOfDirectory + filter) → FUN_101aa4844
+    // FUN_101aa5c5c → FUN_101aac684 (setup) → FUN_101aac728 (isFileURL + contentsOfDirectory + filter) → FUN_101aa4844  ⚑[tool=resolve_fun_pins ref=FUN_101aa5c5c:0x101aa5c5c result=RESOLVES_UNIQUELY] = KSPlayer.DirectorySubtitleDataSource.searchSubtitle(fileURL: Foundation.URL) async throws -> [KSPlayer.URLSubtitleInfo]
     //   (in-place mergeSort by URLSubtitleInfo.name). Binary-pinned: isFileURL guard, contentsOfDirectory(at:
     //   deletingLastPathComponent, includingPropertiesForKeys:nil) [try?→[]], .filter(\.isSubtitle) (inlined
     //   FUN_10001e034 = the 5-ext contains incl "sup"), .map { URLSubtitleInfo(url:) }, .sorted { $0.name < $1.name }.
@@ -218,7 +218,7 @@ public class DirectorySubtitleDataSource: URLSubtitleDataSource {
 // §7.2 — Souce→Source + FileURL→URL. Stateless.
 public class ShooterSubtitleDataSource: URLSubtitleDataSource {
     public init() {}
-    // FUN_101aa5cbc → FUN_101aacc04 (setup) → FUN_101aaccfc (URL+request+URLSession.data) → FUN_101aad004 →
+    // FUN_101aa5cbc → FUN_101aacc04 (setup) → FUN_101aaccfc (URL+request+URLSession.data) → FUN_101aad004 →  ⚑[tool=resolve_fun_pins ref=FUN_101aa5cbc:0x101aa5cbc result=RESOLVES_UNIQUELY] = KSPlayer.ShooterSubtitleDataSource.searchSubtitle(fileURL: Foundation.URL) async throws -> [KSPlayer.URLSubtitleInfo]
     //   FUN_101aad0c0 (JSON decode + flatMap). base cce7002 P19-adapted to RETURN [URLSubtitleInfo] (§5.1).
     //   Binary-pinned: URL "https://www.shooter.cn/api/subapi.php" @0x103d3a2f0 (exact), .add(queryItems:)
     //   (format/pathinfo=fileURL.path/filehash=fileURL.shooterFilehash), URLRequest(url:,cachePolicy:0,timeout:60)
@@ -274,7 +274,7 @@ public class AssrtSubtitleDataSource: SearchSubtitleDataSource {
         self.token = token
     }
 
-    // Task 5 (session 20). Witness FUN_101aa6c50 (WT 0x1041da848) → real body FUN_101aad528. Base cce7002
+    // Task 5 (session 20). Witness FUN_101aa6c50 (WT 0x1041da848) → real body FUN_101aad528. Base cce7002  ⚑[tool=resolve_fun_pins ref=FUN_101aa6c50:0x101aa6c50 result=RESOLVES_UNIQUELY] = KSPlayer.AssrtSubtitleDataSource.searchSubtitle(query: Swift.String, languages: [Swift.String]) async throws -> [KSPlayer.URLSubtitleInfo]
     // AssrtSubtitleDataSouce.searchSubtitle P19-adapted: host-field URL (not the base hardcode), dropped stored
     // `infos` → RETURNS [URLSubtitleInfo] (§5.1/§7.5, P60). Internal choices deep-pinned from the binary (P59/P61):
     //   URL host+"/sub/search" · query ["q":query] · header Authorization: Bearer <token> · JSON status/sub/subs ·
@@ -366,7 +366,7 @@ public class OpenSubtitleDataSource: SearchSubtitleDataSource {
         self.apiKey = apiKey
     }
 
-    // Task 5 body 2/2 (session 20). Witness FUN_101aab81c → FUN_101aa9374 (the imdbID:tmdbID: delegate, args 0,0).
+    // Task 5 body 2/2 (session 20). Witness FUN_101aab81c → FUN_101aa9374 (the imdbID:tmdbID: delegate, args 0,0).  ⚑[tool=resolve_fun_pins ref=FUN_101aa9374:0x101aa9374 result=RESOLVES_UNIQUELY] = KSPlayer.OpenSubtitleDataSource.searchSubtitle(query: Swift.String, imdbID: Swift.Int, tmdbID: Swift.Int, languages: [Swift.String]) async throws -> [KSPlayer.URLSubtitleInfo]
     // Base cce7002 OpenSubtitleDataSouce P19-adapted: host-field URLs, dropped stored `infos` → RETURNS [URLSubtitleInfo]
     // (§5.1/§7.5, P60 — no-boxing confirmed at Open's witness). Internal choices deep-pinned from the binary (P59/P61):
     //   host+"/subtitles" (search) · host+"/download" (loadDetails) · queryItems query/imdb_id/tmdb_id/languages

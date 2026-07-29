@@ -43,7 +43,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     public var stream: UnsafeMutablePointer<AVStream>?
     package var startTime = CMTime.zero        // ⚑ package (Forward-fidelity): RemuxerIOAction (ProAVPlayer module) reads this cross-module — binary-arbitrated; exact modifier under-included §1 (could be public)
     public var codecpar: UnsafeMutablePointer<AVCodecParameters>   // ⚑ retyped value→pointer (+0xb8); designated init derefs via `let codecpar = codecparPtr.pointee`
-    package var timebase: Timebase = .defaultValue  // ⚑ package: see startTime — cross-module read by RemuxerIOAction.performRead/ptsToSeconds (FUN_101a32e28)
+    package var timebase: Timebase = .defaultValue  // ⚑ package: see startTime — cross-module read by RemuxerIOAction.performRead/ptsToSeconds (FUN_101a32e28)  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
     let bitsPerRawSample: Int32
     public let formatDescription: CMFormatDescription?   // moved up to bin +0xd0 (before audioDescriptor)
     public let audioDescriptor: AudioDescriptor?
@@ -281,7 +281,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     }
 
     // ⚑ P55 (session 32): `options: KSOptions?` — SubtitleDecode.init forwards a nullable options through here
-    //   (binary FUN_101a6914c → this createContext with nullable options); codecpar.createContext is already KSOptions?.
+    //   (binary FUN_101a6914c → this createContext with nullable options); codecpar.createContext is already KSOptions?.  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     func createContext(options: KSOptions?) throws -> UnsafeMutablePointer<AVCodecContext> {
         try codecpar.pointee.createContext(options: options)
     }

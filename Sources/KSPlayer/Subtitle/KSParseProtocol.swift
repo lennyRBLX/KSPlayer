@@ -47,7 +47,7 @@ public class AssParse: KSParseProtocol {
     private var styleMap: [String: ASSStyle]? // §8.3 [String:ASSStyle]? — populated lazily in canParse
     private var eventKeys: [String] = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"]
     private var displaySize: CGSize = .zero
-    // Forward 1.3.17 AssParse.canParse (FUN_101a97464, ~1048i) — REORGANIZED vs the base original:
+    // Forward 1.3.17 AssParse.canParse (FUN_101a97464, ~1048i) — REORGANIZED vs the base original:  ⚑[tool=resolve_fun_pins ref=FUN_101a97464:0x101a97464 result=RESOLVES_UNIQUELY] = KSPlayer.AssParse.canParse(scanner: __C.NSScanner) -> Swift.Bool
     //   resets styleMap, prechecks `scanner.string.contains("Format: Name,")` (NOT the base
     //   `scanString("[Script Info]")`), writes PlayResX/Y DIRECTLY into displaySize with 384x288
     //   defaults, COLLECTS the Style: lines and processes them AFTER the [Fonts] embedded-font
@@ -93,7 +93,7 @@ public class AssParse: KSParseProtocol {
                 }
                 guard let encoded = fontScanner.scanUpToString("fontname:") else {
                     // binary loops back to scanString("fontname:") on a nil body (skips an empty
-                    // entry), NOT break — FUN_101a97464 @390-396 (audit_workflow session 18).
+                    // entry), NOT break — FUN_101a97464 @390-396 (audit_workflow session 18).  ⚑[tool=resolve_fun_pins ref=FUN_101a97464:0x101a97464 result=RESOLVES_UNIQUELY] = KSPlayer.AssParse.canParse(scanner: __C.NSScanner) -> Swift.Bool
                     continue
                 }
                 // Path = NSTemporaryDirectory() + "fontsDir/" + fontName (3-part, 2× String.append —
@@ -208,11 +208,11 @@ public class AssParse: KSParseProtocol {
         }
         text = text.replacingOccurrences(of: "\\N", with: "\n")
         text = text.replacingOccurrences(of: "\\n", with: "\n")
-        text = text.replacingOccurrences(of: "\\h", with: " ") // ASS hard-space (FUN_101a99ef0 @472, "\h"->" "; base original lacked it)
+        text = text.replacingOccurrences(of: "\\h", with: " ") // ASS hard-space (FUN_101a99ef0 @472, "\h"->" "; base original lacked it)  ⚑[tool=resolve_fun_pins ref=FUN_101a99ef0:0x101a99ef0 result=RESOLVES_UNIQUELY] = KSPlayer.AssParse.parsePart(scanner: __C.NSScanner) -> [KSPlayer.SubtitlePart]
         let textInfo = SubtitleTextInfo(
             text: text.build(textPosition: &textPosition, attributed: attributes),
             position: textPosition, // ASS textPosition (audit-confirmed)
-            displaySize: displaySize, // = self.displaySize (ASS PlayResX/Y); binary copies self+0x20/+0x28 @FUN_101a99ef0:487-490 (NOT nil)
+            displaySize: displaySize, // = self.displaySize (ASS PlayResX/Y); binary copies self+0x20/+0x28 @FUN_101a99ef0:487-490 (NOT nil)  ⚑[tool=resolve_fun_pins ref=FUN_101a99ef0:0x101a99ef0 result=RESOLVES_UNIQUELY] = KSPlayer.AssParse.parsePart(scanner: __C.NSScanner) -> [KSPlayer.SubtitlePart]
             styleRole: .primary, // =0 (audit-confirmed)
             usesForcedPosition: false // =0 (audit-confirmed)
         )

@@ -61,7 +61,7 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
         self.demuxerIO = DemuxerIO(formatContext: formatContext,                  // FUN_101b6b184 (actor) @0x58
                                    ioAction: remuxerIOAction, delegate: nil)      //   delegate=nil: binary passes x2/x3=0
         self.server = server                                                      // @0x60
-        self.directoryWatcher = DirectoryWatcher()                               // FUN_101a04e20 (KSPlayer actor) @0x68
+        self.directoryWatcher = DirectoryWatcher()                               // FUN_101a04e20 (KSPlayer actor) @0x68  ⚑[tool=resolve_fun_pins ref=FUN_101a04e20:0x101a04e20 result=RESOLVES_UNIQUELY] = KSPlayer.DirectoryWatcher.__allocating_init() -> KSPlayer.DirectoryWatcher
         remuxerIOAction.delegate = self                                          // weak; RemuxerIOActionDelegate wt 0x1041e0b80
         // ⚑ server route install — DEFERRED (owner-phase, decompile-verified not assumed): the binary registers
         //   a connection handler on `server` under exclusive access (FUN_101b831f0), closure FUN_101b6ba5c captures
@@ -98,7 +98,7 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     }
 
     /// `FUN_101b69fc4`. The PLAYER-side counterpart to `didUpdateCurrentTime(_:)` — ProAVPlayer's item-swap
-    /// closure (`FUN_101b7c460`) + progress method (`FUN_101b7b7e8`) call this with the current playback
+    /// closure (`FUN_101b7c460`) + progress method (`FUN_101b7b7e8`) call this with the current playback  ⚑[tool=resolve_fun_pins ref=FUN_101b7b7e8:0x101b7b7e8 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.changePlaybackTime(time: Swift.Double) -> ()
     /// position. Symmetric to the demuxer side but stores `currentPlaybackTime` (@0x40) and spawns the progress
     /// `Task` only when the un-drained lead `(demuxerTime - remuxerIOAction.startPlayTime) - time` drops BELOW
     /// `maxBufferDuration` (the consumer catching up — the INVERSE of `didUpdateCurrentTime`'s producer test).

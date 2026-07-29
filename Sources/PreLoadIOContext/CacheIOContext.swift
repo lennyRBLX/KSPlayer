@@ -13,16 +13,16 @@ import FFmpegKit   // AVIOInterruptCB (FFmpeg C struct — the L3 cancel field)
 //             init); NAMES + ORDER + COUNT + TYPES transcribed verbatim. The ⚑
 //             ones are best-effort (unmapped stdlib int / Foundation / in-module
 //             class / closure / FFmpeg-C) and flagged `// type inferred — ⚑`.
-//   inits   — designated s61 → inner FUN_101b86d38 (cached): sets ALL 28 fields to
+//   inits   — designated s61 → inner FUN_101b86d38 (cached): sets ALL 28 fields to  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
 //             their defaults, then takes download/md5/bufferSize/saveFile/
 //             isReadComplete as explicit param→field stores. The Foundation
 //             cache-directory scan (enumerate videoCache dir → build entryList →
 //             sum fetchedSize) is deep Foundation with unnamed helpers → its body
 //             is UNRESOLVED→P8 (IO-completion) (the defaults + explicit param stores are faithful).
 //           — convenience s60 @101b8668c (cached): builds `download` via the SHARED
-//             URLContextDownload inner init FUN_101b90c58, delegates to designated,
+//             URLContextDownload inner init FUN_101b90c58, delegates to designated,  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
 //             then sets formatContextOptions + interrupt. The URLContext-open
-//             inside FUN_101b90c58 is deep FFmpeg → left as the delegated call,
+//             inside FUN_101b90c58 is deep FFmpeg → left as the delegated call,  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
 //             NOT reconstructed.
 //   methods — read (slot 66) is the L3-critical override; its body is driven
 //             through `download.read` + the AVIOInterruptCB callback and is NOT
@@ -161,7 +161,7 @@ public class CacheIOContext: AbstractAVIOContext {
 
     // --- inits ---
 
-    // Designated init s61 → inner FUN_101b86d38 (cached). Arity inferred (no mangled
+    // Designated init s61 → inner FUN_101b86d38 (cached). Arity inferred (no mangled  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     // init symbol): the EXPLICIT param→field stores in the inner init are
     //   param_1 → download (the `any DownloadProtocol` existential value-witness-copied into +0x20 —
     //     a 40-byte existential, not an 8-byte retained class ptr),
@@ -181,7 +181,7 @@ public class CacheIOContext: AbstractAVIOContext {
         self.isReadComplete = isReadComplete // binary: explicit param_6 store
         super.init(bufferSize: bufferSize) // binary: *(self+0x14) = param_4
         _ = md5
-        // UNRESOLVED → P8 (IO-completion): the Foundation cache-directory scan in FUN_101b86d38 —
+        // UNRESOLVED → P8 (IO-completion): the Foundation cache-directory scan in FUN_101b86d38 —  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
         //   NSTemporaryDirectory()/appendingPathComponent("videoCache")/<md5>,
         //   fileExists + createDirectory, contentsOfDirectory enumeration building
         //   the entryList CacheFileEntry segments (via unnamed helpers FUN_101b87a48
@@ -191,22 +191,22 @@ public class CacheIOContext: AbstractAVIOContext {
     }
 
     // Convenience init s60 @101b8668c (cached). Faithful spine: build `download`
-    // (the SHARED URLContextDownload inner init FUN_101b90c58, also reused by
+    // (the SHARED URLContextDownload inner init FUN_101b90c58, also reused by  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     // ReadCacheIOContext), delegate to the designated init (vtable+0x380), then set
     // formatContextOptions (= local_b0/param_3) and interrupt (2 words =
-    // local_c0/local_b8). The URLContext-open inside FUN_101b90c58 is deep FFmpeg →
+    // local_c0/local_b8). The URLContext-open inside FUN_101b90c58 is deep FFmpeg →  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     // left as the delegated `download`-build call, NOT reconstructed. Arity/param
     // roles beyond formatContextOptions + interrupt are inferred.
     //
     // UNRESOLVED → P8 (IO-completion): the real convenience init's full signature (the URL + options
-    //   that FUN_101b90c58 opens an FFmpeg URLContext from) is deep FFmpeg whose
+    //   that FUN_101b90c58 opens an FFmpeg URLContext from) is deep FFmpeg whose  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
     //   stripped calls only the P2 oracle names. The determinable post-delegation
     //   field stores (formatContextOptions, interrupt) are shown here as the faithful
     //   spine; the download-build is the delegated call, not fabricated.
     // ⚑[tool=export_trie_oracle ref=CacheIOContext.init(url:formatContextOptions:interrupt:saveFile:isReadComplete:) result=DIVERGENT — the trie carries this convenience at ARITY 5 with `url:` as the first label and NO `bufferSize:`; this declaration has 6 params led by `cacheKey:`. Signature + body are a unit of their own (dropping a parameter changes the delegation), so it is PINNED rather than half-applied here]
     public convenience init(cacheKey: String, formatContextOptions: [String: Any]?, interrupt: AVIOInterruptCB?, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
         // UNRESOLVED → P8 (IO-completion): download = URLContextDownload(<FFmpeg URLContext open via
-        //   FUN_101b90c58>) — the shared inner init opens the libavformat URLContext;
+        //   FUN_101b90c58>) — the shared inner init opens the libavformat URLContext;  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
         //   deep FFmpeg, not reconstructed. Delegated as nil here (compilable spine).
         self.init(download: nil, md5: cacheKey, bufferSize: bufferSize, saveFile: saveFile, isReadComplete: isReadComplete)
         self.formatContextOptions = formatContextOptions // binary: store at +formatContextOptions
@@ -246,7 +246,7 @@ public class CacheIOContext: AbstractAVIOContext {
     //   AbstractAVIOContext by dynamic cast and recurses into ITS urlContext — the CHAIN-WALK down the
     //   AVIO cache stack; a non-AVIO or nil download yields nil. The binary's swift_dynamicCast (vs a
     //   free upcast) is exactly why download must be the existential, not URLContextDownload.
-    // ⚑[tool=name_type_at_addr ref=FUN_101b8d8b8:0x101b8d8b8 result=(download as? AbstractAVIOContext)?.urlContext; cast src=any DownloadProtocol, target=AbstractAVIOContext (metadata 0x1044e69b0), recursion=vtable+0xa8]
+    // ⚑[tool=name_type_at_addr ref=FUN_101b8d8b8:0x101b8d8b8 result=(download as? AbstractAVIOContext)?.urlContext; cast src=any DownloadProtocol, target=AbstractAVIOContext (metadata 0x1044e69b0), recursion=vtable+0xa8]  ⚑[tool=resolve_fun_pins ref=FUN_101b8d8b8:0x101b8d8b8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.nextAVOptions() -> Swift.UnsafeMutableRawPointer?
     public override var urlContext: UnsafeMutablePointer<URLContext>? {
         (download as? AbstractAVIOContext)?.urlContext
     }

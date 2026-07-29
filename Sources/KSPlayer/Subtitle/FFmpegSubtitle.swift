@@ -29,11 +29,11 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         // preTime/startTime/endTime = 0 + parts = [] are the declared defaults (binary prologue @0x101a9f33c-348).
 
         // ── open: a fresh interrupt context + the shared throwing open/probe. ──
-        // ⚑ IOInterruptContext(nil) (block = nil): binary allocs a 0x30 obj (FUN_101a3a694 metadata) then
+        // ⚑ IOInterruptContext(nil) (block = nil): binary allocs a 0x30 obj (FUN_101a3a694 metadata) then  ⚑[tool=resolve_fun_pins ref=FUN_101a3a694:0x101a3a694 result=RESOLVES_UNIQUELY] = type metadata accessor for KSPlayer.IOInterruptContext
         //   FUN_101a391bc(0,0) = IOInterruptContext.init (@0x101a9f384-3a0).
         let interrupt = IOInterruptContext(nil)
         let formatCtx = try openFormatContext(time: time, url: url, interrupt: interrupt, options: nil, cacheKey: nil)
-        // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext. Two args are
+        // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext. Two args are  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         //   DISASM-confirmed live: `formatCtx`(x0) = the openFormatContext return; `interrupt`(x2) = the IOInterruptContext.
         //   The other four are DEAD arguments the binary does not encode — 0/0/nil/nil are flagged residues:
         //   `duration`(d0) is PROVEN dead (the callee never reads d0 — its first bl @0x101a35128 clobbers it — and
@@ -62,7 +62,7 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         track.startTime = .zero                       // track+0xa0 CMTime = kCMTimeZero (@0x101a9f564-594)
         subtitleStreamIndex = track.trackID           // self+0x80 = track.trackID (track+0x10, Int32) @0x101a9f5ac-5b4
         // ⚑ SubtitleDecode.init(assetTrack:options:) with options = nil (@0x101a9f5d8 `mov x1,#0x0`; the KSOptions?
-        //   refinement committed @0f6c92f). alloc 0x88 (FUN_101a6bfe0 metadata) + FUN_101a6914c (@0x101a9f5b8-5dc).
+        //   refinement committed @0f6c92f). alloc 0x88 (FUN_101a6bfe0 metadata) + FUN_101a6914c (@0x101a9f5b8-5dc).  ⚑[tool=resolve_fun_pins ref=FUN_101a6bfe0:0x101a6bfe0 result=RESOLVES_UNIQUELY] = type metadata accessor for KSPlayer.SubtitleDecode  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
         let decode = SubtitleDecode(assetTrack: track, options: nil)
         self.formatContext = formatContext            // self+0x70
         self.decode = decode                          // self+0x78
@@ -76,7 +76,7 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         // ── decode-accumulate loop (@0x101a9f618-0x101a9f7cc): pump every packet from the subtitle stream through the
         //   synchronous SubtitleDecode.decodeFrame(from:) (FUN_101a69f54, resolved this session) and accumulate its parts.
         //   The sync decode returns ([SubtitlePart], timestamp, timebase)? — this sidecar caller uses only .parts (the
-        //   timestamp/timebase elements feed the completion-handler wrapper FUN_101a69de8, not the accumulate). ──
+        //   timestamp/timebase elements feed the completion-handler wrapper FUN_101a69de8, not the accumulate). ──  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
         var pkt = av_packet_alloc() // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o)
         guard let packet = pkt else {
             av_packet_free(&pkt) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_free:0x102d618b8 result=CONFIRMED] alloc-nil path ONLY (@0x101a9f688)

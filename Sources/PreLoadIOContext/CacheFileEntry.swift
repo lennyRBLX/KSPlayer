@@ -5,10 +5,10 @@ import Foundation
 //
 // Reconstructed A+ structure-faithful from the Forward 1.3.17 binary:
 //   fields  — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative).
-//   inits   — s10 (101b900c4): inner FUN_101b90114 has explicit param→field stores
+//   inits   — s10 (101b900c4): inner FUN_101b90114 has explicit param→field stores  ⚑[tool=resolve_fun_pins ref=FUN_101b90114:0x101b90114 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(url: Foundation.URL, position: Swift.UInt64) throws -> PreLoadIOContext.CacheFileEntry?
 //             (url=param_1, position=param_2; saveFile=true) → GROUNDED framing,
 //             with the Foundation file-open/size-read detail UNRESOLVED→P8 (IO-completion).
-//             s9 (101b881f8): the DESIGNATED init, inner FUN_101b8fb0c — its
+//             s9 (101b881f8): the DESIGNATED init, inner FUN_101b8fb0c — its  ⚑[tool=resolve_fun_pins ref=FUN_101b8fb0c:0x101b8fb0c result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(dir: Foundation.URL, position: Swift.UInt64, maxSize: Swift.UInt32?) throws -> PreLoadIOContext.CacheFileEntry
 //             param_1 (url-derivation base) type is not deterministically
 //             resolvable → left UNRESOLVED, no fabricated signature. — P2.
 //   methods — s12/s13/s14 (101b90620 / 101b906c8 / 101b9089c): CacheFileEntry's
@@ -59,7 +59,7 @@ public final class CacheFileEntry: CustomStringConvertible {
     public var maxSize: UInt32? // type inferred — ⚑ (brief said Int64; l2 gate + decompile → UInt32?)
 
     // --- inits ---
-    // s10 @101b900c4 → inner FUN_101b90114 (2 args; explicit field stores url=param_1, position=param_2).
+    // s10 @101b900c4 → inner FUN_101b90114 (2 args; explicit field stores url=param_1, position=param_2).  ⚑[tool=resolve_fun_pins ref=FUN_101b90114:0x101b90114 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(url: Foundation.URL, position: Swift.UInt64) throws -> PreLoadIOContext.CacheFileEntry?
     // Arity inferred (no mangled init symbol exists); param→field stores are explicit in the inner init.
     // Body opens the EXISTING cache file + reads its NSURLFileSizeKey size → faithful spine; the
     // NSFileManager/URLResourceValues marshalling detail is UNRESOLVED.
@@ -68,10 +68,10 @@ public final class CacheFileEntry: CustomStringConvertible {
         self.position = position
         self.saveFile = true                  // binary sets saveFile=true on this path
         // UNRESOLVED: open existing file (NSFileManager.fileExists) + read NSURLFileSizeKey → size/maxSize,
-        //   then open FileHandle → file. Foundation spine in FUN_101b90114; detail deferred. — P2
+        //   then open FileHandle → file. Foundation spine in FUN_101b90114; detail deferred. — P2  ⚑[tool=resolve_fun_pins ref=FUN_101b90114:0x101b90114 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(url: Foundation.URL, position: Swift.UInt64) throws -> PreLoadIOContext.CacheFileEntry?
     }
 
-    // UNRESOLVED: s9 @101b881f8 → inner FUN_101b8fb0c — the DESIGNATED init (3 args: param_1 = a
+    // UNRESOLVED: s9 @101b881f8 → inner FUN_101b8fb0c — the DESIGNATED init (3 args: param_1 = a  ⚑[tool=resolve_fun_pins ref=FUN_101b8fb0c:0x101b8fb0c result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(dir: Foundation.URL, position: Swift.UInt64, maxSize: Swift.UInt32?) throws -> PreLoadIOContext.CacheFileEntry
     //   url-derivation base [1-word, CustomStringConvertible; TYPE NOT deterministically resolvable],
     //   position: UInt64 = param_2, maxSize: UInt32? = param_3 packed). Derives url via
     //   appendingPathComponent + creates a new FileHandle (deep Foundation IO). param_1 type unpinnable

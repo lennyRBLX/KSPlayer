@@ -26,7 +26,7 @@ open class KSOptions {
     // ── Forward 1.3.17 __swift5_fieldmd (binary reflection) ORDER + full field SET (84 fields). The 38
     //    Forward-only fields were ADDED and the 9 base-only extras REMOVED (KSOptions→Forward layout
     //    migration — l2 REAL_FLAG 47→0). Field TYPES/ORDER = the deterministic binary oracle
-    //    (dump_binary_field_types.py, desc 0x1039ec4c0). Inline DEFAULTS = KSOptions.init (FUN_1019b2f7c,
+    //    (dump_binary_field_types.py, desc 0x1039ec4c0). Inline DEFAULTS = KSOptions.init (FUN_1019b2f7c,  ⚑[tool=resolve_fun_pins ref=FUN_1019b2f7c:0x1019b2f7c result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.init() -> KSPlayer.KSOptions
     //    symbolic-offset stores). Removed extras (cache/probesize/maxAnalyzeDuration/nobuffer/codecLowDelay/
     //    autoDeInterlace/autoRotate/videoInterlacingType/idetTypeMap) migrated to their callers.
     public var context = ""
@@ -137,7 +137,7 @@ open class KSOptions {
     // 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068, 0x1044e5a38) plus two call sites, whereas the
     // KSOptions descriptor claims only 0x1039ec904. Position is exact; identity is not derivable.
     // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_10002db34:0x10002db34 result=LOCATED pinned=member-identity-undetermined]
-    internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path
+    internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     public var audioRecognizes: [AudioRecognize] = []
     // sutile
     public var autoSelectEmbedSubtitle = true
@@ -231,7 +231,7 @@ open class KSOptions {
     // csel w0,w9,w8,gt; ret` — i.e. the only input the body reads is w1 (a signed 32-bit word;
     // self rides x20, so w1 is the SECOND argument word) and the 4-byte result is 8 when w1 > 2,
     // else 4. 5 xrefs = 1 descriptor + 3 metadata vtables + 1 linkedit (own impl).
-    // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_1019bea54:0x1019bea54 result=LOCATED pinned=member-identity-undetermined]
+    // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_1019bea54:0x1019bea54 result=LOCATED pinned=member-identity-undetermined]  ⚑[tool=resolve_fun_pins ref=FUN_1019bea54:0x1019bea54 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.videoFrameMaxCount(fps: Swift.Float, naturalSize: __C.CGSize, isLive: Swift.Bool, reorderSize: Swift.Int32) -> Swift.UInt8
     //
     // Slot 225 @0x100232cd4 — PINNED. Body `mov x0,#0x0; mov x1,#0x0; mov w2,#0x1; ret`: the
     // three-register `nil` of an Optional whose payload is two 8-byte words (x0, x1 payload +

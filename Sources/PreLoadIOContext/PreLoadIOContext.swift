@@ -97,7 +97,7 @@ public class PreLoadIOContext: CacheIOContext {
     //   `position` is the UInt64 second word (param_2), `invalid` the char param_3.
     func updatePlaybackSnapshot(time: Double, position: UInt64, invalid: Bool) { // name inferred (devirt)
         _playbackSnapshotLock.lock()
-        // Binary gate (FUN_101ba6980): isNaN || isInfinite || time < 0 || invalid.
+        // Binary gate (FUN_101ba6980): isNaN || isInfinite || time < 0 || invalid.  ⚑[tool=resolve_fun_pins ref=FUN_101ba6980:0x101ba6980 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.syncPlaybackPosition(time: Swift.Double, position: Swift.UInt64?) -> ()
         // The `time < 0` (negative-finite) clause was RECOVERED by the M1C audit's
         // independent recheck — decompile clauses C/D are sign-bit-guarded
         // (`(long)param_1 < 0`) finite-exponent tests that reject every negative
@@ -124,7 +124,7 @@ public class PreLoadIOContext: CacheIOContext {
     //   only, NOT fabricated.
     func interpolateTime(_ time: Double, position: UInt64, total: UInt64) -> Double { // name inferred (devirt)
         var result = 0.0
-        // Binary gate (FUN_101ba80e8): total != 0 && finite && time > 0. The decompile
+        // Binary gate (FUN_101ba80e8): total != 0 && finite && time > 0. The decompile  ⚑[tool=resolve_fun_pins ref=FUN_101ba80e8:0x101ba80e8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.positionToTime(position: Swift.UInt64, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.Double
         // enters the lock body only when `-1 < (long)param_1` (sign bit clear = non-negative)
         // AND finite-exponent, or the positive-subnormal clause — net strictly-positive-finite.
         // The `time > 0` requirement was OMITTED in the original reconstruction; RECOVERED by
@@ -157,7 +157,7 @@ public class PreLoadIOContext: CacheIOContext {
     //   through an UNRECOVERED JUMPTABLE — "Could not recover jumptable … too many
     //   branches"). The decompile gates two doubles through the NaN/inf validity check,
     //   reads CacheIOContext.eof (== true) and a duration-like double field, and on the
-    //   pass path computes via the unnamed FUN_101ba7dc8 before the indirect tail-call
+    //   pass path computes via the unnamed FUN_101ba7dc8 before the indirect tail-call  ⚑[tool=resolve_fun_pins ref=FUN_101ba7dc8:0x101ba7dc8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.timeToPosition(time: Swift.Double, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.UInt64
     //   through `*(vtable + 0x590)`; otherwise it passes 0/flag through the same slot.
     //   The branch target (vtable+0x590) is devirt with an unrecovered branch table →
     //   no readable callee. Body left as a faithful-spine marker, NOT fabricated.
@@ -165,10 +165,10 @@ public class PreLoadIOContext: CacheIOContext {
         _ = a
         _ = b
         // UNRESOLVED → P8 (IO-completion) (s36 @101bab2d8): validity-gate(a,b) && eof==true &&
-        //   <duration-double> != 0 → dVar = FUN_101ba7dc8(a, b, <duration>), then the
+        //   <duration-double> != 0 → dVar = FUN_101ba7dc8(a, b, <duration>), then the  ⚑[tool=resolve_fun_pins ref=FUN_101ba7dc8:0x101ba7dc8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.timeToPosition(time: Swift.Double, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.UInt64
         //   indirect tail-call (*(self.vtable + 0x590))(a, dVar, flag) through an
         //   UNRECOVERED JUMPTABLE; the else-branch passes (a, 0.0, 1) through the same
-        //   slot. The devirt branch target + the unnamed FUN_101ba7dc8 have no readable
+        //   slot. The devirt branch target + the unnamed FUN_101ba7dc8 have no readable  ⚑[tool=resolve_fun_pins ref=FUN_101ba7dc8:0x101ba7dc8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.timeToPosition(time: Swift.Double, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.UInt64
         //   body → not reconstructed. — P2
         //   NB (M1C audit): the validity-gate here is the SAME family as s31/s33. When
         //   P2 reconstructs it, the gate MUST include the sign / `> 0` term (binary

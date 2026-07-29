@@ -188,10 +188,10 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // — the terminal witness call (L161) is the function's PRIMARY effect [body-audit re-walk fix].
     // param_1 = AVPacket* (data@+0x18, size@+0x20, stream_index@+0x24 — header-verified).
     //
-    // Decompile outer shape (FUN_101a1ab5c) — the outer branch keys on assetTrackMap[idx] (OSI+0x10),
+    // Decompile outer shape (FUN_101a1ab5c) — the outer branch keys on assetTrackMap[idx] (OSI+0x10),  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
     // NOT transcodeMap [orchestrator re-walk fix]:
     //   if (assetTrackMap.count==0 || assetTrackMap[idx] miss)  → BUILD the context (this faithful path)
-    //   else (assetTrackMap[idx] present)                       → FUN_101a1ae90 = steady-state per-packet
+    //   else (assetTrackMap[idx] present)                       → FUN_101a1ae90 = steady-state per-packet  ⚑[tool=resolve_fun_pins ref=FUN_101a1ae90:0x101a1ae90 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>) -> ()
     //                                                             copy/enqueue (UNRESOLVED, flagged below).
     // BUILD is further guarded by outPacket(+0x60) live + streamMapping[idx] + timeBaseMap[idx] + a live
     // output AVStream (formatCtx->streams[mapped]); then decide Copy vs BSF and store transcodeMap[idx].
@@ -202,13 +202,13 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
 
         // Outer branch keys on assetTrackMap[idx] (self+0x10) — track ABSENT → BUILD; PRESENT → steady-state.
         guard assetTrackMap[idx] == nil else {                                    // self+0x10 (FUN_1019c10ec)
-            // ── STEADY-STATE per-packet path (assetTrackMap[idx] EXISTS) = FUN_101a1ae90 (64 instr) ──
-            // ⚑ UNRESOLVED → own follow-up unit: alloc queued-packet (FUN_101a65be4) + packet-copy
+            // ── STEADY-STATE per-packet path (assetTrackMap[idx] EXISTS) = FUN_101a1ae90 (64 instr) ──  ⚑[tool=resolve_fun_pins ref=FUN_101a1ae90:0x101a1ae90 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>) -> ()
+            // ⚑ UNRESOLVED → own follow-up unit: alloc queued-packet (FUN_101a65be4) + packet-copy  ⚑[tool=resolve_fun_pins ref=FUN_101a65be4:0x101a65be4 result=RESOLVES_UNIQUELY] = type metadata accessor for KSPlayer.Packet
             //   (FUN_102d622ec, sidecar-flagged UNRESOLVED) + enqueue @+0x100. The packet-copy core + the
             //   queue type are unresolved → NOT invented (cardinal). The body-audit + M3 packet-harness are
             //   the arbiters; the M3 test drives the BUILD path below to arbitrate the dispatch.
             //   Cached decompile: reconstruction/decompiles/OutputStreamInfo_s13else_101a1ae90.txt
-            return  // UNRESOLVED — steady-state enqueue (FUN_101a1ae90), reconstruct as its own unit
+            return  // UNRESOLVED — steady-state enqueue (FUN_101a1ae90), reconstruct as its own unit  ⚑[tool=resolve_fun_pins ref=FUN_101a1ae90:0x101a1ae90 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>) -> ()
         }
 
         // ── BUILD path (assetTrackMap[idx] absent): set up the per-stream transcode context ──
@@ -273,7 +273,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         // UNRESOLVED → P3 (remux driver): FUN_1029f5584 = avcodec_parameters_copy (oracle CONFIRMED, exact
         //   cross-binary size 436==436). The call is avcodec_parameters_copy(ctx.pointee.par_in, <src codecpar>);
         //   src = caller-supplied (makeADTS true binary sig is 4-param, not no-arg — src is threaded from the
-        //   OSI slot13/14/15 op FUN_101a1ab5c, itself deferred). Reconstruct with the OSI remux ops in P3 — do
+        //   OSI slot13/14/15 op FUN_101a1ab5c, itself deferred). Reconstruct with the OSI remux ops in P3 — do  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
         //   NOT fabricate the src here. Spine preserved by omission. See reports/task-P2-task4-deferred-io-bodies.md §1.
         guard av_bsf_init(ctx) >= 0 else {                                        // FUN_10295b198 (oracle-CONFIRMED)
             av_bsf_free(&ctx)                                                     // FUN_10295b040 (oracle-CONFIRMED) — error path
