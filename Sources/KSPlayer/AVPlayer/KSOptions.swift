@@ -194,16 +194,38 @@ open class KSOptions {
     //
     // Slots 220-225 are SIX methods declared HERE, between `adjustBuffer` (217-219) and
     // `forceDisableDisplayLayer` (226-228) — both bracketing getters resolve their field-offset
-    // global BY NAME, so the bracket is exact. None of the six has a recoverable member identity:
-    // recover_swift_function_name --addr returns #function None / #file None for every one.
+    // global BY NAME, so the bracket is exact.
+    //
+    // ⚠️ SESSION 64 — "None of the six has a recoverable member identity" IS REFUTED. That rested
+    // on recover_swift_function_name, which works off #function/#file literals that a release
+    // build strips, and which cannot see the ORPHANED EXPORT TRIE. All six resolve by address
+    // (P133/P135 — the same failure mode as SubtitlePart's "missing" inits and the PiP pin):
+    //   220 @0x1019be928  preferredFrame(fps: Swift.Float) -> Swift.Bool
+    //   221 @0x1019be98c  decodeSize(width: Swift.Int32, height: Swift.Int32) -> __C.CGSize
+    //   222 @0x1019bea08  recreateContext(hasDecodeSuccess: Swift.Bool, isKeyFrame: Swift.Bool) -> Swift.Bool
+    //   223 @0x1019bea14  wantedVideo(tracks: [MediaPlayerTrack]) -> MediaPlayerTrack?
+    //   224 @0x1019bea54  videoFrameMaxCount(fps:naturalSize:isLive:reorderSize: Swift.Int32) -> Swift.UInt8
+    //   225 @0x100232cd4  customizeDar(sar: __C.CGSize, par: __C.CGSize) -> __C.CGSize?
+    // Each recovered name COHERES with the body an earlier session had already decoded
+    // independently (220 = `staticBool || fps > 61.0`; 222 = `!arg0 || arg1`; 223 retains an
+    // element when a field is non-nil) — corroboration, not just nomination.
+    // 222 is now DECLARED below with its body; 224/225 are declared and audited FAITHFUL.
+    // ⛔ 223 `wantedVideo` returns MediaPlayerTrack?, NOT the Int? this file declares — that is
+    // the index->object migration (with wantedAudio and audioFrameMaxCount), a separate unit
+    // with call-site ripple. NOT changed here.
+    // 220/221 remain UNDECLARED: names recovered, bodies not yet reconstructed.
     // Context (not in this batch): slot 220 @0x1019be928 = `staticBool || fpsArg > 61.0` → Bool;
     // slot 221 @0x1019be98c reads UITraitCollection.current.userInterfaceIdiom; slot 223
     // @0x1019bea14 retains arg+0x20 when arg+0x10 is non-nil.
     //
-    // Slot 222 @0x1019bea08 — PINNED. Body `orn w8,w1,w0; and w0,w8,#0x1; ret` = two Bool-shaped
-    // argument words (w0, w1) and a 1-bit result equal to `!arg0 || arg1`. 5 xrefs = 1 descriptor +
-    // 3 metadata vtables + 1 linkedit, i.e. its own impl, not a folded stub.
-    // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_1019bea08:0x1019bea08 result=LOCATED pinned=member-identity-undetermined]
+    // Slot 222 @0x1019bea08 — DISCHARGED (s64): identity recovered, declared and audited below as
+    // `recreateContext(hasDecodeSuccess:isKeyFrame:)`. Body `orn w8,w1,w0; and w0,w8,#0x1; ret` =
+    // two Bool-shaped argument words (w0, w1) and a 1-bit result equal to `!arg0 || arg1`.
+    // ⚠️ The xref count here read "5 = 1 descriptor + 3 metadata vtables + 1 linkedit"; that is
+    // FALSE for this slot — `dyld_info -fixups` reports TWO rebases, so it is 4 = 1 descriptor +
+    // 2 metadata vtables + 1 LC_FUNCTION_STARTS entry. The same sentence was written for slot 224,
+    // where 3 IS correct. The CONCLUSION ("its own impl, not a folded stub") stands, but it rests
+    // on the one-symbol trie count and the byte pattern being unique in __text, not on this tally.
     //
     // Slot 224 @0x1019bea54 — PINNED. Body is `cmp w1,#0x2; mov w8,#0x4; mov w9,#0x8;
     // csel w0,w9,w8,gt; ret` — i.e. the only input the body reads is w1 (a signed 32-bit word;
@@ -366,6 +388,24 @@ open class KSOptions {
             }
         }
         return nil
+    }
+
+    // vtable slot 222 @0x1019bea08 — three instructions, its own impl, NOT an ICF fold (the
+    // address exports exactly one symbol, and the 12-byte pattern occurs once in all of __text).
+    // 4 xrefs = 1 method descriptor + 2 metadata vtables + 1 LC_FUNCTION_STARTS entry; the two
+    // vtables are KSOptions' own and TrailerPlayerOptions'. Verified by `dyld_info -fixups`,
+    // which reports exactly TWO rebases to this address (0x10448D358, 0x1044E5D28).
+    // ⚠️ Slot 224 @0x1019bea54 has THREE rebases, and an earlier session wrote "3 metadata
+    // vtables" for BOTH slots — true there, false here. Count them per address; do not carry
+    // the sentence across.
+    //   orn w8, w1, w0   ·   and w0, w8, #0x1   ·   ret        =>  (w1 | ~w0) & 1
+    // self rides x20, so w0/w1 are the two Bool argument words: hasDecodeSuccess, isKeyFrame.
+    // ⚠️ The `||` operand ORDER is NOT recoverable: both spellings canonicalise to the same
+    // branchless `orn`, so `isKeyFrame || !hasDecodeSuccess` is equally consistent with the code.
+    // Declared immediately before `wantedVideo` because the binary orders these 222 then 223.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.recreateContext:0x1019bea08 result=name-recovered]
+    open func recreateContext(hasDecodeSuccess: Bool, isKeyFrame: Bool) -> Bool {
+        !hasDecodeSuccess || isKeyFrame
     }
 
     ///  wanted video stream index, or nil for automatic selection
