@@ -615,28 +615,20 @@ open class KSOptions {
     // The binary takes NO parameter (35-instruction body @0x1019bee0c; the descriptor at
     // 0x1039ecc48 confirms the arity, and the body touches no argument register). The source's
     // `contentRange` is removed; its only call site passed `nil`, so dropping it invents nothing.
-    // ⚑ BODY DIVERGENT — verdict KSOptions_availableDynamicRange_1019bee0c.json (HIGH). The binary
-    // is `guard let destinationDynamicRange else { return nil }` / `if available.contains(d) { return d }`
-    // / `return available.first` over a native Array of 1-byte DynamicRange; the source's
-    // four-branch AVPlayer.HDRMode OptionSet cascade is absent, and the empty and nil cases return
-    // `nil` rather than `.sdr`/`contentRange`. Body rewrite is a separate unit.
+    // ⚑ BODY RECONSTRUCTED (s67, verified via llvm-objdump over 0x1019bee0c, 35 instr): the binary is a
+    //   3-line algorithm over a native [DynamicRange]. No #if split (the compiled branch is UIKit).
+    //   (1) guard let destinationDynamicRange (nil == byte 4: `ldrb w19; cmp #4; b.eq` @0x1019bee3c;
+    //       DynamicRange raws are 0/2/3/5, so 4 is the nil extra-inhabitant);
+    //   (2) available = DynamicRange.availableHDRModes — the helper @0x1019e4078 (AVPlayer ObjC classref
+    //       @0x104410cb0; bit-tests dolbyVision=bit2/hdr10=bit1/hlg=bit0 → [DynamicRange]); count@+0x10,
+    //       1-byte elems@+0x20+i;
+    //   (3) if available.contains(d) { return d } (loop+cmp @0x1019bee58-0x1019bee68);
+    //   (4) return available.first (array[0], or nil/byte-4 when empty @0x1019bee7c).
     open func availableDynamicRange() -> DynamicRange? {
-        #if canImport(UIKit)
-        let availableHDRModes = AVPlayer.availableHDRModes
-        if let preferedDynamicRange = destinationDynamicRange {
-            // value of 0 indicates that no HDR modes are supported.
-            if availableHDRModes == AVPlayer.HDRMode(rawValue: 0) {
-                return .sdr
-            } else if availableHDRModes.contains(preferedDynamicRange.hdrMode) {
-                return preferedDynamicRange
-            } else if preferedDynamicRange != .sdr { // trying update to HDR mode
-                return availableHDRModes.dynamicRange
-            }
-        }
-        return nil
-        #else
-        return destinationDynamicRange
-        #endif
+        guard let destinationDynamicRange else { return nil }
+        let available = DynamicRange.availableHDRModes
+        if available.contains(destinationDynamicRange) { return destinationDynamicRange }
+        return available.first
     }
 
     open func playerLayerDeinit() {
