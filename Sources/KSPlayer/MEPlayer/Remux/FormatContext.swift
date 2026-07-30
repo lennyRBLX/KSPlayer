@@ -278,6 +278,72 @@ public final class FormatContext {
         return nil
     }
 
+    // subtitleAssetTrackMap(options:) `0x101a36488` (242 instr, extent exact from LC_FUNCTION_STARTS
+    // 0x101a36488..0x101a36850) — MEMBER_MISSING: in the binary, absent from source. Trie:
+    // `KSPlayer.FormatContext.subtitleAssetTrackMap(options: KSPlayer.KSOptions) -> [Swift.Int32 : KSPlayer.FFmpegAssetTrack]`.
+    // Read instruction-for-instruction (llvm-objdump; every stub resolved through the chained-fixup
+    // bind table, every symbolic type ref decoded through its nominal-type descriptor):
+    //   0x101a364ac  ldr x26,[x20,#0x40]              self.assetTracks (empty ⇒ 0x101a36814 returns [:])
+    //   0x101a364c8  adrp/ldr [0x104108738]; ldr x28,[x8]   __got 0x104108738 binds AVFoundation
+    //                                                 `_AVMediaTypeSubtitle` — the NSString constant
+    //   0x101a364e4  ldr x25,[0x104112d08]            libswiftCore `__swiftEmptyDictionarySingleton` = `[:]`
+    //   0x101a365c4  ldr x0,[x27,#0x78] then String._unconditionallyBridgeFromObjectiveC on BOTH sides,
+    //                then _stringCompareWithSmolCheck(_:_:expecting:) with w4=0 (.equal), with a
+    //                bitwise-identical fast path at 0x101a365e8  ⇒ `where track.mediaType == .subtitle`
+    //                (mediaType is the 8-byte AVMediaType at +0x78 — session-36 designated-init offset map)
+    //   0x101a36650  ldr w28,[x27,#0x10]              track.trackID (Int32) — the dictionary KEY
+    //   0x101a36668-740  native Dictionary insert: find-bucket 0x1019c10ec, grow 0x1019f9a74,
+    //                copy-to-unique 0x1019f7310, key `str w28,[x25+0x30]`, value `str x27,[x25+0x38]`,
+    //                count bump `[x25+0x10]`; the mismatch trap is libswiftCore
+    //                KEY_TYPE_OF_DICTIONARY_VIOLATES_HASHABLE_REQUIREMENTS  ⇒ `result[track.trackID] = track`
+    //   0x101a36744  ldrb w8,[x27,#0xe8]; cmp #1; b.ne 0x101a364f8   ⇒ `if track.isImageSubtitle`
+    //                (+0xe8 isImageSubtitle, +0x100 subtitle — same session-36 offset map)
+    // The two branches build DIFFERENT generic classes. Each metadata accessor is handed a mangled-name
+    // ref of the form `\x02<indirect ctx desc> y \x02<arg> G`; resolving the indirect slots through the
+    // chained-fixup rebase targets and reading each descriptor's name field gives:
+    //   image-subtitle (fallthrough 0x101a36758): nameRef 0x10356aa38 → 0x1039efb30 `AsyncPlayerItemTrack`
+    //     × 0x1039f0030 `SubtitleFrame`; swift_allocObject size 0xa8/align 7; frameCapacity w1=8. Built
+    //     ONCE and SHARED: [sp+0x18] is nil-seeded at 0x101a364c4, `cbnz x0` at 0x101a36760 skips the
+    //     whole construction on later image tracks, and it is released once at loop exit 0x101a367e0.
+    //     Order is init → decode() → `track.subtitle = …` (0x101a367b4/67bc/67c8).
+    //   text-subtitle (0x101a364f8): nameRef 0x10356ac50 → 0x1039ef97c `SyncPlayerItemTrack` ×
+    //     `SubtitleFrame`; frameCapacity w1=0x80=128; per-track. Order is init → `track.subtitle = …`
+    //     → decode() (0x101a3652c/6538/6548).
+    // Both tails call the SAME member: the text path dispatches `blr [metadata+0x190]`, which is
+    // vtable slot (0x190-0xd0)/8 = 24 = SyncPlayerItemTrack.decode() @0x101a5ba20; the image path calls
+    // 0x101a36850 directly (AsyncPlayerItemTrack is `final`, so the override devirtualises) and that
+    // body opens with the identical `strb w8,[x20,#0x78]; strh w8,[x20,#0x28]` pair before doing the
+    // BlockOperation/operationQueue work of the `decode()` override.
+    // ⚑[tool=llvm-objdump ref=SyncPlayerItemTrack.init:0x101a33460 result=ARITY-DEFERRED — the binary's
+    //   init takes a FOURTH argument after (mediaType x0, frameCapacity w1, options x2): w3, held in x21
+    //   and forwarded as `and w2,w21,#1` into CircularBuffer's initialiser at all three call sites
+    //   (0x101a33580 / 0x101a33624 / 0x101a3364c). This body passes w3=1 on the text path and w3=0 on the
+    //   image path (0x101a36510 / 0x101a367a8). Source declares only the 3-arg
+    //   `init(mediaType:frameCapacity:options:)` (MEPlayerItemTrack.swift:52), so the label and meaning of
+    //   the 4th parameter are unrecoverable from THIS body — naming it is a SyncPlayerItemTrack +
+    //   CircularBuffer signature unit, and it also re-opens the pre-existing 3-arg call sites at
+    //   MEPlayerItem.swift:299/306. Written here with the declared 3-arg spelling.]
+    func subtitleAssetTrackMap(options: KSOptions) -> [Int32: FFmpegAssetTrack] {
+        var result = [Int32: FFmpegAssetTrack]()
+        var imageSubtitleTrack: AsyncPlayerItemTrack<SubtitleFrame>?
+        for track in assetTracks where track.mediaType == .subtitle {
+            result[track.trackID] = track
+            if track.isImageSubtitle {
+                if imageSubtitleTrack == nil {
+                    let subtitle = AsyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options)
+                    subtitle.decode()
+                    imageSubtitleTrack = subtitle
+                }
+                track.subtitle = imageSubtitleTrack
+            } else {
+                let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options)
+                track.subtitle = subtitle
+                subtitle.decode()
+            }
+        }
+        return result
+    }
+
     // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     //   no deep pins): (1) raise the interrupt flag to cancel any in-flight IO; (2) if fonts were registered,
     //   unregister each embedded font (the init's CTFontManagerRegisterFontsForURL mirror, .process scope) and
