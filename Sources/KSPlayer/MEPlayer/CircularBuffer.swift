@@ -187,11 +187,13 @@ public class CircularBuffer<Item: ObjectQueueItem> {
 
 extension FixedWidthInteger {
     /// Returns the next power of two.
+    // No zero-guard: `@inline(__always)` puts this helper inside the init's machine code, and the binary has no
+    // `return 1` arm anywhere in 0x101a16198..0x101a16314 (95 instr). The parameter is referenced at exactly two
+    // sites — `cbz x25, 0x101a16308` @0x101a16238 branching to `brk #1`, and the `sub x8, x25, #1` @0x101a16254
+    // that cbz guards — so the zero case traps as the unsigned-subtraction precondition rather than returning 1.
+    // Sole call site is CircularBuffer.init above, so removing the guard changes no other caller.
     @inline(__always)
     func nextPowerOf2() -> Self {
-        guard self != 0 else {
-            return 1
-        }
-        return 1 << (Self.bitWidth - (self - 1).leadingZeroBitCount)
+        1 << (Self.bitWidth - (self - 1).leadingZeroBitCount)
     }
 }
