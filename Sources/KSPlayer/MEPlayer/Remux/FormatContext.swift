@@ -53,7 +53,7 @@ public final class FormatContext {
     public let interrupt: IOInterruptContext                  // +0x10  (init param 4)
     public let formatCtx: UnsafeMutablePointer<AVFormatContext> // +0x18 (init param 2)
     public let ioContext: AbstractAVIOContext?                // +0x20  (init param 5)
-    public let duration: Double                               // +0x28  (init param 1; see DIVERGENCE note in init)
+    public let duration: Double                               // +0x28  DERIVED (not an init param — see init)
     public let fileSize: Int64                                // +0x30  (init param 3) — external/unmapped stdlib symref; NOT Int
     public let bitrate: Int64                                 // +0x38  DERIVED — external/unmapped; NOT Int
     public let assetTracks: [FFmpegAssetTrack]                // +0x40  default [] (binary builds from a stream loop)
@@ -64,14 +64,25 @@ public final class FormatContext {
     public let maxFrameDuration: Int                        // +0x78  DERIVED (3600 or 10 from format flags); field-record sugar `Si` — NOT Double
     public let fontsDir: URL?                               // (sym)  (init param 6) → triggers font registration side-effect
 
-    // Inner init `0x101a350bc`. 6 params (register order → field):
-    //   p1 duration(double), p2 formatCtx(ptr), p3 fileSize(ulong/Int64),
-    //   p4 interrupt, p5 ioContext(ptr), p6 fontsDir.
+    // Inner init `0x101a350bc`. FIVE params (register order → field):
+    //   x0 formatCtx(ptr), x1 fileSize(Int64), x2 interrupt, x3 ioContext(ptr), x4 fontsDir.
     // Param→field stores observed in the binary at unaff_x20 + off:
-    //   +0x10=p4(interrupt), +0x18=p2(formatCtx), +0x20=p5(ioContext),
-    //   fontsDir=p6, +0x30=p3(fileSize), +0x28=p1(duration), +0x58=0(seekByBytes).
-    public init(duration: Double,
-                formatCtx: UnsafeMutablePointer<AVFormatContext>,
+    //   +0x10=interrupt, +0x18=formatCtx, +0x20=ioContext, fontsDir, +0x30=fileSize, +0x58=0(seekByBytes).
+    //
+    // There is NO `duration` parameter, and the one this declaration used to carry was a
+    // decompiler artifact: Ghidra's default __swiftcall prototype prepends a phantom
+    // `double param_1`, which is visible verbatim in the prefetch caches. Three independent
+    // reads settle it, and the correct signature was ALREADY sitting in the
+    // `⚑[tool=resolve_fun_pins …]` markers below while the declaration above contradicted them:
+    //   · the trie (export_trie_oracle --addr 0x101a350bc --owner FormatContext) → OWNER_MATCH on
+    //     exactly these five labels, no `duration:`;
+    //   · the prologue @0x101a350e8-fc consumes only x20(self)+x0..x4 and never reads d0 —
+    //     the d8..d11 stores at 0x101a350bc-c0 are callee-SAVES, not argument reads;
+    //   · every call site (0x101a34ff8 / 0x101a3a294 / 0x101a3a65c / 0x101a9f43c) passes x0..x4
+    //     with no d0 write in the preceding instructions.
+    // The parameter was never read by this body either: `duration` is assigned below from the
+    // locally derived `durationValue`, not from any argument.
+    public init(formatCtx: UnsafeMutablePointer<AVFormatContext>,
                 fileSize: Int64,
                 interrupt: IOInterruptContext,
                 ioContext: AbstractAVIOContext?,

@@ -35,13 +35,17 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         let formatCtx = try openFormatContext(time: time, url: url, interrupt: interrupt, options: nil, cacheKey: nil)
         // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext. Two args are  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         //   DISASM-confirmed live: `formatCtx`(x0) = the openFormatContext return; `interrupt`(x2) = the IOInterruptContext.
-        //   The other four are DEAD arguments the binary does not encode — 0/0/nil/nil are flagged residues:
-        //   `duration`(d0) is PROVEN dead (the callee never reads d0 — its first bl @0x101a35128 clobbers it — and
-        //   re-derives the duration field @+0x68 from formatCtx); `fileSize`(x1)/`ioContext`(x3)/`fontsDir`(x4) are
-        //   dead-arg-elided (openFormatContext returns a single UnsafeMutablePointer, so their post-call registers are
-        //   leftovers, not returns). The decompile's 0/nil for these is a stale-variable artifact — it renders
-        //   `interrupt` as 0 too, yet disasm proves interrupt = x20 — so they were resolved by disasm, not decompile.
-        let formatContext = FormatContext(duration: 0, formatCtx: formatCtx, fileSize: 0,
+        //   `duration`(d0) is GONE from the signature entirely: it was never a parameter, only Ghidra's
+        //   phantom `double param_1`, and the trie / the prologue @0x101a350e8-fc / every call site all
+        //   agree on five parameters.
+        //   ⚠️ The claim that `fileSize`(x1)/`ioContext`(x3)/`fontsDir`(x4) are "dead-arg-elided because
+        //   openFormatContext returns a single UnsafeMutablePointer" is REFUTED: openFormatContext returns
+        //   THREE values — `mov x0,x26 ; mov x1,x24 ; mov x2,x27` @0x101a39f28 immediately before its sole
+        //   `ret` @0x101a39f58 — and THIS call site consumes all three (`mov x24,x0` / `mov x23,x1` /
+        //   `mov x27,x2` @0x101a9f3e4-f8). So fileSize and ioContext have a real source and the 0/nil here
+        //   are placeholders, not proven residues. Left as-is pending the openFormatContext body audit.
+        //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
+        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: 0,
                                           interrupt: interrupt, ioContext: nil, fontsDir: nil)
 
         // ── stream-select: the FIRST `.subtitle` asset track. Disasm @0x101a9f47c-0x101a9f4f4: iterate

@@ -194,10 +194,13 @@ extension MEPlayerItem {
         //   ⚑[tool=decompile ref=openFormatContext:0x101a392a0 result=try-throws→AVFormatContext*]
         let formatCtx = try openFormatContext(time: 0, url: url, interrupt: interruptContext, options: options, cacheKey: nil)
 
-        // FormatContext dead-arg init (duration:0, fileSize:0 — the init re-derives both; the audited
-        //   FFmpegSubtitle.init precedent, FFmpegSubtitle.swift:44).
-        //   ⚑[tool=decompile ref=FormatContextInit:0x101a350bc result=dead-arg-init]
-        let formatContext = FormatContext(duration: 0, formatCtx: formatCtx, fileSize: 0,
+        // FormatContext init. The former `duration: 0` argument is GONE — it satisfied a phantom
+        //   `double param_1` that Ghidra's default __swiftcall prototype prepends; the trie, the
+        //   prologue @0x101a350e8-fc and every call site all give five parameters, no `duration:`.
+        //   `fileSize: 0` is still a residue and is NOT settled here: openFormatContext actually
+        //   returns three values (x0/x1/x2 @0x101a39f28), so fileSize/ioContext have a real source.
+        //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
+        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: 0,
                                           interrupt: interruptContext, ioContext: nil, fontsDir: options.fontsDir)
         self.formatContext = formatContext
 
