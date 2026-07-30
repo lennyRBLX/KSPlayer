@@ -200,6 +200,25 @@ public final class FormatContext {
         return result
     }
 
+    // seekable `0x101a34e24` (12 instr, extent from LC_FUNCTION_STARTS 0x101a34e24..0x101a34e54) — a COMPUTED
+    // property with no stored field (s68: recovered as MEMBER_MISSING; the class had no `seekable` member at all).
+    // Trie: `$s8KSPlayer13FormatContextC8seekableSbvg` = KSPlayer.FormatContext.seekable.getter : Swift.Bool.
+    // Body read instruction-by-instruction — three exits, in this order:
+    //   0x101a34e24 `ldr x8,[x20,#0x18]`  self.formatCtx        (+0x18, as this class's own field map says)
+    //   0x101a34e28 `ldr x8,[x8,#0x20]`   formatCtx->pb          (AVFormatContext.pb — its 5th pointer-width
+    //                                                             field, per libavformat/avformat.h)
+    //   0x101a34e2c `cbz x8, 0x101a34e3c` pb == nil            ⇒ take the `mov w0,#1` exit ⇒ TRUE
+    //   0x101a34e30 `ldr w8,[x8,#0x90]`   pb->seekable          (AVIOContext.seekable is `int` — hence the
+    //                                                             32-bit w-register load, not x)
+    //   0x101a34e34 `cmp w8,#0` / `b.le`  seekable > 0         ⇒ TRUE (`mov w0,#1` @0x101a34e3c)
+    //   0x101a34e44 `ldr d0,[x20,#0x28]`  self.duration         (+0x28, Double)
+    //   0x101a34e48 `fcmp d0,#0.0` / `cset w0,ne`              ⇒ duration != 0
+    // i.e. a nil pb reports seekable, matching FFmpeg's "no custom IO ⇒ the demuxer decides" convention.
+    var seekable: Bool {
+        guard let pb = formatCtx.pointee.pb else { return true }
+        return pb.pointee.seekable > 0 || duration != 0
+    }
+
     // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     //   no deep pins): (1) raise the interrupt flag to cancel any in-flight IO; (2) if fonts were registered,
     //   unregister each embedded font (the init's CTFontManagerRegisterFontsForURL mirror, .process scope) and
