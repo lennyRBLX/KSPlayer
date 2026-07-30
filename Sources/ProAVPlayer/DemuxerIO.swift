@@ -96,20 +96,34 @@ actor DemuxerIO {
     }
 
     /// slot0 vtable getter (get-only computed): `state == .endOfStream` (FUN_101b7e6b8 — reads state, cmp == 4).  ⚑[tool=resolve_fun_pins ref=FUN_101b7e6b8:0x101b7e6b8 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.isEndOfStream.getter : Swift.Bool
-    /// ⚑ NAME INFERRED — the getter carries no #function literal (`recover_swift_function_name` = None); declared
-    /// first to occupy vtable slot0 (declaration order inferred from the slot position). Access level not
-    /// binary-recoverable (manual §1 — under-include; `var` = internal).
-    var isAtEndOfStream: Bool { state == .endOfStream }
+    /// NAME + ACCESS are BINARY-PROVEN — this SUPERSEDES the earlier "NAME INFERRED / access not
+    /// binary-recoverable" note. The export trie carries `…13isEndOfStreamSbvg` (= 0x101b7e6b8, the already
+    /// audited slot-0 body), `…vgTq` (descriptor slot 0, confirming the slot position independently) and
+    /// `…vpMV` — a property descriptor, which is public-exclusive. `isAtEndOfStream` has NO symbol of any
+    /// kind in the subtree. No `vs`/`vM` symbol and no setter/modify descriptor ⇒ get-only, as reconstructed.
+    public var isEndOfStream: Bool { state == .endOfStream }
 
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     // formatContext: binary NON-optional (l2 IUO_STANDIN discharged this pass); set in init from FUN_101b6b184 param_1 (@0x70).
     public let formatContext: FormatContext
-    public var currentTime: Double = 0
+    // `public` = `…11currentTimeSdvpMV`. Setter NOT public: the class descriptor's slots 2 (Setter) and 3
+    // (ModifyCoroutine) exist but are NOT IN TRIE, while the sibling getter at slot 1 IS named (`vgTq`).
+    // Controls both ways: every private var's accessor descriptor in this class is likewise unnamed, and
+    // SwiftSoup.Node.parentNode — a genuinely public settable var in this same image — keeps vs/vsTq/vM/vMTq.
+    // ⚑ private(set) vs fileprivate(set) vs internal(set) is NOT binary-recoverable: with no setter symbol
+    //   there is no discriminator. `private(set)` is the narrowest spelling, and every write is in-type.
+    public private(set) var currentTime: Double = 0
     // ⚑ Failure type UNRES (libswiftCore wall) → M2. decode_composite = Task<(), UNRES>? (optional confirmed).
     private var ioTask: Task<Void, Never>? = nil
-    // ⚑ Failure type UNRES → M2. decode_composite = CheckedContinuation<(), UNRES>? (optional confirmed).
-    private var ioWaiter: CheckedContinuation<Void, Error>? = nil
-    public var state: State = .ready                             // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
+    // Failure type RESOLVED (supersedes "UNRES → M2"): `…8ioWaiter33_…LLScCyyts5NeverOGSgvpfi`
+    // = CheckedContinuation<(), Swift.Never>?. Corroborated twice: the slot28 park is
+    // `withCheckedContinuation` (non-throwing ⇒ Never), and `ioTask` above carries the IDENTICAL `s5NeverO`
+    // token — so the old pairing of Task<Void,Never> with CheckedContinuation<Void,Error> was internally
+    // inconsistent and one of the two had to be wrong. The trie says it was this one.
+    private var ioWaiter: CheckedContinuation<Void, Never>? = nil
+    // `public` = `…5stateAC5StateOvpMV`; setter NOT public — descriptor slots 11 (Setter) and 12 (Modify)
+    // are unnamed while the getter at slot 10 is named `vgTq`. ⚑ same private(set)-vs-internal(set) pin.
+    public private(set) var state: State = .ready                           // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
     private var seekTime: Double = 0
     private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)? = nil
     // ⚑ optionality UNRES (decode_composite=None, mangle truncated) → M2. symref → DemuxerIOAction.
@@ -118,7 +132,10 @@ actor DemuxerIO {
     // expressible in a declaration initializer), so the default was never observable and the
     // faithful `let` form drops it. Binding now matches the FieldRecord (flags 0x00000000).
     private let ioAction: DemuxerIOAction?
-    private var retryCount: Int = 0                              // ⚑ type symref-unresolved (likely Swift.Int, non-opt) → M2
+    // Type BINARY-PROVEN (supersedes the "likely Swift.Int" pin): `…10retryCount33_…LLs6UInt64Vvpfi`
+    // = Swift.UInt64, class-scoped and discriminator-bearing. NOTE l2_field_gate reports Int here via an
+    // UNSCOPED property-descriptor match — that PASS is a false positive; the class-scoped trie symbol wins.
+    private var retryCount: UInt64 = 0
     private weak var delegate: DemuxerIODelegate? = nil          // weak optional (mangle _pSgXw)
 
     /// Designated init — `FUN_101b6b184` (actor ⇒ the compiler emits `_swift_defaultActor_initialize`).
@@ -299,7 +316,7 @@ actor DemuxerIO {
     // Also deferred: the readLoop .seeking/.paused + .reading-catch + cancelReading await-value continuation
     //   internals (deep-async); DemuxerIOAction reqs 2-3.
     // ── Structural class-M2 gate DONE (vtable_anchor_diff s7-rebuild vs Forward; verdict DemuxerIO_structural_M2):
-    //   the computed getter (isAtEndOfStream) + Init + 5-method (26 process/27 setDelegate/28 readLoop/29 readPacket/
+    //   the computed getter (isEndOfStream) + Init + 5-method (26 process/27 setDelegate/28 readLoop/29 readPacket/
     //   30 cancelReading) kind-sequence ALIGNS. Residual = src 10 vs bin 8 accessor-triples (2 stored props lack vtable
     //   accessors in the binary = library-evolution/resilience emission artifact; the 10 fields are l2-confirmed
     //   REAL_FLAG 0 — NOT fabricated, P33/P23). Method declaration-order ≠ binary slot-order, but the slot→method
