@@ -78,6 +78,18 @@ public extension AudioDynamicsProcessor {
 }
 
 public final class AudioEngineDynamicsPlayer: AudioEnginePlayer, AudioDynamicsProcessor {
+    // ⚑ MISSING field, recovered. Binary field order puts it FIRST, before dynamicsProcessor.
+    //   type    `__C.AVAudioUnitEQ` from all four trie symbols; no trailing `Sg` ⇒ non-optional (rule 7)
+    //   access  `public` — carries a vpMV property descriptor, which is public-exclusive (rule 28)
+    //   let     the trie emits vg/vpMV/vpWvd/vpfi and NO vs or vM, so there is no setter
+    //   default read from its vpfi body @0x10199aa1c (rule 26): load the class from 0x104410c18,
+    //           `bl 0x10345c1e4` = _objc_allocWithZone (stub → GOT 0x10410b8b0 → libobjc), then a TAIL
+    //           `b 0x1034629c0` = objc_msgSend with selref 0x10440b838 and NO argument register set
+    //           ⇒ a no-arg init. The distinguishing control is dynamicsProcessor's own vpfi
+    //           @0x10199aa38, which is the same shape but sets `mov x2,sp` with a stack-built
+    //           AudioComponentDescription ⇒ initWithAudioComponentDescription:. Arity separates them.
+    //   ⚑[tool=export_trie_oracle ref=AudioEngineDynamicsPlayer.nbandEQ:0x10199aa1c result=OWNER_MATCH]
+    public let nbandEQ: AVAudioUnitEQ = AVAudioUnitEQ()
     private let dynamicsProcessor = AVAudioUnitEffect(audioComponentDescription:
         AudioComponentDescription(componentType: kAudioUnitType_Effect,
                                   componentSubType: kAudioUnitSubType_DynamicsProcessor,
