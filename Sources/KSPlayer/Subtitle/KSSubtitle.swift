@@ -355,14 +355,9 @@ open class SubtitleModel: ObservableObject {
             // session invalidates the in-flight query (generation/sequence bump + query-time/parts reset) so
             // the next tick re-queries and translates.
             if newValue != nil {
-                // ⚑[tool=prefetch_decompiles ref=SubtitleModel.searchSubtitle:0x101ab68d8 result=pinned]
-                //   The CALL is proven; its SOURCE SPELLING is not. The call site materialises NO arguments
-                //   (x0 holds the `swift_unknownObjectRelease` return, x1/x2 are untouched) because the
-                //   callee provably reads none of them — so no argument value survives in the binary, and
-                //   this 2-arg entry is indistinguishable from the 0-arg slot-99 entry @0x101ab68d4
-                //   (`b 0x101ab68d8`), whose name is unrecoverable. Behaviour is reproduced exactly; the
-                //   argument VALUES below are placeholders into ignored (`_`-labelled) parameters.
-                searchSubtitle(query: nil, languages: [])
+                // ⚑[tool=export_trie_oracle ref=SubtitleModel.invalidateParts:0x101ab68d8 result=OWNER_MATCH] `bl 0x101ab68d8` @0x101ab0660 (re-read this session) calls slot 105 = `(invalidateParts in _912797…)()` DIRECTLY and materialises no arguments. The old pin here spelled this `searchSubtitle(query: nil, languages: [])` on the theory that the callee ignored two arguments; the trie shows the callee is zero-arg and the two-argument reading was the conflation this package removes.
+                // ⚑[tool=disassemble ref=SubtitleModel.translationSession.setter:0x101ab0660 result=thunk-elision-undecidable] the residual: `cleanParts()` would inline its own one-instruction `b 0x101ab68d8` body and emit this identical `bl`. `invalidateParts()` is the direct target and is in-class, so it is the minimal claim.
+                invalidateParts()
             }
         }
     }
@@ -401,7 +396,7 @@ open class SubtitleModel: ObservableObject {
                 // idiom; P62 concurrency escape — under-included per §1, not a logic change).
                 nonisolated(unsafe) let info = newValue
                 firstSubtitleActor = SubtitleActor(info: info)
-                didSelectSubtitle(info)                 // FUN_101ab8250 (shared with secondary); name P28  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
+                select(subtitleInfo: info)              // shared with secondary  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
                 #if canImport(Translation) && !os(tvOS) && !os(watchOS)
                 // FUN_101ab2540 translation branch: build a Configuration from the new subtitle's language and the
                 // current locale, skipping when they already match (nothing to translate).
@@ -438,7 +433,7 @@ open class SubtitleModel: ObservableObject {
             if let newValue {
                 nonisolated(unsafe) let info = newValue
                 secondarySubtitleActor = SubtitleActor(info: info)
-                didSelectSubtitle(info)
+                select(subtitleInfo: info)
             } else {
                 secondarySubtitleActor = nil
             }
@@ -456,37 +451,40 @@ open class SubtitleModel: ObservableObject {
 
     // Two vtable slots, not one: binary slot 95 @0x101ab3a34 is `mov w2,#0x1 ; b 0x101ab3a3c`
     // and slot 96 @0x101ab3a3c is the real body. Both carry their own MethodDescriptor
-    // (0x1039f2034 / 0x1039f203c) and their own metadata vtable word (0x1044ef358 / 0x1044ef360).
+    // (records 0x1039f2030 / 0x1039f2038, whose Impl fields sit at +4 = 0x1039f2034 / 0x1039f203c —
+    // re-read raw this session) and their own metadata vtable word (0x1044ef358 / 0x1044ef360).
     //
     // This was previously spelled as ONE method with `reselect: Bool = true`. That spelling is
     // WRONG and cannot produce the binary: a Swift default argument emits ONE vtable entry plus a
     // separate default-argument *generator* that is not in the vtable, so it yields 111 slots where
     // the binary has 112. PROVEN by compiling both spellings (session 58):
     //
-    //   one decl + default arg  -> sil_vtable has a single `addSubtitle(info:reselect:)` entry
+    //   one decl + default arg  -> sil_vtable has a single `addSubtitle(info:rebindSelection:)` entry
     //   two overloads           -> sil_vtable has BOTH, adjacent, 1-arg FIRST (declaration order)
     //
     // and the 1-arg overload's codegen on a devirtualizable self-call is exactly
-    //   `mov w2, #1 ; b <addSubtitle(info:reselect:)>`
+    //   `mov w2, #1 ; b <addSubtitle(info:rebindSelection:)>`
     // i.e. instruction-for-instruction the binary's slot 95. So the source is an overload PAIR.
-    // No name is invented here — `addSubtitle(info:)` is the same base name with the existing
-    // `info:` label, and `reselect` keeps its existing pin below, unchanged by this split.
+    // Slot 95's trie name carries NO private discriminator, so this 1-arg overload is not private.
     public func addSubtitle(info: any SubtitleInfo) {
-        addSubtitle(info: info, reselect: true)
+        addSubtitle(info: info, rebindSelection: true)
     }
 
-    // @0x101ab3a3c (slot 96 — the real body; slot 95 above forwards with reselect=true).
+    // @0x101ab3a3c (slot 96 — the real body; slot 95 above forwards with rebindSelection=true).
     // Dedupe-by-subtitleID with REPLACE (base cce7002 only SKIPPED-if-present — the Forward
-    // divergence). `reselect` gates the re-point of selected/secondary to the new instance
+    // divergence). `rebindSelection` gates the re-point of selected/secondary to the new instance
     // (@0x101ab3d64, single-call-site helper inlined).
-    // ⚑ `reselect` param name unrecoverable (P28) — recon-chosen for the semantic bool slot 95 sets true.
-    public func addSubtitle(info: any SubtitleInfo, reselect: Bool) {
+    // Session 74: the P28 "`reselect` param name unrecoverable" pin is RETIRED, and the access narrowed —
+    // the trie resolves this address to `(addSubtitle in _912797…)(info:rebindSelection:)`, i.e. the second
+    // label is `rebindSelection` and the method is PRIVATE. Both call sites are in this file (the 1-arg
+    // overload above and select(subtitleInfo:) below), so the narrowing is closed.  ⚑[tool=export_trie_oracle ref=SubtitleModel.addSubtitle:0x101ab3a3c result=OWNER_MATCH] = KSPlayer.SubtitleModel.(addSubtitle in _912797C474A4D482F764324552AD86D2)(info: KSPlayer.SubtitleInfo, rebindSelection: Swift.Bool) -> ()
+    private func addSubtitle(info: any SubtitleInfo, rebindSelection: Bool) {
         if let index = subtitleInfos.firstIndex(where: { $0.subtitleID == info.subtitleID }) {
             subtitleInfos[index] = info
         } else {
             subtitleInfos.append(info)
         }
-        if reselect {
+        if rebindSelection {
             if let sel = selectedSubtitleInfo, sel.subtitleID == info.subtitleID, sel !== info {
                 selectedSubtitleInfo = info
             }
@@ -496,14 +494,16 @@ open class SubtitleModel: ObservableObject {
         }
     }
 
-    // FUN_101ab8250 — shared helper invoked by BOTH select willSets on the newly-selected info (2 call sites).  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
-    // Activates it, registers it (addSubtitle reselect:false to avoid re-select recursion), and caches a remote /
-    // iCloud-ubiquitous download via a CacheSubtitleDataSource. ⚑ method name unrecoverable (P28).
+    // Slot 111 @0x101ab8250 — shared helper invoked by BOTH select willSets on the newly-selected info (2 call sites).  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
+    // Activates it, registers it (addSubtitle rebindSelection:false to avoid re-select recursion), and caches a
+    // remote / iCloud-ubiquitous download via a CacheSubtitleDataSource. Session 74: the P28 "method name
+    // unrecoverable" pin that stood here is RETIRED — the trie resolves this address uniquely to
+    // `select(subtitleInfo:)`, private (discriminator _912797…), which the marker above already recorded.
     // Forward divergence (P59): base cached only `!isFileURL`; Forward also caches (isFileURL && isUbiquitousItem).
-    private func didSelectSubtitle(_ info: any SubtitleInfo) {
-        info.isEnabled = true
-        addSubtitle(info: info, reselect: false)
-        if let info = info as? URLSubtitleInfo {
+    private func select(subtitleInfo: any SubtitleInfo) {
+        subtitleInfo.isEnabled = true
+        addSubtitle(info: subtitleInfo, rebindSelection: false)
+        if let info = subtitleInfo as? URLSubtitleInfo {
             if info.downloadURL.isFileURL,
                (try? info.downloadURL.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem != true {
                 return
@@ -649,6 +649,15 @@ open class SubtitleModel: ObservableObject {
         parts = newParts     // publish — set_subscript on keypaths d1e8/d210 → @Published `parts` (5430@0x58c0)
     }
 
+    // Slot 99 @0x101ab68d4 — a 4-byte, ONE-instruction body: `b 0x101ab68d8`, i.e. a tail call into
+    // invalidateParts() below. Its trie name carries NO private discriminator, so it is not private.
+    // Declaration position is FORCED by the vtable, not chosen: slot 99 sits between subtitle(currentTime:)
+    // (slot 98) and the five dead-stripped Method slots 100–104, so it must be declared here.
+    // ⚑[tool=export_trie_oracle ref=SubtitleModel.cleanParts:0x101ab68d4 result=access-undecidable] not-private is proven by the absent discriminator and at-least-internal by the cross-type caller inside KSPlayerLayer.seek @0x1019cd1f0; internal vs public is not decidable for a method, and MethodDescriptor.Impl reads nothing on this non-final class (reconstruction/impl_oracle_refuted_s74.json). `public` follows the file's existing convention.
+    public func cleanParts() {
+        invalidateParts()
+    }
+
     // ⚑ pre-hop helpers (FUN_101ab9d00, one level ABOVE the 5 core funclets): the skip gates (char 0x92/0x93)
     //   and per-track adjusted query times (0x990/0x9c0) are computed before the executor hop and read by the
     //   core as spilled slots. Exact skip predicate + delay formula are UNVERIFIED (best-effort); the core's
@@ -704,12 +713,13 @@ open class SubtitleModel: ObservableObject {
         if stillCurrent(items, generation: generation, sequence: sequence) { parts = items }
     }
 
-    // FUN_101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a  ⚑[tool=resolve_fun_pins ref=FUN_101ab68d8:0x101ab68d8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(invalidateParts in _912797C474A4D482F764324552AD86D2)() -> ()
-    // generation-invalidation + actor-reset trigger. The text `query`/`languages` are UNUSED here — the
-    // network search moved into the per-track SubtitleActors (lazy). Bumps the model generation/sequence,
-    // resets both query-times + `parts`, then resets both actors (FUN_101ab6acc→6b5c/6bc4/6c2c chain).
-    // Signature kept (base + consumer KSVideoPlayerView:664); the args are ignored per the binary body.
-    public func searchSubtitle(query _: String?, languages _: [String]) {
+    // Slot 105 @0x101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a  ⚑[tool=resolve_fun_pins ref=FUN_101ab68d8:0x101ab68d8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(invalidateParts in _912797C474A4D482F764324552AD86D2)() -> ()
+    // generation-invalidation + actor-reset trigger. Bumps the model generation/sequence, resets both
+    // query-times + `parts`, then resets both actors (0x101ab6acc→6b5c/6bc4/6c2c chain). Session 74: this
+    // body had been declared as `searchSubtitle(query:languages:)` with both args ignored — a CONFLATION.
+    // The trie names it `invalidateParts()`, zero-arg and PRIVATE (discriminator _912797…); the real
+    // searchSubtitle is a distinct 2312-byte body at slot 109, written out below.
+    private func invalidateParts() {
         subtitleSearchGeneration += 1
         subtitleSearchSequence += 1
         latestPrimarySubtitleQueryTime = nil
@@ -721,5 +731,70 @@ open class SubtitleModel: ObservableObject {
             await strongSelf.firstSubtitleActor?.reset()
             await strongSelf.secondarySubtitleActor?.reset()
         }
+    }
+
+    // Slot 109 @0x101ab6c88, extent 0x101ab6c88..0x101ab7590 (2312 B / 578 instr, LC_FUNCTION_STARTS, no
+    // interior function start). Normal frame (stp x28,x27,[sp,#-0x60]!) and a plain `ret` @0x101ab7558 —
+    // NOT async; the mangling ends in a plain `F` (no `K`, no `Ya`). x0/x1 = query String, x2 = languages,
+    // x20 = self.  ⚑[tool=export_trie_oracle ref=SubtitleModel.searchSubtitle:0x101ab6c88 result=OWNER_MATCH] = KSPlayer.SubtitleModel.searchSubtitle(query: Swift.String, languages: [Swift.String]) -> ()
+    //
+    // Four limbs, in binary order:
+    //  1. 0x101ab6d28–0x101ab7150 — Published modify on `subtitleInfos` (keypaths 0x10356d140/0x10356d168,
+    //     outer stride 16 = [any SubtitleInfo]), each element scanned against the stride-8 `searchInfos`
+    //     array. The predicate is a BARE pointer compare (`cmp x19,x22` @0x101ab6e4c, `cmp x19,x21`
+    //     @0x101ab6fe4) with NO `==` witness call anywhere in the loop, hence `===` and not SubtitleInfo.==.
+    //     Survivors are compacted back into the SAME buffer behind isUniquelyReferenced+COW, i.e.
+    //     `removeAll(where:)`, not `filter`.
+    //  2. 0x101ab7158–0x101ab7188 — `searchInfos = []`: beginAccess(MODIFY, w2=1), old value loaded, the
+    //     empty-array singleton stored, bridgeObjectRelease. Proven to run AFTER limb 1, not before.
+    //  3. 0x101ab718c–0x101ab7280 — `subtitleDataSources` (static self+0x40) filtered by
+    //     swift_conformsToProtocol against descriptor 0x1039f1af4, whose name field reads
+    //     'SearchSubtitleDataSource'. The (instance, witness) PAIR is stored, so the element type is
+    //     `any SearchSubtitleDataSource` — `compactMap { $0 as? … }`, not `filter { $0 is … }`.
+    //  4. 0x101ab7284–0x101ab752c — one `Task` per datasource. Flags 0x1c00 (@0x101ab7478/0x101ab7498),
+    //     identical to the outlined Task.init helper at 0x101a03fd4, so `Task {}` and not `Task.detached`;
+    //     futureResultType Void; priority Optional<TaskPriority> = .none. The await continuation splits on
+    //     a non-nil x20 (@0x101ab7654), i.e. the awaited requirement THROWS → `try await`. On success the
+    //     three appends land in this order: subtitleInfos (upcast via witness table 0x1041da4f8 =
+    //     URLSubtitleInfo : SubtitleInfo), searchInfos (raw), searchedSubtitleInfos (raw).
+    // The error arm @0x101ab7888 gates on KSOptions.logLevel and calls KSLog at level index 2 (.error);
+    // its literals read #file 'KSPlayer/SubtitleModel.swift', #function 'searchSubtitle(query:languages:)',
+    // #line 343 (`mov w6,#0x157` @0x101ab79b8).
+    //
+    // ⚑[tool=export_trie_oracle ref=SubtitleModel.searchSubtitle:0x101ab6c88 result=access-undecidable] public vs internal is not provable for a METHOD: only vpMV/vpZMV prove public and those are property markers, and MethodDescriptor.Impl reads nothing here because SubtitleModel is a non-final class (see reconstruction/impl_oracle_refuted_s74.json). `public` is the pre-existing spelling and the sole call site is cross-module.
+    // ⚑[tool=disassemble ref=SubtitleModel.searchSubtitle:0x101ab73b4 result=isolation-site-undecidable] MainActor.shared is materialised AT this Task, and SubtitleModel is proven NOT type-level @MainActor by invalidateParts' nil actor slot (`stp xzr,xzr,[x0,#0x10]` @0x101ab6a00). But `Task { @MainActor in }` and `@MainActor func searchSubtitle` are byte-identical here; the closure spelling is the minimal claim.
+    // ⚑[tool=disassemble ref=SubtitleModel.searchSubtitle:0x101ab73a4 result=P62-launder-undecidable] self is captured by a bare swift_retain; the `nonisolated(unsafe)` launders emit the same code and are present only for the KSPlayer target's Swift 6 strict concurrency (Package.swift gives .swiftLanguageMode(.v5) to ProAVPlayer only).
+    // ⚑[tool=export_trie_oracle ref=AssrtSubtitleDataSource.searchSubtitle:0x101aa6c50 result=query-non-optional] SubtitleDataSource.swift:113 declares the awaited requirement `query: String?` while every conformer demangles `query: Swift.String`. Build-neutral here (implicit optional promotion, and String? is bit-identical to String at the ABI); deferred to its own package.
+    // ⚑[tool=recover_swift_function_name ref=SubtitleModel.searchSubtitle:0x101ab6c88 result=KSPlayer/SubtitleModel.swift] the #file literal names SubtitleModel.swift while this class lives in KSSubtitle.swift. Deferred to the file-topology package.
+    public func searchSubtitle(query: String, languages: [String]) {
+        subtitleInfos.removeAll { info in searchInfos.contains { $0 === info } }
+        searchInfos = []
+        nonisolated(unsafe) let strongSelf = self
+        for dataSource in subtitleDataSources.compactMap({ $0 as? SearchSubtitleDataSource }) {
+            nonisolated(unsafe) let source = dataSource
+            Task { @MainActor in
+                do {
+                    let infos = try await Self.delegateSearch(source, query: query, languages: languages)
+                    strongSelf.subtitleInfos.append(contentsOf: infos)
+                    strongSelf.searchInfos.append(contentsOf: infos)
+                    strongSelf.searchedSubtitleInfos.append(contentsOf: infos)
+                } catch {
+                    KSLog(error)
+                }
+            }
+        }
+    }
+
+    // Concurrency plumbing (§1 — recon-chosen, binary-invisible; NOT a distinct binary function), the same
+    // `sending` hop SubtitleActor.delegateSearch already uses for the identical shape: the datasource is a
+    // non-Sendable existential and the requirement is nonisolated async, so awaiting it from the MainActor
+    // Task sends the receiver out of the MainActor region. `nonisolated(unsafe)` does NOT suppress that —
+    // it governs isolation checking, not region-based send analysis — so the value is transferred through a
+    // `sending` parameter instead. `private static` ⇒ final ⇒ no vtable slot, so slot order is untouched.
+    private static func delegateSearch(_ dataSource: sending any SearchSubtitleDataSource,
+                                       query: String,
+                                       languages: [String]) async throws -> sending [URLSubtitleInfo]
+    {
+        try await dataSource.searchSubtitle(query: query, languages: languages)
     }
 }
