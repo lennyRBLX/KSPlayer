@@ -219,6 +219,37 @@ public final class FormatContext {
         return pb.pointee.seekable > 0 || duration != 0
     }
 
+    // pause `0x101a362c0` / play `0x101a362c8` — two 2-instruction tail-call thunks, extents exact from
+    // LC_FUNCTION_STARTS (8 bytes each). Trie: `$s8KSPlayer13FormatContextC5pauseyyF` =
+    // KSPlayer.FormatContext.pause() -> () and `$s8KSPlayer13FormatContextC4playyyF` = ...play() -> ().
+    // Both bodies are literally `ldr x0,[x20,#0x18]` (self.formatCtx, +0x18 per this class's field map)
+    // then an unconditional `b` into FFmpeg. The Int32 result is dropped — these return ().
+    //
+    // Naming the two branch targets was the whole difficulty, and it is why s68 could not land these.
+    // The targets share fingerprint [11,44] with n=48 indexed symbols, so `ffmpeg_name_oracle
+    // --candidate` (fingerprint-only at the time) "CONFIRMED" BOTH av_read_pause and av_read_play at
+    // BOTH addresses, and even the unrelated avio_wb64. That defect is fixed in s69: --candidate now
+    // also compares the linked body instruction-for-instruction against the candidate's own code in
+    // the FFmpegKit archive, and `--resolve` collapses the whole 48-way class to one survivor.
+    //
+    // Ground truth, derived WITHOUT the oracle from llvm-objdump + FFmpeg n8.1.1 (FFmpegKit/.Script):
+    // n8.1.1 has NO read_play/read_pause fields — both functions call the single TWO-ARG
+    // FFInputFormat.read_set_state(s, state) at iformat+0x78, then fall back to avio_pause(s->pb, flag):
+    //     av_read_play  -> read_set_state(s, FF_INFMT_STATE_PLAY  = 0), avio_pause(pb, 0)
+    //     av_read_pause -> read_set_state(s, FF_INFMT_STATE_PAUSE = 1), avio_pause(pb, 1)
+    // so the discriminating operand is `mov w1,#0` vs `mov w1,#1`, and it appears TWICE in each body.
+    // 0x1030ecfa8 sets w1=1 (⇒ av_read_pause); 0x1030ecf7c sets w1=0 (⇒ av_read_play). Both share the
+    // avio_pause callee 0x1030c49f0 and both return `mov w0,#-0x4e` = AVERROR(ENOSYS).
+    // ⚑[tool=ffmpeg_name_oracle ref=av_read_pause:0x1030ecfa8 result=CONFIRMED]
+    // ⚑[tool=ffmpeg_name_oracle ref=av_read_play:0x1030ecf7c result=CONFIRMED]
+    func pause() {
+        av_read_pause(formatCtx)
+    }
+
+    func play() {
+        av_read_play(formatCtx)
+    }
+
     // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     //   no deep pins): (1) raise the interrupt flag to cancel any in-flight IO; (2) if fonts were registered,
     //   unregister each embedded font (the init's CTFontManagerRegisterFontsForURL mirror, .process scope) and
