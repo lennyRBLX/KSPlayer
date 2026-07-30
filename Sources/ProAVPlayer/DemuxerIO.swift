@@ -14,11 +14,25 @@ import FFmpegKit   // AVFormatContext for the performRead(formatCtx:) req (match
 /// Drives demuxing of the source for the HLS conversion (reads the FormatContext, runs seek/state).
 /// Forward-new (ProAVPlayer module). Binary-confirmed `actor` (init calls
 /// `_swift_defaultActor_initialize` + a `$defaultActor` field record present; actors are implicitly final).
-actor DemuxerIO {
+/// ACCESS — `public` is BINARY-FORCED, not stylistic. Six `vpMV` property descriptors hang off this
+/// type: currentTime / formatContext / state / isEndOfStream (user-declared) plus the SYNTHESIZED
+/// `unownedExecutor` (the Actor conformance witness) and `State.hashValue`. A compiled control
+/// (swiftc -O -wmo, same Xcode as validate_build.sh) settles what a vpMV proves: an INTERNAL actor
+/// emits NONE — not for members spelled `public`, not for unownedExecutor — while a public actor
+/// emits all of them. So vpMV proves the enclosing TYPE is externally visible, which no member
+/// spelling can fake. This SUPERSEDES the older `vpMV proves a public property, nothing proves a
+/// public type` reading.
+/// ⚑ `public` vs `@usableFromInline internal` is NOT separable — the latter reproduces every symbol
+///   measured. `public` chosen: `@usableFromInline` is only legal where some `@inlinable` needs it,
+///   and ProAVPlayer has none.
+public actor DemuxerIO {
     /// Demuxer state machine — nested (descriptor parent = DemuxerIO, 0x1039f5588). 7 cases; the case ORDER is
     /// GOLD-CONFIRMED (field-record reflection: ready0/reading1/seeking2/paused3/endOfStream4/closed5/failed6),
     /// corroborated by slot0 `state == .endOfStream` compiling to `cmp state==4` (audited FAITHFUL).
-    enum State {
+    /// `public` is forced twice over: `…5StateO9hashValueSivpMV` exists, and the control shows an
+    /// internal enum's automatic-Hashable `hashValue` emits NO vpMV while a public one does; and a
+    /// public `state` property cannot expose an internal type.
+    public enum State {
         case ready, reading, seeking, paused, endOfStream, closed, failed
     }
 
@@ -99,7 +113,8 @@ actor DemuxerIO {
     /// NAME + ACCESS are BINARY-PROVEN — this SUPERSEDES the earlier "NAME INFERRED / access not
     /// binary-recoverable" note. The export trie carries `…13isEndOfStreamSbvg` (= 0x101b7e6b8, the already
     /// audited slot-0 body), `…vgTq` (descriptor slot 0, confirming the slot position independently) and
-    /// `…vpMV` — a property descriptor, which is public-exclusive. `isAtEndOfStream` has NO symbol of any
+    /// `…vpMV` — a property descriptor, which a compiled control shows is emitted only for an
+    /// externally visible member of an externally visible TYPE. `isAtEndOfStream` has NO symbol of any
     /// kind in the subtree. No `vs`/`vM` symbol and no setter/modify descriptor ⇒ get-only, as reconstructed.
     public var isEndOfStream: Bool { state == .endOfStream }
 
@@ -112,31 +127,38 @@ actor DemuxerIO {
     // SwiftSoup.Node.parentNode — a genuinely public settable var in this same image — keeps vs/vsTq/vM/vMTq.
     // ⚑ private(set) vs fileprivate(set) vs internal(set) is NOT binary-recoverable: with no setter symbol
     //   there is no discriminator. `private(set)` is the narrowest spelling, and every write is in-type.
+    // CONTROL (s72): a `public private(set) var` on a public actor emits Getter impl NON-NULL with
+    // Setter and Modify impls NULL in the class descriptor — exactly Forward's slots 1/2/3 here and
+    // 10/11/12 for `state`; a fully public var emits all three, a private var emits none.
     public private(set) var currentTime: Double = 0
     // ⚑ Failure type UNRES (libswiftCore wall) → M2. decode_composite = Task<(), UNRES>? (optional confirmed).
-    private var ioTask: Task<Void, Never>? = nil
+    private var ioTask: Task<Void, Never>?
     // Failure type RESOLVED (supersedes "UNRES → M2"): `…8ioWaiter33_…LLScCyyts5NeverOGSgvpfi`
     // = CheckedContinuation<(), Swift.Never>?. Corroborated twice: the slot28 park is
     // `withCheckedContinuation` (non-throwing ⇒ Never), and `ioTask` above carries the IDENTICAL `s5NeverO`
     // token — so the old pairing of Task<Void,Never> with CheckedContinuation<Void,Error> was internally
     // inconsistent and one of the two had to be wrong. The trie says it was this one.
-    private var ioWaiter: CheckedContinuation<Void, Never>? = nil
+    private var ioWaiter: CheckedContinuation<Void, Never>?
     // `public` = `…5stateAC5StateOvpMV`; setter NOT public — descriptor slots 11 (Setter) and 12 (Modify)
     // are unnamed while the getter at slot 10 is named `vgTq`. ⚑ same private(set)-vs-internal(set) pin.
     public private(set) var state: State = .ready                           // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
     private var seekTime: Double = 0
-    private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)? = nil
-    // ⚑ optionality UNRES (decode_composite=None, mangle truncated) → M2. symref → DemuxerIOAction.
-    // Session 62 RESOLVED the session-61 `let` refusal for ioAction: its `= nil` default was
-    // always overwritten by the designated init (which assigns the `ioAction` PARAMETER — not
-    // expressible in a declaration initializer), so the default was never observable and the
-    // faithful `let` form drops it. Binding now matches the FieldRecord (flags 0x00000000).
-    private let ioAction: DemuxerIOAction?
+    private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)?
+    // OPTIONALITY RESOLVED (supersedes the `UNRES → M2` pin). Field record index 9 is
+    // `let <SYM:1@0x1039f55c0>_p` — flags 0x00000000 (`let`) and NO trailing `Sg`; 0x1039f55c0 is the
+    // ProtocolDescriptor named `DemuxerIOAction`. The sibling `delegate` at index 11 is `_pSgXw`, so
+    // this dump does emit `Sg` when it is there. A compiled control settles the remaining ambiguity:
+    // BOTH `Q?` and `Q!` reflect as `_pSg`, so a bare `_p` can only come from a genuinely
+    // non-optional declaration and `DemuxerIOAction!` would ADD a divergence rather than remove one.
+    // Corroborated in code: readPacket @0x101b812d0-0x101b812f4 does add/ldr/bl on the existential
+    // with NO `cbz` on the metadata word — a force-unwrap of an Optional existential must test it.
+    // Session 62's `let` (no declaration default; trie has no symbol of any kind for this field) stands.
+    private let ioAction: DemuxerIOAction
     // Type BINARY-PROVEN (supersedes the "likely Swift.Int" pin): `…10retryCount33_…LLs6UInt64Vvpfi`
     // = Swift.UInt64, class-scoped and discriminator-bearing. NOTE l2_field_gate reports Int here via an
     // UNSCOPED property-descriptor match — that PASS is a false positive; the class-scoped trie symbol wins.
     private var retryCount: UInt64 = 0
-    private weak var delegate: DemuxerIODelegate? = nil          // weak optional (mangle _pSgXw)
+    private weak var delegate: DemuxerIODelegate?          // weak optional (mangle _pSgXw)
 
     /// Designated init — `FUN_101b6b184` (actor ⇒ the compiler emits `_swift_defaultActor_initialize`).
     /// formatContext ← param_1 (@0x70); ioAction ← param_2 boxed as a `DemuxerIOAction` existential
@@ -153,43 +175,16 @@ actor DemuxerIO {
         self.delegate = delegate
     }
 
-    /// slot29 vtable method — `FUN_101b812b0` (77i, sync actor-isolated, `throws(Int32)`).
-    /// Drives one demux read through the action, records currentTime, notifies the delegate; on a
-    /// read error throws the FFmpeg status as a typed `Int32`.
-    /// ⚑ NAME INFERRED — no #function literal (`recover_swift_function_name` @0x101b812b0 = None); the
-    ///   demuxer's per-call read-drive wrapper (identifier inferred from role + call target `performRead`).
-    /// ⚑ `ioAction!` force-unwrap — the binary copies+calls `ioAction` with NO null-check (field optionality
-    ///   UNRES, l2 mangle-truncated); modeled as a force-unwrap of the `DemuxerIOAction?` field.
-    /// ⚑ PUNNED throw — on error, `ReadResult.value` (Double) carries the Int32 av_read_frame status in its
-    ///   low 32 bits (performRead packs `Double(bitPattern: UInt64(UInt32(bitPattern: status)))`); the binary
-    ///   reads value's low 4 bytes as the Int32 (auVar5._0_4_ → `_swift_allocError`/`_swift_willThrowTypedImpl`
-    ///   on the Swift.Int32 metadata). currentTime write = `_swift_beginAccess`(self+0x78); delegate notify
-    ///   = weak-load + witness `(*(wt+8))(value)`.
-    func readPacket() throws(Int32) {
-        let r = ioAction!.performRead(formatCtx: formatContext.formatCtx)
-        if r.isError {
-            throw Int32(bitPattern: UInt32(truncatingIfNeeded: r.value.bitPattern))
-        } else if !r.isEnd {
-            currentTime = r.value
-            delegate?.didUpdateCurrentTime(r.value)
-        }
-    }
-
-    /// slot27 vtable method — `FUN_101b7fed8` (7i, sync actor-isolated, method-kind).  ⚑[tool=resolve_fun_pins ref=FUN_101b7fed8:0x101b7fed8 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.update(delegate: ProAVPlayer.DemuxerIODelegate?) -> ()
-    /// Weak delegate setter: stores the witness (delegate+8) then tail-calls `_swift_unknownObjectWeakAssign`
-    /// for the object — i.e. `self.delegate = <existential>`. Kind=Method (NOT a synthesized Setter — delegate
-    /// skips an accessor triple, later·49); dispatched via vtable only (3 DATA xrefs, no code caller).
-    /// ⚑ NAME INFERRED — no #function (recover_swift_function_name @0x101b7fed8 = None; vtable-only dispatch
-    ///   ⇒ no caller-recovery path). ⚑ param optionality inferred `DemuxerIODelegate?` (existential-ness
-    ///   ABI-confirmed: prologue x0=object / x1=witness dynamic; only nil-vs-non-nil not binary-recoverable).
-    func setDelegate(_ delegate: DemuxerIODelegate?) {
-        self.delegate = delegate
-    }
-
     /// slot26 vtable method — `FUN_101b7e9d0` (721i, sync actor-isolated) — the demuxer's Event dispatcher /  ⚑[tool=resolve_fun_pins ref=FUN_101b7e9d0:0x101b7e9d0 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.send(ProAVPlayer.DemuxerIO.Event) -> ()
     /// state machine: an `Event` → state transition + delegate notify + async Task spawn.
     /// ⚑ NAME INFERRED — recover_swift_function_name = `rcl` labels=0 vs the 4-arg ABI ⇒ MISMATCH → UNRESOLVED
-    ///   (P28); `process` inferred from role. ⚑ access-level not binary-recoverable (§1) — internal (vtable slot).
+    ///   (P28); `process` inferred from role.
+    /// ⚑ ACCESS DIVERGENCE, deliberately not applied here: a compiled control shows MethodDescriptor.Impl
+    ///   is non-null iff the member is externally visible (an @inline(never), called, internal method
+    ///   still gets a NULL Impl even though its body is emitted). Forward's slots 26-30 ALL carry
+    ///   non-null Impls while slot 25 (Init) is NULL — so the five methods are public and the init is
+    ///   not. Making them public cascades `Event` and both protocols; that is its own unit, so they
+    ///   stay internal here and the divergence is recorded rather than hidden.
     /// Dispatch map DETERMINISTIC (`decode_int_switch.py`, golden-gated): tag w8 {2→control,1→failed,0→seek};
     /// control x23 {0→startReading,1→pause,2→resume,3→endOfStream,else→close} (state-stores →3/→1/→4/→5 confirmed);
     /// seek state-set = `DAT_1044f3418` {ready,reading,seeking,paused} (read). `switch event` (by case name) is
@@ -254,6 +249,17 @@ actor DemuxerIO {
         }
     }
 
+    /// slot27 vtable method — `FUN_101b7fed8` (7i, sync actor-isolated, method-kind).  ⚑[tool=resolve_fun_pins ref=FUN_101b7fed8:0x101b7fed8 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.update(delegate: ProAVPlayer.DemuxerIODelegate?) -> ()
+    /// Weak delegate setter: stores the witness (delegate+8) then tail-calls `_swift_unknownObjectWeakAssign`
+    /// for the object — i.e. `self.delegate = <existential>`. Kind=Method (NOT a synthesized Setter — delegate
+    /// skips an accessor triple, later·49); dispatched via vtable only (3 DATA xrefs, no code caller).
+    /// ⚑ NAME INFERRED — no #function (recover_swift_function_name @0x101b7fed8 = None; vtable-only dispatch
+    ///   ⇒ no caller-recovery path). ⚑ param optionality inferred `DemuxerIODelegate?` (existential-ness
+    ///   ABI-confirmed: prologue x0=object / x1=witness dynamic; only nil-vs-non-nil not binary-recoverable).
+    func setDelegate(_ delegate: DemuxerIODelegate?) {
+        self.delegate = delegate
+    }
+
     /// slot28 vtable async method — `FUN_101b7fef4` (async sync-entry: stores self into the async frame
     /// [@0x248] then `_swift_task_switch` to the continuation `FUN_101b7ff0c`; async-func-ptr vtable record,
     /// P41). The read-drive body the demuxer's `ioTask = Task { }` runs (spawned by `process`).
@@ -289,6 +295,30 @@ actor DemuxerIO {
         }
     }
 
+    /// slot29 vtable method — `FUN_101b812b0` (77i, sync actor-isolated, `throws(Int32)`).  ⚑[tool=resolve_fun_pins ref=FUN_101b812b0:0x101b812b0 result=NOT_IN_TRIE]
+    /// Drives one demux read through the action, records currentTime, notifies the delegate; on a
+    /// read error throws the FFmpeg status as a typed `Int32`.
+    /// ⚑ NAME INFERRED — no #function literal (`recover_swift_function_name` @0x101b812b0 = None); the
+    ///   demuxer's per-call read-drive wrapper (identifier inferred from role + call target `performRead`).
+    /// ioAction is read UNCONDITIONALLY (`add x0,x20,x8` / `ldr x1,[x0,#0x18]` / `bl 0x10002abb8`, no
+    ///   `cbz` on the metadata word) — which is what a NON-optional field compiles to. The old
+    ///   `ioAction!` force-unwrap modelled that absence; with the field record's bare `_p` spelling it
+    ///   out as non-optional, the model is no longer needed and the pin is DISCHARGED.
+    /// ⚑ PUNNED throw — on error, `ReadResult.value` (Double) carries the Int32 av_read_frame status in its  ⚑[tool=ffmpeg_name_oracle ref=av_read_frame:0x1030e6e78 result=CONFIRMED]
+    ///   low 32 bits (performRead packs `Double(bitPattern: UInt64(UInt32(bitPattern: status)))`); the binary
+    ///   reads value's low 4 bytes as the Int32 (auVar5._0_4_ → `_swift_allocError`/`_swift_willThrowTypedImpl`
+    ///   on the Swift.Int32 metadata). currentTime write = `_swift_beginAccess`(self+0x78); delegate notify
+    ///   = weak-load + witness `(*(wt+8))(value)`.
+    func readPacket() throws(Int32) {
+        let r = ioAction.performRead(formatCtx: formatContext.formatCtx)
+        if r.isError {
+            throw Int32(bitPattern: UInt32(truncatingIfNeeded: r.value.bitPattern))
+        } else if !r.isEnd {
+            currentTime = r.value
+            delegate?.didUpdateCurrentTime(r.value)
+        }
+    }
+
     /// slot30 vtable async method — `FUN_101b813e4` (async sync-entry: stores self [@0x10] then
     /// `_swift_task_switch` to `FUN_101b813fc`; async-func-ptr vtable record, P41). Cancels + drains the
     /// in-flight read task, tears down, and notifies the delegate.
@@ -315,13 +345,23 @@ actor DemuxerIO {
     //   Faithful wiring ⇒ reconstruct those closures = their own deep-async unit (deferred, P36).
     // Also deferred: the readLoop .seeking/.paused + .reading-catch + cancelReading await-value continuation
     //   internals (deep-async); DemuxerIOAction reqs 2-3.
-    // ── Structural class-M2 gate DONE (vtable_anchor_diff s7-rebuild vs Forward; verdict DemuxerIO_structural_M2):
-    //   the computed getter (isEndOfStream) + Init + 5-method (26 process/27 setDelegate/28 readLoop/29 readPacket/
-    //   30 cancelReading) kind-sequence ALIGNS. Residual = src 10 vs bin 8 accessor-triples (2 stored props lack vtable
-    //   accessors in the binary = library-evolution/resilience emission artifact; the 10 fields are l2-confirmed
-    //   REAL_FLAG 0 — NOT fabricated, P33/P23). Method declaration-order ≠ binary slot-order, but the slot→method
-    //   identity is M2-map-confirmed + the accessor residual already offsets absolute method slots by +6, so a relative
-    //   reorder is unverifiable-by-gate and cannot restore absolute slot identity → documented, not reordered (P23/P29).
+    // ── DECLARATION ORDER — the five methods are now in BINARY SLOT ORDER (s72). Swift lays a class's
+    //   own vtable slots out in declaration order (compiled control: five methods alternating
+    //   sync/async reproduce their IsAsync bits in declaration order, and Init takes its declaration
+    //   position too). Forward's slots 25-30 read {Init, sync, sync, ASYNC, sync, ASYNC} from the
+    //   MethodDescriptor flag bytes at 0x1039f5558 (0x01/0x10/0x10/0x50/0x10/0x50); the old order
+    //   emitted {Init, sync, sync, sync, ASYNC, ASYNC} and was refuted at slots 28/29 WITHOUT using a
+    //   single name. Identity: slot 26 = 0x101b7e9d0 = trie `DemuxerIO.send(Event)` (= process);
+    //   slot 27 = 0x101b7fed8 = trie `DemuxerIO.update(delegate:)` (= setDelegate); slots 28/30 are the
+    //   two async methods (async-function-pointer records 0x103571840 -> 0x101b7fef4 ctx 736 and
+    //   0x103571848 -> 0x101b813e4 ctx 48); slot 29 is readPacket by elimination. Slot 30 is
+    //   cancelReading because its body loads ioTask (self+0x80) and `cbz`s on it; slot 28 is readLoop
+    //   because its body beginAccess-es the state byte and dispatches 3 ways.
+    //   This SUPERSEDES the earlier refusal to reorder. Both of its premises are gone: source and
+    //   binary now emit 31 slots with an IDENTICAL kind sequence (no +6 offset), and the old
+    //   `src 10 vs bin 8 accessor-triples … library-evolution artifact` diagnosis was wrong — `let`
+    //   stored properties get NO class-vtable accessor slot, so 8 vars give 8 triples and the two
+    //   `let`s (formatContext, ioAction) give none.
 }
 
 /// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
