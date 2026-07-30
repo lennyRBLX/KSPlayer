@@ -37,7 +37,10 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     //   `didSet { if isEnabled, parts.isEmpty { Task { try? await parse(url:userAgent:) } } }` is GONE, not deferred —
     //   `URLSubtitleInfo.parse` has 0 binary symbols (removed), the `parts` field is gone (KSSubtitle-flatten), the
     //   init (0x101aa3310) never writes isEnabled (default-false zero-init, no observer), and no URLSubtitleInfo
-    //   accessor spawns a parse-Task. The download/search pipeline moved to SubtitleModel (§7.3, Batch 3).
+    //   accessor spawns a parse-Task. The PARSE pipeline moved to SubtitleModel (§7.3, Batch 3) — but the
+    //   DOWNLOAD pipeline did NOT: it is still in this class's designated init, which calls
+    //   URL.download(userAgent:completion:) @0x1019f457c from 0x101aa34c0. The earlier "no download
+    //   pipeline" reading was wrong and is retracted here.
     public var isEnabled: Bool = false
     public private(set) var downloadURL: URL
     public var delay: TimeInterval = 0
@@ -46,14 +49,40 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     public var comment: String?
     public var userInfo: NSMutableDictionary?
     private let userAgent: String?
-    // ⚑ init shape inferred → M2 witness-verify (minimal faithful: assigns stored props, defers download/rename)
+    // 0x101aa3310 = URLSubtitleInfo.__allocating_init(subtitleID:name:url:userAgent:), trie-named, extent
+    // 0x101aa3310..0x101aa34f0 (120 instr). The previous note here claimed this init only assigned stored
+    // properties and left the download/rename to a later unit — REFUTED. This init calls
+    // (extension in KSPlayer):Foundation.URL.download(userAgent:completion:) @0x1019f457c at 0x101aa34c0,
+    // which is inside this init's own extent; the guard and the [weak self] box precede it.
     public init(subtitleID: String, name: String, url: URL, userAgent: String? = nil) {
         self.subtitleID = subtitleID
         self.name = name
         self.userAgent = userAgent
         downloadURL = url
+        // Guard = URL.isFileURL.getter then a _StringObject count test on `name`.
+        if !url.isFileURL, name.isEmpty {
+            // swift_allocObject(24) + swift_weakInit on the new instance = `[weak self]`.
+            url.download(userAgent: userAgent) { [weak self] filename, url in
+                guard let self else {
+                    return
+                }
+                // ⚑ the closure parameter names are not recoverable (P28); only the type (String, URL) is.
+                //   `filename` is recon-chosen because `name` would shadow this init's own parameter.
+                self.name = filename
+                self.downloadURL = url
+                var newURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                newURL.appendPathComponent(filename)
+                try? FileManager.default.moveItem(at: url, to: newURL)
+                self.downloadURL = newURL
+            }
+        }
     }
 
+    // 0x101aa330c = URLSubtitleInfo.__allocating_init(url:), a 4-byte thunk `b 0x101aa3e10`. The 900-byte /
+    // 225-instr body at 0x101aa3e10 is NOT_IN_TRIE only because the THUNK carries the symbol; that body is
+    // this delegation with the designated init AND URL.download both inlined and specialised for
+    // userAgent == nil. Both inits install the SAME completion body, which is why the download is written
+    // once, above — reproducing it here would duplicate the pipeline. No source change needed.
     public convenience init(url: URL) {
         self.init(subtitleID: url.absoluteString, name: url.lastPathComponent, url: url)
     }
@@ -204,7 +233,9 @@ public class DirectorySubtitleDataSource: URLSubtitleDataSource {
     //   (in-place mergeSort by URLSubtitleInfo.name). Binary-pinned: isFileURL guard, contentsOfDirectory(at:
     //   deletingLastPathComponent, includingPropertiesForKeys:nil) [try?→[]], .filter(\.isSubtitle) (inlined
     //   FUN_10001e034 = the 5-ext contains incl "sup"), .map { URLSubtitleInfo(url:) }, .sorted { $0.name < $1.name }.
-    //   §5.1: Forward RETURNS the array (base assigned self.infos). map = FUN_101aa3e10 (URLSubtitleInfo init/elem);
+    //   §5.1: Forward RETURNS the array (base assigned self.infos). The map closure's element ctor is
+    //   URLSubtitleInfo.__allocating_init(url:) — thunk 0x101aa330c -> real body 0x101aa3e10, which is SHARED
+    //   by 7 call sites and is NOT this map's closure body (a per-call-site closure would have exactly one);
     //   nil-fileURL unwrap folds into setup FUN_101aac684 → returns [] (audit-confirmed, not a divergence).
     public func searchSubtitle(fileURL: URL?) async throws -> [URLSubtitleInfo] {
         guard let fileURL, fileURL.isFileURL else { return [] }
