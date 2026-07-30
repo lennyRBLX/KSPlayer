@@ -63,10 +63,19 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
         self.server = server                                                      // @0x60
         self.directoryWatcher = DirectoryWatcher()                               // FUN_101a04e20 (KSPlayer actor) @0x68  ⚑[tool=resolve_fun_pins ref=FUN_101a04e20:0x101a04e20 result=RESOLVES_UNIQUELY] = KSPlayer.DirectoryWatcher.__allocating_init() -> KSPlayer.DirectoryWatcher
         remuxerIOAction.delegate = self                                          // weak; RemuxerIOActionDelegate wt 0x1041e0b80
-        // ⚑ server route install — DEFERRED (owner-phase, decompile-verified not assumed): the binary registers
-        //   a connection handler on `server` under exclusive access (FUN_101b831f0), closure FUN_101b6ba5c captures
-        //   self+server → routes to the request processor FUN_101b68b38. The exact LocalHLSServer route-API + the
-        //   handler body are LocalHLSServer M2. Shape captured; body NOT fabricated.
+        // ⚑ server route install — DEFERRED (owner-phase, binary-read not assumed): the binary registers a
+        //   handler on `server` under exclusive access (swift_beginAccess on server+0x20), passing the route
+        //   thunk FUN_101b6ba5c and its context box → the request processor FUN_101b68b38.
+        // ⚑ CORRECTION (this comment previously said "captures self+server"): the thunk captures self and a
+        //   Double, NOT `server`. The whole 3-instruction body is
+        //       ldr x1, [x20, #0x10] ; ldr d0, [x20, #0x18] ; b 0x101b68b38
+        //   and ctx+0x18 is loaded into an FP register, so it cannot be an object reference. Confirmed twice
+        //   more: the box destructor releases ONLY +0x10 (so +0x18 is trivial, not refcounted), and the
+        //   capture descriptor reads [ProAVPlayer.ConversionInfo, Swift.Double]. The Double is the init's
+        //   maxBufferDuration parameter (the same register stored to self.maxBufferDuration).
+        //   `server` is the RECEIVER of the install, not a capture — it is never stored into the box.
+        //   ⇒ the deferred handler is shaped `{ [self, maxBufferDuration] (req) in … }`.
+        //   ⚑[tool=llvm-objdump ref=FUN_101b6ba5c:0x101b6ba5c result=CAPTURES_SELF_PLUS_DOUBLE]
         //   ⚑[tool=prefetch_decompiles ref=FUN_101b68b38:0x101b68b38 result=LOCATED]
     }
 
@@ -87,11 +96,18 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
         if let sp = remuxerIOAction.startPlayTime { start = sp }           // [remuxerIOAction@0x50; startPlayTime payload@+0x10/tag@+0x18]
         if maxBufferDuration < (value - start) - currentPlaybackTime {     // [fsub;fsub;fcmp d2,d0;b.pl @0x498-4a8]
             Task { [self] in                                               // [swift_retain self @0x4f4; swift_task_create via FUN_101b76920 @0x510]
-                // ⚑ UNRESOLVED — deep-async body: FUN_101b6a530 (READ, P43) sets URL-typed task-locals then
-                //   `_swift_task_switch`es to the continuation FUN_101b6a59c — a continuation-split coroutine
-                //   chain (genuinely deep-async, verified not assumed). The spawn + strong self-capture are
-                //   faithful; the closure internals = the "ConversionInfo deep-async closures" sub-unit
-                //   (P36, sibling of DemuxerIO's slot28/30).
+                // ⚑ UNRESOLVED — deep-async body. ENTRY is FUN_101b6b7f8 (async-fn-ptr record DAT_1035711c8,
+                //   ctxSize 0x20 — the RECORD address is what the task-create helper takes in x3), a 27-instr
+                //   trampoline that unpacks the closure box and tail-calls FUN_101b6a530, which sets URL-typed
+                //   task-locals and `_swift_task_switch`es to the continuation FUN_101b6a59c — continuation-split
+                //   (verified deep-async, not assumed). This comment previously named FUN_101b6a530 as the entry,
+                //   which is one hop DOWNSTREAM: nothing in the image ever materialises 0x101b6a530 as a value.
+                //   Capture list READ from the box capture descriptor: [Optional<any Actor> (the @isolated(any)
+                //   operand of Task.init, the two zero words at box+0x10), ProAVPlayer.ConversionInfo at box+0x20]
+                //   ⇒ `Task { [self] in }` is exact and nothing is missing from the spelling below.
+                //   Internals = the "ConversionInfo deep-async closures" sub-unit (P36, sibling of DemuxerIO
+                //   slot28/30).
+                //   ⚑[tool=llvm-objdump ref=FUN_101b6b7f8:0x101b6b7f8 result=TRAMPOLINE_TO_101b6a530]
                 _ = self
             }
         }
@@ -145,9 +161,16 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     func remuxerDidChangeState(_ state: Int) {
         if state == 2 {                                                    // [cmp/b.eq case 2 @FUN_101b6aca8]
             Task { [self] in                                              // [swift_retain self; swift_task_create via FUN_101b76920]
-                // ⚑ UNRESOLVED — deep-async body: FUN_101b6adc8 (READ, P43) `_swift_task_switch`es to the
-                //   continuation FUN_101b6ade0 — continuation-split (verified deep-async, not assumed). Spawn +
-                //   self-capture faithful; internals = "ConversionInfo deep-async closures" sub-unit (P36).
+                // ⚑ UNRESOLVED — deep-async body. ENTRY is FUN_101b6b8d8 (async-fn-ptr record DAT_1035711e8,
+                //   ctxSize 0x20; record taken in x3 of the task-create helper), a 27-instr trampoline that
+                //   unpacks the closure box and tail-calls FUN_101b6adc8, which `_swift_task_switch`es to the
+                //   continuation FUN_101b6ade0 — continuation-split (verified deep-async, not assumed). This
+                //   comment previously named FUN_101b6adc8 as the entry, one hop DOWNSTREAM. Captures READ from
+                //   the box capture descriptor: [Optional<any Actor>, ProAVPlayer.ConversionInfo] ⇒ `Task { [self]
+                //   in }` is exact. Internals = "ConversionInfo deep-async closures" sub-unit (P36).
+                //   NOTE the third, structurally identical Task site in this file already named its trampoline
+                //   correctly; these two sites were the inconsistent ones.
+                //   ⚑[tool=llvm-objdump ref=FUN_101b6b8d8:0x101b6b8d8 result=TRAMPOLINE_TO_101b6adc8]
                 _ = self
             }
         } else if (state & 1) != 0 {                                       // [tbz #0 bit-test — P38 partial, hand-read + audit]

@@ -236,7 +236,13 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             // BSF only when useBSF AND the filter builds. On BSF-alloc FAILURE the binary FALLS THROUGH to
             // Copy (L115 `if (lVar13 != 0)` has no else/no return) → degrade to unfiltered Copy, do NOT drop
             // the packet [re-audit fix]. The `else` covers both non-AAC/non-ADTS and BSF-alloc-failed.
-            if useBSF, let bsf = makeADTSBitstreamFilter() {                      // FUN_101a08744 (BSF accessor FUN_101a1f1bc)
+            // BOTH inputs are caller-supplied and the wrapper is built HERE, not inside the helper:
+            //   x0/x1 = the filter NAME (13-char small string, decoded below), x20 = codecpar (loaded from
+            //   outStream.pointee.codecpar immediately before the call, then cbz-checked — which is the
+            //   `let codecpar` binding above). The BSFTranscodeContext is a 24-byte swift_allocObject at the
+            //   CALL SITE whose single field receives the helper's raw return.
+            if useBSF, let codecpar, let bsfContext = makeADTSBitstreamFilter("aac_adtstoasc", codecpar) {
+                let bsf = BSFTranscodeContext(bsfContext: bsfContext)             // built at the call site, not in the helper
                 transcodeMap[idx] = bsf                                           // STORE per-stream BSF (FUN_1019b3c2c, L131)
                 ctx = bsf
             } else {
@@ -253,34 +259,64 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         ctx.transcode(packet, output: outPacket, completion: completion)
     }
 
-    // aac_adts BSF allocation (FUN_101a08744 — the 0x737364615f636161 = "aac_adts" branch). A Forward
-    // helper that creates the bitstream filter. av_bsf_* names are ORACLE-CONFIRMED → used directly.
-    // Confirmed sequence: av_bsf_get_by_name("aac_adts") → av_bsf_alloc(filter,&ctx) → <UNRESOLVED
-    // par-setup> → av_bsf_init(ctx) → BSFTranscodeContext(bsfContext: ctx); on non-zero return,
-    // av_bsf_free(&ctx) + the error is logged. ⚑ name `makeADTSBitstreamFilter` INFERRED.
-    private func makeADTSBitstreamFilter() -> BSFTranscodeContext? {
-        guard let filter = av_bsf_get_by_name("aac_adts") else {                  // FUN_102957ca0 (oracle-CONFIRMED)
-            print("bsf aac_adts not found")  // [audit fix] binary logs on the filter-null path (was silent). ⚑ message text audit-decoded ("bsf <name> not found")
+    // BSF allocation (FUN_101a08744, 0x101a08744..0x101a08a94, 212 instr). export_trie_oracle = NOT IN TRIE,
+    // so the base name AND the labels stay inferred (⚑ P28) — but the ARITY, the value types and the return
+    // type are now BINARY-READ, not inferred.
+    // ⚑ SIGNATURE CORRECTION. The retired pin claimed "makeADTS true binary sig is 4-param, not no-arg".
+    //   That is wrong in both directions: the body reads exactly THREE live-in registers = TWO values.
+    //     x0/x1 = a Swift String — String.utf8CString.getter feeds av_bsf_get_by_name, and the SAME x0/x1
+    //             are re-appended into the not-found message, which only makes sense for a String parameter.
+    //     x20   = UnsafeMutablePointer<AVCodecParameters>, live-in and never written on the success path,
+    //             consumed as the `src` of avcodec_parameters_copy. x20 is NOT self: the sole caller keeps
+    //             its own self in x21 and deliberately loads codecpar into x20 four instructions earlier.
+    // ⚑ THE HARD-CODED FILTER NAME WAS WRONG AND UNRUNNABLE. Source said "aac_adts", which is not an FFmpeg
+    //   bitstream filter at all, so this body could only ever return nil. The name is a PARAMETER, and the
+    //   caller passes a 13-char small string: x0 = 0x737464615f636161 -> "aac_adts", x1 = 0xed00006373616f74
+    //   -> "toasc" with discriminator 0xED = 0xE0|13 -> count 13 => "aac_adtstoasc", which is the real filter
+    //   (libavcodec/bsf/aac_adtstoasc.c). The old comment's constant 0x737364615f636161 decodes to "aac_adss"
+    //   — a mistyped read of only the first of the two registers.
+    // ⚑ RETURN is the raw pointer; there is NO swift_allocObject on the success path. The 24-byte
+    //   BSFTranscodeContext is built by the CALLER (see the call site above).
+    // ⚑ the declaration form that lands the pointer in x20 rather than x2 (an UnsafeMutablePointer extension's
+    //   `self` vs a nested function's capture) is NOT binary-recoverable — modelled as an ordinary second
+    //   parameter; the register assignment is the only unmatched detail.
+    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_get_by_name:0x102957ca0 result=UNKNOWN] — this was recorded
+    //     "(oracle-CONFIRMED)"; --resolve now returns UNKNOWN, so the name is retained on call-shape grounds
+    //     only. Stale provenance, corrected rather than carried forward.
+    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_alloc:0x10295b0d4 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_init:0x10295b198 result=CONFIRMED]
+    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_free:0x10295b040 result=CONFIRMED]
+    private func makeADTSBitstreamFilter(_ name: String,                          // ⚑ label inferred (P28)
+                                         _ codecpar: UnsafeMutablePointer<AVCodecParameters>) // ⚑ label inferred (P28)
+        -> UnsafeMutablePointer<AVBSFContext>?
+    {
+        guard let filter = av_bsf_get_by_name(name) else {                        // name is the PARAMETER, not a literal
+            print("bsf \(name) not found")                                        // "bsf " (count 4) + name + " not found" (count 10)
             return nil
         }
         var ctx: UnsafeMutablePointer<AVBSFContext>?
-        guard av_bsf_alloc(filter, &ctx) >= 0 else {                              // FUN_10295b0d4 (oracle-CONFIRMED)
-            // [audit fix] NO av_bsf_free here — the binary does NOT free on the alloc-failure path (alloc-fail
-            //   leaves ctx nil; only the par-setup-fail and init-fail branches call av_bsf_free).
-            print("av_bsf_alloc failed for aac_adts")                            // Swift._print (⚑ message text approximate)
+        let allocResult = av_bsf_alloc(filter, &ctx)
+        guard allocResult >= 0 else {
+            // NO av_bsf_free here — the binary does not free on the alloc-failure path (ctx is still nil).
+            print("Failed to allocate bitstream filter context: \(allocResult)")  // literal count 45, Int32 interpolation
             return nil
         }
-        // UNRESOLVED → P3 (remux driver): FUN_1029f5584 = avcodec_parameters_copy (oracle CONFIRMED, exact
-        //   cross-binary size 436==436). The call is avcodec_parameters_copy(ctx.pointee.par_in, <src codecpar>);
-        //   src = caller-supplied (makeADTS true binary sig is 4-param, not no-arg — src is threaded from the
-        //   OSI slot13/14/15 op FUN_101a1ab5c, itself deferred). Reconstruct with the OSI remux ops in P3 — do  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
-        //   NOT fabricate the src here. Spine preserved by omission. See reports/task-P2-task4-deferred-io-bodies.md §1.
-        guard av_bsf_init(ctx) >= 0 else {                                        // FUN_10295b198 (oracle-CONFIRMED)
-            av_bsf_free(&ctx)                                                     // FUN_10295b040 (oracle-CONFIRMED) — error path
-            print("av_bsf_init failed for aac_adts")                             // Swift._print on the error path
+        // The long-deferred "UNRESOLVED par-setup" is now READ: src is the `codecpar` parameter, and this
+        // branch has its own failure arm + message that the previous reconstruction lacked entirely.
+        let copyResult = avcodec_parameters_copy(ctx?.pointee.par_in, codecpar)   // par_in read by NAME from bsf.h
+        guard copyResult >= 0 else {
+            av_bsf_free(&ctx)
+            print("Failed to copy codec parameters: \(copyResult)")               // literal count 33
             return nil
         }
-        return BSFTranscodeContext(bsfContext: ctx)                              // Wave-1 type (1 field)
+        let initResult = av_bsf_init(ctx)
+        guard initResult >= 0 else {
+            av_bsf_free(&ctx)
+            print("Failed to initialize bitstream filter: \(initResult)")         // literal count 39
+            return nil
+        }
+        return ctx                                                                // raw pointer; wrapper built by the caller
     }
 
     // ── slot14 @0x101a1b8d4 (162 instr) — drain-all + write the container trailer, run-once. Void (P44:
