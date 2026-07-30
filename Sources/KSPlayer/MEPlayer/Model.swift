@@ -473,9 +473,17 @@ public final class VideoVTBFrame: MEFrame {
     public var isKeyFrame: Bool = false
     public var dovi: DOVIDecoderConfigurationRecord?
     public let isDovi: Bool
-    // KSDOVIMetadata = opaque 3008 B inline (DOVIRPUShim). Field-record name `KSDOVIMetadata?`;
-    // an opaque blob has no nil-tag inhabitant in 3008 B → NON-optional + optionality flagged → DV-render.
-    var doviData: KSDOVIMetadata = KSDOVIMetadata()
+    // KSDOVIMetadata = opaque 3008 B inline (DOVIRPUShim). Field record 13 of 14 is
+    // `<SYM:2@0x1039eb100>Sg` — the trailing `Sg` IS the optional wrapper, so `?` is the faithful
+    // spelling here and `!` would be wrong. The earlier "an opaque blob has no nil-tag inhabitant in
+    // 3008 B, so it must be NON-optional" rationale is REFUTED by VideoToolboxDecode.swift:31, which
+    // reconstructs the identical type as `KSDOVIMetadata?` and PASSES the same gate.
+    // NO declaration default: VideoVTBFrame's vpfi set is exactly {adjustBuffer, duration, position,
+    // size, timebase, timestamp} (export_trie_oracle --class VideoVTBFrame) and doviData is NOT in it.
+    // The initializer is therefore dropped, not mirrored from VideoToolboxDecode — whose doviData DOES
+    // carry a vpfi, which is why the two classes legitimately differ. An optional `var` takes Swift's
+    // implicit nil; writing `= nil` would emit a declaration default the binary does not have.
+    var doviData: KSDOVIMetadata?
     public var rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
     init(fps: Float, isDovi: Bool) {
         self.fps = fps

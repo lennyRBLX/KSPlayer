@@ -89,7 +89,15 @@ class VideoSwresample: FrameChange {
     // opaque). Binary +0x60 is EXACTLY 3008 B (=0xBC0), leaving no room for a nil tag in an
     // opaque blob → field reconstructed NON-optional (field-record name is `KSDOVIMetadata?`;
     // optionality flagged → DV-render, where the real layout may expose a spare-bit inhabitant).
-    private var doviData = KSDOVIMetadata()
+    // The field record types this `KSDOVIMetadata?` (l2_field_gate, field 11 of 14). Unannotated
+    // `var x = …` inferred it NON-optional, and the gate could then only report UNCHECKED — so the
+    // annotation is what makes the field verifiable at all, and VideoSwresample's REAL_FLAG 0 was
+    // masking the same defect Model.swift:478 was flagged for.
+    // ⚑[tool=export_trie_oracle ref=VideoSwresample.doviData:vpfi result=NO_SUBTREE] The DEFAULT is
+    //   NOT verifiable: VideoSwresample is internal and has no trie subtree ("no orphan subtree
+    //   found"); exactly 1 of 57138 trie names mentions the type, and that is ThumbnailSession.reScale's
+    //   field type, not a member of this class. Initializer left exactly as it stood.
+    private var doviData: KSDOVIMetadata? = KSDOVIMetadata()
     private var edrMetaData: EDRMetaData?
     private var hdr10PlusData: Data? // ⚑ §7-walled → type inferred
     private var rpuBuffer: Data? // ⚑ §7-walled → the ~104-byte +0xc20 inline buffer; layout NOT guessed
