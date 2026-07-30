@@ -17,9 +17,18 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     private var tailIndex = UInt(0)
     private let expanding: Bool
     private let sorted: Bool
+    // Forward-added stored `let`, and the 4th init parameter. Name AND position are binary-read, not inferred:
+    //   __swift5_fieldmd (l2_field_gate) gives the field order
+    //   [_buffer, condition, headIndex, tailIndex, expanding, sorted, isClearItem, destroyed, mask, maxCount, fps],
+    //   and the init body @0x101a5a2a8 stores param3→+0x30 (expanding), param2→+0x31 (sorted),
+    //   param4→+0x32 (isClearItem) and a constant false→+0x33 (destroyed), object size 0x4c.
+    private let isClearItem: Bool
     private var destroyed = false
     @inline(__always)
-    private var _count: Int { Int(tailIndex &- headIndex) }
+    private var _count: UInt { tailIndex &- headIndex }
+    // ⚑ `count` is `Swift.UInt` in the binary (trie: `KSPlayer.CircularBuffer.count.getter : Swift.UInt`), as are
+    //   `pop(wait:where:)`'s predicate arity type and `search`. Left as `Int` here: computed members are outside
+    //   l2_field_gate's field surface, so this is recorded member-signature debt, not part of the arity unit.
     @inline(__always)
     public var count: Int {
 //        condition.lock()
@@ -27,17 +36,22 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         Int(tailIndex &- headIndex)
     }
 
-    public internal(set) var fps: Float = 24
-    public private(set) var maxCount: Int
     private var mask: UInt
-    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true) {
+    public private(set) var maxCount: UInt
+    public internal(set) var fps: Float = 24
+    // ⚑[tool=export_trie_oracle ref=CircularBuffer.__allocating_init:$s8KSPlayer14CircularBufferC15initialCapacity6sorted9expanding11isClearItemACyxGSu_S3btcfC result=initialCapacity:UInt,sorted:Bool,expanding:Bool,isClearItem:Bool]
+    //   All four labels and their order are read from the export trie, not inferred. The four DEFAULTS below are
+    //   NOT binary-readable: a golden control over all 57138 trie names returns ZERO `default argument N of …`
+    //   symbols anywhere, so their presence and value are undecidable from the trie either way.
+    public init(initialCapacity: UInt = 256, sorted: Bool = false, expanding: Bool = true, isClearItem: Bool = false) {
         self.expanding = expanding
         self.sorted = sorted
+        self.isClearItem = isClearItem
         let capacity = initialCapacity.nextPowerOf2()
         _buffer = ContiguousArray<Item?>(repeating: nil, count: Int(capacity))
-        maxCount = Int(capacity)
-        mask = UInt(maxCount - 1)
-        assert(_buffer.count == capacity)
+        maxCount = capacity
+        mask = maxCount - 1
+        assert(_buffer.count == Int(capacity))
     }
 
     public func push(_ value: Item) {
@@ -102,7 +116,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             assertionFailure("value is nil of index: \(index) headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count), mask: \(mask)")
             return nil
         }
-        if let predicate, !predicate(item, _count) {
+        if let predicate, !predicate(item, Int(_count)) {
             return nil
         } else {
             headIndex &+= 1
@@ -141,7 +155,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         headIndex = 0
         tailIndex = 0
         _buffer.removeAll(keepingCapacity: !destroyed)
-        _buffer.append(contentsOf: ContiguousArray<Item?>(repeating: nil, count: destroyed ? 1 : maxCount))
+        _buffer.append(contentsOf: ContiguousArray<Item?>(repeating: nil, count: destroyed ? 1 : Int(maxCount)))
         condition.broadcast()
     }
 
@@ -155,19 +169,19 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         let newCapacity = maxCount << 1 // Double the storage.
         precondition(newCapacity > 0, "Can't double capacity of \(_buffer.count)")
         assert(newCapacity % 2 == 0)
-        newBacking.reserveCapacity(newCapacity)
+        newBacking.reserveCapacity(Int(newCapacity))
         let head = Int(headIndex & mask)
-        newBacking.append(contentsOf: _buffer[head ..< maxCount])
+        newBacking.append(contentsOf: _buffer[head ..< Int(maxCount)])
         if head > 0 {
             newBacking.append(contentsOf: _buffer[0 ..< head])
         }
-        let repeatitionCount = newCapacity &- newBacking.count
+        let repeatitionCount = Int(newCapacity) &- newBacking.count
         newBacking.append(contentsOf: repeatElement(nil, count: repeatitionCount))
         headIndex = 0
         tailIndex = UInt(newBacking.count &- repeatitionCount)
         _buffer = newBacking
         maxCount = newCapacity
-        mask = UInt(maxCount - 1)
+        mask = maxCount - 1
     }
 }
 

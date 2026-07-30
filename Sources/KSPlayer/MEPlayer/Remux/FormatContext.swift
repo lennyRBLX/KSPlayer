@@ -367,15 +367,8 @@ public final class FormatContext {
     // 0x101a36850 directly (AsyncPlayerItemTrack is `final`, so the override devirtualises) and that
     // body opens with the identical `strb w8,[x20,#0x78]; strh w8,[x20,#0x28]` pair before doing the
     // BlockOperation/operationQueue work of the `decode()` override.
-    // ⚑[tool=llvm-objdump ref=SyncPlayerItemTrack.init:0x101a33460 result=ARITY-DEFERRED — the binary's
-    //   init takes a FOURTH argument after (mediaType x0, frameCapacity w1, options x2): w3, held in x21
-    //   and forwarded as `and w2,w21,#1` into CircularBuffer's initialiser at all three call sites
-    //   (0x101a33580 / 0x101a33624 / 0x101a3364c). This body passes w3=1 on the text path and w3=0 on the
-    //   image path (0x101a36510 / 0x101a367a8). Source declares only the 3-arg
-    //   `init(mediaType:frameCapacity:options:)` (MEPlayerItemTrack.swift:52), so the label and meaning of
-    //   the 4th parameter are unrecoverable from THIS body — naming it is a SyncPlayerItemTrack +
-    //   CircularBuffer signature unit, and it also re-opens the pre-existing 3-arg call sites at
-    //   MEPlayerItem.swift:299/306. Written here with the declared 3-arg spelling.]
+    // The 4th init argument is now declared (see MEPlayerItemTrack.swift): this body emits w3=1 on the text
+    // path (0x101a36510) and w3=0 on the image path (0x101a367a8), both read from the call sites.
     func subtitleAssetTrackMap(options: KSOptions) -> [Int32: FFmpegAssetTrack] {
         var result = [Int32: FFmpegAssetTrack]()
         var imageSubtitleTrack: AsyncPlayerItemTrack<SubtitleFrame>?
@@ -383,13 +376,13 @@ public final class FormatContext {
             result[track.trackID] = track
             if track.isImageSubtitle {
                 if imageSubtitleTrack == nil {
-                    let subtitle = AsyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options)
+                    let subtitle = AsyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options, expanding: false)
                     subtitle.decode()
                     imageSubtitleTrack = subtitle
                 }
                 track.subtitle = imageSubtitleTrack
             } else {
-                let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options)
+                let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
                 track.subtitle = subtitle
                 subtitle.decode()
             }

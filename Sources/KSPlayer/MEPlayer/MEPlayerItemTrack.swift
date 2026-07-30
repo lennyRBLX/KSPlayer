@@ -9,7 +9,7 @@ import CoreMedia
 import Libavformat
 
 protocol PlayerItemTrackProtocol: CapacityProtocol, AnyObject {
-    init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt8, options: KSOptions)
+    init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt16, options: KSOptions, expanding: Bool)
     // 是否无缝循环
     var isLoopModel: Bool { get set }
     var isEndOfFile: Bool { get set }
@@ -42,25 +42,37 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     var isLoopModel = false
     var frameCount: Int { outputRenderQueue.count }
     var frameMaxCount: Int {
-        outputRenderQueue.maxCount
+        Int(outputRenderQueue.maxCount)
     }
 
     var fps: Float {
         outputRenderQueue.fps
     }
 
-    required init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt8, options: KSOptions) {
+    // Body @0x101a33460 (126 instr), reached through three per-Frame metadata thunks (0x101a3340c / 0x101a33428 /
+    // 0x101a33444) that supply x4/x5 = the metadata pair and x6 = the specialized CircularBuffer init entry, which
+    // `blr x19` calls. Real Swift arguments are x0..x3 only: x0 mediaType, x1 frameCapacity, x2 options, x3 = this
+    // 4th Bool. `frameCapacity` is UInt16, not UInt8: every branch narrows it with `and x0, x22, #0xffff`.
+    // ⚑ P28 — the 4th parameter's LABEL is irreducible, not merely unfound. SyncPlayerItemTrack is `internal`, so it
+    //   contributes no symbol to the export trie (0 hits for `ItemTrack` across all 57138 trie names) and none to the
+    //   symtab; Swift emits parameter labels nowhere else. `expanding` is recon-chosen because the binary forwards
+    //   this argument verbatim as CircularBuffer's `expanding:` at all three branches (0x101a33580 / 0x101a33624 /
+    //   0x101a3364c). The VALUES below are binary-read, not chosen: audio → sorted false / isClearItem true
+    //   (w1=0, w3=1 @0x101a33584-88), video → sorted true / isClearItem true (w1=1, w3=1 @0x101a33650),
+    //   else → sorted true / isClearItem !expanding (`bic w3, w8, w21` with w8=1 @0x101a33628).
+    //   0x104108730 = _AVMediaTypeAudio and 0x104108740 = _AVMediaTypeVideo, both read from the bind table.
+    required init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt16, options: KSOptions, expanding: Bool) {
         self.options = options
         self.mediaType = mediaType
         description = mediaType.rawValue
         // 默认缓存队列大小跟帧率挂钩,经测试除以4，最优
         if mediaType == .audio {
-            outputRenderQueue = CircularBuffer(initialCapacity: Int(frameCapacity), expanding: false)
+            outputRenderQueue = CircularBuffer(initialCapacity: UInt(frameCapacity), sorted: false, expanding: expanding, isClearItem: true)
         } else if mediaType == .video {
-            outputRenderQueue = CircularBuffer(initialCapacity: Int(frameCapacity), sorted: true, expanding: false)
+            outputRenderQueue = CircularBuffer(initialCapacity: UInt(frameCapacity), sorted: true, expanding: expanding, isClearItem: true)
         } else {
             // 有的图片字幕不按顺序来输出，所以要排序下。
-            outputRenderQueue = CircularBuffer(initialCapacity: Int(frameCapacity), sorted: true)
+            outputRenderQueue = CircularBuffer(initialCapacity: UInt(frameCapacity), sorted: true, expanding: expanding, isClearItem: !expanding)
         }
     }
 
@@ -201,8 +213,17 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
         }
     }
 
-    required init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt8, options: KSOptions) {
-        super.init(mediaType: mediaType, frameCapacity: frameCapacity, options: options)
+    // Body @0x101a383c0 (277 instr): x0 mediaType, x1 frameCapacity, x2 options, x3 = the same 4th Bool, x4 = the
+    // CircularBuffer init entry, incoming x20 = self. It INLINES the super init rather than calling it — the same
+    // three-way mediaType branch appears at 0x101a38600 (audio: w1=0, w3=1), 0x101a387b0 (video: w1=1, w3=1) and
+    // 0x101a38804 (else: w1=1, `bic w3, w8, w20` = !expanding), each forwarding `and w2, w20, #1` as `expanding:`.
+    // ⚑ NOT REPRODUCED HERE (own unit, out of the arity fix): the binary also builds `packetQueue` inside this init
+    //   with a mediaType-dependent capacity — audio 2048 / video 512 / else 256 @0x101a384f8 / 0x101a387f4 /
+    //   0x101a384dc — and isClearItem = false for audio and else, but `!options.<field>` for video (field-offset
+    //   global 0x104c63350, read under swift_beginAccess then `eor w8, w8, #1` @0x101a387ec). Source still declares
+    //   `var packetQueue = CircularBuffer<Packet>()` as a property initializer, which that body refutes.
+    required init(mediaType: AVFoundation.AVMediaType, frameCapacity: UInt16, options: KSOptions, expanding: Bool) {
+        super.init(mediaType: mediaType, frameCapacity: frameCapacity, options: options, expanding: expanding)
         operationQueue.name = "KSPlayer_" + mediaType.rawValue
         operationQueue.maxConcurrentOperationCount = 1
         operationQueue.qualityOfService = .userInteractive

@@ -62,7 +62,14 @@ class FFmpegDecode: DecodeProtocol {
                     subtitleAssetTrack.name = "Closed Captions"
                     subtitleAssetTrack.startTime = packet.assetTrack.startTime
                     subtitleAssetTrack.timebase = packet.assetTrack.timebase
-                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 255, options: options)
+                    // ⚑[tool=export_trie_oracle ref=FUN_101a23404:0x101a23404 result=NOT_IN_TRIE — enclosing function
+                    //   unnamed (a real negative, not a lookup failure); identified by its own body, below]
+                    // Call @0x101a235a0 (thunk 0x101a3340c) inside that function: `w1 = 0x80` @0x101a23594 and
+                    // `w3 = 1` @0x101a2359c, both binary-read — so frameCapacity is 128 here, not the 255 source
+                    // carried. Site identified by its own body: `str d0,[x0]` @0x101a23480 writes the
+                    // codec_type/codec_id pair, swift_allocObject(351) @0x101a23498 is the FFmpegAssetTrack, and
+                    // the result is stored to +0x100 (`subtitle`) @0x101a235ac.
+                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
                     subtitleAssetTrack.subtitle = subtitle
                     packet.assetTrack.closedCaptionsTrack = subtitleAssetTrack
                     subtitle.decode()

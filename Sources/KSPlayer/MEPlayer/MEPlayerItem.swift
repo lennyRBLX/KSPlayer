@@ -296,14 +296,22 @@ extension MEPlayerItem {
             if track.mediaType == .subtitle {
                 if track.isImageSubtitle {
                     if subtitleTrack == nil {
-                        let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options)
+                        // ⚑[tool=llvm-objdump ref=FUN_101a556b0:0x101a556b0 result=NO-CAP-8-CALL-SITE] This branch has
+                        //   NO counterpart in the closure it reconstructs: a BL scan of 0x101a556b0..0x101a55de4 finds
+                        //   exactly ONE track construction, 0x101a55918 (cap 128, the text branch below). So the
+                        //   comment above is wrong on two counts — this body builds no cap-8 track at all, and the
+                        //   image path elsewhere (subtitleAssetTrackMap 0x101a367b4) builds AsyncPlayerItemTrack, not
+                        //   Sync. `expanding: false` is taken from the analogous image path (w3=0 @0x101a367a8); it is
+                        //   NOT read from this function, which emits no such call. Re-deriving SLICE 2 is its own unit.
+                        let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options, expanding: false)
                         allPlayerItemTracks.append(subtitle)    // append BEFORE delegate: the binary's append endAccess barrier (0x101a55a74) precedes the delegate weakAssign (0x101a55a88) — matches the text branch order
                         subtitle.delegate = self
                         subtitleTrack = subtitle
                     }
                     track.subtitle = subtitleTrack
                 } else {
-                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options)
+                    // `expanding: true` is binary-read: w3=1 @0x101a55914, the call at 0x101a55918.
+                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
                     subtitle.delegate = self
                     track.subtitle = subtitle
                     allPlayerItemTracks.append(subtitle)
