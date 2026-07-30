@@ -33,7 +33,11 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var remuxer: Remuxer?                                    // 8
     private var seekTime = TimeInterval(0)                           // 9
     private var seekUsePacketCache = false                           // 10
-    private var seekingCompletionHandler: ((Bool) -> Void)?          // 11
+    // ⚑ `@Sendable` is READ, not added for concurrency: the trie spells this field
+    //   `(@Sendable (Swift.Bool) -> ())?`. In Swift 6 @Sendable is part of the function type, so the
+    //   un-annotated source spelling emitted a different mangle from the binary's. Surfaced by the s75
+    //   l2_field_gate export-trie signal, which resolved a type this field previously reported as bin=None.
+    private var seekingCompletionHandler: (@Sendable (Bool) -> Void)?          // 11
     // 没有音频数据可以渲染
     private var isAudioStalled = true                               // 12
     private var audioClock = KSClock()                              // 13
@@ -168,16 +172,11 @@ extension MEPlayerItem {
         // ⚑ UNRESOLVED: a close/reset call precedes the open to reset prior state; method identity + body deferred.
         //   ⚑[tool=recover_swift_function_name ref=closeReset:0x101a531fc result=no-#function/739B]
 
-        // io: Either<URL, AbstractAVIOContext>. .left(URL) = the reconstructed plain-URL open; .right = the
-        //   custom-AVIO/preload open — DEFERRED (custom-AVIO campaign; the AbstractAVIOContext threads into
-        //   openFormatContext's url-AVIO arm + FormatContext.init(ioContext:)).
-        let url: URL?
-        switch io {
-        case let .left(fileURL):
-            url = fileURL
-        case .right:
-            url = nil  // ⚑ UNRESOLVED: .right(AbstractAVIOContext) custom-AVIO wiring deferred
-        }
+        // ⚑ the binary does NOT project `io` here — it hands the WHOLE Either to openFormatContext:
+        //   `bl 0x10002e588` @0x101a4d5a8 copies `self.io` into a stack alloca, `mov x0,x26` @0x101a4d618 passes
+        //   the alloca pointer, and the throw path destroys it with the SAME cache/name pair
+        //   (0x1044e4778 / 0x103566d40 = Either<URL, AbstractAVIOContext>) @0x101a4d64c. The projection switch
+        //   that used to stand here is REMOVED — the projection lives inside openFormatContext.
 
         // Interrupt callback — FAITHFUL. A `{ [weak self] }` closure (compiler HeapLocalVariable box, metadata
         //   kind 0x400 — NOT a user class): abort blocking IO when self is gone, an interrupt was requested, or
@@ -190,18 +189,22 @@ extension MEPlayerItem {
             return self.state == .closed || self.state == .failed
         }
 
-        // openFormatContext(time:0, …) → AVFormatContext*; `time:0` is the dead d0 residue (#function no params).
-        //   ⚑[tool=decompile ref=openFormatContext:0x101a392a0 result=try-throws→AVFormatContext*]
-        let formatCtx = try openFormatContext(time: 0, url: url, interrupt: interruptContext, options: options, cacheKey: nil)
+        // ⚑ call site @0x101a4d630, arguments MEASURED @0x101a4d618-2c: `mov x0,x26`(the io copy),
+        //   `mov x1,x24`(the IOInterruptContext built at 0x101a4d610), `mov x2,x23`(self.options via field-offset
+        //   global 0x104c63690), `mov x3,#0`/`mov x4,#0`(inFormat nil), `mov x21,x25`(swifterror). NO d0 is set —
+        //   `time: 0` was the Ghidra `double param_1` phantom and is REMOVED.
+        //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
+        let (formatCtx, fileSize, ioContext) = try openFormatContext(io: io, interrupt: interruptContext,
+                                                                     options: options, inFormat: nil)
 
         // FormatContext init. The former `duration: 0` argument is GONE — it satisfied a phantom
         //   `double param_1` that Ghidra's default __swiftcall prototype prepends; the trie, the
         //   prologue @0x101a350e8-fc and every call site all give five parameters, no `duration:`.
-        //   `fileSize: 0` is still a residue and is NOT settled here: openFormatContext actually
-        //   returns three values (x0/x1/x2 @0x101a39f28), so fileSize/ioContext have a real source.
-        //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
-        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: 0,
-                                          interrupt: interruptContext, ioContext: nil, fontsDir: options.fontsDir)
+        //   RESOLVED: the `fileSize: 0` / `ioContext: nil` placeholders are gone. The three returns are
+        //   destructured at 0x101a4d66c-74 (`mov x25,x0` / `mov x27,x1` / `mov x20,x2`).
+        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: fileSize,
+                                          interrupt: interruptContext, ioContext: ioContext,
+                                          fontsDir: options.fontsDir)
         self.formatContext = formatContext
 
         // Custom-AVIO install (unconditional) — save + BOX the format context's default io_open/io_close2

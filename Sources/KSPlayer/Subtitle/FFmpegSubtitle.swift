@@ -16,37 +16,48 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
     private var endTime: Double = 0                   // +0x98
     private var parts: [SubtitlePart] = []            // +0xa0
 
-    // Binary init `(time: Double, url: URL) throws` (FUN_101a9f27c, 0x101a9f27c-0x101a9f8df) — MIGRATED from the
+    // Binary init `(url: URL) throws` (FUN_101a9f27c, 0x101a9f27c-0x101a9f8df) — MIGRATED from the
     //   base stub `init(formatContext:decode:)`. A throwing ACTOR init: open the subtitle source via the shared
     //   `openFormatContext`, wrap it in a `FormatContext`, find the `.subtitle` asset track, enable it, build a
     //   `SubtitleDecode`, then pump packets to accumulate `parts`. Throws "can not judge stream" if there is no
-    //   subtitle track. ⚑ signature P28 (param names `time`/`url` irreducible; actor init = _swift_defaultActor_*).
+    //   subtitle track. ⚑ signature P28 (param name `url` irreducible; actor init = _swift_defaultActor_*).
+    // ⚑ `time: Double` REFUTED: the prologue @0x101a9f29c-a4 takes only x21(swifterror→x23), x20(self→x19) and
+    //   x0(URL ptr→x28) — no d0. The only d0 in the whole 1636-byte body is a LOCAL `ldr d0,[x19,#0x8]` +
+    //   `str d0,[x26,#0xa8]` @0x101a9f58c (the CMTime store for `track.startTime`), i.e. defined before use.
+    //   Same Ghidra `double param_1` phantom as openFormatContext's. Blast radius zero: `FFmpegSubtitle(`
+    //   has no call site in Sources/.
     //
     // FAITHFUL PARTIAL. The SPINE (open → FormatContext → stream-select → decode setup → throw) is reconstructed +
     //   disasm-confirmed. The intricate DECODE-ACCUMULATE LOOP is flagged `// UNRESOLVED` below and NOT fabricated
     //   (a plausible-but-wrong decode call looks done and mis-loads every subtitle).
-    init(time: Double, url: URL) throws {
+    init(url: URL) throws {
         // preTime/startTime/endTime = 0 + parts = [] are the declared defaults (binary prologue @0x101a9f33c-348).
 
         // ── open: a fresh interrupt context + the shared throwing open/probe. ──
         // ⚑ IOInterruptContext(nil) (block = nil): binary allocs a 0x30 obj (FUN_101a3a694 metadata) then  ⚑[tool=resolve_fun_pins ref=FUN_101a3a694:0x101a3a694 result=RESOLVES_UNIQUELY] = type metadata accessor for KSPlayer.IOInterruptContext
         //   FUN_101a391bc(0,0) = IOInterruptContext.init (@0x101a9f384-3a0).
         let interrupt = IOInterruptContext(nil)
-        let formatCtx = try openFormatContext(time: time, url: url, interrupt: interrupt, options: nil, cacheKey: nil)
-        // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext. Two args are  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
-        //   DISASM-confirmed live: `formatCtx`(x0) = the openFormatContext return; `interrupt`(x2) = the IOInterruptContext.
+        // ⚑ the binary BUILDS the Either here: it allocas from the Either<URL, AbstractAVIOContext> metadata
+        //   (`__swift_instantiateConcreteTypeFromMangledName(0x1044e4778, 0x103566d40)` @0x101a9f304), copies the
+        //   `url` parameter into the payload with URL's vwt[0x10] @0x101a9f36c, then stamps case 0 with
+        //   `swift_storeEnumTagMultiPayload(buf, EitherMeta, w2=0)` @0x101a9f37c. `mov x2,#0`/`mov x3,#0`/`mov x4,#0`
+        //   @0x101a9f3b0-b8 = options nil, inFormat nil.
+        let (formatCtx, fileSize, ioContext) = try openFormatContext(io: .left(url), interrupt: interrupt,
+                                                                     options: nil, inFormat: nil)
+        // ⚑ FormatContext.init (FUN_101a350bc @0x101a9f43c) wraps the opened AVFormatContext.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
         //   `duration`(d0) is GONE from the signature entirely: it was never a parameter, only Ghidra's
         //   phantom `double param_1`, and the trie / the prologue @0x101a350e8-fc / every call site all
         //   agree on five parameters.
-        //   ⚠️ The claim that `fileSize`(x1)/`ioContext`(x3)/`fontsDir`(x4) are "dead-arg-elided because
-        //   openFormatContext returns a single UnsafeMutablePointer" is REFUTED: openFormatContext returns
-        //   THREE values — `mov x0,x26 ; mov x1,x24 ; mov x2,x27` @0x101a39f28 immediately before its sole
-        //   `ret` @0x101a39f58 — and THIS call site consumes all three (`mov x24,x0` / `mov x23,x1` /
-        //   `mov x27,x2` @0x101a9f3e4-f8). So fileSize and ioContext have a real source and the 0/nil here
-        //   are placeholders, not proven residues. Left as-is pending the openFormatContext body audit.
+        //   RESOLVED: the `fileSize: 0` / `ioContext: nil` PLACEHOLDERS are gone. openFormatContext returns three
+        //   values (`mov x0,x26 / x1,x24 / x2,x27` @0x101a39f28-30) and this call site FORWARDS all three straight
+        //   into FormatContext.init: `mov x24,x0`/`mov x23,x1`/`mov x27,x2` @0x101a9f3e4-f8, then
+        //   `mov x0,x24`(formatCtx) / `mov x1,x23`(fileSize) / `mov x2,x20`(interrupt) / `mov x3,x27`(ioContext)
+        //   @0x101a9f424-30 immediately before `bl 0x101a350bc` @0x101a9f43c.
+        //   ⚑ `fontsDir`(x4 = x25 @0x101a9f434) is a pointer to a `URL?` stack buffer whose initialization was not
+        //     located; `nil` is UNCHANGED and remains unproven.
         //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
-        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: 0,
-                                          interrupt: interrupt, ioContext: nil, fontsDir: nil)
+        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: fileSize,
+                                          interrupt: interrupt, ioContext: ioContext, fontsDir: nil)
 
         // ── stream-select: the FIRST `.subtitle` asset track. Disasm @0x101a9f47c-0x101a9f4f4: iterate
         //   `formatContext.assetTracks`, compare `track.mediaType`(track+0x78, String-backed AVMediaType) ==

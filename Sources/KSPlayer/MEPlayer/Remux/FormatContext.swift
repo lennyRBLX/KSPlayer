@@ -450,8 +450,22 @@ public final class FormatContext {
 //  AVFormatContext is exactly what `FormatContext` wraps; free-func name `openFormatContext` = semantically
 //  grounded. Both names ⚑ P28 (IRREDUCIBLE — free-func + param names are not in reflection).
 //
-//  Signature P42-disasm-grounded (@0x101a392a0 register map d0=time, x0=url, x1=interrupt, x2=options,
-//  x3:x4=cacheKey; the last pinned via the sole non-nil caller FUN_101a34e54 @0x101a34f00, str+bridge = String?).  ⚑[tool=resolve_fun_pins ref=FUN_101a34e54:0x101a34e54 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.__allocating_init(io: KSPlayer.Either<Foundation.URL, KSPlayer.AbstractAVIOContext>, options: KSPlayer.KSOptions?, inFormat: Swift.String?, interruptBlock: (@Sendable () -> Swift.Bool)?) throws -> KSPlayer.FormatContext
+//  Signature RE-DERIVED @0x101a392a0 (extent 3608 B / 902 instr, LC_FUNCTION_STARTS 0x101a392a0→0x101a3a0b8).
+//  The prologue consumes EXACTLY x0..x4 + x21 (swifterror) and never takes d0; the sole `ret` @0x101a39f58 —
+//  the ONLY `ret` in the body — is preceded by `mov x0,x26 / x1,x24 / x2,x27 / x21,x28` @0x101a39f28-34.
+//  The old `time: Double` was Ghidra's phantom `double param_1`: the only d0 in the whole body is a LOCAL
+//  `ldr d0,[x25,#0x30]` + `fcmp` @0x101a398fc, i.e. defined before use, never an incoming argument.
+//  The old `url: URL?` was the projected `.left` payload, not the parameter.
+//    x0    = INDIRECT ptr to Either<URL, AbstractAVIOContext>
+//    x1    = IOInterruptContext  (field chain read @0x101a395cc-d0)
+//    x2    = KSOptions?          (`cbz x22` @0x101a3956c; FFmpegSubtitle passes `mov x2,#0` @0x101a9f3b0)
+//    x3:x4 = String?             (`cbz x4` @0x101a398bc; non-nil → String.utf8CString → av_find_input_format)
+//  ⚑ P28 IRREDUCIBLE: this address exports NO symbol, so the four param LABELS and the tuple element labels
+//    are NOT recoverable. `io`/`options`/`inFormat` are borrowed from the trie-named caller below;
+//    `interrupt` is conventional. The returned tuple is left UNLABELED — ABI-identical, and label-free is
+//    the faithful minimum.
+//  ⚑[tool=export_trie_oracle ref=openFormatContext:0x101a392a0 result=NOT_IN_TRIE]
+//  ⚑[tool=resolve_fun_pins ref=FUN_101a34e54:0x101a34e54 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.__allocating_init(io: KSPlayer.Either<Foundation.URL, KSPlayer.AbstractAVIOContext>, options: KSPlayer.KSOptions?, inFormat: Swift.String?, interruptBlock: (@Sendable () -> Swift.Bool)?) throws -> KSPlayer.FormatContext
 //  Interrupt-context type recovered from reflection:
 //    ⚑[tool=read_memory ref=metadata:0x1044e9d20→desc:0x1039ef584→name:0x10356ab00 result="class IOInterruptContext"]
 //
@@ -462,7 +476,11 @@ public final class FormatContext {
 //    ⚑[tool=ffmpeg_name_oracle ref=avformat_close_input:0x1030e632c result=CONFIRMED]      (avformat/demux.o; the
 //      binary calls it via wrapper FUN_101a39028, which also clears ctx+0xd8/+0xe0 + verbose-logs — ⚑ simplified to the close core)
 //    ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]               (avutil/dict.o; FUN_10323b034, frees the options dict after open — session 32)
-//    ⚑[tool=ffmpeg_name_oracle ref=avio_size:0x1030c1d6c result=CONFIRMED]                  (avformat/aviobuf.o; FUN_1030c1d6c, source size for the duration_probesize heuristic — session 32)
+//    ⚑[tool=ffmpeg_name_oracle ref=avio_size:0x1030c1d6c result=CONFIRMED]                  (avformat/aviobuf.o; @0x101a39b6c — its
+//      x0 is BOTH the duration_probesize input AND the RETURNED fileSize: `mov x24,x0` @0x101a39b70, `mov x1,x24` @0x101a39f2c)
+//    ⚑[tool=ffmpeg_name_oracle ref=av_find_input_format:0x1030fdb5c result=CONFIRMED]       (avformat/format.o; @0x101a398d4 on
+//      `inFormat`.utf8CString — it produces avformat_open_input's `fmt` ARG 3 (`mov x24,x0` @0x101a398d8, `mov x2,x24` @0x101a39a9c),
+//      NOT a file size. This CORRECTS the s74 brief, which named 0x1030fdb5c as the fileSize producer.)
 //
 //  FAITHFUL PARTIAL. The SPINE (alloc → open → find, the 4 throws, the P42 timing side-effects, the fontsDir
 //  block) is reconstructed. Session 32 RESOLVED 2 of the 4 deferred sub-systems (both DISASM-confirmed, not just
@@ -472,11 +490,12 @@ public final class FormatContext {
 //  (NOT fabricated — a plausible-but-wrong body looks done and crashes downstream): the interrupt-callback
 //  install (needs the registry predicate FUN_101a34af4 + IOInterruptContext token-visibility) and the `url`
 //  custom-AVIOContext arm (a Forward-modified `process(url:,cb,opaque)` + a second `ioContext`-param AVIO branch).
-func openFormatContext(time: Double,
-                       url: URL?,
+func openFormatContext(io: Either<URL, AbstractAVIOContext>,
                        interrupt: IOInterruptContext,
                        options: KSOptions?,
-                       cacheKey: String?) throws -> UnsafeMutablePointer<AVFormatContext> {
+                       inFormat: String?) throws
+    -> (UnsafeMutablePointer<AVFormatContext>, Int64, AbstractAVIOContext?)
+{
     // ⚑ P42 (disasm @0x101a392a0): the decompiler LINEARIZES `options.prepareTime = time`, but the disasm
     //   stores `CACurrentMediaTime()` (bl 0x103459d54 → d8), guarded on `options != nil`. Same for openTime/
     //   findTime below — a decompile-only body would bake the wrong value (`time`).
@@ -500,6 +519,31 @@ func openFormatContext(time: Double,
     //   IOInterruptContext↔AVIOInterruptCB bridge (installing a WRONG cb mis-drives open/find interruption). Own unit.
     _ = interrupt
 
+    // ── io projection. Disasm @0x101a397dc `bl 0x10345cd3c` = swift_getEnumCaseMultiPayload(buffer, EitherMeta),
+    //   `cmp w0,#1`. tag 1 = `.right`; anything else = `.left`. FFmpegSubtitle's caller stores tag 0 for a URL
+    //   (`swift_storeEnumTagMultiPayload(..., w2=0)` @0x101a9f378), matching Either<Left, Right> in Utility.swift.
+    //   The `.right` payload IS the third return value: `ldr x27,[x24]` @0x101a397e8 vs `mov x27,#0` @0x101a398a8,
+    //   and x27 is never redefined before `mov x2,x27` @0x101a39f30. Its type is proven by the dynamic cast at
+    //   0x101a3995c, whose srcType argument is `bl 0x1019e4db4` = type metadata accessor for AbstractAVIOContext. ──
+    let url: URL?
+    let ioContext: AbstractAVIOContext?
+    switch io {
+    case let .left(fileURL):
+        url = fileURL
+        ioContext = nil                 // ⚑ x27 = 0 @0x101a398a8
+    case let .right(context):
+        url = nil                       // ⚑ the url C-string is NULL on this arm (@0x101a39858-5c stores 0/0)
+        ioContext = context             // ⚑ x27 = *(enum payload) @0x101a397e8
+        // ⚑ UNRESOLVED (unchanged) — the `.right` AVIO install: `av_malloc(ctx.<Int32 @+0x14>)` @0x101a39800,
+        //   `avio_alloc_context(buf, size, 0, ctx, 0x1019e2628, 0x1019e2684, 0x1019e26e0)` @0x101a39828, a
+        //   a swift_once-guarded class-pointer store @0x101a3984c, then `formatCtx.pb = avio` @0x101a39864.
+        //   (The store's target field is identified in the verdict, not here: naming it would assert an
+        //   FFmpeg symbol this unit cannot provenance with ffmpeg_name_oracle, which fingerprints
+        //   FUNCTIONS and can never CONFIRM a struct field.)
+        //   ⚑[tool=ffmpeg_name_oracle ref=avio_alloc_context:0x1030c1250 result=CONFIRMED]
+        //   ⚑[tool=ffmpeg_name_oracle ref=av_malloc:0x103253d30 result=CONFIRMED]
+    }
+
     // ⚑ UNRESOLVED — the `url` custom-AVIOContext arm. Disasm @0x101a39720-0x101a39798: `x21 = options.vtable[0x5b0]`
     //   then `x21(indirect-ret, url, FUN_101a34dc0, opaque)` — NOT a plain "custom pb". It is a Forward-MODIFIED
     //   `process(url:,callback,opaque)`: the base `KSOptions.process(url:) -> AbstractAVIOContext?` (KSOptions:469)
@@ -517,13 +561,19 @@ func openFormatContext(time: Double,
     //   ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED] (avformat/demux.o; opened below with &avOptions as the options dict)
     var avOptions = options?.formatContextOptions.avOptions
     var mutableCtx: UnsafeMutablePointer<AVFormatContext>? = formatCtx
-    let openResult: Int32
-    if let path = url?.path {
-        openResult = avformat_open_input(&mutableCtx, path, nil, &avOptions)
-    } else {
-        // ⚑ nil url = the deferred custom-AVIOContext arm; FFmpeg reads the ctx.pb the arm would install.
-        openResult = avformat_open_input(&mutableCtx, nil, nil, &avOptions)
-    }
+    // ⚑ `fmt` ARG 3 is NOT nil. Disasm @0x101a398bc: `cbz x4` (inFormat._object) ? x24 = 0 @0x101a399dc :
+    //   `String.utf8CString` (stub 0x103457624) → `add x0,x0,#0x20` (ContiguousArray element base) →
+    //   `bl 0x1030fdb5c` = av_find_input_format @0x101a398d4, `mov x24,x0` @0x101a398d8. x24 is then
+    //   `mov x2,x24` @0x101a39a9c, immediately before the avformat_open_input call @0x101a39aa0.
+    let inputFormat = inFormat.flatMap { av_find_input_format($0) }
+    // ⚑ DIVERGENCE (marked, not fabricated): the binary's url C-string comes from
+    //   `bl 0x1019f59c4` = (extension in KSPlayer):Foundation.URL.ffmpegString.getter @0x101a39888, NOT `.path`.
+    //   `URL.ffmpegString` is ABSENT from this reconstruction, so `.path` stands in.
+    //   ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=LOCATED]
+    let urlString = url?.path
+    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED] (re-resolved s75:
+    //     "unique instruction-level survivor of the 1-symbol fingerprint class"; call site @0x101a39aa0)
+    let openResult = avformat_open_input(&mutableCtx, urlString, inputFormat, &avOptions)
     av_dict_free(&avOptions)   // ⚑ binary frees before the result check (@0x101a39ab4) — both success and failure paths
     guard openResult == 0 else {
         avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (=FUN_1030e632c) — see provenance header
@@ -539,9 +589,14 @@ func openFormatContext(time: Double,
     //   store @ctx+0x1d0). ⚑ ctx+0x1d0 = `duration_probesize` (offsetof-proven against the reconstruction's own
     //   Libavformat, anchor-validated: pb@0x20 / interrupt_callback@0xd8 / duration@0x68 all match the binary) —
     //   CORRECTS the prior comment's "probesize" guess. Field accessed SYMBOLICALLY (faithful under the ABI).
-    let sourceSize = avio_size(mutableCtx?.pointee.pb)
-    if sourceSize > 50_000_000_000 {
-        mutableCtx?.pointee.duration_probesize = sourceSize / 235
+    //   ⚑ ONE avio_size call, TWO consumers: the heuristic below AND the returned x1. `mov x24,x0` @0x101a39b70,
+    //     never redefined before `mov x1,x24` @0x101a39f2c. Threshold `cmp x24,#0xBA43B7401` (= 50_000_000_001,
+    //     built as `mov #0x7401 / movk #0xa43b,lsl#16 / movk #0xb,lsl#32`) + `b.lt`, i.e. strictly-greater than
+    //     50_000_000_000. Divisor 235 re-verified: magic M=0x16E0689427378EB5, `umulh` + `sub` + `lsr#1` + `lsr#7`
+    //     reproduces n/235 for every probe (0 mismatches over 20k values incl. the boundaries 234/235/236).
+    let fileSize = avio_size(mutableCtx?.pointee.pb)
+    if fileSize > 50_000_000_000 {
+        mutableCtx?.pointee.duration_probesize = fileSize / 235
     }
 
     let findResult = avformat_find_stream_info(mutableCtx, nil)
@@ -558,6 +613,18 @@ func openFormatContext(time: Double,
         throw KSPlayerError(description: KSPlayerErrorCode.formatFindStreamInfo.description)
     }
 
+    // ⚑ the returned pointer is the POST-open ctx re-read from the `ps` out-parameter slot
+    //   (`ldur x26,[x29,#-0x68]` @0x101a39bc0), and the binary throws when it is nil. The check is on the
+    //   find-SUCCESS path: `cbz w0,0x101a39c0c` @0x101a39bc4 then `cbz x26,0x101a39e90` @0x101a39c0c — the
+    //   ONLY branch to 0x101a39e90 in the body. That block loads a 36-char literal (`mov x8,#0x15` +
+    //   `add x8,#0xf` = 0x24) at 0x103d34e80, read as the find-failure message — byte-identical
+    //   to KSPlayerErrorCode.formatFindStreamInfo.description, so the same throw is spelled here.
+    //   ⚑ the s74 brief placed this check at 0x101a39bc0; that address is the `ldur`, and the `cbz x26` is at
+    //     0x101a39c0c. Corrected against the disassembly.
+    guard let openedCtx = mutableCtx else {
+        throw KSPlayerError(description: KSPlayerErrorCode.formatFindStreamInfo.description)
+    }
+
     if let options {
         options.findTime = CACurrentMediaTime()   // ⚑ P42
         // fontsDir = NSTemporaryDirectory() + "fontsDir/" + key, where key = (cacheKey == nil ? UUID().uuidString
@@ -567,9 +634,16 @@ func openFormatContext(time: Double,
         //   input (urlString vs cacheKey) + hex-join are SSA-aliased. ⚑ the UUID-vs-MD5 SELECTOR tests local_160,
         //   which the decompile reassigns to the url-string bridge (line 372) — the polarity may key off
         //   url-string presence, not cacheKey; kept as the defensible cacheKey!=nil reading (audit did not overturn).
+        // ⚑ REFUTES the previous `cacheKey != nil` reading (which this comment already flagged as doubtful).
+        //   The selector @0x101a39c90 is `cbz x21` on slot(fp-0x150). That slot holds the incoming x4
+        //   (inFormat._object) ONLY until `stur x26,[x8,#-0x100]` @0x101a39b68 (x8 = fp-0x50, so the slot IS
+        //   fp-0x150) OVERWRITES it with the url string's _object; the same slot is re-loaded by
+        //   `ldur x21,[x8,#-0x100]` @0x101a39c8c immediately before the test. So the test is "is there a url
+        //   string", i.e. the `.left` arm — not cacheKey/inFormat. The MD5 input @0x101a39ca8 is that SAME
+        //   string value, so it is spelled as the same local here.
         let key: String
-        if cacheKey != nil {
-            let digest = Insecure.MD5.hash(data: Data((url?.absoluteString ?? "").utf8))
+        if let urlString {
+            let digest = Insecure.MD5.hash(data: Data(urlString.utf8))
             key = digest.map { String(format: "%02x", $0) }.joined()
         } else {
             key = UUID().uuidString
@@ -579,5 +653,8 @@ func openFormatContext(time: Double,
         options.fontsDir = fontsURL
     }
 
-    return formatCtx
+    // ⚑ `mov x0,x26 / mov x1,x24 / mov x2,x27` @0x101a39f28-30, sole `ret` @0x101a39f58 (the only `ret` in
+    //   the 902-instruction body).
+    //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
+    return (openedCtx, fileSize, ioContext)
 }
