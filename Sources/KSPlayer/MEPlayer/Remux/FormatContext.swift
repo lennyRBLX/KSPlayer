@@ -250,6 +250,34 @@ public final class FormatContext {
         av_read_play(formatCtx)
     }
 
+    // time(index:timestamp:) `0x101a32e28` (109 instr, extent exact from LC_FUNCTION_STARTS
+    // 0x101a32e28..0x101a32fdc) — MEMBER_MISSING: in the binary, absent from source. Trie:
+    // `KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?`.
+    // FFmpegAssetTrack.swift:46 already pinned this address as the cross-module `timebase` reader.
+    // Verbatim decompile, structure-for-structure:
+    //   `if (param_2 != -0x8000000000000000)`    guard timestamp != Int64.min  (AV_NOPTS_VALUE)
+    //   loads self+0x40                          self.assetTracks (this class's field map)
+    //   inline loop w/ retain/release            a `for` over the array, NOT `first(where:)` —
+    //                                            the array is indexed directly, no generic call
+    //   `*(int *)(uVar6 + 0x10) == param_1`      track.trackID == index
+    //   `CMTime.init(value:timescale:)` with
+    //     value = timestamp * *(int*)(t+0xc0)    timebase.num
+    //     timescale = *(uint*)(t+0xc4)           timebase.den   ⇒ exactly Timebase.cmtime(for:)
+    //   `CMTime.-_infix(…, *(t+0xa0…0xb0))`      minus track.startTime (24-byte CMTime at +0xa0)
+    //   `.seconds` then `dVar3=0; if (0<dVar10) dVar3=dVar10`   ⇒ max(0, …)
+    //   returns on the FIRST match (goto with the some-flag 0); falls out of the loop ⇒ nil.
+    // Offsets are consistent with the field-record order (dump_field_bindings): trackID is field 1,
+    // hence the post-header +0x10; startTime is 14 and occupies the 24 bytes +0xa0..+0xb8; codecpar
+    // (15, a pointer) takes +0xb8; timebase (16) lands on +0xc0, its two Int32s at +0xc0/+0xc4 —
+    // and Timebase declares `num` before `den`, matching value*num / timescale=den.
+    func time(index: Int32, timestamp: Int64) -> Double? {
+        guard timestamp != Int64.min else { return nil }
+        for track in assetTracks where track.trackID == index {
+            return max(0, (track.timebase.cmtime(for: timestamp) - track.startTime).seconds)
+        }
+        return nil
+    }
+
     // close (FUN_101a3302c) — FormatContext teardown. Reconstructed FAITHFUL (every callee named/confirmed,  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
     //   no deep pins): (1) raise the interrupt flag to cancel any in-flight IO; (2) if fonts were registered,
     //   unregister each embedded font (the init's CTFontManagerRegisterFontsForURL mirror, .process scope) and
