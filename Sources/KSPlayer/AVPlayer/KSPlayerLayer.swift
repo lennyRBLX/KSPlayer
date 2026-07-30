@@ -62,6 +62,23 @@ public protocol KSPlayerLayerDelegate: AnyObject {
     func player(layer: KSPlayerLayer, currentTime: TimeInterval, totalTime: TimeInterval)
     func player(layer: KSPlayerLayer, finish error: Error?)
     func player(layer: KSPlayerLayer, bufferedCount: Int, consumeTime: TimeInterval)
+    func player(layer: KSPlayerLayer, url: URL)
+    func playerDidEOF(layer: KSPlayerLayer)
+    func playerOnTick(layer: KSPlayerLayer)
+    func playerDidReplace(layer: KSPlayerLayer)
+    func playerDidClear(layer: KSPlayerLayer)
+    func playerDidAddSubtitle(_: UIView)
+    func playerDidSelectSubtitle()
+}
+
+public extension KSPlayerLayerDelegate {
+    func player(layer _: KSPlayerLayer, url _: URL) {}
+    func playerDidEOF(layer _: KSPlayerLayer) {}
+    func playerOnTick(layer _: KSPlayerLayer) {}
+    func playerDidReplace(layer _: KSPlayerLayer) {}
+    func playerDidClear(layer _: KSPlayerLayer) {}
+    func playerDidAddSubtitle(_: UIView) {}
+    func playerDidSelectSubtitle() {}
 }
 
 @MainActor

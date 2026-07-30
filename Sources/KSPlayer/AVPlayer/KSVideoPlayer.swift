@@ -129,6 +129,7 @@ extension KSVideoPlayer: UIViewRepresentable {
         public var onFinish: ((KSPlayerLayer, Error?) -> Void)?
         public var onStateChanged: ((KSPlayerLayer, KSPlayerState) -> Void)?
         public var onBufferChanged: ((Int, TimeInterval) -> Void)?
+        public var onURLChanged: ((KSPlayerLayer, URL) -> Void)?
         #if canImport(UIKit)
         fileprivate var onSwipe: ((UISwipeGestureRecognizer.Direction) -> Void)?
         @objc fileprivate func swipeGestureAction(_ recognizer: UISwipeGestureRecognizer) {
@@ -276,6 +277,10 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
 
     public func player(layer _: KSPlayerLayer, bufferedCount: Int, consumeTime: TimeInterval) {
         onBufferChanged?(bufferedCount, consumeTime)
+    }
+
+    public func player(layer: KSPlayerLayer, url: URL) {
+        onURLChanged?(layer, url)
     }
 }
 
