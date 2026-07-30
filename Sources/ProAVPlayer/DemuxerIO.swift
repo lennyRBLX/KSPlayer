@@ -99,7 +99,7 @@ public actor DemuxerIO {
     ///      that heuristic is calibrated to separate MODULE-SHARED runtime helpers, and a TYPE-LOCAL outlined
     ///      value witness legitimately has only a handful of callers. Fan-in cannot classify this family;
     ///      membership in the type's VWT (above) can, and should be the check used for the sibling helpers.
-    enum Event {
+    public enum Event {
         case seek(to: Double, completion: (@Sendable (Bool) async throws -> Void)?)
         case failed(any Error)
         case startReading
@@ -192,7 +192,7 @@ public actor DemuxerIO {
     /// ⚑ DEFERRED (UNRESOLVED, honest-deferral P36): the `Task { }` closure bodies (async read/seek loops →
     ///   slot28 `FUN_101b7ff0c` / slot30 `FUN_101b813fc` + taskspawn `FUN_101b7f678`/`101b76bbc`); the `ioAction`
     ///   vtbl +0x120 call (devirt OutputStreamInfo/DemuxerIOAction method); KSLog forms (class-wide).
-    func process(_ event: Event) {
+    public func process(_ event: Event) {
         switch event {
         case .startReading:                                              // control x23==0
             guard state == .ready || state == .seeking else { return }   // state & 0xfd == 0
@@ -256,7 +256,7 @@ public actor DemuxerIO {
     /// ⚑ NAME INFERRED — no #function (recover_swift_function_name @0x101b7fed8 = None; vtable-only dispatch
     ///   ⇒ no caller-recovery path). ⚑ param optionality inferred `DemuxerIODelegate?` (existential-ness
     ///   ABI-confirmed: prologue x0=object / x1=witness dynamic; only nil-vs-non-nil not binary-recoverable).
-    func setDelegate(_ delegate: DemuxerIODelegate?) {
+    public func setDelegate(_ delegate: DemuxerIODelegate?) {
         self.delegate = delegate
     }
 
@@ -277,7 +277,7 @@ public actor DemuxerIO {
     ///   jumptables ("Too many branches") + 32 pruned unreachable blocks + the `.paused` pre-park
     ///   formatContext dynamic-cast/witness; the exact while/await interleaving across suspension points is
     ///   not faithfully recoverable. The loop is the Task/continuation re-entry, NOT a `while` in this body.
-    func readLoop() async {
+    public func readLoop() async {
         switch state {
         case .reading:
             do {
@@ -309,7 +309,7 @@ public actor DemuxerIO {
     ///   reads value's low 4 bytes as the Int32 (auVar5._0_4_ → `_swift_allocError`/`_swift_willThrowTypedImpl`
     ///   on the Swift.Int32 metadata). currentTime write = `_swift_beginAccess`(self+0x78); delegate notify
     ///   = weak-load + witness `(*(wt+8))(value)`.
-    func readPacket() throws(Int32) {
+    public func readPacket() throws(Int32) {
         let r = ioAction.performRead(formatCtx: formatContext.formatCtx)
         if r.isError {
             throw Int32(bitPattern: UInt32(truncatingIfNeeded: r.value.bitPattern))
@@ -329,7 +329,7 @@ public actor DemuxerIO {
     /// ⚑ UNRESOLVED (honest-deferral P36): the `await t.value` resumption (continuation `FUN_101b814f8`) +
     ///   the tail jumptable ("Too many branches") + the teardown callees (release ioAction `FUN_10002abb8`;
     ///   `FUN_101b82c04` module-new / `FUN_101a3302c` base).  ⚑[tool=resolve_fun_pins ref=FUN_101a3302c:0x101a3302c result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.close() -> ()
-    func cancelReading() async {
+    public func cancelReading() async {
         if let task = ioTask {
             task.cancel()
             _ = await task.value
@@ -406,7 +406,7 @@ protocol DemuxerIOAction {
 }
 
 /// Demuxer delegate — weak-referenced ⇒ `AnyObject`. 4 requirements (protocol desc 0x1039f540c).
-protocol DemuxerIODelegate: AnyObject {
+public protocol DemuxerIODelegate: AnyObject {
     /// req0 (witness table +8) — notified with the current demux time (seconds) after a non-EOF read,
     /// from `DemuxerIO.readPacket()` (slot29). Impl = ConversionInfo witness `FUN_101b6a40c`
     /// (`void f(double)` — single `Double`, `Void` return, synchronous; ABI-confirmed, P28).
