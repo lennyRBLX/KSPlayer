@@ -174,7 +174,11 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
             //   ("…index=…, size=…, flags=…, timestamp=…, duration=…" with the write's error code).
             // [L365] Helper call (FUN_101b7e2f4) — RemuxerIOAction internal (rebuild/reset side effect).
             // ⚑ FUN_101b7e2f4 effect UNRESOLVED (own reconstruction unit); NOT invented.
-            reconstruct(completion: nil)   // FUN_101b7e2f4(0,0) = nil completion; name RECOVERED (was fabricated `performReadErrorRecovery`)
+            // `mov x0,#0 ; mov x1,#0` = closure fn ptr AND context both zero = the Optional<() -> Void> nil
+            // form ⇒ `completion: nil`. `mov x21,#0` initialises the swifterror slot — emitted only for a
+            // throwing callee. On return `cbz x21` then a call to swift_errorRelease (GOT 0x104112E48), and
+            // control falls through either way: the error is CAUGHT AND DISCARDED, so this is `try?`.
+            try? reconstruct(completion: nil)
             // [L366-370] Re-issue the outputStreamInfo write once after recovery.
             // ⚑ UNRESOLVED — second outputStreamInfo vtable +0x118 write (same slot); NOT emitted (see above).
         }
@@ -218,7 +222,22 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     ///   rebuilds/resets state (subtitles/dir/formatContextOptions/masterM3U8Context, resets startPlayTime,
     ///   drives outputStreamInfo vtable slots +0xb0/+0xb8/+0x128, re-creates @0x20 via self.write() [FUN_101b8559c], notifies
     ///   the delegate). ⚑ completion type + access level UNRESOLVED (own unit); performRead passes a nil closure.
-    private func reconstruct(completion: (() -> Void)?) {
+    /// `throws` — PROVEN three independent ways, do not "simplify" it away:
+    ///   (a) ABI: the prologue saves x28,x27,x26,x25,x24,x23,x22,x20,x19,x29,x30 and NOT x21, yet the body
+    ///       clobbers x21. Only the swifterror register may be clobbered unsaved in the x19-x28 range.
+    ///   (b) rethrow: `mov x21,x25` re-supplies swifterror to write(); `mov x25,x21` captures it back —
+    ///       overwriting the "saved" copy, which a callee-save shuffle would never do — and the epilogue
+    ///       `mov x21,x25` returns WITH it. There is no `mov x21,#0` anywhere in the body, so the error is
+    ///       never swallowed.
+    ///   (c) both call sites emit `mov x21,#0` before the `bl` and test x21 after: performRead (-> the error
+    ///       is released, i.e. `try?`) and the async funclet at 0x101b6a138 (-> propagates).
+    /// NOT `async` (plain stp x29,x30 frame + `ret`; no async-frame marker) and returns Void.
+    /// The NAME is ground truth, not inferred: the KSLog call passes #function = "reconstruct(completion:)"
+    /// and #file = "ProAVPlayer/RemuxerIO.swift" (so this type's Swift file is misnamed), #line = 347.
+    /// ⚑ CORRECTIONS to the doc below, which had two errors: the OutputStreamInfo +0xb0/+0xb8/+0x128 calls
+    ///   are NON-throwing (x21 carries the callee ADDRESS across each `blr` and no error test follows —
+    ///   `write()` is the only throwing callee), and the `cbz x21` is a RETHROW, not an early-out.
+    private func reconstruct(completion: (() -> Void)?) throws {
         // ── Body DEFERRED to owner-phase (blocked on OutputStreamInfo's devirt API + RemuxerIOActionDelegate).
         //    Grounded control flow from FUN_101b7e2f4 (239i; prefetch-cached + disasm-verified — NOT live code, to
         //    avoid fabricating the OutputStreamInfo interface / mis-placing the swifterror-guarded resets, P32/P36):
