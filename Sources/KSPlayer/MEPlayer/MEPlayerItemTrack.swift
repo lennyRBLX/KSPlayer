@@ -123,6 +123,14 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
 
     private var lastPacketBytes = Int32(0)
     private var lastPacketSeconds = Double(-1)
+    // Forward-added stored field, every part binary-read: __swift5_fieldmd names it and places it here, between
+    // lastPacketSeconds and bitrate (field 13 of 14, `var Sb`), and the init @0x101a33460 seeds it with
+    // `strb wzr, [x20, #0x78]` @0x101a3853c-analogue — i.e. false. Its READER is not reconstructed yet; the
+    // related `CircularBuffer.seek(seconds:needKeyFrame:)` in the trie is the likely consumer, its own unit.
+    var isNeedKeyFrame = false
+    // ⚑ `bitrate` is `Swift.Int` in __swift5_fieldmd (field 14, `var Si`), not the `Double` spelled here. The init's
+    //   `str xzr, [x20, #0x80]` cannot discriminate the two (both are 8 zero bytes), and doDecode's arithmetic below
+    //   is the body that would settle it — left as recorded type debt, its own unit.
     var bitrate = Double(0)
     fileprivate func doDecode(packet: Packet) {
         if packet.isKeyFrame, packet.assetTrack.mediaType != .subtitle {
