@@ -364,11 +364,23 @@ open class KSPlayerLayer: NSObject {
             completion(false)
         }
     }
-}
 
-// MARK: - MediaPlayerDelegate
+    // The eight members below are CLASS-BODY declarations in Forward 1.3.17, not extension
+    // members: each occupies a slot in KSPlayerLayer's vtable (descriptor 0x1039ecf38,
+    // VTableDescriptorHeader 0x1039ecf70, VTableSize 82), and a Swift extension member never
+    // receives a vtable slot. They were previously written into extensions below. Declaration
+    // order follows the vtable: 68 prepareToPlay 0x1019cd5e0, 69 readyToPlay 0x1019cda08,
+    // 70 changeLoadState 0x1019ce474, 71 changeBuffering 0x1019ce730, 72 playBack 0x1019ce740,
+    // 74 finish 0x1019ce7d0, 78 wirelessRouteActiveDidChange 0x1019cedcc,
+    // 79 audioInterrupted 0x1019cef60. Bodies are unchanged by this move.
+    // ⚑[tool=vtable_walk ref=KSPlayerLayer:0x1039ecf38 result=82-slots-vtable-offset-27]
+    open func prepareToPlay() {
+        state = .preparing
+        startTime = CACurrentMediaTime()
+        bufferedCount = 0
+        player.prepareToPlay()
+    }
 
-extension KSPlayerLayer: MediaPlayerDelegate {
     public func readyToPlay(player: some MediaPlayerProtocol) {
         state = .readyToPlay
         #if os(macOS)
@@ -475,7 +487,55 @@ extension KSPlayerLayer: MediaPlayerDelegate {
             nextPlayer()
         }
     }
+
+    #if canImport(UIKit) && !os(xrOS)
+    @MainActor
+    @objc private func wirelessRouteActiveDidChange(notification: Notification) {
+        guard let volumeView = notification.object as? MPVolumeView, isWirelessRouteActive != volumeView.isWirelessRouteActive else { return }
+        if volumeView.isWirelessRouteActive {
+            if !player.allowsExternalPlayback {
+                isWirelessRouteActive = true
+            }
+            player.usesExternalPlaybackWhileExternalScreenIsActive = true
+        }
+        isWirelessRouteActive = volumeView.isWirelessRouteActive
+    }
+    #endif
+    #if !os(macOS)
+    @objc private func audioInterrupted(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue)
+        else {
+            return
+        }
+        switch type {
+        case .began:
+            pause()
+
+        case .ended:
+            // An interruption ended. Resume playback, if appropriate.
+
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if options.contains(.shouldResume) {
+                play()
+            }
+
+        default:
+            break
+        }
+    }
+    #endif
 }
+
+// MARK: - MediaPlayerDelegate
+
+// The five witnesses (readyToPlay, changeLoadState, changeBuffering, playBack, finish) are
+// declared in the class body above, where their vtable slots put them. Where Forward 1.3.17
+// declares the CONFORMANCE itself is not decidable from the binary, so it is left exactly where
+// this reconstruction already had it rather than moved onto the class line.
+extension KSPlayerLayer: MediaPlayerDelegate {}
 
 // MARK: - AVPictureInPictureControllerDelegate
 
@@ -493,13 +553,6 @@ extension KSPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
 // MARK: - private functions
 
 extension KSPlayerLayer {
-    open func prepareToPlay() {
-        state = .preparing
-        startTime = CACurrentMediaTime()
-        bufferedCount = 0
-        player.prepareToPlay()
-    }
-
     private func updateNowPlayingInfo() {
         if MPNowPlayingInfoCenter.default().nowPlayingInfo == nil {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyPlaybackDuration: player.duration]
@@ -672,44 +725,4 @@ extension KSPlayerLayer {
             player.enterForeground()
         }
     }
-
-    #if canImport(UIKit) && !os(xrOS)
-    @MainActor
-    @objc private func wirelessRouteActiveDidChange(notification: Notification) {
-        guard let volumeView = notification.object as? MPVolumeView, isWirelessRouteActive != volumeView.isWirelessRouteActive else { return }
-        if volumeView.isWirelessRouteActive {
-            if !player.allowsExternalPlayback {
-                isWirelessRouteActive = true
-            }
-            player.usesExternalPlaybackWhileExternalScreenIsActive = true
-        }
-        isWirelessRouteActive = volumeView.isWirelessRouteActive
-    }
-    #endif
-    #if !os(macOS)
-    @objc private func audioInterrupted(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeValue)
-        else {
-            return
-        }
-        switch type {
-        case .began:
-            pause()
-
-        case .ended:
-            // An interruption ended. Resume playback, if appropriate.
-
-            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
-            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            if options.contains(.shouldResume) {
-                play()
-            }
-
-        default:
-            break
-        }
-    }
-    #endif
 }
