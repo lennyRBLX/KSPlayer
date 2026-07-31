@@ -32,9 +32,16 @@ public class KSPlayerResource: Equatable, Hashable {
     public convenience init(url: URL, options: KSOptions = KSOptions(), name: String = "", cover: URL? = nil, subtitleURLs: [URL]? = nil, extinf: [String: String]? = nil) {
         let definition = KSPlayerResourceDefinition(url: url, definition: "", options: options)
         let subtitleDataSource: ConstantURLSubtitleDataSource?
-        if let subtitleURLs, let first = subtitleURLs.first {
-            // ⚑ init shape → P4 M2 (recon URLSubtitleDataSouce(urls:) → ConstantURLSubtitleDataSource(url:infos:))
-            subtitleDataSource = ConstantURLSubtitleDataSource(url: first, infos: subtitleURLs.map { URLSubtitleInfo(url: $0) })
+        // 0x101b165fc = KSPlayerResource.__allocating_init(url:options:name:cover:subtitleURLs:extinf:). Its
+        // prologue pins the parameter registers exactly as declared here: x0 url → x24, x1 options → x28,
+        // x2/x3 name, x4 cover, x5 subtitleURLs → x20, x6 extinf. The guard at 0x101b166cc is a bare
+        // `cbz x20` — the optional array's nil test and nothing else. There is no count test and no element
+        // load, so the reconstruction's `let first = subtitleURLs.first` was an addition, and the URL handed
+        // to the data source is THIS init's own `url`: at 0x101b166f8 the call passes x0 = a value-witness
+        // copy of x24 and x1 = x20 (the raw [URL]) into 0x101aa5958. The map moved into that init.
+        // ⚑[tool=export_trie_oracle ref=$s8KSPlayer0A8ResourceC3url7options4name5cover12subtitleURLs6extinfAC10Foundation3URLV_AA9KSOptionsCSSALSgSayALGSgSDyS2SGSgtcfC:0x101b165fc result=OWNER_MATCH]
+        if let subtitleURLs {
+            subtitleDataSource = ConstantURLSubtitleDataSource(url: url, subtitleURLs: subtitleURLs)
         } else {
             subtitleDataSource = nil
         }

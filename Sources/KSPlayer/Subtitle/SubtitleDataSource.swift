@@ -193,11 +193,28 @@ public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
 // §7.2 — recon `URLSubtitleDataSouce` class → ConstantURLSubtitleDataSource (→ URL, now HAS searchSubtitle).
 public class ConstantURLSubtitleDataSource: URLSubtitleDataSource {
     public let infos: [URLSubtitleInfo]
-    public let url: URL // ⚑ optionality §7.5 (mangle reads non-optional; recon init(urls:) built infos from [URL]) → M2 verify
-    // ⚑ init shape inferred → M2 witness-verify
-    public init(url: URL, infos: [URLSubtitleInfo]) {
+    public let url: URL // non-optional: field record + `url.getter : Foundation.URL`; l2_field_gate PASSes both fields
+    // The init shape is no longer inferred. 0x101aa590c = __allocating_init(url:subtitleURLs:) (trie-named,
+    // 19 instr) allocates and calls the designated init 0x101aa5958 (500 B / 125 instr, LC_FUNCTION_STARTS
+    // bounds). Read instruction by instruction from that body:
+    //   0x101aa59f8  self.url = url — the URL value witness's initializeWithCopy into self + the field-offset
+    //                global 0x104c637c0, which export_trie_oracle names "direct field offset for
+    //                KSPlayer.ConstantURLSubtitleDataSource.url". URL is resilient, hence the metadata
+    //                accessor at 0x103452464 (_$s10Foundation3URLVMa) and the two size-derived allocas.
+    //   0x101aa59fc  x26 = subtitleURLs.count; `cbz` to 0x101aa5b04, which stores __swiftEmptyArrayStorage —
+    //                Array.map's own count == 0 fast path.
+    //   0x101aa5a24  reserveCapacity(count), then a per-element loop: copy the element through the URL value
+    //                witness and call 0x101aa3e10, appending each result with the standard
+    //                count/capacity>>1 append check. That callee IS URLSubtitleInfo.__allocating_init(url:) —
+    //                its trie symbol 0x101aa330c is a single unconditional `b 0x101aa3e10` (MEMORY rule 24).
+    //   0x101aa5b24  self.infos = the built array, at the fixed offset +0x10.
+    // So the `infos` parameter this class used to declare does not exist in the binary: the map lives HERE, and
+    // KSPlayerItem.swift's caller passes the raw [URL] through (0x101b16704). The other in-binary call site,
+    // KSVideoPlayerView.init(model:subtitleURLs:liftCycleBlock:) @0x101ac68b8, has no declaration in Sources/.
+    // ⚑[tool=export_trie_oracle ref=$s8KSPlayer29ConstantURLSubtitleDataSourceC3url12subtitleURLsAC10Foundation3URLV_SayAHGtcfc:0x101aa5958 result=OWNER_MATCH]
+    public init(url: URL, subtitleURLs: [URL]) {
         self.url = url
-        self.infos = infos
+        infos = subtitleURLs.map { URLSubtitleInfo(url: $0) }
     }
 
     // FUN_101aa5b4c → cont FUN_101aa5b64 (P42-disasm): returns infos iff url == the requested fileURL, else [].  ⚑[tool=resolve_fun_pins ref=FUN_101aa5b4c:0x101aa5b4c result=RESOLVES_UNIQUELY] = KSPlayer.ConstantURLSubtitleDataSource.searchSubtitle(fileURL: Foundation.URL) async throws -> [KSPlayer.URLSubtitleInfo]
