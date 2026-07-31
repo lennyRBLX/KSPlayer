@@ -366,4 +366,7 @@ public class ControllerTimeModel: ObservableObject {
     public var currentTime = 0
     @Published
     public var totalTime = 1
+    @Published
+    public var bufferTime = 0
+    public var fileSize: Int64 = 1
 }
