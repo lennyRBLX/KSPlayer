@@ -388,6 +388,41 @@ public extension URL {
         ["cue", "m3u", "pls"].contains(pathExtension.lowercased())
     }
 
+    // The string Forward hands to FFmpeg for a URL. 232 B / 58 instr @0x1019f59c4.
+    // ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=public-get-only]
+    // public: the trie carries `vg` AND the `vpMV` property descriptor. Get-only: a whole-trie prefix
+    // walk finds exactly TWO ffmpegString symbols — no `vs`, no `vM`, no `vpfi`. Not folded.
+    // Body, read instruction by instruction and with every callee resolved through its stub's __got
+    // slot in `llvm-objdump --macho --bind`:
+    //   0x1019f59d8  bl → __got 0x1041099d0 = Foundation.URL.isFileURL.getter; `tbz w0,#0` splits.
+    //   0x1019f59f0  the true arm is a TAIL `b` → __got 0x104109ac8 = Foundation.URL.path.getter.
+    //   0x1019f59f4  bl → __got 0x104109a10 = Foundation.URL.absoluteString.getter. Its value is
+    //                held in x21/x19 and returned on EVERY remaining exit. It is called ONCE, and a
+    //                `scheme` getter call sits between the uses, so the optimiser could not have
+    //                merged three separate reads — one call means one source-level access, i.e. a
+    //                local binding rather than three `absoluteString` mentions.
+    //   0x1019f5a00  bl → __got 0x104109ae8 = Foundation.URL.scheme.getter; `cbz x1` sends nil
+    //                straight to the binding, which is how `Optional == "ftp"` compiles.
+    //   "ftp" is a Swift small string, not a __cstring: w8 = 0x00707466 ('f','t','p') with
+    //                discriminator 0xe3 (count 3). Compared inline at 0x1019f5a10/0x1019f5a1c, then
+    //                via __got 0x104112638 = Swift._stringCompareWithSmolCheck with w4 = 0
+    //                (`expecting: .equal`) on the slow path.
+    //   0x1019f5a70  bl → __got 0x10410a668 = (extension in Foundation):StringProtocol
+    //                .removingPercentEncoding.getter, handed the String metadata (0x104111500 =
+    //                `_$sSSN`) and the String : StringProtocol witness table from the one-time cache
+    //                at 0x1019c46e0. `cbz x1` falls back to the binding — that is the `??`.
+    // ⚑ The local's NAME is not in the binary; `string` is recon-chosen (P28). Everything else is read.
+    var ffmpegString: String {
+        if isFileURL {
+            return path
+        }
+        let string = absoluteString
+        if scheme == "ftp" {
+            return string.removingPercentEncoding ?? string
+        }
+        return string
+    }
+
     func parsePlaylist() async throws -> [(String, URL, [String: String])] {
         let data = try await data()
         var entrys = data.parsePlaylist()

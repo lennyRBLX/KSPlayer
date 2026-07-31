@@ -566,11 +566,11 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
     //   `bl 0x1030fdb5c` = av_find_input_format @0x101a398d4, `mov x24,x0` @0x101a398d8. x24 is then
     //   `mov x2,x24` @0x101a39a9c, immediately before the avformat_open_input call @0x101a39aa0.
     let inputFormat = inFormat.flatMap { av_find_input_format($0) }
-    // ⚑ DIVERGENCE (marked, not fabricated): the binary's url C-string comes from
-    //   `bl 0x1019f59c4` = (extension in KSPlayer):Foundation.URL.ffmpegString.getter @0x101a39888, NOT `.path`.
-    //   `URL.ffmpegString` is ABSENT from this reconstruction, so `.path` stands in.
-    //   ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=LOCATED]
-    let urlString = url?.path
+    // RESOLVED (session 76): the binary's url C-string comes from
+    //   `bl 0x1019f59c4` = (extension in KSPlayer):Foundation.URL.ffmpegString.getter @0x101a39888.
+    //   That property is now reconstructed in Core/Utility.swift, so the `.path` stand-in is gone.
+    //   ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=RECONSTRUCTED]
+    let urlString = url?.ffmpegString
     //   ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED] (re-resolved s75:
     //     "unique instruction-level survivor of the 1-symbol fingerprint class"; call site @0x101a39aa0)
     let openResult = avformat_open_input(&mutableCtx, urlString, inputFormat, &avOptions)

@@ -309,7 +309,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         try masterM3U8Context.write(to: dir.appendingPathComponent("master.m3u8"), atomically: true, encoding: .utf8)
         // 6. KSLog debug gate (logLevel > 2, FUN_1019b4074) — form UNRESOLVED (class-wide) [L194-214]  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
         // 7. build + return the OSI via its real designated init [L244-247]
-        let filename = dir.appendingPathComponent("playlist_%v.m3u8").path   // ⚑ FUN_1019f59c4-computed (approximated)  ⚑[tool=resolve_fun_pins ref=FUN_1019f59c4:0x1019f59c4 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Foundation.URL.ffmpegString.getter : Swift.String
+        let filename = dir.appendingPathComponent("playlist_%v.m3u8").ffmpegString   // ⚑ was `.path` (approximated); the call at 0x101b85b60 is ffmpegString, now reconstructed  ⚑[tool=resolve_fun_pins ref=FUN_1019f59c4:0x1019f59c4 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Foundation.URL.ffmpegString.getter : Swift.String
         return try OutputStreamInfo(formatContext: formatContext,
                                     filename: filename,
                                     forceTranscode: false,                  // p4 = 0
