@@ -124,7 +124,11 @@ extension KSVideoPlayer: UIViewRepresentable {
             }
         }
 
-        private var delayHide: DispatchWorkItem?
+        // Stated outright by the export trie, so the payload is read and not inferred:
+        // ⚑[tool=export_trie_oracle ref=$s8KSPlayer13KSVideoPlayerV11CoordinatorC9delayHide33_9CE0D5E10C22B47FEFCEFADFDAB1EB55LLScTyyts5Error_pGSgvpfi result=Swift.Task<(),Swift.Error>?]
+        // `ScT` is Swift.Task and the trailing `Sg` is present, so the optional was already right;
+        // only the payload was wrong. See mask(show:autoHide:) for the write site.
+        private var delayHide: Task<Void, Error>?
         public var onPlay: ((TimeInterval, TimeInterval) -> Void)?
         public var onFinish: ((KSPlayerLayer, Error?) -> Void)?
         public var onStateChanged: ((KSPlayerLayer, KSPlayerState) -> Void)?
@@ -192,14 +196,39 @@ extension KSVideoPlayer: UIViewRepresentable {
                 // 播放的时候才自动隐藏
                 guard state == .bufferFinished else { return }
                 if autoHide {
-                    delayHide = DispatchWorkItem { [weak self] in
+                    // Forward schedules the auto-hide as a Task, not a DispatchWorkItem +
+                    // asyncAfter. Read from mask(show:autoHide:) @0x1019d9d74: the field store at
+                    // 0x1019da07c writes the result of the task-creation call at 0x1019da074 into
+                    // the delayHide field-offset slot, and the cancel at 0x1019d9f4c dispatches
+                    // ⚑[tool=stubs->__got->--macho --bind ref=0x103457c78:0x104113968 result=$sScT6cancelyyF]
+                    // (Swift.Task.cancel), never DispatchWorkItem.cancel. The closure is
+                    // [weak self]: swift_allocObject(24 B) @0x1019d9fe0 then
+                    // ⚑[tool=stubs->__got->--macho --bind ref=0x10345d204:0x104113140 result=_swift_weakInit]
+                    // at box+0x10. `priority: nil` is the storeEnumTagSinglePayload(buf,1,1) on
+                    // ⚑[tool=stubs->__got->--macho --bind ref=0x103457bc4:0x1041138a8 result=$sScPMa]
+                    // (Swift.TaskPriority) at 0x1019d9fcc. MainActor isolation is inherited from
+                    // this @MainActor method, not annotated: the body hops through MainActor.shared
+                    // + swift_task_switch @0x1019daf6c before the sleep.
+                    delayHide = Task { [weak self] in
+                        // Body @0x1019daf70: swift_beginAccess on
+                        // static KSOptions.animateDelayTimeInterval @0x1044f1810 (export trie),
+                        // `fmul` by the literal 0x41CDCD6500000000 = 1000000000.0 exactly, then
+                        // `fcvtzu x20, d0` — an unsigned Double->UInt64 conversion with the three
+                        // standard overflow traps at 0x1019db020/24/28 — passed to
+                        // ⚑[tool=stubs->__got->--macho --bind ref=0x103457ca8:0x104113998 result=$sScTss5NeverORszABRs_rlE5sleep11nanosecondsys6UInt64V_tYaKFZ]
+                        // (Task.sleep(nanoseconds:)). `try` is what makes the field Task<(), Error>.
+                        try await Task.sleep(nanoseconds: UInt64(KSOptions.animateDelayTimeInterval * 1_000_000_000))
+                        // Continuation @0x1019db084, in this order: swift_weakLoadStrong on the
+                        // box then `cbz` to the exit (the guard); the Published `state` read
+                        // through the same two keypath descriptors 0x103567a90/0x103567ab8 the
+                        // guard at line 193 uses, compared `cmp w8, #0x4` = case index 4 =
+                        // .bufferFinished; then w0=0 into
+                        // ⚑[tool=export_trie_oracle ref=Coordinator.isMaskShow.setter:0x1019da0e0 result=OWNER_MATCH]
                         guard let self else { return }
                         if self.state == .bufferFinished {
                             self.isMaskShow = false
                         }
                     }
-                    DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + KSOptions.animateDelayTimeInterval,
-                                                  execute: delayHide!)
                 }
             }
             #if os(macOS)
