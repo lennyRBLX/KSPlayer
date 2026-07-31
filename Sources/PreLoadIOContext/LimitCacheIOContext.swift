@@ -18,7 +18,16 @@ public class LimitCacheIOContext: CacheIOContext {
     // Both facts it asserted were wrong: the label is `md5:`, and `maxFileSize` is the FIFTH
     // parameter, not the first.
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext010LimitCacheC0C8download3md510bufferSize8saveFile03maxkI014isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VSbs6UInt64VSbtKcfc result=labels+order RECOVERED]
-    public init(download: URLContextDownload?, md5: String,
+    // `download` is the EXISTENTIAL `any DownloadProtocol`: the mangle above spells it
+    // `8KSPlayer16DownloadProtocol_p` (`_p` = existential), where this module's
+    // HLSCacheIOContext init mangles a concrete one as `AcA18URLContextDownloadC_`. The 40-byte
+    // box is read directly in LimitCountPreLoadIOContext.swift (outlined copy helper
+    // 0x1001263e0: metadata +0x18, witness table +0x20, then a value witness).
+    // The optionality is STILL DIVERGENT: no `Sg` in the mangle. Blocked on the `download: nil`
+    // P8 spines at CacheIOContext.swift:211 and LimitSeparatePreLoadIOContext.swift:346, whose
+    // real argument is built by the FFmpeg URLContext open that the existence-check LOCATED:
+    // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext18URLContextDownloadC3url5flags7options9interrupt14isReadCompleteAC10Foundation3URLV_s5Int32VSpys13OpaquePointerVSgGSgSo15AVIOInterruptCBVSbtKcfc:0x101b90c58 result=LOCATED]
+    public init(download: (any DownloadProtocol)?, md5: String,
                 bufferSize: Int32 = 32 * 1024, saveFile: Bool, maxFileSize: UInt64,
                 isReadComplete: Bool) {
         self.maxFileSize = maxFileSize

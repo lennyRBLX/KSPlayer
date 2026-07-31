@@ -123,7 +123,19 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     // CacheIOContext's designated init). `isReadComplete` is LAST, not fifth.
     // ⚑[tool=export_trie_oracle ref=FUN_101b86d38:0x101b86d38 result=IDENTIFIED as $s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc — CacheIOContext's designated init, INITIALIZING entry (`cfc`). It was a raw FUN_ only because the class name is word-substituted]  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext05LimitabC0C8download3md510bufferSize8saveFile03maxjH00k6ReadedjH014isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VSbs6UInt64VAPSbtKcfc result=labels+order RECOVERED]
-    init(download: URLContextDownload?, md5: String, bufferSize: Int32 = 32 * 1024,
+    // `download` is the EXISTENTIAL `any DownloadProtocol`: the mangle above spells it
+    // `8KSPlayer16DownloadProtocol_p`, where `_p` marks the existential, while the same module's
+    // HLSCacheIOContext init mangles a concrete one as `AcA18URLContextDownloadC_`. Corroborated
+    // by the ABI in the subclass that delegates through here — LimitCountPreLoadIOContext's init
+    // @0x101ba26c4 passes download by ADDRESS and copies it with the outlined existential helper
+    // 0x1001263e0 (metadata at +0x18, witness table at +0x20, then a value witness = a 40-byte
+    // box). See CacheIOContext.swift:166, which read the same 40-byte copy independently.
+    // The optionality is STILL DIVERGENT: no `Sg` in the mangle, so the binary's parameter is
+    // non-optional. Blocked on the `download: nil` P8 spines at CacheIOContext.swift:211 and
+    // LimitSeparatePreLoadIOContext.swift:346 — see LimitCountPreLoadIOContext.swift. The
+    // existence-check for the value those spines stand in for LOCATED it:
+    // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext18URLContextDownloadC3url5flags7options9interrupt14isReadCompleteAC10Foundation3URLV_s5Int32VSpys13OpaquePointerVSgGSgSo15AVIOInterruptCBVSbtKcfc:0x101b90c58 result=LOCATED]
+    init(download: (any DownloadProtocol)?, md5: String, bufferSize: Int32 = 32 * 1024,
          saveFile: Bool, maxFileSize: UInt64, maxReadedFileSize: UInt64,
          isReadComplete: Bool) {
         self.maxFileSize = maxFileSize            // binary s37: self.maxFileSize = param_6
