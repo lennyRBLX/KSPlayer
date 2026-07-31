@@ -41,9 +41,22 @@ class LocalHLSServer {
         400: "Bad Request", 403: "Forbidden", 404: "Not Found",
         405: "Method Not Allowed", 500: "Internal Server Error", 503: "Service Unavailable",
     ]
-    // ⚑ [URL: Int] — CORRECTED from the M1 [String: Int] guess: slot19 (sendRetryResponse) hashes the
-    // key via URL:Hashable (FUN_101b835bc → Hashable._rawHashValue on a URL). Per-URL backoff delay.
-    private var retryDelayMap: [URL: Int] = [:]
+    // ⚑ [URL: UInt64] — the KEY was CORRECTED from the M1 [String: Int] guess: slot19
+    // (sendRetryResponse) hashes it via URL:Hashable (FUN_101b835bc → Hashable._rawHashValue on a URL).
+    // Session 79 corrects the VALUE, which that pass never checked: the binary says UInt64, not Int.
+    // ⚑[tool=export_trie_oracle ref=LocalHLSServer.retryDelayMap:$s11ProAVPlayer14LocalHLSServerC13retryDelayMap33_15C2A0C98D82F34B7E875A9CFB544E90LLSDy10Foundation3URLVs6UInt64VGvpfi result=CONFIRMED]
+    //   demangles to `[Foundation.URL : Swift.UInt64]` — `s6UInt64V`, not `Si`.
+    // NOT a spelling difference (MEMORY rule 51), three ways. (a) The same class mangles
+    // `statusMessages` as `SDySiSSG` = [Swift.Int : Swift.String], so Int vs UInt64 is a distinction
+    // this mangler makes inside this one class. (b) and (c) the BODY agrees, in sendRetryResponse
+    // (0x101b740d4–0x101b74760, 419 instr by LC_FUNCTION_STARTS), where x26 IS the loaded value —
+    // `ldr x26,[x8,x0,lsl #3]` @0x101b74288 is the subscript, `mov w26,#0x1` @0x101b742a8 the `?? 1`:
+    //   (b) `cmp x26,#0x5` / `b.lo` @0x101b74294-98 is the `delay <= 4` test taken UNSIGNED; a
+    //       `Swift.Int` emits the signed `b.lt`.
+    //   (c) `ucvtf d0, x26` @0x101b744f0 converts it for `.now() + Double(delay)` — the UNSIGNED
+    //       convert, where a `Swift.Int` emits `scvtf`.
+    // Per-URL backoff delay.
+    private var retryDelayMap: [URL: UInt64] = [:]
 
     /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).  ⚑[tool=resolve_fun_pins ref=FUN_101b705ec:0x101b705ec result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer  ⚑[tool=resolve_fun_pins ref=FUN_101b70274:0x101b70274 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.__allocating_init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer
     /// vtable slot 6 @0x101b70274 is the compiler-emitted ALLOCATING entry point for this init and has no
