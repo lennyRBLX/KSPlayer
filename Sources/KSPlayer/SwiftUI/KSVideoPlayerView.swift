@@ -518,7 +518,15 @@ struct VideoControllerView: View {
 }
 
 @available(iOS 15, tvOS 16, macOS 12, *)
-public struct MenuView<Label, SelectionValue, Content>: View where Label: View, SelectionValue: Hashable, Content: View {
+// Generic parameter ORDER is read from the binary, not chosen. Nominal descriptor 0x1039f2a7c
+// declares 3 parameters and 3 requirements whose subjects are τ_0_0/τ_0_1/τ_0_2: parameter 0 is
+// constrained by 0x1041dd498 = `_$sSHMp` (Swift.Hashable) and parameters 1 and 2 by 0x1041dd460 =
+// `_$s7SwiftUI4ViewMp` (SwiftUI.View). Its field records read selection: Binding<τ_0_0>,
+// content: () -> τ_0_1, label: () -> τ_0_2, and the export trie agrees — …9selectionVyxGvpMV
+// demangles to Binding<A>, …7contentq_ycvpMV to () -> B, …5labelq0_ycvpMV to () -> C. So the
+// Hashable parameter that `selection` uses is declared FIRST. Only the NAMES are recon-chosen:
+// Swift stores no generic-parameter source names anywhere in the image.
+public struct MenuView<SelectionValue, Content, Label>: View where SelectionValue: Hashable, Content: View, Label: View {
     public let selection: Binding<SelectionValue>
     @ViewBuilder
     public let content: () -> Content
