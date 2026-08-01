@@ -18,15 +18,16 @@ Filenames in this directory do not sort in session order. **Order by the session
    parent/child pair before touching `reconstruction/` or `forward`. Sessions 81 and 82 ran
    concurrently and clobbered each other's close-out pins.
 2. Run `python3 scripts/recon_gate.py --mode handoff` from `/Users/jweaver/Desktop/Work/swift/play`
-   — expect **PASS 36 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
+   — expect **PASS 37 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
    `agg_high 55`, `agg_unresolved 1`. Floor **299**.
 3. **The floor did not move this session and that is correct.** Both bodies audited in s85 were
    DIVERGENT, so 299 is unchanged from s84. `agg_critical` 14 -> 15 and `agg_high` 48 -> 55 are the
    eight new divergences those two audits MEASURED (1 CRITICAL + 7 HIGH; the two verdicts also
    carry 3 MED and 4 LOW). No source line was changed by an audit.
-4. Run `python3 scripts/recon_progress.py`. Its STAGES block is hand-maintained prose and is still
-   wrong in both directions. The "blocked on unresolved symbols 283" line is a hardcoded literal at
-   `recon_progress.py:105` and is **still unverified** — it has been carried unchecked since s80.
+4. Run `python3 scripts/recon_progress.py`. **The "283" is gone — it was triaged in s85 and the
+   line is now DERIVED** (see the section below). Two stage lines are computed on demand; the rest
+   of the STAGES block is HISTORICAL NARRATIVE describing what a past session did, and is labelled
+   as such in the source. Do not add a live count to it as prose.
 5. **The two-repo split.** Swift sources, the `forward` branch and these handoffs live in
    `/Users/jweaver/Desktop/Work/swift/KSPlayer`. The cwd `/Users/jweaver/Desktop/Work/swift/play`
    holds `scripts/` and `reconstruction/`, both gitignored there. Address KSPlayer with `git -C`;
@@ -73,6 +74,39 @@ and neither is in KSPlayer. So every tool, every new doc, the hook and the manua
 disk, with no version control and no backup beyond `reconstruction/_scripts_backup_s71_8cb7b40` and
 `reconstruction/MEMORY_s85_pre_split_backup.md`. A disk loss costs the entire tooling layer.
 **Unit for s86: decide where this layer is versioned.**
+
+## The "283" is dead — hardcoded counts are now a gate
+
+`recon_progress.py` printed `"blocked on unresolved symbols %4d bodies" % 283` for four handoffs.
+Triaged in s85: the number was written in **session 60, before the export-trie oracle existed**,
+using a tool (`recover_swift_function_name`) that reads `#function`/`#file` literals a release build
+strips and that cannot see the orphaned trie. **It matched no measurement at any point.**
+`resolve_fun_pins.py`'s docstring had already refuted it — and then hardcoded its OWN tally
+(289/79/6/204), which had itself drifted by s85. The reporter's docstring meanwhile claimed "every
+number here is read from a durable on disk, never typed in" while the literal sat 80 lines below it.
+
+**Derived now, live:** `280` unique FUN_ pins across `523` references — `84` nameable from the trie
+today, `196` genuine negatives. These drift with every commit, which is the whole argument: quote
+`resolve_fun_pins.pin_counts()`, never a number from any docstring including this handoff.
+
+What changed:
+- `resolve_fun_pins.pin_counts()` — new. Greps Sources for the pin population (always derivable,
+  no binary needed); reads the last `--scan` for the nameable/negative split and reports it UNKNOWN
+  rather than guessing when no scan is on disk.
+- `recon_progress.py` — the debt line and the REAL_METHOD stage line are computed. The latter was
+  frozen s64 prose ("bank 1 done — 8 FAITHFUL, 3 DIVERGENT") that s84/s85 falsified; it now reads
+  `181 of 234 slots still unverdicted — 97 in classes WITH source / 84 with NO source`.
+- Both docstrings corrected, including the false "never typed in" claim.
+- **`test_no_hardcoded_counts.py` — new, wired into `recon_gate --mode handoff`.** An AST check:
+  a `%`-format carrying an integer conversion whose argument is an integer LITERAL. That is exactly
+  the bug's shape and has no legitimate use in a reporter. Verified against a negative control —
+  it fires on the reintroduced `% 283` and stays silent on derived counts, `"=" * 74`, width
+  specifiers and float formats. Covers `recon_progress`, `recon_gate`, `aggregate_verdicts`; add
+  any new reporter to its REPORTERS list.
+
+**The general lesson, and why it became a gate rather than a rule:** a literal in a reporter is
+indistinguishable from a measurement to every reader, and it gets quoted onward into handoffs as if
+derived. Prose cannot detect its own violation — four sessions of review did not catch this one.
 
 ## The dispatch recheck — the floor was NOT overstated
 
