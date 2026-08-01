@@ -18,7 +18,7 @@ Filenames in this directory do not sort in session order. **Order by the session
    parent/child pair before touching `reconstruction/` or `forward`. Sessions 81 and 82 ran
    concurrently and clobbered each other's close-out pins.
 2. Run `python3 scripts/recon_gate.py --mode handoff` from `/Users/jweaver/Desktop/Work/swift/play`
-   — expect **PASS 35 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
+   — expect **PASS 36 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
    `agg_high 55`, `agg_unresolved 1`. Floor **299**.
 3. **The floor did not move this session and that is correct.** Both bodies audited in s85 were
    DIVERGENT, so 299 is unchanged from s84. `agg_critical` 14 -> 15 and `agg_high` 48 -> 55 are the
@@ -73,6 +73,42 @@ and neither is in KSPlayer. So every tool, every new doc, the hook and the manua
 disk, with no version control and no backup beyond `reconstruction/_scripts_backup_s71_8cb7b40` and
 `reconstruction/MEMORY_s85_pre_split_backup.md`. A disk loss costs the entire tooling layer.
 **Unit for s86: decide where this layer is versioned.**
+
+## The dispatch recheck — the floor was NOT overstated
+
+s85 fixed `body_fingerprint`'s dispatch over-reporting, which every audit in s80-s84 had consumed.
+That raised a real question: did any verdict turn a PHANTOM offset into a call that does not exist,
+and is the faithful floor therefore too high? `scripts/dispatch_recheck.py` answers it
+deterministically — it recomputes BOTH the old and the fixed rule per body and reports only verdicts
+citing a phantom offset in a genuine dispatch context.
+
+**ANSWER: no. 340 verdicts / 266 bodies / 212 carry phantom offsets / 27 cite one in a dispatch
+context / ZERO had a wrong vtable-or-metadata CONCLUSION.** The floor of 299 stands. The 27 all cite
+the number as a FIELD offset, an async-frame slot or a value-witness size, and were only flagged
+because a libdispatch word (`_dispatch_sync`, `DispatchQueue`) sat nearby. Three s84 verdicts had
+already caught and refuted the tool's phantoms in their own text.
+
+**What the sweep did find was two further defects in s85's own fix**, both caught because a verdict
+disagreed with the tool and MEMORY rule 9 says check the tool first. Both are now golden-guarded:
+
+1. **Tail calls were missed.** The filter accepted only `blr`. `br xD` is a tail call, which Swift
+   emits whenever a body's last statement is a virtual call. VideoPlayerView slot 44 @`0x101b2fb04`
+   ends `ldr x1,[x8,#0x310]` / `br x1` — a tail-called `isMaskShow` setter that an adjudicated
+   verdict had already resolved through the metadata address. The tool said "no dispatch".
+2. **The scan was control-flow blind.** It walked forward linearly, so an unconditional `b` carried
+   it into an unrelated basic block. KSPlayerLayer `set(url:options:)` @`0x1019cb674` loads TWO
+   vtable offsets on mutually-exclusive paths that converge on ONE `blr`:
+   `1019cb91c ldr x8,[x8,#0x2b8]` / `1019cb920 b 0x1019cba04` … `1019cba00 ldr x8,[x8,#0x2f8]` /
+   `1019cba04 mov` / `1019cba08 blr x8`. Both are real; the linear scan reported `0x2b8` as phantom.
+   It now follows unconditional branches. KNOWN LIMIT, documented in the source: a CONDITIONAL
+   branch still falls through, so a dispatch reached only on the taken side can still be missed —
+   which under-reports, never invents.
+
+Corpus after both fixes (MEMORY rule 50, 264 bodies, 0 crashes): dispatch histogram
+0:167 / 1:60 / 2:28 / 3:4 / 4:5 — **97 bodies carry at least one real dispatch.**
+
+**The lesson worth carrying: the audit verdicts were more careful than the tool.** Twice the tool
+contradicted an adjudicated verdict and twice the verdict was right. Rule 9 paid for itself.
 
 ## The tool sweeps — what s85 LANDED
 
