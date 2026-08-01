@@ -1,14 +1,12 @@
 # Session 86 work
 
-Session 85 closed the AUDIT_ONLY backlog: **31 of 31 bodies are audited.** Both remaining bodies
-came back DIVERGENT, so the floor did not move — that is the arithmetic working, not a stall.
-Three source commits landed, plus four tool sweeps (L1-L5) and a knowledge/control split of
-MEMORY.md. The tool units still open are steps 8-12; two of the four fix-queue units (steps 15-16)
-were not done and are the largest remaining block of specified work.
-Steps 25-27 say which of it is safe to run N-wide and which is not.
+Session 85 closed the AUDIT_ONLY backlog (31/31), split MEMORY.md into knowledge/control, landed
+four tool sweeps, re-verified the faithful floor against a tool defect, and killed a four-handoff-old
+hardcoded literal. **Session 86 runs the AUDIT WAVE.** Sessions 87 and 88 run the two waves after
+it; the plan for all three is "The wave sequence" below and the unit lists are already on disk.
 
 Note on filenames: this file and the session-85 handoff are BOTH dated 2026-07-31 (the real clock).
-Filenames in this directory do not sort in session order. **Order by the session number.**
+Filenames here do not sort in session order. **Order by the session number.**
 
 ## Verify first
 
@@ -18,343 +16,222 @@ Filenames in this directory do not sort in session order. **Order by the session
    parent/child pair before touching `reconstruction/` or `forward`. Sessions 81 and 82 ran
    concurrently and clobbered each other's close-out pins.
 2. Run `python3 scripts/recon_gate.py --mode handoff` from `/Users/jweaver/Desktop/Work/swift/play`
-   — expect **PASS 37 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
+   — expect **PASS 38 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
    `agg_high 55`, `agg_unresolved 1`. Floor **299**.
-3. **The floor did not move this session and that is correct.** Both bodies audited in s85 were
-   DIVERGENT, so 299 is unchanged from s84. `agg_critical` 14 -> 15 and `agg_high` 48 -> 55 are the
-   eight new divergences those two audits MEASURED (1 CRITICAL + 7 HIGH; the two verdicts also
-   carry 3 MED and 4 LOW). No source line was changed by an audit.
-4. Run `python3 scripts/recon_progress.py`. **The "283" is gone — it was triaged in s85 and the
-   line is now DERIVED** (see the section below). Two stage lines are computed on demand; the rest
-   of the STAGES block is HISTORICAL NARRATIVE describing what a past session did, and is labelled
-   as such in the source. Do not add a live count to it as prose.
+3. **The floor did not move in s85 and that is correct.** Both bodies it audited were DIVERGENT.
+   `agg_critical` 14 -> 15 and `agg_high` 48 -> 55 are the eight divergences those two audits
+   MEASURED (1 CRITICAL + 7 HIGH; the verdicts also carry 3 MED and 4 LOW). No source line changed.
+4. Run `python3 scripts/recon_progress.py`. Two of its lines are now DERIVED on demand; the rest of
+   the STAGES block is historical narrative and is labelled as such in the source.
 5. **The two-repo split.** Swift sources, the `forward` branch and these handoffs live in
    `/Users/jweaver/Desktop/Work/swift/KSPlayer`. The cwd `/Users/jweaver/Desktop/Work/swift/play`
    holds `scripts/` and `reconstruction/`, both gitignored there. Address KSPlayer with `git -C`;
    run every `scripts/` command from `play`. FFmpegKit is a SIBLING of KSPlayer at
    `/Users/jweaver/Desktop/Work/swift/FFmpegKit`, not inside it.
-6. Read `reconstruction/handoff_baseline.json` block `captured_session85`, then the two verdicts
-   `reconstruction/verdicts/VideoPlayerView_setupUIComponents_slot40_s85.json` and
-   `reconstruction/verdicts/FFmpegDecode_decodeFrame_slot13_s85.json`. The s80-s84 durables remain
-   valid background EXCEPT where steps 17-22 refute them.
-7. **The gathering-agent protocol now lives at `reconstruction/AGENT_PROTOCOL.md`, not in
-   `scratchpad/`.** s85 found the scratchpad copy gone at takeover and had to regenerate it. The new
-   location is durable, beside `AUDIT_AGENT.md` and `DISPATCH_CONTRACT_s64.md`, which both survived.
+6. **MEMORY.md changed SHAPE in s85 — read it before anything else.** It is no longer 85 numbered
+   rules: 21 every-turn hard rules, a 24-route context index keyed by TRIGGER, and an
+   "enforced elsewhere" list so you do not re-check by hand what a hook or gate already decides.
+   `play/docs/superpowers/ENFORCEMENT_MAP.md` holds the taxonomy and the disposition of all 85
+   former rules; read it first if you are unsure where a new rule belongs.
+7. **A PreToolUse hook is LIVE** (`scripts/command_shape_hook.py`, wired on `Bash`). It BLOCKS eight
+   command shapes that used to be prose rules — bare `llvm-objdump`, `--macho` on a ranged call,
+   `timeout`, `cd` into another repo instead of `git -C`, unquoted heredoc, `validate_build.sh`
+   without `DEVELOPER_DIR=`, `2>/dev/null` on an absence-shaped command, wrong `scripts/` cwd. If it
+   blocks you the stderr names the check. 18-case golden, negatives included.
+8. Read `reconstruction/handoff_baseline.json` block `captured_session85`, then the two s85 verdicts
+   `VideoPlayerView_setupUIComponents_slot40_s85.json` and `FFmpegDecode_decodeFrame_slot13_s85.json`.
+   The s80-s84 durables remain valid background EXCEPT where "Premises REFUTED" below refutes them.
 
-## MEMORY.md changed SHAPE in s85 — read this before step 1
+## The wave sequence — s86, s87, s88
 
-**MEMORY.md is no longer 85 numbered rules.** It was split into knowledge vs control:
+**The unit lists are generated and on disk. Do not re-derive them by hand.**
+`python3 scripts/wave_worklist.py --selfcheck` asserts the counts below AND that the two body waves
+PARTITION the 181 unverdicted REAL_METHOD slots — nothing double-counted, nothing lost.
 
-- **21 hard rules** that apply in EVERY turn stay in the body.
-- **A routed-context index**: one line per doc, each naming the TRIGGER that should make you read
-  it. All 24 routes were verified to resolve, and the previously ORPHANED memory files are now
-  reachable — 16 of the 18 files beside MEMORY.md had no link at all, including the 272 KB
-  `reconstruction-agent-pitfalls.md`.
-- **An "enforced elsewhere" list**, so you do not spend turns re-checking what a hook or gate
-  already decides.
+| wave | session | units | classes | file |
+|---|---|---|---|---|
+| AUDIT    | **86** | 97 | 22 | `reconstruction/wave_audit.json` |
+| STAND-UP | 87 | 84 | 9 | `reconstruction/wave_standup.json` |
+| DERIVE   | 88 | 13 + 37 | — | `reconstruction/wave_derive.json` |
 
-New under `play/docs/superpowers/`: `ENFORCEMENT_MAP.md` (the taxonomy + the disposition of all 85
-former rules — read it first if you are unsure where a new rule belongs), `READING_THE_BINARY.md`,
-`VERDICTS_AND_HANDOFFS.md`, `SWIFT_SPELLING.md`.
+The split between the first two is **does the owning class have a SOURCE FILE**. With source there
+is something to compare the binary against — the s84/s85 audit shape. Without source there is
+nothing to audit; the unit is "recover the shape", a different job with a different verdict kind.
+An audit agent pointed at a source-less class produces a confident comparison against nothing, so
+the tool routes them apart and its golden asserts SettingsView never lands in the audit wave.
 
-**A PreToolUse hook is now LIVE** (`scripts/command_shape_hook.py`, wired on `Bash` in
-`play/.claude/settings.json`). It BLOCKS eight command shapes that were previously prose rules —
-bare `llvm-objdump`, `--macho` on a ranged call, `timeout`, `cd` into another repo instead of
-`git -C`, unquoted heredoc, `validate_build.sh` without `DEVELOPER_DIR=`, `2>/dev/null` on an
-absence-shaped command, wrong `scripts/` cwd. If it blocks you, the stderr names the check. It has
-an 18-case golden including the negatives that must stay allowed.
+### Session 86 — the AUDIT WAVE (97 units, 22 classes)
 
-Two rules were deleted by FIXING their cause rather than restating them: old rule 85 (both gates now
-accept `--file` alone and gate every class the file declares) and old rule 29 (it named
-`function_sizes.py` for bounds, which cannot do that on this image — the tool is
-`function_extents.py`, and the rule had been wrong for several sessions).
+9. Regenerate and read the worklist:
+   `python3 scripts/wave_worklist.py --wave audit --json reconstruction/wave_audit.json`.
+   Largest first: IOSVideoPlayerView 32 units / 9122 instr · KSPlayerLayer 12 / 1355 ·
+   KSAVPlayer 7 / 626 · PreLoadIOContext 7 / 3391 · KSSlider 5 / 299 · VideoSwresample 5 / 1717 ·
+   VideoToolboxDecode 4 / 642 · Anime4K 3 / 4780 · FFmpegDecode 3 / 177 · LimitPreLoadIOContext 3 ·
+   LimitSeparatePreLoadIOContext 3 · AudioSwresample 2 · HLSCacheIOContext 2 · then twelve
+   single-unit classes.
+10. **Batch by CLASS, dispatch ONE BODY PER AGENT.** Batching by class amortises the vtable walk
+    (one `vtable_walk` per class, not per body). Merging several bodies of one class into a single
+    agent cross-contaminates findings between them — s84 kept them separate for exactly that reason.
+11. Every agent runs under `reconstruction/AGENT_PROTOCOL.md`: raw-output envelope, gather only, no
+    verdict, no source edit, no git index, no build. **The orchestrator re-verifies every
+    load-bearing claim against the binary itself and writes and adjudicates every verdict.**
+12. **Give each agent the source RANGE, not a starting line, and tell it to read the WHOLE body.**
+    s85's own first draft of the FFmpegDecode verdict asserted two false absences because it had
+    read :40-189 of a body that runs to :207; the agent caught both. This is the single
+    highest-value change to the agent prompt.
+13. Write every premise so the agent can refute it (address, owner, slot, extent, source range,
+    prior findings). A refuted premise is the most valuable thing a gathering agent returns.
+14. **Treat KSPlayerLayer as suspect.** s84 found 8 of its lifecycle methods DIVERGENT (play slot
+    60, stop 63, set(url:options:) 55, prepareToPlay 68, readyToPlay 69, changeLoadState 70, finish
+    74, pause 61) and s85 found its field records do not match its source properties. Expect
+    divergence; do not let an agent's "matches" pass without your own read.
+15. Anime4K is 3 units but 4780 instructions, and PreLoadIOContext 7 units / 3391 — budget those
+    like ten ordinary bodies each, not three and seven.
+16. Adjudicate every body with `adjudicate_verdict.py`; run `verdict_provenance_gate.py --class <C>`
+    on every class you touch. Verdict schema and the FAITHFUL bar are in
+    `play/docs/superpowers/VERDICTS_AND_HANDOFFS.md`.
 
-⚠️ **DURABILITY RISK, unresolved.** `play/.gitignore` lines 128-129 ignore `docs/` AND `scripts/`,
-and neither is in KSPlayer. So every tool, every new doc, the hook and the manual exist ONLY on this
-disk, with no version control and no backup beyond `reconstruction/_scripts_backup_s71_8cb7b40` and
-`reconstruction/MEMORY_s85_pre_split_backup.md`. A disk loss costs the entire tooling layer.
-**Unit for s86: decide where this layer is versioned.**
+### Session 87 — the STAND-UP WAVE (84 units, 9 classes)
 
-## The "283" is dead — hardcoded counts are now a gate
+17. `python3 scripts/wave_worklist.py --wave standup --json reconstruction/wave_standup.json`.
+    SettingsView 43 / 9880 instr · ThumbnailQueue 15 / 1057 · Anime4KPipeline 13 / 2459 ·
+    ThumbnailSession 4 / 5198 · KSComplexPlayerLayer 3 · KSVideoPlayerModel 2 ·
+    MetalShaderExporter 2 · CustomProgressView 1 · DoviDisplayModel 1.
+18. **Run a NAME-RECOVERABILITY SCREEN FIRST, as its own cheap wave.** These classes are in the
+    classmap with real vtables, but `export_trie_oracle --class SettingsView` returns
+    `no orphan subtree found` — the class exists, its member NAMES do not. Screen all 9 with
+    `export_trie_oracle --class` plus `resolve_fun_pins.py --addr` per slot BEFORE dispatching 43
+    agents at work that may bottom out in "cannot be named". Split the wave into name-recoverable
+    and name-blocked, and size the session from the recoverable half.
+19. **The stand-up wave needs its own agent protocol — write it before dispatching.**
+    `AGENT_PROTOCOL.md` is an AUDIT contract; it assumes a source body to compare against, and a
+    stand-up unit has none. The deliverable per unit is the recovered SHAPE — arity, parameter and
+    return types from the mangled name where nameable, field records, extent, call set, dispatch set
+    — plus an explicit statement of what could NOT be recovered. Not FAITHFUL/DIVERGENT, which is
+    meaningless with nothing to compare.
+20. Decide the verdict KIND for a stand-up unit before writing the first one, and teach
+    `aggregate_verdicts` to handle it, or the floor arithmetic will silently mis-count these.
 
-`recon_progress.py` printed `"blocked on unresolved symbols %4d bodies" % 283` for four handoffs.
-Triaged in s85: the number was written in **session 60, before the export-trie oracle existed**,
-using a tool (`recover_swift_function_name`) that reads `#function`/`#file` literals a release build
-strips and that cannot see the orphaned trie. **It matched no measurement at any point.**
-`resolve_fun_pins.py`'s docstring had already refuted it — and then hardcoded its OWN tally
-(289/79/6/204), which had itself drifted by s85. The reporter's docstring meanwhile claimed "every
-number here is read from a durable on disk, never typed in" while the literal sat 80 lines below it.
+### Session 88 — the DERIVATION-ONLY HALVES
 
-**Derived now, live:** `280` unique FUN_ pins across `523` references — `84` nameable from the trie
-today, `196` genuine negatives. These drift with every commit, which is the whole argument: quote
-`resolve_fun_pins.pin_counts()`, never a number from any docstring including this handoff.
-
-What changed:
-- `resolve_fun_pins.pin_counts()` — new. Greps Sources for the pin population (always derivable,
-  no binary needed); reads the last `--scan` for the nameable/negative split and reports it UNKNOWN
-  rather than guessing when no scan is on disk.
-- `recon_progress.py` — the debt line and the REAL_METHOD stage line are computed. The latter was
-  frozen s64 prose ("bank 1 done — 8 FAITHFUL, 3 DIVERGENT") that s84/s85 falsified; it now reads
-  `181 of 234 slots still unverdicted — 97 in classes WITH source / 84 with NO source`.
-- Both docstrings corrected, including the false "never typed in" claim.
-- **`test_no_hardcoded_counts.py` — new, wired into `recon_gate --mode handoff`.** An AST check:
-  a `%`-format carrying an integer conversion whose argument is an integer LITERAL. That is exactly
-  the bug's shape and has no legitimate use in a reporter. Verified against a negative control —
-  it fires on the reintroduced `% 283` and stays silent on derived counts, `"=" * 74`, width
-  specifiers and float formats. Covers `recon_progress`, `recon_gate`, `aggregate_verdicts`; add
-  any new reporter to its REPORTERS list.
-
-**The general lesson, and why it became a gate rather than a rule:** a literal in a reporter is
-indistinguishable from a measurement to every reader, and it gets quoted onward into handoffs as if
-derived. Prose cannot detect its own violation — four sessions of review did not catch this one.
-
-## The dispatch recheck — the floor was NOT overstated
-
-s85 fixed `body_fingerprint`'s dispatch over-reporting, which every audit in s80-s84 had consumed.
-That raised a real question: did any verdict turn a PHANTOM offset into a call that does not exist,
-and is the faithful floor therefore too high? `scripts/dispatch_recheck.py` answers it
-deterministically — it recomputes BOTH the old and the fixed rule per body and reports only verdicts
-citing a phantom offset in a genuine dispatch context.
-
-**ANSWER: no. 340 verdicts / 266 bodies / 212 carry phantom offsets / 27 cite one in a dispatch
-context / ZERO had a wrong vtable-or-metadata CONCLUSION.** The floor of 299 stands. The 27 all cite
-the number as a FIELD offset, an async-frame slot or a value-witness size, and were only flagged
-because a libdispatch word (`_dispatch_sync`, `DispatchQueue`) sat nearby. Three s84 verdicts had
-already caught and refuted the tool's phantoms in their own text.
-
-**What the sweep did find was two further defects in s85's own fix**, both caught because a verdict
-disagreed with the tool and MEMORY rule 9 says check the tool first. Both are now golden-guarded:
-
-1. **Tail calls were missed.** The filter accepted only `blr`. `br xD` is a tail call, which Swift
-   emits whenever a body's last statement is a virtual call. VideoPlayerView slot 44 @`0x101b2fb04`
-   ends `ldr x1,[x8,#0x310]` / `br x1` — a tail-called `isMaskShow` setter that an adjudicated
-   verdict had already resolved through the metadata address. The tool said "no dispatch".
-2. **The scan was control-flow blind.** It walked forward linearly, so an unconditional `b` carried
-   it into an unrelated basic block. KSPlayerLayer `set(url:options:)` @`0x1019cb674` loads TWO
-   vtable offsets on mutually-exclusive paths that converge on ONE `blr`:
-   `1019cb91c ldr x8,[x8,#0x2b8]` / `1019cb920 b 0x1019cba04` … `1019cba00 ldr x8,[x8,#0x2f8]` /
-   `1019cba04 mov` / `1019cba08 blr x8`. Both are real; the linear scan reported `0x2b8` as phantom.
-   It now follows unconditional branches. KNOWN LIMIT, documented in the source: a CONDITIONAL
-   branch still falls through, so a dispatch reached only on the taken side can still be missed —
-   which under-reports, never invents.
-
-Corpus after both fixes (MEMORY rule 50, 264 bodies, 0 crashes): dispatch histogram
-0:167 / 1:60 / 2:28 / 3:4 / 4:5 — **97 bodies carry at least one real dispatch.**
-
-**The lesson worth carrying: the audit verdicts were more careful than the tool.** Twice the tool
-contradicted an adjudicated verdict and twice the verdict was right. Rule 9 paid for itself.
-
-## The tool sweeps — what s85 LANDED
-
-**Two new tools and one repaired tool. `scripts/` is gitignored in KSPlayer, so none of this is in
-a commit — it exists only on disk in `play/scripts/`. Re-run each `--selfcheck` at takeover.**
-
-L1. **`scripts/fieldrec.py` — NEW, `--selfcheck` PASS.** Reads Swift reflection FIELD RECORDS
-    straight out of the Mach-O: the MEMORY rule 84 authority for every absence claim. Golden is
-    anchored on five independently-established answers (VideoPlayerView 20 fields, PlayerView 5,
-    FFmpegDecode 9, KSOptions 84, and the `doviProfile` symref). **It decodes the ctrl-0x02
-    SYMBOLIC REFERENCE correctly**, which is the trap that cost s85 a commit: a reader that splits
-    a mangle on NUL truncates `02 5f 43 4e 00 53 67` to `b'\x02_CN'` and loses both the referent
-    (`__got 0x104112A00` -> `_$ss5UInt8VMn`) and the `Sg`. The golden regression-guards that case.
-L2. **`scripts/field_presence_sweep.py` — NEW, `--selfcheck` PASS.** The corpus-wide presence diff
-    (source stored properties vs binary field records, both directions), with a superclass walk so
-    inherited storage is not false-flagged, and `$__lazy_storage_$_x` / `$defaultActor` normalised
-    so every correct `lazy var` and `actor` is not reported as a divergence. **RESULT: 118 classes
-    swept — 77 clean, 13 with source properties that DO NOT EXIST in the binary (43 fields), 16
-    with binary-only fields, 19 with no source declaration.** It independently reproduced three
-    refutations it was never told about (`VideoPlayerView.longPressGesture`,
-    `IOSVideoPlayerView.originalOrientations`, and KSPlayerLayer's field set), which is the
-    strongest evidence it is right. The 13, with their absent fields, are L4.
-L3. **`scripts/body_fingerprint.py` — ALL THREE DEFECTS FIXED, `--selfcheck` PASS, and MEMORY rule
-    50 discharged over the whole corpus (264 bodies with a `binary_addr`: 0 crashes, 0 mojibake).**
-    (a) The objc-stub selector decode is now gated on the target lying inside `__objc_stubs`, so a
-    plain Swift call into `__text` reads NOT IN TRIE instead of `objc_msgSend[<mojibake>]`.
-    (b) An `add rd, rs, #imm` now REBINDS rd to the full effective address. The real defect was a
-    STALE REGISTER MAP, not a missing displacement: after `adrp x24,PG` + `add x24,x24,#0x880` the
-    map still held PG for x24, so a later zero-offset `ldr` through x24 recovered the PAGE BASE and
-    named it (the bogus `YouTubePlayerKit…PlaybackState.allCases` line).
-    (c) `DISPATCH OFFSETS` now requires the loaded register to be BLR'd before it is redefined.
-    On `VideoPlayerView.setupUIComponents` it went 15 -> **1** (`0x328`), matching the body's single
-    `blr`; across all 264 bodies the histogram is now 0:168, 1:59, 2:28, 3:5, 4:4.
-L4. **The 13 classes whose source declares storage the binary does not have** (from L2; each is a
-    class-shape unit, NOT a statement fix, and each needs its non-field consumers checked too):
-    VideoPlayerView 8 (cancellable, navigationBar, titleLabel, subtitleLabel, subtitleBackView,
-    originalPlaybackRate, speedTipLabel, longPressGesture) · PlaneDisplayModel 6 (indexCount,
-    indexType, primitiveType, indexBuffer, posBuffer, uvBuffer — **this EXPLAINS s84's finding that
-    the binary draws with `drawPrimitives`, not `drawIndexedPrimitives`: the index buffers do not
-    exist**) · KSPictureInPictureController 5 (binary has ZERO field records) · KSAVPlayer 4
-    (the external-playback set) · KSPlayerLayer 4 (_isPipActive, state, urls, startTime) ·
-    Coordinator 2 · MetalPlayView 2 · PlayerView 1 (srtControl) · AudioGraphPlayer 1 ·
+21. `python3 scripts/wave_worklist.py --wave derive --json reconstruction/wave_derive.json`.
+    Two kinds: **13 class-shape units and 37 fix-spec units.**
+22. **Class-shape units (13)** — classes whose source declares stored properties the binary does not
+    have, from `field_presence_sweep`. VideoPlayerView 8 (cancellable, navigationBar, titleLabel,
+    subtitleLabel, subtitleBackView, originalPlaybackRate, speedTipLabel, longPressGesture) ·
+    PlaneDisplayModel 6 (indexCount, indexType, primitiveType, indexBuffer, posBuffer, uvBuffer —
+    **this is why s84 saw `drawPrimitives` and not `drawIndexedPrimitives`: the index buffers do not
+    exist**) · KSPictureInPictureController 5 (binary has ZERO field records) · KSAVPlayer 4 ·
+    KSPlayerLayer 4 · Coordinator 2 · MetalPlayView 2 · PlayerView 1 · AudioGraphPlayer 1 ·
     FFmpegAssetTrack 1 · MetalView 1 · AudioFrame 1 · IOSVideoPlayerView 1.
-L5. **The UNCHECKED hole is now MEASURED corpus-wide: 205 of 803 source stored properties (25.5%)
-    across 33 classes are written `var x = …` with no annotation and are therefore invisible to the
-    type gate.** Worst: KSOptions 62/84, IOSVideoPlayerView 23/64, MEPlayerItem 20/42,
-    VideoPlayerView 19/27, PlayerToolBar 12/16. This is far larger than the 11 REAL_FLAGs of step 12
-    and it does not appear in any FAIL count. Annotating them from the binary's field records is
-    mechanical and deterministic — but it is a SOURCE edit, so per step 27 it must be done
-    per-class with its own build and commit, and must NOT be waved across agents.
+23. **Fix-spec units (37)** — every DIVERGENT body with a `binary_addr`. The unit is a
+    statement-level spec of what the binary actually does; derivable independently, one body per
+    agent.
+24. **DERIVING is parallel; WRITING is serial.** The pre-commit `l2_field_gate` blocks on the CLASS,
+    not on your diff, so two "independent" source edits in one file serialise anyway (s85 lost a
+    commit to exactly this). Land the derivation as specs during the wave, then apply them one unit
+    and one commit at a time.
 
-## The tool units — still open
+## What NOT to wave, in any session
 
-8. **`vtable_walk.py` resolves a class name to the WRONG descriptor when two modules declare the
-   same simple name.** RE-VERIFIED in s85 against the binary: `reconstruction/classmap_1.3.17.jsonl`
-   line 877 is `PlayerView`/Notelet desc `0x1039e919c` and line 913 is `PlayerView`/KSPlayer desc
-   `0x1039ee210`; `lookup_desc` returns the first. **Unit:** make `lookup_desc` take a module, prefer
-   KSPlayer, and ERROR on ambiguity rather than silently taking the first. Then re-run every class in
-   the corpus (MEMORY rule 50) and diff. `fieldrec.desc_for_class` already implements exactly this
-   contract (prefer KSPlayer, raise on ambiguity) — copy it rather than reinventing it.
-9. **`body_fingerprint.py`'s remaining gap.** L3 fixed the three measured defects, but the tool
-   still reports a dispatch only when the destination register is BLR'd inside the SAME extent; a
-   tail-called or outlined dispatch would be missed. No body in the 264-body rule-50 run showed
-   that shape, so it is a known limit rather than an observed bug. **Unit:** add a golden with a
-   tail-call body if one is ever found.
-10. **`decode_string_literal.py` misses computed counts** and attaches spurious counts to unrelated
-    adrp targets — it failed on FileLog.log, KSPlayerLayer slot 68 and BrightnessVolume slot 8.
-    **Unit:** model the `orr`/`add`-derived count registers, and add the `_StringObject` 32-byte bias
-    direction. s85 decoded four literals in slot 40 BY HAND from the `mov`/`movk` immediates
-    ("play.fill", "arrow.counterclockwise", "lock.open", "lock") — that hand method is the spec.
-11. **The trie's field-offset coverage is partial.** Of KSPlayerLayer's 17 fields only 7 export a
-    `vpWvd` symbol; KSOptions exports none at all. **Unit:** a resolver that names a field-offset
-    global from (a) field-record order plus (b) an anchor site — the proven pattern is `pause()`
-    @`0x1019ccb3c`, whose first instruction pair stores `wzr` through `0x104c63520`, pinning it as
-    `isAutoPlay` against source `:325`.
-12. Teach `l2_field_gate`'s `merge_binary_type` to fall back to the trie's `.setter`/`.getter` symbol
-    type when there is no mangled property symbol. KSPlayerLayer has 11 REAL_FLAGs and 7 UNCHECKED
-    fields waiting on it. **Note:** s85 measured KSOptions at `PASS 22 · UNCHECKED 62 · REAL_FLAG 0`
-    — 62 of 84 fields are unverifiable purely because the source writes `var x = …` without an
-    annotation. That is a bigger hole than the 11 REAL_FLAGs and it is invisible in the FAIL counts.
-13. **DONE in s85 — see L1.** `scripts/fieldrec.py` now exists with a `--selfcheck` golden,
-    including the ctrl-0x02 symref regression guard. Nothing is open here.
+25. **Source edits** — per step 24; the gate blocks per class and parallel editors collide on the
+    git index. MEMORY already forbids an agent touching the index or running a build.
+26. **Class-shape changes that ripple to consumers** (DisplayModel's `(frame:encoder:)` arity,
+    VideoPlayerView's stored-property set, FFmpegDecode's signature). Single-threaded.
+27. **Several bodies of one class into one agent** — see step 10.
+28. `GENERATED_ACCESSOR` (322 slots) is not a candidate at all: it collapses into declarations and
+    is not body work.
 
-## The fix queue — two of four landed
+## What s85 landed (context for the above)
 
-14. Steps 15-16 are what remains of the s85 fix queue. Each is its own unit and its own commit
-    (MEMORY rule 20). **Landed in s85:** FileLog.log (67f4cec), CMTime.init(seconds:) (d23612a), plus
-    an unplanned prerequisite, KSOptions.doviProfile (85bb872).
-15. **`KSPlayerLayer.seek(time:)`** (`KSPlayerLayer.swift:601`): the binary's slot 64 is
-    `seek(time:completion:)` and it forwards the caller's completion into the 3-argument overload;
-    the source declares `seek(time:)` and supplies a fresh empty closure at `:602-603`. **Verify the
-    slot-64 claim against the binary before editing (MEMORY rule 68) — s85 did not re-derive it.**
-16. **`VideoPlayerView.change(definitionIndex:)`** (`VideoPlayerView.swift:371-373`): replace the
-    trailing guarded `seek(time: shouldSeekTo) { _ in }` with
-    `asset.options.startPlayTime = shouldSeekTo` BEFORE the `super.set` call. KSOptions+0x30 =
-    `startPlayTime`, read from its own `vpWvd` at `0x103567480`. **These two are coupled** — :372
-    currently calls a two-argument `seek(time:)` with a trailing closure, so changing the
-    KSPlayerLayer declaration in step 15 can break or fix this call site. Build both before staging
-    either.
+29. **Tools, all with `--selfcheck`, all disk-only** (`scripts/` is gitignored — re-run each golden
+    at takeover): `fieldrec.py` (Mach-O field records, the rule-3 absence authority; decodes the
+    ctrl-`0x02` symref that a NUL-splitting reader truncates) · `field_presence_sweep.py` (118
+    classes: 77 clean, 13 with source properties absent from the binary = 43 fields, 16 binary-only;
+    it reproduced three refutations it was never told about) · `dispatch_recheck.py` ·
+    `wave_worklist.py` · `command_shape_hook.py` · `test_gate_interface_strings.py` ·
+    `test_no_hardcoded_counts.py`.
+30. **`body_fingerprint.py` had three defects and they are fixed** — objc-selector decode gated on
+    `__objc_stubs` (a `__text` call read as `objc_msgSend[<mojibake>]`), `add rd,rs,#imm` now rebinds
+    the register (a STALE MAP, not a missing displacement, produced the bogus page-base global), and
+    DISPATCH OFFSETS requires the register to be CALLED. Rule 10 discharged over 264 bodies, 0
+    crashes; histogram 0:167 / 1:60 / 2:28 / 3:4 / 4:5 — 97 bodies carry a real dispatch.
+31. **The floor is NOT overstated.** `dispatch_recheck` over 340 verdicts / 266 bodies: 212 carry
+    phantom offsets, 27 cite one in a dispatch context, **0 had a wrong vtable-or-metadata
+    conclusion.** The sweep instead found TWO more defects in s85's own fix — `blr`-only missed TAIL
+    calls (`br xD`), and a linear scan walked past an unconditional `b` into another basic block.
+    **Twice the tool contradicted an adjudicated verdict and twice the verdict was right.**
+32. **The "283" is dead.** `recon_progress` printed `"...%4d bodies" % 283` for four handoffs; the
+    number was written in s60 before the export-trie oracle existed and matched no measurement ever.
+    Derived now: 280 unique FUN_ pins / 523 refs / 84 nameable / 196 genuine negatives — call
+    `resolve_fun_pins.pin_counts()`, never quote a tally from a docstring or from this handoff.
+    `test_no_hardcoded_counts.py` makes a literal-in-a-reporter a gate failure.
+33. **The UNCHECKED hole is measured:** 205 of 803 source stored properties (25.5%) across 33
+    classes are written `var x = …` with no annotation and are invisible to the type gate. Worst:
+    KSOptions 62/84, IOSVideoPlayerView 23/64, MEPlayerItem 20/42, VideoPlayerView 19/27.
 
-## Premises REFUTED or CORRECTED in s85 — do not re-derive
+## Premises REFUTED — do not re-derive
 
-17. **`VideoPlayerView.navigationBar`, `.titleLabel` and `.speedTipLabel` DO NOT EXIST in the
-    binary**, and neither do `.subtitleLabel` or `.subtitleBackView`. Established from the FIELD
-    RECORDS (the MEMORY rule 84 authority), read directly out of the Mach-O: VideoPlayerView's
-    FieldDescriptor `0x103cbf530` holds exactly **20** records and none of the five is among them;
-    superclass PlayerView (KSPlayer, desc `0x1039ee210`) holds **5** (playerLayer, delegate, toolBar,
-    playTimeDidChange, backBlock) and has none of them either. The source declares all five ON
-    VideoPlayerView at `:78`, `:79`, `:80`, `:81`, `:109`. This is the same class of refutation as
-    s84's `originalOrientations` / `longPressGesture`, but it is now established from field records
-    rather than from the trie, and it carries ~9 source statements.
-18. **`setupUIComponents` is three statements shorter at the tail than the source.** The tail is
-    exactly `bl 0x101b2ed64` (addConstraint, unnamed in trie, identified by its OWN body — it opens
-    with the `setThumbImage:forState:` pair of `:753-757`), then ONE `blr` through metadata+`0x328`
-    = slot 41 = `customizeUIComponents()`, then `layoutIfNeeded`. **`setupSrtControl()` is never
-    called**, and it is not inlined into either function.
-19. **The cleanest corroboration found in s85, and a template worth reusing:** `addConstraint`
-    @`0x101b2ed64` emits **9** `setTranslatesAutoresizingMaskIntoConstraints:` where its own source
-    `:765-775` has **11** — short by exactly `navigationBar` and `titleLabel`. A count taken in a
-    DIFFERENT function independently confirmed the absence.
-20. **`FFmpegDecode.decodeFrame`'s SIGNATURE diverges.** The binary takes
-    `from: UnsafeMutablePointer<__C.AVPacket>` (mangled `SpySo8AVPacketVG`); the source takes
-    `from packet: Packet`, and `Packet` is a `final class` at `Model.swift:232` (mangling
-    `AA6PacketC`). Proved at the mangle level, so MEMORY rule 51 is satisfied. Every
-    `packet.assetTrack` / `.corePacket` / `.size` / `.position` access in the source body has no
-    counterpart reachable from a bare AVPacket pointer.
-21. **`FFmpegDecode`'s FFmpeg call set is not the source's.** Oracle-CONFIRMED in the extent:
-    `avcodec_free_context` @`0x102d53ac8` (called TWICE), `avcodec_receive_frame` @`0x10294dba0`,
-    `avcodec_flush_buffers` @`0x10294d260`. The source's decodeFrame calls neither free_context nor
-    flush_buffers. `0x102a1a424` is called four times and is **UNKNOWN** — `--candidate
-    avcodec_send_packet` is REFUTED with its sole mismatch at index 11, `ldr w8,[x21,#0x154]` vs the
-    indexed lib's `ldr w8,[x21,#0xa4]`: the same instruction against a different AVCodecContext
-    layout. **A re-index is NOT the fix, and s85 proved it:** Forward's own version strings are
-    `Lavc62.28.101` / `Lavf62.12.101`, and the xcframeworks `ffmpeg_name_oracle.LIBS` already indexes
-    (`FFmpegKit/Sources/Libav*.xcframework/ios-arm64/…`) carry exactly `Lavc62.28.101` /
-    `Lavf62.12.101`. Same version on both sides, so VERSION SKEW IS REFUTED as the explanation and
-    re-indexing would be a no-op. **Unit:** find the real cause — either a build-CONFIGURE
-    difference that moves an AVCodecContext field between two same-version builds, or the
-    simpler possibility that `0x102a1a424` is genuinely NOT avcodec_send_packet. Until one of those
-    is established, the oracle's REFUTED verdict stands at face value and the callee stays UNKNOWN.
-    Do NOT assume the name.
-22. **The nine-way side-data dispatch is not in `decodeFrame`.** The AVFrameSideDataType values from
-    `FFmpegKit/.Script/FFmpeg-n8.1.1/libavutil/frame.h` are A53_CC=1, MASTERING_DISPLAY=11,
-    CONTENT_LIGHT=14, HDR_PLUS=17, SEI_UNREGISTERED=20, DOVI_RPU=23, DOVI_METADATA=24,
-    HDR_VIVID=25, AMBIENT=26. The COMPLETE compare-immediate set of the 677-instruction extent is
-    `#0x0, #0x1, #0x2, #0x18`. Seven of the nine never appear. `0x101a67274` IS called at
-    `0x101a22984`, confirming the direction of the source's own DEFERRED comment at `:41-45`.
-23. **`FFmpegDecode` has a vtable method the source class lacks:** slot 18 = `0x101a23404`, NOT IN
-    TRIE (unnamed, not absent). The source declares exactly five members. `decodeFrame` calls it at
-    `0x101a22630`. The source comment at `:65-66` calls it a free function; it is a real method.
-24. **MEPlayer is under-audited.** `decodeFrame` was the only MEPlayer body in the backlog and it
-    diverges in signature, call set, a ~70-line block, error/logging behaviour AND class shape. Treat
-    the rest of MEPlayer as unverified.
+34. **VideoPlayerView.navigationBar, .titleLabel, .speedTipLabel, .subtitleLabel and
+    .subtitleBackView DO NOT EXIST in the binary.** From the FIELD RECORDS: FieldDescriptor
+    `0x103cbf530` holds exactly 20 records with none of the five; superclass PlayerView
+    (`0x1039ee210`) holds 5 and has none either. Source declares all five ON VideoPlayerView.
+    `setupUIComponents` is ~9 statements shorter and `setupSrtControl()` is never called.
+    Corroborated from a DIFFERENT function: `addConstraint` @`0x101b2ed64` emits 9
+    `setTranslatesAutoresizingMaskIntoConstraints:` where its source has 11 — short by exactly
+    navigationBar and titleLabel.
+35. **FFmpegDecode.decodeFrame takes `UnsafeMutablePointer<__C.AVPacket>`** (`SpySo8AVPacketVG`), not
+    the `Packet` CLASS (`AA6PacketC`) — proved at the mangle level. Its CC guard tests `self.isVideo`
+    and passes `self.assetTrack`, not the packet's. The side-data loop and the 4-level timestamp
+    fallback are both ABSENT. The error type is KSPlayerError, not NSError. FFmpegDecode has a
+    binary-only vtable method at slot 18 (`0x101a23404`, NOT_IN_TRIE = unnamed, not absent).
+36. **`ffmpeg_name_oracle` version skew is REFUTED.** Forward is `Lavc62.28.101`/`Lavf62.12.101` and
+    the indexed xcframeworks are the same build, so a re-index is a NO-OP. `0x102a1a424` stays
+    UNKNOWN; find the real cause (a build-configure difference, or it simply is not
+    `avcodec_send_packet`) before naming it.
+37. Everything s84 refuted still holds: PlayerView DOES have a vtable (a `vtable_walk` cross-module
+    name collision); KSPlayerLayer has a binary-only `change(state:)` at slot 58; MediaPlayback
+    req 14's KSAVPlayer impl is named `stop()` where the source says `shutdown()`;
+    IOSVideoPlayerView.originalOrientations and VideoPlayerView.longPressGesture do not exist.
 
-## What is safely BATCHABLE, and what is not
+## Still open, not scheduled into a wave
 
-This is the s85 answer to "what else can be waved without hurting disassembly matching". The
-dividing line is not size, it is **who writes**. An agent that only READS is safe to run N-wide; a
-deterministic tool is better still, because it has no hallucination surface and costs no tokens.
-
-25. **Safe to wave — the body-audit fan-out, unchanged.** One body per agent, the raw-output
-    envelope in `reconstruction/AGENT_PROTOCOL.md`, orchestrator writes and adjudicates every
-    verdict. Proven in s84 (29 bodies) and s85 (2 bodies). Ready pool: `REAL_METHOD` 234 total /
-    50 ready and `COMPUTED_ACCESSOR` 108 total / 55 ready, from `classify_accessor_slots`. Bodies
-    are independent, agents never write, so there is no shared state to corrupt.
-    **One rule to add to the next wave's prompts:** *read the WHOLE source body before writing any
-    divergence phrased as an absence in the source.* s85's orchestrator drafted two false claims
-    about `decodeFrame` from a partial read (:40-189 of a body that runs to :207) and the agent
-    caught both. Give agents the source RANGE, not a starting line.
-26. **Better as a deterministic tool sweep than as a wave** — higher value per token than any agent
-    wave currently queued, and each is one script over the whole corpus rather than N agents:
-    (a) **Field-record vs source-declaration diff for every class in the classmap.** This produced
-    BOTH of s85's largest findings essentially for free — the three absent VideoPlayerView
-    properties (step 17) and the `doviProfile` type fix (85bb872). It is `fieldrec` + a source
-    parser over ~1000 classmap rows. Build it FIRST (step 13).
-    (b) The `UNCHECKED` sweep of step 12 — 62 of KSOptions' 84 fields are unverifiable only because
-    the source writes `var x = …` with no annotation. Mechanical, per class, deterministic.
-    (c) The `ffmpeg_name_oracle` re-index against FFmpeg-n8.1.1 (step 21) — one job that unblocks
-    every FFmpeg name in MEPlayer at once.
-    (d) The three `body_fingerprint` defects (step 9) — fixing them improves EVERY future audit,
-    so it compounds across the whole remaining backlog.
-27. **Do NOT wave these.** (a) **Source edits.** The pre-commit `l2_field_gate` blocks on the CLASS,
-    not on your diff — s85 had two genuinely independent fixes in one file serialize on each other
-    (see step 29 of Close out). Parallel editors would collide on the git index too, which is why
-    MEMORY rules 61-62 exist. (b) **Class-shape jobs** — DisplayModel's `(frame:encoder:)` arity,
-    VideoPlayerView's stored-property set, FFmpegDecode's signature — each ripples through
-    consumers and must be single-threaded. (c) **Several bodies of ONE class into one agent.** s84
-    batched by class only to amortise the vtable walk, and still kept one body per agent; merging
-    them cross-contaminates findings between bodies.
-
-## Still blocked, and on what
-
-28. `Coordinator.player(layer:currentTime:totalTime:)`, the `startRecord` CRITICAL, **A · KSOptions**,
-    the `T!` vs `T?` normalizer, Package F init bodies, KSComplexPlayerLayer, MetalPlayView/`Drawable`,
-    the DisplayModel `(frame:encoder:)` class-shape job, and extending the classmap to structs and
-    enums are all unchanged. See s84-handoff steps 26-32 and s85-handoff steps 28-31.
+38. **`vtable_walk.py` resolves a bare class NAME to the FIRST classmap row**, wrong across a
+    cross-module collision (`PlayerView` is Notelet `0x1039e919c` before KSPlayer `0x1039ee210`).
+    **Unit:** take a module, prefer KSPlayer, ERROR on ambiguity — `fieldrec.desc_for_class` already
+    implements exactly that contract; copy it. Then re-run every class and diff.
+39. `decode_string_literal.py` misses computed counts and the `_StringObject` bias direction; s85
+    decoded four literals by hand from `mov`/`movk` immediates, and that hand method is the spec.
+40. A field-offset-global resolver from field-record order + an anchor site (the proven pattern:
+    `pause()` @`0x1019ccb3c` stores `wzr` through `0x104c63520`, pinning `isAutoPlay`).
+41. `l2_field_gate`'s `merge_binary_type` should fall back to the trie's `.setter`/`.getter` type
+    when there is no mangled property symbol. 11 REAL_FLAGs + 7 UNCHECKED on KSPlayerLayer wait on
+    it — but step 33's 205 unannotated properties are the bigger hole.
+42. Fix queue, coupled — **build both before staging either**: `KSPlayerLayer.seek(time:)`
+    (`:601`; binary slot 64 is `seek(time:completion:)` and forwards the caller's completion) and
+    `VideoPlayerView.change(definitionIndex:)` (`:371-373`; replace the guarded `seek` with
+    `asset.options.startPlayTime = shouldSeekTo` BEFORE `super.set` — KSOptions+0x30 = startPlayTime
+    from its `vpWvd` at `0x103567480`). Re-derive the slot-64 claim before editing; s85 did not.
+43. `Coordinator.player(layer:currentTime:totalTime:)`, the `startRecord` CRITICAL, **A · KSOptions**,
+    the `T!` vs `T?` normalizer, Package F init bodies, MetalPlayView/`Drawable`, and extending the
+    classmap to structs and enums are unchanged. See s84-handoff steps 26-32.
+44. ⚠️ **DURABILITY RISK, unresolved.** `play/.gitignore` lines 128-129 ignore `docs/` AND `scripts/`,
+    and neither is in KSPlayer. Every tool, doc, hook and worklist exists ONLY on this disk. Backups
+    are `reconstruction/_scripts_backup_s71_8cb7b40` and
+    `reconstruction/MEMORY_s85_pre_split_backup.md`. **Decide where this layer is versioned.**
 
 ## Close out
 
-29. Adjudicate every body you audit with `adjudicate_verdict.py` (MEMORY rule 41). Never delete
-    `binary_addr` to get a verdict past its provenance guard (rule 81). Run
-    `verdict_provenance_gate.py --class <C>` on every class you touch.
-30. **The pre-commit `l2_field_gate` blocks on the CLASS, not on your diff.** s85 lost a commit to a
-    pre-existing `doviProfile` block in a file it was editing for an unrelated reason. When that
-    happens, check whether a FAITHFUL spelling exists before reaching for `--no-verify`: MEMORY rule
-    47 only authorises it when no faithful spelling satisfies the gate. Land the blocker as its own
-    commit first.
-31. Update `reconstruction/handoff_baseline.json` with a `captured_session86` block and refresh
-    `head`, `ahead_origin` and `faithful_floor`. **Re-run `recon_gate --mode handoff` AFTER updating
+45. Adjudicate every body with `adjudicate_verdict.py` (never delete `binary_addr` to pass the
+    provenance guard). Run `verdict_provenance_gate.py --class <C>` on every class you touch.
+46. **If the pre-commit gate blocks on a class you did not touch**, check whether a FAITHFUL spelling
+    exists before reaching for `--no-verify` — MEMORY only permits it when none does. Land the
+    blocker as its own commit first, as s85 did for `KSOptions.doviProfile`.
+47. Update `reconstruction/handoff_baseline.json` with a `captured_session86` block and refresh
+    `head`, `ahead_origin`, `faithful_floor`. **Re-run `recon_gate --mode handoff` AFTER updating
     the baseline.** Take `ahead_origin` from `git rev-list --count origin/forward..forward`.
-32. Record how many bodies landed, the FAITHFUL/DIVERGENT split, and every premise the session
-    refuted — the refutations have been the highest-value output of the last fifteen sessions, above
-    the code. Then write the session-87 handoff in this format at `docs/superpowers/specs/`, from the
-    FINAL state rather than by patching a mid-session draft. **Do not write the takeover prompt into
-    it (MEMORY rule 77) — give the prompt in chat.**
+48. Record how many bodies landed, the FAITHFUL/DIVERGENT split, and every premise refuted — the
+    refutations have been the highest-value output of the last sixteen sessions, above the code.
+    Then write the session-87 handoff from the FINAL state, not by patching a mid-session draft, and
+    make its work section the STAND-UP wave per steps 17-20. **Do not write the takeover prompt into
+    it — give the prompt in chat.**
