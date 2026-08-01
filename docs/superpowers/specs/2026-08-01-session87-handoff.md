@@ -94,9 +94,14 @@ still PARTITION the 181 unverdicted REAL_METHOD slots.
     LimitSeparatePreLoadIOContext 3 · then sixteen classes of 1-2 units.
 16. **The name-recoverability screen that the s86 handoff scheduled as its own wave is DONE**, as a
     by-product of the corrected split. Of the 175 stand-up units, **102 are NAMED** (bucket
-    `BINARY_ONLY` — the trie gives a full demangled signature) and **73 are UNNAMED**. Read the
-    split from `reconstruction/method_presence_standup.json`, or re-derive with
-    `python3 scripts/method_source_presence.py --wave standup`. **Size the session from the 102.**
+    `BINARY_ONLY` — the trie gives a full demangled signature) and **73 are UNNAMED**.
+    **Size the session from the 102.**
+    ⚠️ `reconstruction/method_presence_standup.json` is derived FROM the wave file, so step 15
+    stales it. Regenerate it in the same breath, never read it blind:
+    `python3 scripts/method_source_presence.py --wave standup --json reconstruction/method_presence_standup.json`.
+    s86 wrote that file against the pre-correction 84-unit wave and caught it only on re-read.
+    The 97-unit measurement that justified the correction is preserved separately at
+    `reconstruction/method_presence_s86_refutation_97units.json`; it is evidence, not a worklist.
 17. **Write the stand-up agent protocol BEFORE dispatching anything.**
     `reconstruction/AGENT_PROTOCOL.md` is an AUDIT contract — it assumes a source body to compare
     against, and every unit in this wave lacks one. The deliverable per unit is the recovered SHAPE:
