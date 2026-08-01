@@ -148,7 +148,15 @@ open class KSOptions {
     public let yadifMode = KSOptions.yadifMode
     public let deInterlaceAddIdet = KSOptions.deInterlaceAddIdet
     public var dynamicRange = DynamicRange.sdr
-    public var doviProfile: Int?
+    // Field record 44 of 84 (FieldDescriptor 0x103cba11c, desc 0x1039ec4c0). Its mangled type is a
+    // ctrl-0x02 SYMBOLIC REFERENCE, not a literal mangle: raw bytes `02 5f 43 4e 00 53 67`, i.e.
+    // ctrl 0x02 + rel32 0x004e435f + tail `Sg`. Resolving per MEMORY rule 28 — add the rel32 to the
+    // address of the offset field itself — gives __got 0x104112A00, which
+    // `llvm-objdump --macho --bind` binds to libswiftCore `_$ss5UInt8VMn` = the nominal type
+    // descriptor for Swift.UInt8; the `Sg` tail makes it Optional. So the binary field is UInt8?,
+    // not Int?. Zero consumers in the tree (this declaration is the only reference), so the
+    // narrowing ripples nowhere.
+    public var doviProfile: UInt8?
     public var audioCodecName: String?
     public var audioChannelCount: UInt32 = 0
     // video
