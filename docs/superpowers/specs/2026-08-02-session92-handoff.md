@@ -16,9 +16,11 @@ Note on filenames: this directory does not sort in session order. **Order by the
    confirm there is no SECOND unrelated parent/child pair before touching `reconstruction/` or
    `forward`. `recon_gate --mode handoff` WRITES `reconstruction/handoff_report.json`, so running it
    IS touching `reconstruction/` and this step gates it.
-2. Expect `python3 scripts/recon_gate.py --mode handoff` to print **PASS 44 / ANOMALY 0 / FAIL 3**,
+2. Expect `python3 scripts/recon_gate.py --mode handoff` to print **PASS 45 / ANOMALY 0 / FAIL 3**,
    floor **299**, `agg_stood_up` **52**, `wave_standup_size` **123**, `wave_audit_size` **6**. The 3
    permanent FAILs are the unchanged known debt: `agg_critical 15`, `agg_high 55`, `agg_unresolved 1`.
+   PASS went 44 -> 45 because s91 gate-wired `sc_body_fingerprint`: the tool has been the
+   field-naming route since s80 and carried three goldens that nothing enforced.
 3. **The floor HELD at 299 and that is correct.** Fifty-two bodies are now stood up; none is
    auditable, so none may count toward FAITHFUL.
 4. Run `python3 scripts/recon_progress.py`.
