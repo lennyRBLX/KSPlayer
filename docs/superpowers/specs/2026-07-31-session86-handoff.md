@@ -2,8 +2,9 @@
 
 Session 85 closed the AUDIT_ONLY backlog: **31 of 31 bodies are audited.** Both remaining bodies
 came back DIVERGENT, so the floor did not move — that is the arithmetic working, not a stall.
-Three source commits landed. The tool units (steps 8-13) and two of the four fix-queue units
-(steps 15-16) were NOT done this session and are the largest remaining block of specified work.
+Three source commits landed, plus four tool sweeps (L1-L5) and a knowledge/control split of
+MEMORY.md. The tool units still open are steps 8-12; two of the four fix-queue units (steps 15-16)
+were not done and are the largest remaining block of specified work.
 Steps 25-27 say which of it is safe to run N-wide and which is not.
 
 Note on filenames: this file and the session-85 handoff are BOTH dated 2026-07-31 (the real clock).
@@ -17,7 +18,7 @@ Filenames in this directory do not sort in session order. **Order by the session
    parent/child pair before touching `reconstruction/` or `forward`. Sessions 81 and 82 ran
    concurrently and clobbered each other's close-out pins.
 2. Run `python3 scripts/recon_gate.py --mode handoff` from `/Users/jweaver/Desktop/Work/swift/play`
-   — expect **PASS 31 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
+   — expect **PASS 35 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
    `agg_high 55`, `agg_unresolved 1`. Floor **299**.
 3. **The floor did not move this session and that is correct.** Both bodies audited in s85 were
    DIVERGENT, so 299 is unchanged from s84. `agg_critical` 14 -> 15 and `agg_high` 48 -> 55 are the
@@ -39,6 +40,40 @@ Filenames in this directory do not sort in session order. **Order by the session
    `scratchpad/`.** s85 found the scratchpad copy gone at takeover and had to regenerate it. The new
    location is durable, beside `AUDIT_AGENT.md` and `DISPATCH_CONTRACT_s64.md`, which both survived.
 
+## MEMORY.md changed SHAPE in s85 — read this before step 1
+
+**MEMORY.md is no longer 85 numbered rules.** It was split into knowledge vs control:
+
+- **21 hard rules** that apply in EVERY turn stay in the body.
+- **A routed-context index**: one line per doc, each naming the TRIGGER that should make you read
+  it. All 24 routes were verified to resolve, and the previously ORPHANED memory files are now
+  reachable — 16 of the 18 files beside MEMORY.md had no link at all, including the 272 KB
+  `reconstruction-agent-pitfalls.md`.
+- **An "enforced elsewhere" list**, so you do not spend turns re-checking what a hook or gate
+  already decides.
+
+New under `play/docs/superpowers/`: `ENFORCEMENT_MAP.md` (the taxonomy + the disposition of all 85
+former rules — read it first if you are unsure where a new rule belongs), `READING_THE_BINARY.md`,
+`VERDICTS_AND_HANDOFFS.md`, `SWIFT_SPELLING.md`.
+
+**A PreToolUse hook is now LIVE** (`scripts/command_shape_hook.py`, wired on `Bash` in
+`play/.claude/settings.json`). It BLOCKS eight command shapes that were previously prose rules —
+bare `llvm-objdump`, `--macho` on a ranged call, `timeout`, `cd` into another repo instead of
+`git -C`, unquoted heredoc, `validate_build.sh` without `DEVELOPER_DIR=`, `2>/dev/null` on an
+absence-shaped command, wrong `scripts/` cwd. If it blocks you, the stderr names the check. It has
+an 18-case golden including the negatives that must stay allowed.
+
+Two rules were deleted by FIXING their cause rather than restating them: old rule 85 (both gates now
+accept `--file` alone and gate every class the file declares) and old rule 29 (it named
+`function_sizes.py` for bounds, which cannot do that on this image — the tool is
+`function_extents.py`, and the rule had been wrong for several sessions).
+
+⚠️ **DURABILITY RISK, unresolved.** `play/.gitignore` lines 128-129 ignore `docs/` AND `scripts/`,
+and neither is in KSPlayer. So every tool, every new doc, the hook and the manual exist ONLY on this
+disk, with no version control and no backup beyond `reconstruction/_scripts_backup_s71_8cb7b40` and
+`reconstruction/MEMORY_s85_pre_split_backup.md`. A disk loss costs the entire tooling layer.
+**Unit for s86: decide where this layer is versioned.**
+
 ## The tool sweeps — what s85 LANDED
 
 **Two new tools and one repaired tool. `scripts/` is gitignored in KSPlayer, so none of this is in
@@ -59,7 +94,7 @@ L2. **`scripts/field_presence_sweep.py` — NEW, `--selfcheck` PASS.** The corpu
     with binary-only fields, 19 with no source declaration.** It independently reproduced three
     refutations it was never told about (`VideoPlayerView.longPressGesture`,
     `IOSVideoPlayerView.originalOrientations`, and KSPlayerLayer's field set), which is the
-    strongest evidence it is right. The 13, with their absent fields, are step 8d.
+    strongest evidence it is right. The 13, with their absent fields, are L4.
 L3. **`scripts/body_fingerprint.py` — ALL THREE DEFECTS FIXED, `--selfcheck` PASS, and MEMORY rule
     50 discharged over the whole corpus (264 bodies with a `binary_addr`: 0 crashes, 0 mojibake).**
     (a) The objc-stub selector decode is now gated on the target lying inside `__objc_stubs`, so a
