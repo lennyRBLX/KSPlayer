@@ -18,10 +18,11 @@ Filenames in this directory do not sort in session order. **Order by the session
    concurrently and clobbered each other's close-out pins.
 2. Run `python3 scripts/recon_gate.py --mode handoff` from `/Users/jweaver/Desktop/Work/swift/play`
    — expect **PASS 31 / ANOMALY 0 / FAIL 3**. The 3 FAILs are known debt: `agg_critical 15`,
-   `agg_high 54`, `agg_unresolved 1`. Floor **299**.
+   `agg_high 55`, `agg_unresolved 1`. Floor **299**.
 3. **The floor did not move this session and that is correct.** Both bodies audited in s85 were
-   DIVERGENT, so 299 is unchanged from s84. `agg_critical` 14 -> 15 and `agg_high` 48 -> 54 are the
-   six new divergences those two audits MEASURED. No source line was changed by an audit.
+   DIVERGENT, so 299 is unchanged from s84. `agg_critical` 14 -> 15 and `agg_high` 48 -> 55 are the
+   eight new divergences those two audits MEASURED (1 CRITICAL + 7 HIGH; the two verdicts also
+   carry 3 MED and 4 LOW). No source line was changed by an audit.
 4. Run `python3 scripts/recon_progress.py`. Its STAGES block is hand-maintained prose and is still
    wrong in both directions. The "blocked on unresolved symbols 283" line is a hardcoded literal at
    `recon_progress.py:105` and is **still unverified** — it has been carried unchecked since s80.
