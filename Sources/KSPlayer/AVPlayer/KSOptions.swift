@@ -916,7 +916,14 @@ public class FileLog: LogHandler {
     public func log(level: LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt) {
         let string = String(format: "%@ %@ %@:%d %@ | %@\n", formatter.string(from: Date()), level.description, file, line, function, message.description)
         if let data = string.data(using: .utf8) {
-            fileHandle.write(data)
+            // Forward calls the THROWING generic overload and DROPS the error, not the
+            // non-throwing ObjC `write(_:)`. Read at FileLog.log @0x1019e38d0: `mov x21,#0x0`
+            // @0x1019e3c00 zeroes the swifterror register, `bl 0x103458080` @0x1019e3c04 is
+            // `_$sSo12NSFileHandleC10FoundationE5write10contentsOfyx_tKAC12DataProtocolRzlF`
+            // = `FileHandle.write<T: DataProtocol>(contentsOf: T) throws`, then `cbz x21`
+            // @0x1019e3c08 skips `bl _swift_errorRelease` @0x1019e3c10 — the error is
+            // released and discarded, never rethrown. That is exactly `try?`.
+            try? fileHandle.write(contentsOf: data)
         }
     }
 }
