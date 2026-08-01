@@ -304,7 +304,19 @@ public extension FourCharCode {
 
 extension CMTime {
     init(seconds: TimeInterval) {
-        self.init(seconds: seconds, preferredTimescale: Int32(USEC_PER_SEC))
+        // Forward passes a NANOsecond timescale here, not USEC_PER_SEC — a factor of 1000.
+        // Read at the inlined site inside KSAVPlayer.seek(time:completion:) @0x1019a4300
+        // (extent 0x1019a4300-0x1019a47e4). KSAVPlayer.swift:381 calls the ONE-argument
+        // `CMTime(seconds: time)`, i.e. this init, and it lowers to:
+        //   0x1019a46a8  mov.16b v0, v8              d0 = seconds
+        //   0x1019a46ac  mov     w0, #0xca00
+        //   0x1019a46b0  movk    w0, #0x3b9a, lsl #16   w0 = 0x3B9ACA00 = 1_000_000_000
+        //   0x1019a46b4  bl      0x103458560          stub -> __got 0x1041132c8 ->
+        //     `_$sSo6CMTimea9CoreMediaE7seconds18preferredTimescaleABSd_s5Int32VtcfC`
+        //     = CMTime.init(seconds: Double, preferredTimescale: Int32)
+        // Spelled as the literal to match the sibling call sites that already pass this
+        // timescale explicitly (AudioRendererPlayer.swift:107 and :142).
+        self.init(seconds: seconds, preferredTimescale: 1_000_000_000)
     }
 }
 
