@@ -1,4 +1,5 @@
 import Foundation
+import KSPlayer   // CacheEntryProtocol — the binary's `$s8KSPlayer18CacheEntryProtocolMp` is KSPlayer-module
 
 // CacheFileEntry — standalone cache-entry type (NO superclass). Shared dependency
 // for the Wave-2 cache contexts (CacheIOContext / ReadCacheIOContext reference it).
@@ -19,10 +20,16 @@ import Foundation
 // ['CacheEntryProtocol', 'CustomStringConvertible'] (reverse-walk from the class
 // descriptor through each conformance descriptor's TypeRef). CustomStringConvertible is
 // declared here because its single requirement is now satisfied (see `description`
-// below). CacheEntryProtocol is still MISSING from this list — a pre-existing gate FLAG,
-// byte-identical at HEAD; its requirement set has not been recovered, so declaring it
-// would be a fabrication. Left for the owner phase.
-public final class CacheFileEntry: CustomStringConvertible {
+// below).
+//
+// s98: CacheEntryProtocol is now DECLARED. Its requirement set is no longer unrecovered —
+// the protocol descriptor is `$s8KSPlayer18CacheEntryProtocolMp` @0x1039edec8 (KSPlayer
+// module) and it has exactly 2 instance Getters, read off BOTH conformers' validated witness
+// tables. This type's own table is 0x1041e19e8: req0 @0x101b90b48 loads a 64-bit field through
+// a runtime field-offset global and returns it (= the stored `position`, UInt64); req1
+// @0x101b90b5c does the same for the 32-bit `size`. Both requirements are therefore satisfied
+// by stored properties already declared below — this adds the conformance, not any member.
+public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     // --- stored fields (binary __swift5_fieldmd order) ---
     // file: backing FileHandle. s13/s14 fetch it at field offset 0x10 and drive
     //   NSFileHandle::_offset / seekToOffset:error: / _write / _read on it.
