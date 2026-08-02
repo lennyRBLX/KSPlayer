@@ -63,6 +63,11 @@ open class KSOptions {
     // getters: slot 125 → _TtC8KSPlayer9KSOptions::syncDecodeAudio (field 37), slot 134 →
     // ::audioRecognizes (39), slot 217 → ::adjustBuffer (68), slot 226 → ::forceDisableDisplayLayer
     // (69); plus slots 56/61 read self+0x70/+0x71, the two adjacent Bools isLoopPlay/isAccurateSeek.
+    // ⚠️ s97 — every number in the four anchors above is an IDX, not a slot; they are off by
+    // VTableOffset=94. Checked against the vtable: idx125→slot219 syncDecodeAudio.getter,
+    // idx134→slot228 audioRecognizes.getter, idx217→slot311 adjustBuffer.getter,
+    // idx226→slot320 forceDisableDisplayLayer.getter — all four resolve in idx space and none in
+    // slot space. The real slot217 is idx123, audioFilters.setter. Record both as `idx<N> slot<M>`.
     //
     // Slots 59-60 are two methods declared HERE, between `isLoopPlay` and `isAccurateSeek`.
     // Slot 59 @0x1019b52fc is the `adaptable`-shaped body (maxBufferDuration * 0.5,

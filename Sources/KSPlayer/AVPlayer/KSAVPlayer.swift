@@ -74,6 +74,10 @@ open class KSAVPlayer {
     //
     // ⚑[tool=vtable_walk ref=KSAVPlayer.nominalTypeDescriptor:0x1039ec148 result=LOCATED] the 103-slot vtable
     //   (VTableDescriptorHeader @0x1039ec180) lays out one getter/setter/_modify triple per property in DECLARATION
+    //   ⚠️ s97 — every "slot" number in this file's comments is really the vtable IDX; they are off
+    //   by VTableOffset=38. Spot-checked: "slot 47 @0x1019a1380" is idx47 slot85 (chapters.setter),
+    //   "slots 61–63" is idx61–63 (getter @0x1019a1a3c = idx61 slot99), and 18–20/46–48 likewise
+    //   resolve in idx space and not in slot space. Record both as `idx<N> slot<M>`.
     //   order, and every one of those accessors is COMPILER-GENERATED for the stored fields below — there is no source
     //   text to recover for them. The live ones are slots 6 (io getter), 9–11 (shouldSeekTo), 18–20 (subtitleTracks),
     //   30–32 (pipController), 33–35 (delegate), 36–38 (duration), 39–41 (fileSize), 46–48 (chapters), 49–51
@@ -161,6 +165,22 @@ open class KSAVPlayer {
     // ⚑ UNRESOLVED → KSAVPlayer M2: the binary builds a DynamicInfo lazily (metadata/bytesRead/bitrate blocks).
     // The lazy triple is vtable slots 61–63; the getter @0x1019a1a3c is 0x4d4 bytes (vs. the 16-instruction generated
     // getters around it), i.e. it holds the whole lazy initialiser — that body is the M2 target.
+    // ⚠️ s97 — THE DECLARED TYPE IS WRONG HERE, and the fix is NOT a one-line edit. All three of
+    // Forward's accessors mangle the type as a CLASS with no `Sg`, i.e. NON-optional:
+    //   getter @0x1019a1a3c  $s8KSPlayer10KSAVPlayerC11dynamicInfoAA07DynamicD0Cvg
+    //   setter @0x1019a1f10  …Cvs        modify @0x1019a1f28  …CvM
+    // all demangling to `dynamicInfo… : KSPlayer.DynamicInfo`. The lazy backing field carries
+    // exactly ONE `Sg` (`$__lazy_storage_$_dynamicInfo … tail=b'Sg'`) — that `Sg` is the lazy
+    // wrapper itself; a declared `DynamicInfo?` would put a SECOND one there. So the binary says
+    // `DynamicInfo`, this file says `DynamicInfo?`.
+    // NOT CHANGED HERE, and the blocker is not effort: `MediaPlayerProtocol` requires
+    // `var dynamicInfo: DynamicInfo? { get }` (MediaPlayerProtocol.swift:191), and a non-optional
+    // property cannot satisfy an optional property requirement — flipping this line alone does not
+    // compile. The migration is protocol requirement + KSAVPlayer + KSMEPlayer:360 + 22 call sites
+    // under Sources/ that use `?.`/`if let`. The protocol requirement's own optionality has NOT
+    // been read from the binary yet (KSMEPlayer's vtable carries no dynamicInfo accessor to read it
+    // off), and writing a type we have not read is the one thing this project never does.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSAVPlayer.dynamicInfo:0x1019a1a3c result=type-divergence-pinned]
     public lazy var dynamicInfo: DynamicInfo? = nil
 
     // Declared HERE, between `dynamicInfo` and `bufferingProgress` — Forward's vtable puts this lone getter at slot 64,

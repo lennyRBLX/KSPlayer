@@ -24,6 +24,10 @@
 //      from the decompile and are left `// UNRESOLVED` with compiling stubs
 //      (fabricating 379 instr of closure logic is the cardinal failure).
 //    - All method NAMES are INFERRED — every slot is devirtualized (no symbols).
+//      ⚠️ s97: FALSE for slot 3. The orphaned export trie names it outright —
+//      `$s8KSPlayer16DirectoryWatcherC10isWatchingSbvg` = DirectoryWatcher.isWatching.getter :
+//      Swift.Bool, one symbol at 0x101a04e10, not folded. The blanket "no symbols" claim came from
+//      a tool that cannot see that trie; re-check the other slots against it before trusting them.
 //    - Slot 8 is UNRESOLVED (null descriptor address) — declared as nothing.
 
 import Dispatch
@@ -58,7 +62,8 @@ public actor DirectoryWatcher {
         source = nil                              // *(self+0x70) = 0
     }
 
-    // MARK: slot 3 @0x101a04e10 — isWatching (4 instr) · name inferred
+    // MARK: idx3 slot15 @0x101a04e10 — isWatching (4 instr) · name RECOVERED, not inferred (s97)
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.DirectoryWatcher.isWatching:0x101a04e10 result=name-recovered]
 
     /// `true` while a source is installed. Binary: `return *(self+0x70) != 0`.
     public var isWatching: Bool {
