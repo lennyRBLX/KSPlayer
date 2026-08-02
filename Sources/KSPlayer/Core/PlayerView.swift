@@ -146,7 +146,7 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
     }
 
     open func resetPlayer() {
-        pause()
+        playerLayer = nil
         totalTime = 0.0
     }
 
