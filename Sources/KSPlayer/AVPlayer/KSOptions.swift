@@ -418,7 +418,9 @@ open class KSOptions {
         return nil
     }
 
-    // vtable slot 222 @0x1019bea08 — three instructions, its own impl, NOT an ICF fold (the
+    // vtable idx222 slot316 @0x1019bea08 — three instructions, its own impl, NOT an ICF fold (the
+    // ⚠️ s97: this block previously read "slot 222", which is the IDX. The real slot222 is idx128
+    // (@0x10002db34, wantedAudio) — a DIFFERENT entry. Both spellings were live in this one file.
     // address exports exactly one symbol, and the 12-byte pattern occurs once in all of __text).
     // 4 xrefs = 1 method descriptor + 2 metadata vtables + 1 LC_FUNCTION_STARTS entry; the two
     // vtables are KSOptions' own and TrailerPlayerOptions'. Verified by `dyld_info -fixups`,
@@ -453,7 +455,12 @@ open class KSOptions {
     //   (2) the ABI agrees — MediaPlayerTrack is AnyObject-constrained, so the existential is
     //       (ref, witness) and `nil` is exactly the observed `mov x0,#0x0; mov x1,#0x0; ret`.
     //       An `Int?` nil does not leave x1 zero, so the body refutes the Int? spelling on its own.
-    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=name+signature-recovered]
+    // ⚠️ The name is NOT recoverable from the address alone: export_trie_oracle --addr 0x10002db34
+    // --owner KSOptions answers `OWNER_AMBIG (586 symbols)` / `NOT RECOVERABLE from this address —
+    // do not guess it`. It becomes recoverable only by filtering that fold list to KSOptions' four
+    // symbols and combining it with the vtable-uniqueness argument above, which is why the marker
+    // below names the vtable oracle rather than the trie oracle.
+    // ⚑[tool=vtable_impl_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=signature-recovered]
     open func wantedAudio(tracks _: [MediaPlayerTrack]) -> MediaPlayerTrack? {
         nil
     }
