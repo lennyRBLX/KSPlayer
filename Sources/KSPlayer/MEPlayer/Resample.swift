@@ -289,16 +289,43 @@ class AudioSwresample: FrameChange {
         _ = setup(descriptor: descriptor)
     }
 
+    // Slot 23 (vtable idx10) @0x101a67c34, 368 instr — one of only two non-NULL Impls in this
+    // class's 13-entry vtable. The address is NOT_IN_TRIE, so the identification is the
+    // vtable's plus the body's own arguments: the `#function` literal is the 18-char
+    // `setup(descriptor:)` and the `#fileID` literal is the 23-char `KSPlayer/Resample.swift`,
+    // both read off the log calls below — which also proves both sites are lexically inside
+    // THIS method rather than inlined from elsewhere.
+    //
+    // Two error paths the previous reconstruction did not have at all. They are NOT one shared
+    // message: the two 37-char literals differ, and both are followed by the same 11-char
+    // ` inChannel=` segment. The string reserve constant 52 confirms the shape exactly —
+    // (37 + 11) literal chars + 2*2 for two interpolations. Both interpolate through
+    // `(extension in KSPlayer):__C.AVChannelLayout.description` @0x101a09460, first the
+    // out_ch_layout argument (descriptor+0x40) then the in_ch_layout one (descriptor+0x20),
+    // which are `outChannel` and `channel` respectively at the alloc call below.
+    // Both sites are gated on `KSOptions.logLevel` >= case index 2 = `.error`, compared as a
+    // 1-byte discriminant (NOT the Int32 rawValue 16).
+    // ⚑[tool=ffmpeg_name_oracle ref=swr_alloc_set_opts2:0x103288ad4 result=CONFIRMED] (swresample.o)
+    // ⚑[tool=ffmpeg_name_oracle ref=swr_free:0x10344997c result=CONFIRMED] (the teardown `shutdown()` reaches)
     private func setup(descriptor: AudioDescriptor) -> Bool {
         var result = swr_alloc_set_opts2(&swrContext, &descriptor.outChannel, descriptor.audioFormat.sampleFormat, Int32(descriptor.audioFormat.sampleRate), &descriptor.channel, descriptor.sampleFormat, descriptor.sampleRate, 0, nil)
+        // The binary TESTS this first return value (`tbnz w20,#0x1f` @0x101a67d78) and only
+        // reaches the second call when it is non-negative. The previous reconstruction
+        // overwrote `result` unread on the next line, so this sign test was missing entirely.
+        if result < 0 {
+            KSLog(level: .error, "swr_alloc_set_opts2 fail. outChannel=\(descriptor.outChannel) inChannel=\(descriptor.channel)")
+            // This path does NOT tear down — it branches straight to the `return false`
+            // epilogue @0x101a68178. Only the second failure path frees the context.
+            return false
+        }
         result = swr_init(swrContext)
         if result < 0 {
+            KSLog(level: .error, "swr_init swrContext fail. outChannel=\(descriptor.outChannel) inChannel=\(descriptor.channel)")
             shutdown()
             return false
-        } else {
-            outChannel = descriptor.outChannel
-            return true
         }
+        outChannel = descriptor.outChannel
+        return true
     }
 
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
