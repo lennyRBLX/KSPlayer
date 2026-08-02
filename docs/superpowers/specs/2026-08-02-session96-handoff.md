@@ -4,8 +4,9 @@
 re-read from the binary rather than inherited. **31 of the original 40 remain.** The mechanism is
 still the only backlog in the project where fixing one body moves the floor by one.
 
-**The third one opens a new seam: FILE PLACEMENT is readable, and it can flip a verdict on its own.**
-See step 27. If you want cheap floor points, that is where to look first.
+**The third one closed a seam rather than opening one.** File placement IS readable and it flipped
+that verdict on its own — so s95 built a tool and measured the rest of it: **zero** other bodies are
+misfiled. Step 27 has the measurement and the trap that makes a naive sweep report false candidates.
 
 Note on filenames: this directory does not sort in session order. **Order by the session number.**
 
@@ -15,9 +16,9 @@ Note on filenames: this directory does not sort in session order. **Order by the
    live session prints **4** lines. Confirm there is no SECOND unrelated parent/child pair before
    touching `reconstruction/` or `forward`. `recon_gate --mode handoff` WRITES
    `reconstruction/handoff_report.json`, so running it IS touching `reconstruction/`.
-2. Expect `python3 scripts/recon_gate.py --mode handoff` to print **PASS 47 / ANOMALY 0 / FAIL 3**,
+2. Expect `python3 scripts/recon_gate.py --mode handoff` to print **PASS 48 / ANOMALY 0 / FAIL 3**,
    floor **308**, `agg_stood_up` **61**, `wave_standup_size` **109**, `wave_audit_size` **4**. PASS
-   is 47, not 46: `sc_stale_screen` was added this session. The 3 permanent FAILs are the known debt
+   is 48, not 46: `sc_stale_screen` and `sc_placement_sweep` were both added this session. The 3 permanent FAILs are the known debt
    and are this session's target: `agg_critical` **15**, `agg_high` **49**, `agg_unresolved` **1**.
    `agg_high` did not move on the third unit because that verdict's only blocker was a MED.
 3. Run `python3 scripts/recon_progress.py`.
@@ -70,8 +71,9 @@ Note on filenames: this directory does not sort in session order. **Order by the
     edit: zero body lines changed. `performSeek` now lives in a new
     `Sources/KSPlayer/MEPlayer/Remux/FFmpegUtility.swift` as an `extension FormatContext`. Read
     step 27 before you touch any other placement.
-17. **NEW TOOL `scripts/stale_divergence_screen.py`**, wired into `recon_gate` as `sc_stale_screen`
-    (PASS 46 → 47). Full usage is in the faithfulness manual. It reports; it decides nothing.
+17. **TWO NEW TOOLS**, both wired into `recon_gate` and both documented in the faithfulness manual:
+    `scripts/stale_divergence_screen.py` (`sc_stale_screen`) and `scripts/file_placement_sweep.py`
+    (`sc_placement_sweep`). PASS 46 → 48. Both report; neither decides.
 18. **`AudioDescriptor_updateAudioFormat_slot17_s84` was re-adjudicated DIVERGENT ON PURPOSE** — see
     step 20. Its `recheck.confirmed_reason` now carries the reason, so read the verdict, not this.
 
@@ -130,26 +132,33 @@ Note on filenames: this directory does not sort in session order. **Order by the
     is an undecidability note, not a source defect. So is an ICF fold that makes a body's address
     non-discriminating, and so is an unnamed (NOT_IN_TRIE) callee whose name nothing turns on. Say
     so in the evidence rather than dropping it.
-27. **FILE PLACEMENT IS A READING, AND IT IS THE MOST PROMISING UNWORKED SEAM. Start here.** s95
-    closed `FormatContext_performSeek_101a329d8` with **zero body lines changed** — the whole unit
-    was moving the member into a file with the right name. The method generalises:
-    - The image holds **56** distinct `KSPlayer/<file>.swift` `#fileID` literals. Extract them with a
-      regex over the raw bytes; that set is Forward's file list, or at least every file containing a
-      body that emits `#fileID` (a `KSLog` call is enough).
-    - For any one of them, a whole-`__text` scan for `adrp`+`add` materialisations of the literal's
-      address gives **every body declared in that file**. For `FFmpegUtility.swift` that is exactly
-      two: `performSeek` and `close(formatCtx:)`.
-    - Compare against where our source declares the same member. `KSPlayer/FormatContext.swift` is
-      NOT in the literal set, and neither is any other `Remux/` filename — so our `Remux/` layout is
-      invented, and each of those is a candidate.
+27. **FILE PLACEMENT IS A READING, AND THE SEAM IS NOW MEASURED AND CLOSED. Do NOT go looking for
+    more of it.** s95 closed `FormatContext_performSeek_101a329d8` with **zero body lines changed**
+    — the whole unit was moving the member into a file with the right name — and then built
+    `scripts/file_placement_sweep.py` to price the rest of the seam rather than assume it was wide.
+    **The answer is MISPLACED = 0** over 574 bodies (34 MATCH, 101 INLINED_HELPER, 50 NOT_IN_SOURCE,
+    389 UNNAMED). An earlier draft of this handoff called placement "the most promising unworked
+    seam"; that was written before the measurement and is refuted by it.
+    - The image holds **56** distinct `KSPlayer/<file>.swift` `#fileID` literals; that set is
+      Forward's file list, for every file containing a body that emits one (a `KSLog` call suffices).
+      `KSPlayer/FormatContext.swift` is absent and so is every other `Remux/` filename — our `Remux/`
+      layout is invented — but no NAMEABLE body is actually misfiled because of it.
+    - **The trap that makes a naive sweep lie, and the reason the first run reported 3 candidates
+      that were not real:** `#fileID` is passed at the CALL site of a `#fileID`-defaulted parameter,
+      so an INLINED callee carries its own file AND line into its inliner. `KSMEPlayer.sourceDidOpened`,
+      `KSMEPlayer.sourceDidFailed` and `MEPlayerItem.setAudio` — three different classes — all
+      appeared to belong to `Utility.swift`. Reading them showed the three sites are byte-identical:
+      the same `mov w3,#0x16` (line 22), the same `mov w5,#0x16`, and the same callee `0x101a04674`.
+      That is ONE helper defined at `Utility.swift:22` inlined three times. The tool now encodes this
+      as the `INLINED_HELPER` verdict — a (literal, immediates, callee) fingerprint shared across
+      more than one body — so it is not re-derived.
     - **The residual `#line` does not block FAITHFUL** and you do not need to argue it again:
       `KSAVPlayer_play_slot95_s84` is FAITHFUL carrying exactly it, recorded there as "the file name
       matches; the line does not ... No semantic effect", and six FAITHFUL verdicts carry a
       position-drift note. Only the FILE has to match.
-    - **This should be a TOOL and is not one yet.** It is the obvious next build: literal set →
-      per-literal materialisation sites → enclosing function via `function_extents` → name via the
-      trie → the file our source declares that name in → a per-body PLACEMENT verdict. s95 did it by
-      hand for one literal. Doing it for all 56 would price the whole seam in one run.
+    - What the sweep DOES leave for a future session is the 50 `NOT_IN_SOURCE` rows: bodies the trie
+      names, whose file Forward tells us, and which our source does not declare at all. Those are
+      MEMBER_MISSING units with a free answer to "which file does it go in" — not placement work.
 28. **Cheapest remaining among the ordinary units.** No single-blocking-divergence unit is both open
     and uncoupled: `FormatContext_inner_init_101a350bc` (1 MED) waits on the PlayList protocol unit;
     `PreLoadIOContext_download_existential_s78` (1 MED) is a USER-GATED deferral — its optionality
