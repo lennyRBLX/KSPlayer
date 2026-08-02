@@ -11,7 +11,13 @@ import UIKit
 open class BrightnessVolume {
     private var brightnessObservation: NSKeyValueObservation?
     public static let shared = BrightnessVolume()
-    public var progressView: BrightnessVolumeViewProtocol & UIView = ProgressView()
+    // Composition order is CANONICAL, not read: a control (two functions differing only in the order
+    // of a class+protocol composition) mangles both to the identical `AA2PV_AA1VCXc` and demangles
+    // both class-first, so `BrightnessVolumeViewProtocol & UIView` and `UIView &
+    // BrightnessVolumeViewProtocol` are the same type and the same bytes. Which order Forward's
+    // source wrote is therefore NOT decidable from the binary; this is spelled the way the binary
+    // prints it so l2_field_gate's source-text comparison agrees with the canonical form.
+    public var progressView: UIView & BrightnessVolumeViewProtocol = ProgressView()
     init() {
         #if !os(tvOS) && !os(xrOS)
         brightnessObservation = UIScreen.main.observe(\.brightness, options: .new) { [weak self] _, change in
@@ -44,7 +50,18 @@ open class BrightnessVolume {
     private func appearView() {
         if progressView.alpha == 0.0 {
             progressView.alpha = 1.0
-            DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 3) { [weak self] () in
+            // A Task, not DispatchQueue.asyncAfter. The body @0x101aff5b8 binds swift_allocObject /
+            // swift_weakInit ([weak self]) and, from libswift_Concurrency, MainActor.shared, the
+            // MainActor metadata accessor and the TaskPriority metadata accessor — the last used to
+            // write the nil case of an Optional<TaskPriority>. No libdispatch row is bound anywhere in
+            // the extent and both objc stubs it calls are alpha/setAlpha:. The sleep is literal:
+            // `mov w0,#0x5e00; movk w0,#0xb2d0,lsl #16` = 0xb2d05e00 = 3_000_000_000 @0x101aff75c,
+            // tail-branched into Task.sleep(nanoseconds:) async throws (__got 0x104113998). `try`, not
+            // `try?`: the error resume @0x101aff930 loads the error into x20 and returns to the caller's
+            // continuation instead of falling into the disAppearView path, which is what a swallowed
+            // error would do.
+            Task { [weak self] in
+                try await Task.sleep(nanoseconds: 3_000_000_000)
                 self?.disAppearView()
             }
         }
