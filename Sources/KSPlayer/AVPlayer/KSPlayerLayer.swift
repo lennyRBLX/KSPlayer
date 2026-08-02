@@ -346,9 +346,17 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
-    open func seek(time: TimeInterval, autoPlay: Bool, completion: @escaping ((Bool) -> Void)) {
+    // Forward 1.3.17 declares TWO overridable seeks, idx64 slot91 and idx65 slot92 (VTableOffset 27).
+    // Both carry a method descriptor, so both are class-body declarations; the one-argument
+    // seek(time:) at the bottom of this file has NO method descriptor, which is why it stays an
+    // extension member.
+    open func seek(time: TimeInterval, completion: (@MainActor @Sendable (Bool) -> Void)?) {
+        seek(time: time, autoPlay: options.isSeekedAutoPlay, completion: completion)
+    }
+
+    open func seek(time: TimeInterval, autoPlay: Bool, completion: (@MainActor @Sendable (Bool) -> Void)?) {
         if time.isInfinite || time.isNaN {
-            completion(false)
+            completion?(false)
         }
         if player.isReadyToPlay, player.seekable {
             player.seek(time: time) { [weak self] finished in
@@ -356,12 +364,12 @@ open class KSPlayerLayer: NSObject {
                 if finished, autoPlay {
                     self.play()
                 }
-                completion(finished)
+                completion?(finished)
             }
         } else {
             isAutoPlay = autoPlay
             shouldSeekTo = time
-            completion(false)
+            completion?(false)
         }
     }
 

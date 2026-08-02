@@ -141,8 +141,8 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
         playerLayer?.pause()
     }
 
-    open func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
-        playerLayer?.seek(time: time, autoPlay: KSOptions.isSeekedAutoPlay, completion: completion)
+    open func seek(time: TimeInterval, completion: (@MainActor @Sendable (Bool) -> Void)?) {
+        playerLayer?.seek(time: time, completion: completion)
     }
 
     open func resetPlayer() {
