@@ -129,17 +129,30 @@ open class KSOptions {
     // type equals one particular class it clamps the 2nd argument up to 6, computes
     // Int(fps) * that, >>1, capped at 0x1000; otherwise Int(fps) * arg, >>2, capped at 0x400.
     // Slot 130 @0x1019b9330 returns that same static-type equality as a Bool.
-    // Slot 128 @0x10002db34 is PINNED: `mov x0,#0x0; mov x1,#0x0; ret` (3 instructions) — a
-    // 16-byte all-zero direct result and nothing else. recover_swift_function_name --addr returns
-    // #function None. The body is a LINKER-FOLDED (ICF) stub, so it carries no identifying
-    // information whatsoever: it is 586-way ICF-folded (export_trie_oracle n_syms=586). dyld_info
-    // -fixups shows exactly 12 rebases — the 12 class-metadata vtable slots that hold this address
-    // (0x10411eb30, 0x10412b500, 0x104137858, 0x10413c0c0, 0x104147208, 0x10417c970,
-    // 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068, 0x1044e5a38) — whereas the KSOptions
-    // descriptor claims only 0x1039ec904. Position is exact; identity is not derivable.
+    // idx128 slot222 @0x10002db34: `mov x0,#0x0; mov x1,#0x0; ret` (3 instructions) — a
+    // 16-byte all-zero direct result and nothing else. The body is 586-way ICF-folded
+    // (export_trie_oracle n_syms=586). dyld_info -fixups shows exactly 12 rebases — the 12
+    // class-metadata vtable slots that hold this address (0x10411eb30, 0x10412b500, 0x104137858,
+    // 0x10413c0c0, 0x104147208, 0x10417c970, 0x10417cef8/cf38, 0x10417d098/d300, 0x10448d068,
+    // 0x1044e5a38) — whereas the KSOptions descriptor claims only 0x1039ec904.
     // (s68: corrected a prior "16 xrefs plus two call sites" tally that did not decompose; the
     //  independently verified count is 12 rebases — resolve_fun_pins verdict FOLDED_AMBIGUOUS.)
-    // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_10002db34:0x10002db34 result=LOCATED pinned=member-identity-undetermined]
+    //
+    // ⚠️ s97 — "Position is exact; identity is not derivable" IS REFUTED, and the pin is DISCHARGED.
+    // The fold defeats identification only if you look at the BODY. Go the other way, through the
+    // vtable, and the ICF fold is irrelevant:
+    //   (a) `wantedAudio` is `open` on a non-final class, so it necessarily HAS a vtable entry, and
+    //       that entry's Impl is its body address;
+    //   (b) the trie exports `wantedAudio(tracks:) -> MediaPlayerTrack?` at 0x10002db34;
+    //   (c) EXACTLY ONE KSOptions vtable entry carries Impl=0x10002db34 — idx128, flags=0x0010
+    //       Method — so no other member can be competing for it.
+    // Therefore idx128 slot222 IS `wantedAudio(tracks:)`. Corroboration, not part of the proof: the
+    // other three KSOptions symbols folded at this address are variable initialization expressions,
+    // which take no vtable slot at all; and idx129 being audioFrameMaxCount-shaped means the binary
+    // groups the AUDIO pair here exactly as it groups wantedVideo/videoFrameMaxCount at idx223/224.
+    // The prior pin rested on recover_swift_function_name, which reads #function/#file literals that
+    // a release build strips — the same failure mode already recorded for slots 220-225 below.
+    // ⚑[tool=vtable_impl_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=identity-discharged]
     internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     public var audioRecognizes: [AudioRecognize] = []
     // sutile
@@ -221,9 +234,13 @@ open class KSOptions {
     // independently (220 = `staticBool || fps > 61.0`; 222 = `!arg0 || arg1`; 223 retains an
     // element when a field is non-nil) — corroboration, not just nomination.
     // 222 is now DECLARED below with its body; 224/225 are declared and audited FAITHFUL.
-    // ⛔ 223 `wantedVideo` returns MediaPlayerTrack?, NOT the Int? this file declares — that is
-    // the index->object migration (with wantedAudio and audioFrameMaxCount), a separate unit
-    // with call-site ripple. NOT changed here.
+    // ⛔ idx223 `wantedVideo` returns MediaPlayerTrack?, NOT the Int? this file declares — the
+    // index->object migration. `wantedAudio` (idx128) was migrated in s97; `wantedVideo` is a
+    // DIFFERENT vtable slot and so a different unit, and is NOT changed here.
+    // ⚠️ s97 — the "call-site ripple" this note cites is ZERO for both methods: neither
+    // `wantedAudio` nor `wantedVideo` is called anywhere under Sources/, inside this file or out
+    // (`grep -rn "wantedAudio\|wantedVideo" Sources/` returns only the declarations). Whatever
+    // makes wantedVideo a separate unit, it is not ripple.
     // 220/221 remain UNDECLARED: names recovered, bodies not yet reconstructed.
     // Context (not in this batch): slot 220 @0x1019be928 = `staticBool || fpsArg > 61.0` → Bool;
     // slot 221 @0x1019be98c reads UITraitCollection.current.userInterfaceIdiom; slot 223
@@ -426,10 +443,18 @@ open class KSOptions {
         nil
     }
 
-    /// wanted audio stream index, or nil for automatic selection
+    /// wanted audio track, or nil for automatic selection
     /// - Parameter :  audio track
-    /// - Returns: The index of the track
-    open func wantedAudio(tracks _: [MediaPlayerTrack]) -> Int? {
+    /// - Returns: The selected track
+    // idx128 slot222 @0x10002db34 — identity DISCHARGED (s97); see the slot-128 block above.
+    // Return type is MediaPlayerTrack?, NOT Int?. Two independent lines of evidence:
+    //   (1) the trie demangles this address's sole KSOptions METHOD symbol as
+    //       `wantedAudio(tracks: [KSPlayer.MediaPlayerTrack]) -> KSPlayer.MediaPlayerTrack?`;
+    //   (2) the ABI agrees — MediaPlayerTrack is AnyObject-constrained, so the existential is
+    //       (ref, witness) and `nil` is exactly the observed `mov x0,#0x0; mov x1,#0x0; ret`.
+    //       An `Int?` nil does not leave x1 zero, so the body refutes the Int? spelling on its own.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=name+signature-recovered]
+    open func wantedAudio(tracks _: [MediaPlayerTrack]) -> MediaPlayerTrack? {
         nil
     }
 
