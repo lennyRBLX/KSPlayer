@@ -324,12 +324,6 @@ open class KSPlayerLayer: NSObject {
     open func pause() {
         isAutoPlay = false
         player.pause()
-        timer.fireDate = Date.distantFuture
-        state = .paused
-        MPNowPlayingInfoCenter.default().playbackState = .paused
-        runOnMainThread {
-            UIApplication.shared.isIdleTimerDisabled = false
-        }
     }
 
     public func stop() {
