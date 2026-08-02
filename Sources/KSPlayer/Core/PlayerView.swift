@@ -46,7 +46,10 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
         }
     }
 
-    public weak var delegate: ControllerDelegate?
+    // Spelled with the underlying protocol name, not the ControllerDelegate alias above: the
+    // reflection field record erases the typealias and stores PlayerControllerDelegate, so this
+    // is the same type either way, and the l2 field gate compares against the stored name.
+    public weak var delegate: PlayerControllerDelegate?
     public let toolBar = PlayerToolBar()
     public let srtControl = SubtitleModel()
     // Listen to play time change
