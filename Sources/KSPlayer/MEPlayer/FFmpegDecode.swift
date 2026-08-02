@@ -110,7 +110,25 @@ class FFmpegDecode: DecodeProtocol {
                                 let size = sideData.size
                                 if size > AV_UUID_LEN {
                                     let str = String(cString: sideData.data.advanced(by: Int(AV_UUID_LEN)))
-                                    options.sei(string: str)
+                                    // `time` is READ, not chosen. Forward's only call to sei(string:time:) is the sole
+                                    // slot-283 dispatch in the image, @0x101a6754c, inside the same
+                                    // relocated side-data loop this method is pinned above as DEFERRED (VideoSwresample.s32,
+                                    // 0x101a67274). There the argument is built @0x101a674fc-0x101a67544: best_effort_timestamp
+                                    // (AVFrame+0x130), falling back on a sign-bit test to pts (+0x88) then pkt_dts (+0x90) —
+                                    // offsets taken by NAME with offsetof against the ios-arm64 n8.1.1 headers that built the
+                                    // image, and corroborated in the same body by nb_side_data(+0x110)/side_data(+0x108);
+                                    // `bic x8,x8,x8,asr #63` = max(0,·); then Timebase.cmtime(for:) (the CMTime.init(value:
+                                    // timescale:) bind at __got 0x1041132c0 over track.timebase num/den at +0xc0/+0xc4) minus
+                                    // the track's startTime CMTime at +0xa0 (CMTime.- infix, __got 0x1041132b8). +0xa0/+0xc0
+                                    // are FFmpegAssetTrack.startTime/timebase per field_offset_vector.py.
+                                    var seiTimestamp = inputFrame.pointee.best_effort_timestamp
+                                    if seiTimestamp < 0 {
+                                        seiTimestamp = inputFrame.pointee.pts
+                                    }
+                                    if seiTimestamp < 0 {
+                                        seiTimestamp = inputFrame.pointee.pkt_dts
+                                    }
+                                    options.sei(string: str, time: packet.assetTrack.timebase.cmtime(for: max(0, seiTimestamp)) - packet.assetTrack.startTime)
                                 }
                             } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
                                 let data = sideData.data.withMemoryRebound(to: [UInt8].self, capacity: 1) { $0 }

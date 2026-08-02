@@ -484,9 +484,15 @@ open class KSOptions {
         // handler calls it). NOT fabricated (a guessed body would look done and mislead).
     }
 
-    open func sei(string: String) {
-        KSLog("sei \(string)")
-    }
+    // Two parameters, and an EMPTY body. The trie carries exactly one `sei` in the image —
+    // `$s8KSPlayer9KSOptionsC3sei6string4timeySS_So6CMTimeatF` (and its `Tq` method descriptor at
+    // 0x1039ecdd8, which is what proves the declaration is a real overridable vtable member) — so
+    // there is no one-argument overload and no default-argument generator for `time`. The body at
+    // 0x10000e52c is a single `ret`: 4 B / 1 instr on an exact LC_FUNCTION_STARTS extent. That is the
+    // 420-way ICF fold of every empty function, so it carries no content of its own; the base's
+    // `KSLog("sei \(string)")` cannot compile to a bare `ret` (KSLog takes an autoclosure and emits at
+    // minimum a level test and a call), which is what makes the empty body a reading rather than a guess.
+    open func sei(string _: String, time _: CMTime) {}
 
     // ⚑ INFERRED name `processHardwareDecode`: #function unrecoverable (direct call @0x1019b5fe0, no
     //   vtable slot; recover_swift_function_name → None). A KSOptions helper (called by the video-format
