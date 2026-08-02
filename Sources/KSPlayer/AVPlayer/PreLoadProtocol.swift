@@ -40,11 +40,11 @@ import Foundation
 public protocol PreLoadProtocol {
     // 0
     var loadedSize: Int64 { get }
-    // 1 — see the note below: this requirement's witness is SHARED by both conformers.
+    // 1 — shared witness ADDRESS, but see the correction below: an ICF fold, not a default.
     var position: UInt64 { get }
-    // 2 — shared witness (protocol-extension default); see below.
+    // 2 — shared witness address; same correction.
     var downloadSpeed: Double { get }
-    // 3 — shared witness (protocol-extension default); see below.
+    // 3 — shared witness address; same correction.
     var bytesRead: UInt64 { get }
     // 4
     func more() -> Int32
@@ -58,19 +58,37 @@ public protocol PreLoadProtocol {
     func syncPlaybackPosition(time: Double, duration: Double)
 }
 
-// Requirements 1, 2 and 3 are satisfied by the SAME witness address in BOTH conformance
-// tables — req1 0x101ba66bc, req2 0x101b95bf8 (thunk -> 0x101b914d0), req3 0x101a65dd4
-// (thunk -> 0x101a63dec). Two unrelated conformers cannot share a witness body unless the
-// protocol itself supplies it, so these are protocol-extension defaults rather than
-// per-conformer implementations. For two of the three the trie says so outright:
-//   (extension in KSPlayer):KSPlayer.PreLoadProtocol.downloadSpeed.getter : Swift.Double
-//   (extension in KSPlayer):KSPlayer.PreLoadProtocol.bytesRead.getter    : Swift.UInt64
-// each with its own property descriptor. No equivalent symbol was found for `position`, so
-// its shared witness is evidence of a default but not yet proof of one.
+// CORRECTION, and it is worth stating plainly because the first reading of this was wrong.
 //
-// The extension bodies are NOT written here. They are three real bodies (23, and two behind
-// thunks) that have not been read yet, and an extension member is a body like any other.
-// ⚑[tool=decode_witness_table ref=KSPlayer.PreLoadProtocol:0x1039ede48 result=reqs-1-2-3-share-a-witness]
+// Requirements 1, 2 and 3 resolve to the SAME witness address in BOTH conformance tables —
+// req1 0x101ba66bc, req2 0x101b95bf8 (thunk -> 0x101b914d0), req3 0x101a65dd4 (thunk ->
+// 0x101a63dec). That was first read as proof of protocol-extension defaults, on the reasoning
+// that two unrelated conformers cannot share a witness body. THAT REASONING IS INVALID, and
+// the bodies themselves refute it: req2's shared body is
+//     ldr x8, [x20]  ·  ldr d0, [x8, #0x68]  ·  ret
+// — a CONCRETE read of inherited offset 0x68, which is CacheIOContext._downloadSpeed, whose
+// own exported getter @0x100d362bc is the same `ldr d0, [x20, #0x68]`. req3's body likewise
+// reads offset 0x18 = CacheIOContext.bytesRead, and req1's reads 0x50 and 0x80 = urlPos and
+// logicalPos. A generic protocol-extension body cannot hardcode an inherited stored-property
+// offset.
+//
+// The two conformers are SIBLINGS under CacheIOContext, not one under the other, so they
+// inherit an identical layout and their witnesses come out bit-identical — and the linker
+// folds them. The shared address is an ICF fold, exactly the case AGENT_PROTOCOL warns about:
+// a shared address is not an anchor mismatch, the code is genuinely each function's, it is
+// merely also somebody else's.
+//
+// Protocol-extension defaults for two of these DO exist — the trie carries
+// `(extension in KSPlayer):KSPlayer.PreLoadProtocol.downloadSpeed.getter` @0x10002dc44 and
+// `...bytesRead.getter` @0x1001a1394 — but at addresses appearing in NEITHER witness table, so
+// neither conformer uses them. No `position` or `loadedSize` extension default exists at all
+// (both real trie negatives).
+//
+// The consequence for the conformances: these three are satisfied by members INHERITED from
+// CacheIOContext, not by anything the protocol supplies. Source's CacheIOContext already has
+// `bytesRead`; it does not yet have `downloadSpeed` (only the private stored `_downloadSpeed`
+// at the same 0x68) or `position`.
+// ⚑[tool=decode_witness_table ref=KSPlayer.PreLoadProtocol:0x1039ede48 result=reqs-1-2-3-ICF-folded]
 
 // Sole requirement, and it is NOT a duplicate of PreLoadProtocol's req8 — it is a different
 // overload of the same base name, distinguished by its second label and type. Both exist as
