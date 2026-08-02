@@ -211,7 +211,7 @@ public protocol MediaPlayerDelegate: AnyObject {
     func readyToPlay(player: some MediaPlayerProtocol)
     func changeLoadState(player: some MediaPlayerProtocol)
     // 缓冲加载进度，0-100
-    func changeBuffering(player: some MediaPlayerProtocol, progress: Int)
+    func changeBuffering(player: some MediaPlayerProtocol, progress: UInt8)
     func playBack(player: some MediaPlayerProtocol, loopCount: Int)
     func finish(player: some MediaPlayerProtocol, error: Error?)
 }

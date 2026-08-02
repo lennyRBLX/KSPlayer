@@ -32,7 +32,7 @@ extension MEPlayerViewController: MediaPlayerDelegate {
 
     func changeLoadState(player _: some KSPlayer.MediaPlayerProtocol) {}
 
-    func changeBuffering(player _: some KSPlayer.MediaPlayerProtocol, progress _: Int) {}
+    func changeBuffering(player _: some KSPlayer.MediaPlayerProtocol, progress _: UInt8) {}
 
     func playBack(player _: some KSPlayer.MediaPlayerProtocol, loopCount _: Int) {}
 

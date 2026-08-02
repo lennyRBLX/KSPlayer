@@ -176,7 +176,7 @@ open class KSAVPlayer {
 
     public private(set) var bufferingProgress: UInt8 = 0 {
         didSet {
-            delegate?.changeBuffering(player: self, progress: Int(bufferingProgress))
+            delegate?.changeBuffering(player: self, progress: bufferingProgress)
         }
     }
 

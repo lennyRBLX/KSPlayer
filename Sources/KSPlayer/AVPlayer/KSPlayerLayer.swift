@@ -85,7 +85,7 @@ public extension KSPlayerLayerDelegate {
 open class KSPlayerLayer: NSObject {
     public weak var delegate: KSPlayerLayerDelegate?
     @Published
-    public var bufferingProgress: Int = 0
+    public var bufferingProgress: UInt8 = 0
     @Published
     public var loopCount: Int = 0
     @Published
@@ -459,7 +459,7 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
-    public func changeBuffering(player _: some MediaPlayerProtocol, progress: Int) {
+    public func changeBuffering(player _: some MediaPlayerProtocol, progress: UInt8) {
         bufferingProgress = progress
     }
 

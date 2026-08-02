@@ -49,7 +49,7 @@ public final class KSMEPlayer: NSObject {
         willSet {
             runOnMainThread { [weak self] in
                 guard let self else { return }
-                delegate?.changeBuffering(player: self, progress: Int(newValue))
+                delegate?.changeBuffering(player: self, progress: newValue)
             }
         }
     }
