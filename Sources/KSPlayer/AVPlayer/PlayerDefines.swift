@@ -391,6 +391,37 @@ public protocol VideoPipeline {
     // 5 requirements (1 getter + 4 methods) UNRESOLVED — see the PlayList/VideoPipeline no-conformer protocol pass.
 }
 
+// Forward-only protocol. Name and module are the trie's, not inferred: the protocol descriptor
+// `$s8KSPlayer11MovieStreamMp` is exported at 0x1039edcd0, so this is `KSPlayer.MovieStream`.
+// protocol_signature: 3 requirements, all instance Getters; AssociatedTypeNames 0 and
+// NumRequirementsInSignature 0 — so it has no associated type and is NOT class-constrained
+// (it must therefore not be written `: AnyObject`).
+//
+// Declared EMPTY on purpose, exactly like `VideoPipeline` above. conformance_walker finds ZERO
+// conformers anywhere in the image, so there is no witness table from which requirement names
+// could be read; per the tool's own rule that makes the three names IRREDUCIBLE rather than
+// merely unrecovered, and any name written here would be invented. A protocol existential's
+// size does not depend on its requirements, so every `any MovieStream` field and signature
+// below is layout-faithful either way.
+// ⚑[tool=conformance_walker ref=KSPlayer.MovieStream:0x1039edcd0 result=zero-conformers]
+public protocol MovieStream {
+    // 3 instance Getter requirements IRREDUCIBLE — no conformer exists to read them from.
+}
+
+// Forward-only protocol, `$s8KSPlayer8PlayListMp` @0x1039edc98. Like MovieStream it has no
+// associated type and NumRequirementsInSignature 0, so it is NOT class-constrained. Unlike
+// MovieStream it HAS a conformer, so these four names and types are RECOVERED, not deferred:
+// PreLoadIOContext.CacheIOContext, witness table 0x1041e19c0 (validated by decode_witness_table).
+// The four witnesses at 0x1041e19c0[1..4] are `ldr x20,[x20]` thunks that forward to
+// 0x101b8f528 / 0x101b8f60c / 0x101b8f6f0 / 0x101b8f7d0, each of which the export trie names —
+// so the DECLARATION ORDER below is the witness-table order, read off the binary, not chosen.
+public protocol PlayList {
+    var audioLanguageCodeMap: [Int32: String] { get }
+    var subtitleLanguageCodeMap: [Int32: String] { get }
+    var playlists: [any MovieStream] { get }
+    var currentStream: (any MovieStream)? { get }
+}
+
 open class AbstractAVIOContext {
     // Forward addition (binary __swift5_fieldmd: readLimit@+0x10, bufferSize@+0x14;
     // vtable slots 0/1/2 are its synthesized getter/setter/read). Default -1

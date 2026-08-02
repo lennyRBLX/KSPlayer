@@ -37,7 +37,7 @@ import FFmpegKit   // AVIOInterruptCB (FFmpeg C struct — the L3 cancel field)
 //   in FFmpegKit's headers, so it resolves via `import FFmpegKit`. CacheFileEntry +
 //   URLContextDownload are in-module (already committed; no import). PreLoadIOContext
 //   builds green via `swift build --target PreLoadIOContext`.
-public class CacheIOContext: AbstractAVIOContext {
+public class CacheIOContext: AbstractAVIOContext, PlayList {
     // --- stored fields (binary __swift5_fieldmd order; Swift synthesizes the 70
     //     accessors — do NOT hand-write get/set/_modify) ---
 
@@ -290,6 +290,16 @@ public class CacheIOContext: AbstractAVIOContext {
     //   an indirect call through vtable+0x388 ("Could not recover jumptable … too many
     //   branches"). The target slot is devirt and the branch table is unrecovered →
     //   no readable body to reconstruct (name + body both unresolved). — P2
+    // ⚠️ s97 — the NAME half is REFUTED. The address exports exactly one symbol, unfolded:
+    //   $s16PreLoadIOContext05CacheC0C18canReadFromNetworkSbyF
+    //   = PreLoadIOContext.CacheIOContext.canReadFromNetwork() -> Swift.Bool
+    // The BODY half stands, but is now narrower than "unrecovered jumptable": the three
+    // instructions are `ldr x8,[x20]` / `ldr x0,[x8,#0x388]` / `br x0`, i.e. a single indirect
+    // dispatch through metadata word 0x388/8 = 113 = this class's own idx62 slot113 (@0x10002c740,
+    // a 2-instruction `mov w0,#1; ret`). It is one devirtualised forward, not a branch table.
+    // Still NOT declared here: what source spelling produces a forward to another overridable
+    // member has not been established, and inventing one is worse than the pin.
+    // ⚑[tool=export_trie_oracle ref=PreLoadIOContext.CacheIOContext.canReadFromNetwork:0x101b885ac result=name-recovered]
 
     // s64 @101b8a0e0 — `var isOpen: Bool` (name inferred, devirt). Faithful (full):
     //   returns the logical negation of _isClosed (`(_isClosed ^ 0xff) & 1`).
@@ -301,6 +311,48 @@ public class CacheIOContext: AbstractAVIOContext {
     //   (full): sets isReadComplete = true.
     func markReadComplete() { // name inferred (devirt)
         isReadComplete = true
+    }
+
+    // MARK: - KSPlayer.PlayList conformance
+    //
+    // Names, types and ORDER are the witness table's, not chosen: conformance descriptor
+    // 0x103571aa0, witness table 0x1041e19c0 (validated), whose four slots forward to getters
+    // the export trie names outright —
+    //   0x101b8f528  audioLanguageCodeMap.getter    : [Swift.Int32 : Swift.String]
+    //   0x101b8f60c  subtitleLanguageCodeMap.getter : [Swift.Int32 : Swift.String]
+    //   0x101b8f6f0  playlists.getter               : [KSPlayer.MovieStream]
+    //   0x101b8f7d0  currentStream.getter           : KSPlayer.MovieStream?
+    // None of the four appears among this class's 28 field records, so all four are COMPUTED.
+    //
+    // All four bodies are the SAME shape, read at 0x101b8f528-0x101b8f8b4: copy the `download`
+    // existential out of self+0x20, `_swift_dynamicCast` it to `any PlayList` with flags
+    // w4 = 6 (TakeOnSuccess|DestroyOnFailure, Unconditional CLEAR — i.e. `as?`, not `as!`),
+    // and on success project the result and `blr` the PlayList witness at wt+8*(i+1). There is
+    // no loop, no filter, no map and no second cast: each getter is one forward plus a default.
+    // The failure arms differ per requirement and are read off the epilogues:
+    //   req0/req1 build an empty dictionary literal, req2 returns the empty-array storage,
+    //   req3 writes 40 zero bytes into the sret buffer (`str xzr` + `stp q0,q0`) = nil.
+    //
+    // `download` is identified as the field at self+0x20 by TYPE, not by offset arithmetic: it
+    // is this class's only stored field whose type is a bare protocol existential, and the
+    // cast's SOURCE metadata resolves to `KSPlayer.DownloadProtocol` (descriptor 0x1039edd38),
+    // which is that field's protocol. field_offset_vector refuses this class outright — its
+    // metadata is runtime-initialized and it exports no `...CN` symbol — so the offset is NOT
+    // taken from the field-record order.
+    public var audioLanguageCodeMap: [Int32: String] {
+        (download as? any PlayList)?.audioLanguageCodeMap ?? [:]
+    }
+
+    public var subtitleLanguageCodeMap: [Int32: String] {
+        (download as? any PlayList)?.subtitleLanguageCodeMap ?? [:]
+    }
+
+    public var playlists: [any MovieStream] {
+        (download as? any PlayList)?.playlists ?? []
+    }
+
+    public var currentStream: (any MovieStream)? {
+        (download as? any PlayList)?.currentStream
     }
 
     // UNRESOLVED → P8 (IO-completion) (deep IO engine — NOT reconstructed; declare nothing beyond
