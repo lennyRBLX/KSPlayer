@@ -164,6 +164,37 @@ public class DynamicInfo: ObservableObject {
         accessLogEvent = nil
         displayFPSBlock = nil
     }
+
+    // s100 — vtable slot 35, the SECOND designated init. Allocating entry 0x1019de4a8, initializing
+    // entry 0x1019df2f0 (110 instr). Labels from the trie:
+    // `KSPlayer.DynamicInfo.init(displayFPSBlock: @MainActor @Sendable () -> Float,
+    //  accessLogEvent: () -> [AVPlayerItemAccessLogEvent])`.
+    // Argument mapping read from the stores: arg 1 -> self+0x60 (displayFPSBlock), arg 2 ->
+    // self+0x50 (accessLogEvent), matching the offsets the slot-36 updater uses.
+    // The four block `let`s are SYNTHESIZED here rather than passed, each via a 2-instruction
+    // adapter at 0x1019e0e38/40/48 that loads the captured closure out of its own
+    // `_swift_allocObject(…, 0x20, 7)` box; all three derived blocks capture the SAME
+    // accessLogEvent closure, which is why the body ends in `_swift_retain_n(param_5, 3)`.
+    //   metadataBlock    0x1019df4a8 -> 0x1019c2f60 with `__swiftEmptyArrayStorage`
+    //                    (⚑ bind_oracle 0x104112d00); the builder's `cbz` empty path returns
+    //                    `__swiftEmptyDictionarySingleton` (⚑ bind_oracle 0x104112d08) ⇒ [:]
+    //   bytesReadBlock   0x1019df4b4 sums `numberOfBytesTransferred` (Int64, `adds` with overflow trap)
+    //   audioBitrateBlock 0x1019df598 sums `averageAudioBitrate` — selref 0x10440a7d8 →
+    //                    __objc_methname 0x10397b1c0 = "averageAudioBitrate"
+    //   videoBitrateBlock 0x1019df6b8 sums `averageVideoBitrate`
+    // Both bitrate helpers accumulate in `d8` as a DOUBLE and convert ONCE at the end
+    // (`fcvtzs x0, d8`, guarded by the Swift Int(_:) range `fcmp` against 2^63), so the
+    // conversion wraps the sum, not each element.
+    init(displayFPSBlock: @escaping @MainActor @Sendable () -> Float,
+         accessLogEvent: @escaping () -> [AVPlayerItemAccessLogEvent])
+    {
+        metadataBlock = { [:] }
+        bytesReadBlock = { accessLogEvent().reduce(0) { $0 + $1.numberOfBytesTransferred } }
+        audioBitrateBlock = { Int(accessLogEvent().reduce(0.0) { $0 + $1.averageAudioBitrate }) }
+        videoBitrateBlock = { Int(accessLogEvent().reduce(0.0) { $0 + $1.averageVideoBitrate }) }
+        self.accessLogEvent = accessLogEvent
+        self.displayFPSBlock = displayFPSBlock
+    }
 }
 
 public struct Chapter {
