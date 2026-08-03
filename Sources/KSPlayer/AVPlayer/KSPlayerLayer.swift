@@ -320,8 +320,22 @@ open class KSPlayerLayer: NSObject {
         options.playerLayerDeinit()
     }
 
-    public func set(url: URL, options: KSOptions) {
-        self.options = options
+    // ⚑ p2 OPTIONALITY DERIVED s102, closing divergence 1 of KSPlayerLayer_setUrlOptions_slot55_s84.
+    //   The trie INDEX (57,138 names — the only complete source for an overload set) carries exactly
+    //   TWO `KSPlayerLayer.set` symbols: this method and its `method descriptor`. So there is ONE
+    //   overload, it has a vtable slot, and its second parameter mangles `AA9KSOptionsCSg` — Optional.
+    //   ⚑[tool=export_trie_oracle ref=$s8KSPlayer0A5LayerC3set3url7optionsy10Foundation3URLV_AA9KSOptionsCSgtF:0x1019cb674 result=KSOptions-optional]
+    //   The `if let` is read, not styled around the compiler: `cbz x24, 0x1019cb760` @0x1019cb6fc
+    //   guards the options block, and the non-nil arm takes exclusive access on the field, reads the
+    //   old value and stores the new one (`str x24,[x22,x21]` @0x1019cb71c) — i.e. `self.options =
+    //   options`. The nil arm REJOINS at 0x1019cb760 rather than returning, and the non-nil block
+    //   falls through to that same address, so only the assignment is guarded.
+    // ⚑ BODY STILL DIVERGENT — divergence 2 of the same verdict is unaddressed here. The binary body
+    //   is 251 instr (0x1019cb674-0x1019cba60) and does far more than these statements.
+    public func set(url: URL, options: KSOptions?) {
+        if let options {
+            self.options = options
+        }
         runOnMainThread {
             self.url = url
         }
