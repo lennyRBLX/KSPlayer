@@ -27,6 +27,31 @@ public protocol PixelBufferProtocol: AnyObject {
     var colorPrimaries: CFString? { get set }
     var transferFunction: CFString? { get set }
     var colorspace: CGColorSpace? { get set }
+    // s98 — THIS PROTOCOL IS MISSING FOUR REQUIREMENTS, and they are now RECOVERED. The
+    // deferral note in Resample.swift called this "a ~12-requirement protocol layer ...
+    // unverifiable with current tools (no witness-table verifier)". It IS verifiable, and the
+    // gap is exactly four get/set/modify properties (4 x 3 = those 12 slots): the descriptor
+    // @0x1039f108c declares 40 requirements and this protocol declares 28.
+    //
+    // Names, types AND positions, read by walking CVBuffer's witness table 0x1041d9f98 at
+    // wt+8*(slot+1): slot 21 holds 0x101a89788, which the trie names
+    // `__C.CVBufferRef.hdr10PlusData.getter : Foundation.Data?` outright; slots 26, 29 and 32
+    // hold one-instruction thunks branching to 0x101a898c4, 0x101a899a4 and 0x101a89c44 — the
+    // getters the trie names displayInfo, contentInfo and ambientViewingEnvironment. Slot 33
+    // is independently named ambientViewingEnvironment.setter, corroborating the last one.
+    // Exactly four `Data?` get/set/modify properties exist on the CVBufferRef extension and
+    // these are they — the set matches the gap with nothing left over. Full order is:
+    //   ... colorspace(18-20), hdr10PlusData(21-23), cvPixelBuffer(24), isFullRangeVideo(25),
+    //   displayInfo(26-28), contentInfo(29-31), ambientViewingEnvironment(32-34), 5 methods.
+    //
+    // NOT DECLARED YET: adding them breaks conformance because CVPixelBuffer's extension does
+    // not implement them. All four are CVBuffer ATTACHMENT accessors keyed by CoreVideo
+    // CFString constants (displayInfo and contentInfo are 3-instruction thunks that load a key
+    // from __got 0x1041088e8 / 0x1041088c8 and tail-call the shared helper 0x101a899b0;
+    // hdr10PlusData reads its key from 0x1041091a8 and calls 0x10345a9c0). Writing them needs
+    // those keys named plus the four setters — that is the remaining work, and it is now a
+    // bounded body-reconstruction task rather than an unverifiable one.
+    // ⚑[tool=decode_witness_table ref=KSPlayer.PixelBufferProtocol:0x1039f108c result=40-reqs-vs-28]
     var cvPixelBuffer: CVPixelBuffer? { get }
     var isFullRangeVideo: Bool { get }
     func cgImage() -> CGImage?
@@ -174,7 +199,7 @@ class PixelBuffer: PixelBufferProtocol {
     // ⚑ Forward-added HDR side-data field (binary PixelBuffer @+0x48; init @0x101a8a318 sets an empty
     // default). Reflection field-record is symbolic/unmapped → type inferred `Data` from the 16-byte
     // field size + empty-Data init default (sibling Resample.hdr10PlusData is `Data?`; layout-identical).
-    var hdr10PlusData = Data()
+    var hdr10PlusData: Data?   // field record carries `Sg` — Data?, not a non-optional Data()
     var cvPixelBuffer: CVPixelBuffer? { nil }
     var colorPrimaries: CFString?
     var transferFunction: CFString?
@@ -190,9 +215,9 @@ class PixelBuffer: PixelBufferProtocol {
     // ⚑ Forward-added trailing HDR side-data fields (binary PixelBuffer @+0xb0/+0xc0/+0xd0; init
     // @0x101a8a318 sets empty defaults). Reflection symbolic/unmapped → type inferred `Data` (16-byte
     // fields + empty-Data init default). Total instance size 0xe0 (224 B) confirmed vs the binary alloc.
-    var displayInfo = Data()
-    var contentInfo = Data()
-    var ambientViewingEnvironment = Data()
+    var displayInfo: Data?   // field record carries `Sg` — Data?, not a non-optional Data()
+    var contentInfo: Data?   // field record carries `Sg` — Data?, not a non-optional Data()
+    var ambientViewingEnvironment: Data?   // field record carries `Sg` — Data?, not a non-optional Data()
 
     init(frame: AVFrame) {
         yCbCrMatrix = frame.colorspace.ycbcrMatrix
