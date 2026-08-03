@@ -163,7 +163,7 @@ public final class KSMEPlayer: NSObject {
         #endif
         NotificationCenter.default.removeObserver(self)
         videoOutput?.invalidate()
-        playerItem.shutdown()
+        playerItem.stop()
     }
 }
 
@@ -336,7 +336,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     public func replace(url: URL, options: KSOptions) {
         KSLog("replaceUrl \(self)")
-        shutdown()
+        stop()
         playerItem.delegate = nil
         playerItem = MEPlayerItem(url: url, options: options)
         if options.videoDisable {
@@ -426,13 +426,13 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
-    public func shutdown() {
+    public func stop() {
         KSLog("shutdown \(self)")
         playbackState = .stopped
         loadState = .idle
         isReadyToPlay = false
         loopCount = 0
-        playerItem.shutdown()
+        playerItem.stop()
         options.prepareTime = 0
         options.dnsStartTime = 0
         options.tcpStartTime = 0

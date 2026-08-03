@@ -411,7 +411,10 @@ extension MEPlayerItem: MediaPlayback {
         //   Deferred to the openAndFindStream/ioTask migration commit.
     }
 
-    public func shutdown() {
+    // Renamed with the MediaPlayback requirement (see MediaPlayerProtocol). This class's own
+    // member name is NOT recoverable — neither `MEPlayerItem.stop` nor `MEPlayerItem.shutdown`
+    // appears in the trie — so the name follows the requirement it satisfies, not a read symbol.
+    public func stop() {
         guard state != .closed else { return }
         state = .closed
         // ⚑ UNRESOLVED (commit-1 stub): base tore down via the removed outputPacket/formatCtx/outputFormatCtx/

@@ -357,18 +357,23 @@ open class KSPlayerLayer: NSObject {
         player.pause()
     }
 
+    // SIX SOURCE STATEMENTS HAVE NO COUNTERPART and are removed: bufferedCount = 0,
+    // shouldSeekTo = 0, player.playbackRate = 1, player.playbackVolume = 1, the
+    // MPNowPlayingInfoCenter clear, and the isIdleTimerDisabled runOnMainThread block.
+    // THREE STATEMENTS EXIST ONLY IN THE BINARY and are added: the subtitleModel clear, the
+    // subtitleView removal, and options.playerLayerDeinit().
+    // THE LOG ARGUMENT DIFFERS: the binary builds "stop " + self.description — it sends objc
+    // `description` to self and bridges the NSString before appending — not a plain literal.
     public func stop() {
-        KSLog("stop Player")
+        KSLog("stop \(self)")
         state = .initialized
-        player.shutdown()
-        bufferedCount = 0
-        shouldSeekTo = 0
-        player.playbackRate = 1
-        player.playbackVolume = 1
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        runOnMainThread {
-            UIApplication.shared.isIdleTimerDisabled = false
-        }
+        player.stop()
+        // UNRESOLVED → P8: the subtitleModel call the binary makes here with (nil, nil). Its callee
+        // 0x101ab2540 is 507 instructions and a real trie negative, so it is pinned, not named.
+        // ⚑[tool=export_trie_oracle ref=subtitle_clear:0x101ab2540 result=NOT_IN_TRIE]
+        subtitleModel.selectedSubtitleInfo = nil
+        subtitleView.removeFromSuperview()
+        options.playerLayerDeinit()
     }
 
     // Forward 1.3.17 declares TWO overridable seeks, idx64 slot91 and idx65 slot92 (VTableOffset 27).
@@ -699,7 +704,7 @@ extension KSPlayerLayer {
             guard let self else {
                 return .commandFailed
             }
-            self.player.shutdown()
+            self.player.stop()
             return .success
         }
         remoteCommand.nextTrackCommand.addTarget { [weak self] _ in

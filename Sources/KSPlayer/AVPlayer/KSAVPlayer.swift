@@ -423,7 +423,7 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         playbackState = .paused
     }
 
-    public func shutdown() {
+    public func stop() {
         KSLog("shutdown \(self)")
         isReadyToPlay = false
         playbackState = .stopped
@@ -434,7 +434,7 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
 
     public func replace(url: URL, options: KSOptions) {
         KSLog("replaceUrl \(self)")
-        shutdown()
+        stop()
         io = .left(url) // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset
         self.options = options
     }

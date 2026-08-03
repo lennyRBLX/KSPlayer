@@ -20,7 +20,11 @@ public protocol MediaPlayback: AnyObject {
     var chapters: [Chapter] { get }
     var currentPlaybackTime: TimeInterval { get }
     func prepareToPlay()
-    func shutdown()
+    // NAMED `stop()` in the binary, not `shutdown()`. This is MediaPlayback requirement 14, and the
+    // trie names both implementations — KSAVPlayer.stop() and KSMEPlayer.stop(); neither class has a
+    // `shutdown` symbol at all. The other shutdown() methods in this tree belong to different
+    // protocols (CircularBuffer, FFmpegDecode, MEPlayerItemTrack, VideoSwresample) and are untouched.
+    func stop()
     func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void))
 }
 
