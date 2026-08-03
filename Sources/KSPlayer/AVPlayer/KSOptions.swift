@@ -502,8 +502,35 @@ open class KSOptions {
     }
 
     // 虽然只有iOS才支持PIP。但是因为AVSampleBufferDisplayLayer能够支持HDR10+。所以默认还是推荐用AVSampleBufferDisplayLayer
-    open func isUseDisplayLayer() -> Bool {
-        !display.isSphere
+    // SIGNATURE AND BODY BOTH RECOVERED. The trie prints
+    // `KSOptions.isUseDisplayLayer(frame: KSPlayer.VideoVTBFrame, isHDRScreen: Swift.Bool) -> Bool`;
+    // the source had a no-argument one-liner. Both parameters are load-bearing — x0 is dereferenced
+    // at frame+0x18 (pixelBuffer) and x1 is bit-tested at 0x1019beca0.
+    //
+    // The binary body is 121 instructions in six steps, and the RETURN VALUE is not the display test
+    // the source returned — it is `videoPipeline == nil`. The final `cset w21, eq` reads the word at
+    // +0x18 of the copied `VideoPipeline?` existential (its metadata word, carrying the Optional
+    // discriminator) and returns == 0. The display comparison is a mid-body guard, four conditions
+    // earlier.
+    //
+    // GUARDS 2 AND 3 ARE PINNED, NOT WRITTEN. Step 2 rejects when a pixelBuffer-derived Double (the
+    // second lane) is >= 6000, and step 3 rejects when `!isHDRScreen` and a pixelBuffer-derived
+    // optional ObjC reference is non-nil. Both reach through requirements this reconstruction cannot
+    // name, so guessing them would fabricate two conditions in the middle of a guard ladder.
+    // ⚑[tool=export_trie_oracle ref=KSOptions.isUseDisplayLayer:0x1019bec28 result=guards-2-3-pinned]
+    open func isUseDisplayLayer(frame _: VideoVTBFrame, isHDRScreen _: Bool) -> Bool {
+        if forceDisableDisplayLayer {
+            return false
+        }
+        // UNRESOLVED → P8: guard 2 (pixelBuffer Double lane 2 >= 6000 -> false)
+        // UNRESOLVED → P8: guard 3 (!isHDRScreen && pixelBuffer optional ref != nil -> false)
+        guard !display.isSphere else {
+            return false
+        }
+        guard brightness == 1, contrast == 1, saturation == 1 else {
+            return false
+        }
+        return videoPipeline == nil
     }
 
     open func urlIO(log: String) {
@@ -727,6 +754,10 @@ public extension KSOptions {
     nonisolated(unsafe) static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
     nonisolated(unsafe) static var playerTypes: [MediaPlayerProtocol.Type] = [KSAVPlayer.self, KSMEPlayer.self]
     /// 最低缓存视频时间
+    // Trie: `static KSPlayer.KSOptions.isHDRScreen : Swift.Bool?`, with getter, setter, modify,
+    // property descriptor and unsafeMutableAddressor — a static Optional Bool. It is what feeds
+    // isUseDisplayLayer's second parameter, and it was absent from this reconstruction.
+    nonisolated(unsafe) static var isHDRScreen: Bool?
     nonisolated(unsafe) static var preferredForwardBufferDuration = 3.0
     /// 最大缓存视频时间
     nonisolated(unsafe) static var maxBufferDuration = 30.0

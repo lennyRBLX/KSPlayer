@@ -193,7 +193,11 @@ extension MetalPlayView {
             let cmtime = frame.cmtime
             let par = pixelBuffer.size
             let sar = pixelBuffer.aspectRatio
-            if let pixelBuffer = pixelBuffer.cvPixelBuffer, options.isUseDisplayLayer() {
+            // The two arguments come from the binary's own signature. `isHDRScreen` is the static
+            // KSOptions.isHDRScreen, which is Optional there; the `?? false` coalesce at this call
+            // site is OURS — the default is not read from the caller.
+            if let pixelBuffer = pixelBuffer.cvPixelBuffer,
+               options.isUseDisplayLayer(frame: frame, isHDRScreen: KSOptions.isHDRScreen ?? false) {
                 if displayView.isHidden {
                     displayView.isHidden = false
                     metalView.isHidden = true
