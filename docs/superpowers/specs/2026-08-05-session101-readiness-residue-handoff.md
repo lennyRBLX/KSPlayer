@@ -126,10 +126,13 @@ It also discharged a live blocker in §3: `__got 0x104112d00` binds `__swiftEmpt
 `0x104112d08` binds `__swiftEmptyDictionarySingleton`, which together ESTABLISH that `DynamicInfo`'s
 `metadataBlock` closure returns `[:]` — the fact that let the slot-35 init be written.
 
-**Action for session 101:** re-check pre-s100 deferrals that pin a classref or `__got` as
-unreadable. The sweep is started, not finished: the corpus grep is in this session's transcript and
-the hits worth re-reading are in `S99_DERIVED_IOSVideoPlayerView.md` (done) and the `Anime4KPipeline`
-/ `FormatContext` verdicts (not done).
+**The sweep is DONE — do not redo it.** Every chained-fixup deferral in `reconstruction/*.md` and
+`reconstruction/verdicts/*.json` was extracted and run through the oracle. Result: the six
+`S99_DERIVED_IOSVideoPlayerView` classrefs resolve (they are BINDs), `0x104108738` in
+`FormatContext_subtitleAssetTrackMap` resolves to `AVFoundation _AVMediaTypeSubtitle`, and the rest
+— `0x101a7448c`, `0x1039893c0`, `0x103999f20`, `0x1039ee4c4`, `0x1035696a0`, `0x1041079e8`,
+`0x1039efb30` — are **NOT bind sites**. They are REBASEs, which is precisely why s92 had to apply
+the chain by hand. That is the corrected distinction above, confirmed empirically.
 
 ## 4. Open defects
 
