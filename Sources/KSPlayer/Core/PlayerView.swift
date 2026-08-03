@@ -40,9 +40,23 @@ public protocol PlayerControllerDelegate: AnyObject {
 
 open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDelegate {
     public typealias ControllerDelegate = PlayerControllerDelegate
+    // s100 — Forward's observer tears down the PREVIOUS layer; it does not wire the new one.
+    // Body 0x101a01924 (52 instr): store the new value, then `cbz` on the old and, when non-nil,
+    // weak-assign nil into its `delegate` (0x101a0199c, with `str xzr,[x19,#0x8]` clearing the
+    // existential's witness word first) and dispatch KSPlayerLayer metadata +0x2d0, which
+    // `vtable_walk KSPlayerLayer --metadata-offset 0x2d0` resolves to slot 63 impl 0x1019cccd8 =
+    // `KSPlayerLayer.stop()`.
+    // ⚠️ The receiver of that dispatch is the OLD layer, not self: x20 arrives as swiftself but is
+    // OVERWRITTEN at 0x101a0195c (`ldr x20,[x20,x21]`). Ghidra also mis-attributes the call's
+    // argument. Read it from the disassembler.
+    // The delegate is wired at CONSTRUCTION instead, in `set(url:options:)` (0x1019fe194), which
+    // weak-assigns self together with the `PlayerView : KSPlayerLayerDelegate` witness table
+    // (0x1041d6308) on the URL-equality reuse path — so dropping the old `playerLayer?.delegate =
+    // self` here does not leave the delegate unwired.
     public var playerLayer: KSPlayerLayer? {
         didSet {
-            playerLayer?.delegate = self
+            oldValue?.delegate = nil
+            oldValue?.stop()
         }
     }
 
