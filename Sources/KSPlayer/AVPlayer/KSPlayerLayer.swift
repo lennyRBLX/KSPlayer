@@ -500,25 +500,27 @@ open class KSPlayerLayer: NSObject {
         self.loopCount = loopCount
     }
 
+    // THE SECOND-PLAYER FALLBACK IS ABSENT from the binary: the error arm goes straight from the
+    // error retain to the state write, with no type(of:) comparison and no KSOptions read. Three
+    // further statements are absent too — `timer.fireDate = Date.distantFuture`, `bufferedCount = 1`
+    // (the extent stores to no field of self except through the Published setter) and the
+    // `if error == nil { nextPlayer() }` tail.
+    // ORDER: on the nil arm the binary writes state BEFORE reading player.duration and calling the
+    // delegate; the source had it the other way round.
+    // LOG OVERLOAD: the binary converts with Foundation._convertErrorToNSError and logs through the
+    // __C.NSObject : CustomStringConvertible conformance — that is `KSLog(_ error: Error)`
+    // (KSOptions.swift:985), not the `CustomStringConvertible` overload the source used, which would
+    // have carried the error existential directly.
     public func finish(player: some MediaPlayerProtocol, error: Error?) {
         if let error {
-            if type(of: player) != KSOptions.secondPlayerType, let secondPlayerType = KSOptions.secondPlayerType {
-                self.player = secondPlayerType.init(url: url, options: options)
-                return
-            }
             state = .error
-            KSLog(error as CustomStringConvertible)
+            KSLog(error)
         } else {
+            state = .playedToTheEnd
             let duration = player.duration
             delegate?.player(layer: self, currentTime: duration, totalTime: duration)
-            state = .playedToTheEnd
         }
-        timer.fireDate = Date.distantFuture
-        bufferedCount = 1
         delegate?.player(layer: self, finish: error)
-        if error == nil {
-            nextPlayer()
-        }
     }
 
     #if canImport(UIKit) && !os(xrOS)
@@ -542,6 +544,8 @@ open class KSPlayerLayer: NSObject {
         else {
             return
         }
+        // The binary logs the interruption before switching on it; the source had no KSLog here at all.
+        KSLog("[audio] audioInterrupted \(type)")
         switch type {
         case .began:
             pause()
@@ -552,7 +556,13 @@ open class KSPlayerLayer: NSObject {
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
             if options.contains(.shouldResume) {
-                play()
+                // THE RESUME IS DELAYED. The source called play() bare; the binary wraps it in a Task
+                // that first awaits Task.sleep(nanoseconds: 800_000_000) and only then runs play() on
+                // the MainActor, through a weak self.
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    self?.play()
+                }
             }
 
         default:
