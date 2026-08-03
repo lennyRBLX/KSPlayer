@@ -11,7 +11,11 @@ import Foundation
 public actor SubtitleActor: KSSubtitleProtocol {
     var parts: [SubtitlePart] = []
     let info: any SubtitleInfo
-    var searchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
+    // UInt64. NOT read from this class's own field records — dump_binary_field_types reports
+    // searchGeneration as `unmapped` here — but it is assigned to and from SubtitleModel's
+    // subtitleSearchGeneration, which IS record-read as UInt64, so the pair must agree. The old
+    // `Int store-evidenced` note rested on a 64-bit store, which cannot distinguish signedness.
+    var searchGeneration: UInt64 = 0
     var latestQueryTime: Double?
     // init(info:) — witness-verified against the inlined construction at BOTH willSets (FUN_101ab2540
     // selectedSubtitleInfo @0x101ab2688 / FUN_101ab2de4 secondarySubtitleInfo): SubtitleActor metadata accessor
@@ -57,7 +61,8 @@ public actor SubtitleActor: KSSubtitleProtocol {
     // above + the two SubtitleModel drivers FUN_101ab438c/4c54). Reentrancy-safe across the `await info.search`:
     // a newer search that bumps searchGeneration during suspension makes this call stale, so it neither records
     // its query time (8884 guard) nor commits its results (898c gate @0x101ab9558).
-    func search(with query: KSSubtitleQuery, generation: Int) async -> sending [SubtitlePart] {
+    // generation/sequence carry SubtitleModel's field type, which the field records give as UInt64.
+    func search(with query: KSSubtitleQuery, generation: UInt64) async -> sending [SubtitlePart] {
         // 8884 — adopt this generation + record the query time (skipped if a newer search already ran)
         if searchGeneration <= generation {
             searchGeneration = generation

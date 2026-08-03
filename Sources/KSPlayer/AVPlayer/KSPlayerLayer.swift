@@ -379,11 +379,28 @@ open class KSPlayerLayer: NSObject {
         seek(time: time, autoPlay: options.isSeekedAutoPlay, completion: completion)
     }
 
+    // THE NON-FINITE ARM RETURNS. The source fell through into the isReadyToPlay test; the binary's
+    // arm is `cbnz x19 -> completion(false)` followed by `b` to the epilogue, and no edge re-enters
+    // the finite path.
+    // THE DISTANCE SHORT-CIRCUIT was missing from the source entirely. At 0x1019cd154 the binary
+    // computes `fabd d0, d8, d9` — |time - player.currentPlaybackTime| — then `fmov d1, #1.0`,
+    // `fcmp d0, d1`, `b.pl` away. So below 1.0 it plays (when autoPlay), completes with TRUE and
+    // returns, never reaching player.seek.
     open func seek(time: TimeInterval, autoPlay: Bool, completion: (@MainActor @Sendable (Bool) -> Void)?) {
         if time.isInfinite || time.isNaN {
             completion?(false)
+            return
         }
         if player.isReadyToPlay, player.seekable {
+            if abs(time - player.currentPlaybackTime) < 1.0 {
+                if autoPlay {
+                    play()
+                }
+                completion?(true)
+                return
+            }
+            // Called immediately before the player seek; subtitleModel is binary field 16.
+            subtitleModel.invalidateParts()
             player.seek(time: time) { [weak self] finished in
                 guard let self else { return }
                 if finished, autoPlay {
@@ -454,34 +471,39 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
+    // THE `bufferedCount == 0` BLOCK IS A DIFFERENT PIECE OF CODE. The source built an 8-to-11
+    // entry timing dictionary out of options.dnsStartTime / tcpStartTime / tcpConnectedTime /
+    // openTime / findTime / readyTime / readVideoTime / readAudioTime / decodeVideoTime /
+    // decodeAudioTime and called KSLog(dic). The binary has NO KSLog anywhere in this body and
+    // reads none of those timing fields; it reads `player.subtitleDataSource` and, when non-nil,
+    // appends it into self.subtitleModel.
+    // NESTING: the binary tests loadState, then bufferedCount == 0, then SEPARATELY
+    // bufferingStartTime > 0 — the source guarded loadState and the time together — and it
+    // increments bufferedCount TWICE, once in the bufferedCount == 0 block and once after the
+    // delegate call.
+    // THE SECOND GUARD TESTS A DIFFERENT OBJECT: the binary re-reads the PLAYER's playbackState,
+    // not the layer's own `state`, and carries a `.paused -> state = .paused` arm the source
+    // lacked before requiring `.playing`.
     public func changeLoadState(player: some MediaPlayerProtocol) {
         guard player.playbackState != .seeking else { return }
-        if player.loadState == .playable, bufferingStartTime > 0 {
-            let diff = CACurrentMediaTime() - bufferingStartTime
-            delegate?.player(layer: self, bufferedCount: bufferedCount, consumeTime: diff)
+        if player.loadState == .playable {
             if bufferedCount == 0 {
-                var dic = ["firstTime": diff]
-                if options.tcpConnectedTime > 0 {
-                    dic["initTime"] = options.dnsStartTime - bufferingStartTime
-                    dic["dnsTime"] = options.tcpStartTime - options.dnsStartTime
-                    dic["tcpTime"] = options.tcpConnectedTime - options.tcpStartTime
-                    dic["openTime"] = options.openTime - options.tcpConnectedTime
-                    dic["findTime"] = options.findTime - options.openTime
-                } else {
-                    dic["openTime"] = options.openTime - bufferingStartTime
+                if let subtitleDataSource = player.subtitleDataSource {
+                    subtitleModel.subtitleDataSources.append(subtitleDataSource)
                 }
-                dic["findTime"] = options.findTime - options.openTime
-                dic["readyTime"] = options.readyTime - options.findTime
-                dic["readVideoTime"] = options.readVideoTime - options.readyTime
-                dic["readAudioTime"] = options.readAudioTime - options.readyTime
-                dic["decodeVideoTime"] = options.decodeVideoTime - options.readVideoTime
-                dic["decodeAudioTime"] = options.decodeAudioTime - options.readAudioTime
-                KSLog(dic)
+                bufferedCount += 1
             }
-            bufferedCount += 1
-            bufferingStartTime = 0
+            if bufferingStartTime > 0 {
+                let diff = CACurrentMediaTime() - bufferingStartTime
+                delegate?.player(layer: self, bufferedCount: bufferedCount, consumeTime: diff)
+                bufferedCount += 1
+                bufferingStartTime = 0
+            }
         }
-        guard state.isPlaying else { return }
+        if player.playbackState == .paused {
+            state = .paused
+        }
+        guard player.playbackState == .playing else { return }
         if player.loadState == .playable {
             state = .bufferFinished
         } else {

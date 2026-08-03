@@ -362,7 +362,9 @@ open class SubtitleModel: ObservableObject {
         }
     }
     #endif
-    private var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
+    // NOT private: KSPlayerLayer.changeLoadState appends player.subtitleDataSource into this
+    // array, so the binary reaches it across a class boundary.
+    var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
     @Published public private(set) var subtitleInfos: [any SubtitleInfo] = []
     @Published public private(set) var searchedSubtitleInfos: [URLSubtitleInfo] = []
     // slots 30/31/32 (keypaths d1e8/d210) + the `$parts` projection 33/34/35 — all Combine machinery.
@@ -374,11 +376,16 @@ open class SubtitleModel: ObservableObject {
     @Published public var subtitleTranslateY: Float = 0
     public var playRatio: Double = 1
     @Published public var screenSize: CGSize = .zero
-    private var subtitleSearchGeneration: Int = 0 // ⚑ Int store-evidenced (§7.5)
-    private var subtitleSearchSequence: Int = 0 // ⚑ Int store-evidenced (§7.5)
+    // UInt64, not Int. The earlier `Int store-evidenced` note came from a 64-bit STORE, which
+    // cannot distinguish signedness; the field record's type mangle can, and reads UInt64.
+    private var subtitleSearchGeneration: UInt64 = 0
+    private var subtitleSearchSequence: UInt64 = 0
     private var latestPrimarySubtitleQueryTime: Double?
     private var latestSecondarySubtitleQueryTime: Double?
-    public var url: URL? // ⚑ §7.5: mangle reads NON-optional; recon URL? w/ search didSet → M2 verify
+    // NON-OPTIONAL in the binary — the field mangle carries no `Sg`, as this line already noted.
+    // Written as the sanctioned IUO stand-in rather than a bare `URL`, because the search didSet
+    // still assigns nil and the construction that would make it non-optional is M2.
+    public var url: URL!
     private var firstSubtitleActor: SubtitleActor?
     // FUN_101ab2540 — selectedSubtitleInfo willSet (P67: 11 assign-site callers, call-before-store w/ newValue;
     // the prior recon guess @Published+didSet was wrong — binary is plain-stored with a willSet).
@@ -687,7 +694,8 @@ open class SubtitleModel: ObservableObject {
     // tail-inlined-into-every-funclet codegen (5aa8 entry @0x5aa8 over newParts / 5aa8 publish @0x6360 over the
     // translated part / 664c @0x674c over newParts).
     @inline(__always)
-    private func stillCurrent(_ items: [SubtitlePart], generation: Int, sequence: Int) -> Bool {
+    // generation/sequence carry SubtitleModel's field type, which the field records give as UInt64.
+    private func stillCurrent(_ items: [SubtitlePart], generation: UInt64, sequence: UInt64) -> Bool {
         guard generation == subtitleSearchGeneration else { return false }
         if sequence != subtitleSearchSequence {
             guard !items.isEmpty else { return false }
@@ -709,7 +717,8 @@ open class SubtitleModel: ObservableObject {
     }
 
     @inline(__always)
-    private func publishIfCurrent(_ items: [SubtitlePart], generation: Int, sequence: Int) {
+    // generation/sequence carry SubtitleModel's field type, which the field records give as UInt64.
+    private func publishIfCurrent(_ items: [SubtitlePart], generation: UInt64, sequence: UInt64) {
         if stillCurrent(items, generation: generation, sequence: sequence) { parts = items }
     }
 
@@ -719,7 +728,9 @@ open class SubtitleModel: ObservableObject {
     // body had been declared as `searchSubtitle(query:languages:)` with both args ignored — a CONFLATION.
     // The trie names it `invalidateParts()`, zero-arg and PRIVATE (discriminator _912797…); the real
     // searchSubtitle is a distinct 2312-byte body at slot 109, written out below.
-    private func invalidateParts() {
+    // NOT private: KSPlayerLayer.seek calls this immediately before the player seek, so the
+    // binary reaches it across a class boundary.
+    func invalidateParts() {
         subtitleSearchGeneration += 1
         subtitleSearchSequence += 1
         latestPrimarySubtitleQueryTime = nil
