@@ -327,7 +327,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     @MainActor
     public var naturalSize: CGSize {
-        options.display == .plane ? playerItem.naturalSize : KSOptions.sceneSize
+        !options.display.isSphere ? playerItem.naturalSize : KSOptions.sceneSize
     }
 
     public var isExternalPlaybackActive: Bool { false }

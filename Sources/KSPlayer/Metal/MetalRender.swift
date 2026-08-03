@@ -22,9 +22,9 @@ class MetalRender {
         return library
     }()
 
-    private nonisolated(unsafe) static let renderPassDescriptor = MTLRenderPassDescriptor()
-    private static let commandQueue = MetalRender.device.makeCommandQueue()
-    private static let samplerState: MTLSamplerState? = {
+    nonisolated(unsafe) static let renderPassDescriptor = MTLRenderPassDescriptor()
+    static let commandQueue = MetalRender.device.makeCommandQueue()
+    static let samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.minFilter = .linear
         samplerDescriptor.magFilter = .linear
@@ -90,33 +90,13 @@ class MetalRender {
         commandBuffer.commit()
     }
 
-    @MainActor
-    // STATIC: MetalView's binary field descriptor reports NumFields=0, so it cannot hold a
-    // stored MetalRender, and nothing in this method needs instance state.
-    static func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable) {
-        let inputTextures = pixelBuffer.textures()
-        MetalRender.renderPassDescriptor.colorAttachments[0].texture = drawable.texture
-        guard !inputTextures.isEmpty, let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(), let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor) else {
-            return
-        }
-        encoder.pushDebugGroup("RenderFrame")
-        let state = display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
-        encoder.setRenderPipelineState(state)
-        encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
-        for (index, texture) in inputTextures.enumerated() {
-            texture.label = "texture\(index)"
-            encoder.setFragmentTexture(texture, index: index)
-        }
-        MetalRender.setFragmentBuffer(encoder: encoder, pixelBuffer: pixelBuffer)
-        display.set(encoder: encoder)
-        encoder.popDebugGroup()
-        encoder.endEncoding()
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-    }
+    // MetalRender.draw is GONE. It had no counterpart in the binary under any name; Forward's
+    // real render entry point is the MTLRenderCommandEncoder extension at the bottom of this
+    // file, and keeping a second one would have meant inventing a call path.
 
-    private static func setFragmentBuffer(encoder: MTLRenderCommandEncoder, pixelBuffer: PixelBufferProtocol) {
+    // NOT private: the trie exports `static KSPlayer.MetalRender.setFragmentBuffer(encoder:pixelBuffer:)`
+    // at 0x101a83720, and a private static would export nothing. Both display models call it.
+    static func setFragmentBuffer(encoder: MTLRenderCommandEncoder, pixelBuffer: PixelBufferProtocol) {
         if pixelBuffer.planeCount > 1 {
             let isFullRangeVideo = pixelBuffer.isFullRangeVideo
             let leftShift = pixelBuffer.leftShift == 0 ? leftShiftMatrixBuffer : leftShiftSixMatrixBuffer
@@ -215,3 +195,44 @@ extension vImage_YpCbCrToARGBMatrix {
 }
 
 // swiftlint:enable identifier_name
+
+// Forward's actual render entry point, and the reason MetalRender.draw had no counterpart:
+// `$sSo23MTLRenderCommandEncoderP8KSPlayerE4draw5frame7displayyAC13VideoVTBFrameC_AC11DisplayEnum_ptF`
+// @0x101a84830, 151 instructions. `self` is the ENCODER — the binary's swiftself register holds
+// it — and there is no drawable parameter and no command-buffer work here at all; the caller
+// owns that. Statement order read from the body:
+//   textures() through the pixelBuffer's witness slot at wt+0x128, which resolves to
+//   (extension in KSPlayer):__C.CVBufferRef.textures() -> [MTLTexture]
+//   -> empty-guard early return
+//   -> pushDebugGroup("RenderFrame")          [stub 0x103466b80]
+//   -> setFragmentSamplerState(_:index: 0)    [stub 0x103469b80]
+//   -> per texture: setLabel: then setFragmentTexture:atIndex:  [stubs 0x103469f80 / 0x103469ba0]
+//   -> display.set(frame:encoder:) through the DisplayEnum witness table at wt+0x10
+//   -> popDebugGroup()                        [stub 0x1034663e0]
+//   -> endEncoding()                          [stub 0x1034616c0]
+// It notably does NOT call setRenderPipelineState and does NOT call MetalRender.setFragmentBuffer
+// — both moved into DisplayEnum.set(frame:encoder:), which is what forced that requirement to
+// take the frame.
+//
+// Both string literals here are register-form small strings ("RenderFrame" with a count-11
+// discriminator, "texture" with count-7), which decode_string_literal has no path for; they were
+// read from the mov/movk immediates.
+public extension MTLRenderCommandEncoder {
+    @MainActor
+    func draw(frame: VideoVTBFrame, display: any DisplayEnum) {
+        // No unwrap: VideoVTBFrame.pixelBuffer is a non-optional `let` in the source now too, so
+        // this matches the binary, which loads the field with no nil check.
+        let pixelBuffer = frame.pixelBuffer
+        let inputTextures = pixelBuffer.textures()
+        guard !inputTextures.isEmpty else { return }
+        pushDebugGroup("RenderFrame")
+        setFragmentSamplerState(MetalRender.samplerState, index: 0)
+        for (index, texture) in inputTextures.enumerated() {
+            texture.label = "texture\(index)"
+            setFragmentTexture(texture, index: index)
+        }
+        display.set(frame: frame, encoder: self)
+        popDebugGroup()
+        endEncoding()
+    }
+}

@@ -178,7 +178,10 @@ open class KSOptions {
     public var audioCodecName: String?
     public var audioChannelCount: UInt32 = 0
     // video
-    public var display = DisplayEnum.plane
+    // Field 47. The reflection record's type mangle ends `_p`, i.e. an EXISTENTIAL, not an enum
+    // tag — which is what settles that DisplayEnum is a protocol. The property carries getter,
+    // setter AND modify in the trie, so it is a `var`.
+    public var display: any DisplayEnum = PlaneDisplayModel()
     public var videoPipeline: VideoPipeline?
     public var videoDelay = 0.0 // s
     public var isRotateByFilter = false
@@ -500,7 +503,7 @@ open class KSOptions {
 
     // 虽然只有iOS才支持PIP。但是因为AVSampleBufferDisplayLayer能够支持HDR10+。所以默认还是推荐用AVSampleBufferDisplayLayer
     open func isUseDisplayLayer() -> Bool {
-        display == .plane
+        !display.isSphere
     }
 
     open func urlIO(log: String) {

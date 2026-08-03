@@ -17,7 +17,7 @@ public protocol DisplayLayerDelegate: NSObjectProtocol {
 
 public protocol VideoOutput: FrameOutput {
     var renderSource: VideoOutputRenderSourceDelegate? { get set }
-    // Source-only; removal derived and ready, but it lands with unit 6 (see the field below).
+    // Source-only; removal derived and ready, but it is its own unit (see the field below).
     var displayLayerDelegate: DisplayLayerDelegate? { get set }
     var options: KSOptions { get set }
     var displayLayer: AVSampleBufferDisplayLayer { get }
@@ -77,9 +77,9 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     private var displayLink: DisplayLinkProtocol?
 //    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
     // displayLayerDelegate is a source-only construct — zero-hit across the whole demangled trie,
-    // and MetalPlayView's field descriptor does not list it. Its REMOVAL is derived and ready, but
-    // it lands with unit 6: dropping it forces an edit to KSMEPlayer.swift, and that file cannot be
-    // staged until its `pipController` type block is resolved (see the unit-6 note).
+    // and MetalPlayView's field descriptor does not list it. Its REMOVAL is derived and ready. The
+    // KSMEPlayer block that held it up is gone (unit 6 landed), so it is now just its own unit:
+    // dropping it touches this protocol, this field, the displayView didSet and two KSMEPlayer sites.
     public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
@@ -136,7 +136,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
 
     #if canImport(UIKit)
     override public func touchesMoved(_ touches: Set<UITouch>, with: UIEvent?) {
-        if options.display == .plane {
+        if !options.display.isSphere {
             super.touchesMoved(touches, with: with)
         } else {
             options.display.touchesMoved(touch: touches.first!)
@@ -144,7 +144,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     }
     #else
     override public func touchesMoved(with event: NSEvent) {
-        if options.display == .plane {
+        if !options.display.isSphere {
             super.touchesMoved(with: event)
         } else {
             options.display.touchesMoved(touch: event.allTouches().first!)
@@ -211,7 +211,7 @@ extension MetalPlayView {
                     displayView.displayLayer.flushAndRemoveImage()
                 }
                 let size: CGSize
-                if options.display == .plane {
+                if !options.display.isSphere {
                     if let dar = options.customizeDar(sar: sar, par: par) {
                         size = CGSize(width: par.width, height: par.width * dar.height / dar.width)
                     } else {
@@ -226,7 +226,7 @@ extension MetalPlayView {
                     metalView.metalLayer.edrMetadata = frame.edrMetadata
                 }
                 #endif
-                metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size)
+                metalView.draw(frame: frame, display: options.display, size: size)
             }
             renderSource?.setVideo(time: cmtime, position: frame.position)
         }
@@ -253,7 +253,8 @@ extension MetalPlayView {
 class MetalView: UIView {
     // NO STORED PROPERTIES. MetalView's binary field descriptor reports NumFields=0, so the
     // `private let render = MetalRender()` that used to sit here is a field the binary does not
-    // have. MetalRender.draw is static, so nothing needed it.
+    // have. It is not needed either: the render entry point is an extension on
+    // MTLRenderCommandEncoder and everything else MetalRender exposes is static.
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { CAMetalLayer.self }
     #endif
@@ -284,7 +285,12 @@ class MetalView: UIView {
         }
     }
 
-    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize) {
+    // Carries the FRAME rather than the pixel buffer, because DisplayEnum's requirement is
+    // set(frame:encoder:). Every caller already had a frame in scope.
+    func draw(frame: VideoVTBFrame, display: any DisplayEnum, size: CGSize) {
+        // No unwrap: VideoVTBFrame.pixelBuffer is a non-optional `let` in the source now too, so
+        // this matches the binary, which loads the field with no nil check.
+        let pixelBuffer = frame.pixelBuffer
         metalLayer.drawableSize = size
         metalLayer.pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
         let colorspace = pixelBuffer.colorspace
@@ -310,7 +316,15 @@ class MetalView: UIView {
             KSLog("[video] CAMetalLayer not readyForMoreMediaData")
             return
         }
-        MetalRender.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
+        MetalRender.renderPassDescriptor.colorAttachments[0].texture = drawable.texture
+        guard let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor)
+        else {
+            return
+        }
+        encoder.draw(frame: frame, display: display)
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
     }
 }
 

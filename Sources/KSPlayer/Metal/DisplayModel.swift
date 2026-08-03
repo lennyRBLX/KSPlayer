@@ -12,107 +12,86 @@ import simd
 import UIKit
 #endif
 
-extension DisplayEnum {
-    private static var planeDisplay = PlaneDisplayModel()
-    private static var vrDiaplay = VRDisplayModel()
-    private static var vrBoxDiaplay = VRBoxDisplayModel()
+// The `extension DisplayEnum` that used to sit here is GONE. It switched on the enum cases
+// .plane/.vr/.vrBox and forwarded to three static instances. None of that exists in the binary:
+// DisplayEnum is a class-constrained protocol and the forwarding is ordinary witness dispatch,
+// so the whole layer was scaffolding for a type kind Forward does not have.
 
-    func set(encoder: MTLRenderCommandEncoder) {
-        switch self {
-        case .plane:
-            DisplayEnum.planeDisplay.set(encoder: encoder)
-        case .vr:
-            DisplayEnum.vrDiaplay.set(encoder: encoder)
-        case .vrBox:
-            DisplayEnum.vrBoxDiaplay.set(encoder: encoder)
-        }
-    }
-
-    func pipeline(planeCount: Int, bitDepth: Int32) -> MTLRenderPipelineState {
-        switch self {
-        case .plane:
-            return DisplayEnum.planeDisplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
-        case .vr:
-            return DisplayEnum.vrDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
-        case .vrBox:
-            return DisplayEnum.vrBoxDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
-        }
-    }
-
-    func touchesMoved(touch: UITouch) {
-        switch self {
-        case .vr:
-            DisplayEnum.vrDiaplay.touchesMoved(touch: touch)
-        case .vrBox:
-            DisplayEnum.vrBoxDiaplay.touchesMoved(touch: touch)
-        default:
-            break
-        }
-    }
-}
-
-private class PlaneDisplayModel {
+// PUBLIC, not `private class`. The binary emits a public-exclusive property descriptor for
+// `isSphere` on this class, and a public member of a file-private class is not expressible.
+// Widening is also what lets KSOptions.display hold one of these as an existential and what
+// lets ThumbnailDoviDisplayModel subclass it from another file.
+@MainActor
+public class PlaneDisplayModel: DisplayEnum {
     private lazy var yuv = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture")
     private lazy var yuvp010LE = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", bitDepth: 10)
     private lazy var nv12 = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture")
     private lazy var p010LE = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", bitDepth: 10)
     private lazy var bgra = MetalRender.makePipelineState(fragmentFunction: "displayTexture")
-    let indexCount: Int
-    let indexType = MTLIndexType.uint16
-    let primitiveType = MTLPrimitiveType.triangleStrip
-    let indexBuffer: MTLBuffer
-    let posBuffer: MTLBuffer?
-    let uvBuffer: MTLBuffer?
 
-    fileprivate init() {
-        let (indices, positions, uvs) = PlaneDisplayModel.genSphere()
-        let device = MetalRender.device
-        indexCount = indices.count
-        indexBuffer = device.makeBuffer(bytes: indices, length: MemoryLayout<UInt16>.size * indexCount)!
-        posBuffer = device.makeBuffer(bytes: positions, length: MemoryLayout<simd_float4>.size * positions.count)
-        uvBuffer = device.makeBuffer(bytes: uvs, length: MemoryLayout<simd_float2>.size * uvs.count)
-    }
+    // DisplayEnum requirement 0. STORED with a declaration default, at offset 0x38 — the class's
+    // field_offset_vector is 5 lazy slots (0x10..0x37) then isSphere, InstanceSize 0x39.
+    public nonisolated let isSphere = false
 
-    private static func genSphere() -> ([UInt16], [simd_float4], [simd_float2]) {
-        let indices: [UInt16] = [0, 1, 2, 3]
-        let positions: [simd_float4] = [
-            [-1.0, -1.0, 0.0, 1.0],
-            [-1.0, 1.0, 0.0, 1.0],
-            [1.0, -1.0, 0.0, 1.0],
-            [1.0, 1.0, 0.0, 1.0],
-        ]
-        let uvs: [simd_float2] = [
-            [0.0, 1.0],
-            [0.0, 0.0],
-            [1.0, 1.0],
-            [1.0, 0.0],
-        ]
-        return (indices, positions, uvs)
-    }
+    // The six stored properties this class used to declare — indexCount, indexType,
+    // primitiveType, indexBuffer, posBuffer, uvBuffer — together with genSphere() and the init
+    // that filled them, are REMOVED. The binary's PlaneDisplayModel has exactly six field
+    // records: the five $__lazy_storage_$_ pipeline slots plus isSphere, and no init beyond the
+    // implicit one. That absence is the whole reason set(frame:encoder:) below draws
+    // non-indexed: there is no index buffer to draw from.
 
-    func set(encoder: MTLRenderCommandEncoder) {
+    public nonisolated init() {}
+
+    // Slot 33 @0x101a81a10, 46 instructions, read end to end. `frame` is used for exactly two
+    // things and nothing else: `frame.pixelBuffer` (a 2-word class existential at frame+0x18)
+    // and `frame.adjustBuffer` (frame+0x48 — identified BY TYPE as the only MTLBuffer-typed
+    // field among VideoVTBFrame's 14 records). The body touches no stored field of this class;
+    // `self` is consumed only as the receiver of the pipeline call.
+    //
+    // The four selector sends were named from Ghidra's __objc_msgSend_stub entries, not guessed:
+    // 0x10346b020 setRenderPipelineState:, 0x103469b00 setFragmentBuffer:offset:atIndex:,
+    // 0x103469c60 setFrontFacingWinding:, 0x103461380 drawPrimitives:vertexStart:vertexCount:.
+    // Immediates: fragment buffer index 3, winding 0 (= .clockwise), and drawPrimitives
+    // (4, 0, 4) where MTLPrimitiveType 4 is .triangleStrip.
+    //
+    // The third statement's callee 0x101a86ea4 exports no symbol of its own, but it is NOT
+    // unnameable: the exported `MetalRender.setFragmentBuffer(encoder:pixelBuffer:)` sits at
+    // 0x101a83720 and its entire body is one instruction, `b 0x101a86ea4`.
+    public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) {
+        // No unwrap: VideoVTBFrame.pixelBuffer is a non-optional `let` in the source now too, so
+        // this matches the binary, which loads the field with no nil check.
+        let pixelBuffer = frame.pixelBuffer
+        let state = pipeline(pixelBuffer: pixelBuffer)
+        encoder.setRenderPipelineState(state)
+        MetalRender.setFragmentBuffer(encoder: encoder, pixelBuffer: pixelBuffer)
+        encoder.setFragmentBuffer(frame.adjustBuffer, offset: 0, index: 3)
         encoder.setFrontFacing(.clockwise)
-        encoder.setVertexBuffer(posBuffer, offset: 0, index: 0)
-        encoder.setVertexBuffer(uvBuffer, offset: 0, index: 1)
-        encoder.drawIndexedPrimitives(type: primitiveType, indexCount: indexCount, indexType: indexType, indexBuffer: indexBuffer, indexBufferOffset: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }
 
-    func pipeline(planeCount: Int, bitDepth: Int32) -> MTLRenderPipelineState {
-        switch planeCount {
+    // DisplayEnum requirement 2. The witness is a bare `ret` — an empty body, not a missing one.
+    public func touchesMoved(touch: UITouch) {}
+
+    // Slot 32 @0x101a81f08, 51 instructions. PRIVATE in the binary (the mangled name carries a
+    // private discriminator) and NOT a protocol requirement. It takes the pixel buffer
+    // existential and reads both selectors off it itself — `planeCount` through witness slot 4
+    // (wt+0x28) and `bitDepth` through slot 2 (wt+0x18), which match PixelBufferProtocol's
+    // declaration order. The previous `(planeCount:bitDepth:)` spelling is a real trie negative.
+    // The selection itself is unchanged; only the parameter shape moved.
+    private func pipeline(pixelBuffer: PixelBufferProtocol) -> MTLRenderPipelineState {
+        switch pixelBuffer.planeCount {
         case 3:
-            if bitDepth == 10 {
+            if pixelBuffer.bitDepth == 10 {
                 return yuvp010LE
             } else {
                 return yuv
             }
         case 2:
-            if bitDepth == 10 {
+            if pixelBuffer.bitDepth == 10 {
                 return p010LE
             } else {
                 return nv12
             }
-        case 1:
-            return bgra
         default:
             return bgra
         }
@@ -120,7 +99,12 @@ private class PlaneDisplayModel {
 }
 
 @MainActor
-private class SphereDisplayModel {
+public class SphereDisplayModel: DisplayEnum {
+    // DisplayEnum requirement 0, stored at offset 0x38 with a declaration default, exactly as on
+    // PlaneDisplayModel. NOTE its getter is NOT in the trie — only Plane's is — so the address
+    // 0x10002c740 (`mov w0,#1; ret`) is anchored solely by this class's witness table.
+    public nonisolated let isSphere = true
+
     private lazy var yuv = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", isSphere: true)
     private lazy var yuvp010LE = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", isSphere: true, bitDepth: 10)
     private lazy var nv12 = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", isSphere: true)
@@ -150,7 +134,29 @@ private class SphereDisplayModel {
         #endif
     }
 
-    func set(encoder: MTLRenderCommandEncoder) {
+    // Slot 51 @0x101a8c200, 88 instructions. Its first five statements are Plane's, then the two
+    // vertex buffers this class does keep. Unlike Plane it issues NO DRAW CALL AT ALL —
+    // independently verified: zero drawPrimitives/drawIndexedPrimitives stub calls appear in
+    // 0x101a8c200-0x101a8c360. The draw lives in the VR subclasses below, which is consistent.
+    //
+    // The three leading statements had no counterpart in the previous reconstruction; the four
+    // it did have were a strict subset. Field offsets confirm the vertex buffers:
+    // posBuffer@0xb0 at index 0, uvBuffer@0xb8 at index 1.
+    //
+    // The sensor tail is gated on the global `static KSPlayer.KSOptions.enableSensor`
+    // (0x1044e5150) and, when the provider returns a non-nil Optional, copies 0x40 bytes into
+    // self+0x50 = modelViewMatrix — the only stored field either set() body writes. The provider
+    // 0x101a880e4 exports no symbol and has no thunk route, but the existing spelling matches its
+    // shape exactly (enableSensor gate, Optional-returning call, assign).
+    // ⚑[tool=export_trie_oracle ref=sensor_matrix_provider:0x101a880e4 result=NOT_IN_TRIE]
+    public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) {
+        // No unwrap: VideoVTBFrame.pixelBuffer is a non-optional `let` in the source now too, so
+        // this matches the binary, which loads the field with no nil check.
+        let pixelBuffer = frame.pixelBuffer
+        let state = pipeline(pixelBuffer: pixelBuffer)
+        encoder.setRenderPipelineState(state)
+        MetalRender.setFragmentBuffer(encoder: encoder, pixelBuffer: pixelBuffer)
+        encoder.setFragmentBuffer(frame.adjustBuffer, offset: 0, index: 3)
         encoder.setFrontFacing(.clockwise)
         encoder.setVertexBuffer(posBuffer, offset: 0, index: 0)
         encoder.setVertexBuffer(uvBuffer, offset: 0, index: 1)
@@ -162,7 +168,7 @@ private class SphereDisplayModel {
     }
 
     @MainActor
-    func touchesMoved(touch: UITouch) {
+    public func touchesMoved(touch: UITouch) {
         #if canImport(UIKit)
         let view = touch.view
         #else
@@ -226,29 +232,30 @@ private class SphereDisplayModel {
         return (indices, positions, uvs)
     }
 
-    func pipeline(planeCount: Int, bitDepth: Int32) -> MTLRenderPipelineState {
-        switch planeCount {
+    // Slot 50 @0x101a8c134 — the identical 51-instruction shape as Plane's helper, same
+    // parameter change. Unlike Plane's, this one is a trie negative, so its name comes from the
+    // structural match rather than from a symbol.
+    private func pipeline(pixelBuffer: PixelBufferProtocol) -> MTLRenderPipelineState {
+        switch pixelBuffer.planeCount {
         case 3:
-            if bitDepth == 10 {
+            if pixelBuffer.bitDepth == 10 {
                 return yuvp010LE
             } else {
                 return yuv
             }
         case 2:
-            if bitDepth == 10 {
+            if pixelBuffer.bitDepth == 10 {
                 return p010LE
             } else {
                 return nv12
             }
-        case 1:
-            return bgra
         default:
             return bgra
         }
     }
 }
 
-private class VRDisplayModel: SphereDisplayModel {
+public class VRDisplayModel: SphereDisplayModel {
     private let modelViewProjectionMatrix: simd_float4x4
 
     override required init() {
@@ -260,8 +267,10 @@ private class VRDisplayModel: SphereDisplayModel {
         super.init()
     }
 
-    override func set(encoder: MTLRenderCommandEncoder) {
-        super.set(encoder: encoder)
+    // The binary carries VRDisplayModel.set(frame:encoder:) at arity 2, so the override follows
+    // its superclass's grounded signature change. The body below is unchanged.
+    override public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) {
+        super.set(frame: frame, encoder: encoder)
         var matrix = modelViewProjectionMatrix * modelViewMatrix
         let matrixBuffer = MetalRender.device.makeBuffer(bytes: &matrix, length: MemoryLayout<simd_float4x4>.size)
         encoder.setVertexBuffer(matrixBuffer, offset: 0, index: 2)
@@ -269,7 +278,7 @@ private class VRDisplayModel: SphereDisplayModel {
     }
 }
 
-private class VRBoxDisplayModel: SphereDisplayModel {
+public class VRBoxDisplayModel: SphereDisplayModel {
     private let modelViewProjectionMatrixLeft: simd_float4x4
     private let modelViewProjectionMatrixRight: simd_float4x4
     override required init() {
@@ -283,8 +292,10 @@ private class VRBoxDisplayModel: SphereDisplayModel {
         super.init()
     }
 
-    override func set(encoder: MTLRenderCommandEncoder) {
-        super.set(encoder: encoder)
+    // As VRDisplayModel above: the binary carries VRBoxDisplayModel.set(frame:encoder:) at
+    // arity 2. Body unchanged.
+    override public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) {
+        super.set(frame: frame, encoder: encoder)
         let layerSize = KSOptions.sceneSize
         let width = Double(layerSize.width / 2)
         [(modelViewProjectionMatrixLeft, MTLViewport(originX: 0, originY: 0, width: width, height: Double(layerSize.height), znear: 0, zfar: 0)),

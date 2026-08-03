@@ -137,13 +137,40 @@ extension DynamicRange {
     }
 }
 
+// DisplayEnum is a PROTOCOL in the binary, not an enum — a type-KIND divergence, not the
+// "missing conformance" the census implied. The trie symbol is `$s8KSPlayer11DisplayEnumMp`
+// @0x1039eda7c, and the `Mp` suffix (protocol descriptor) is decisive; no enum-kind nominal
+// type of this name exists anywhere in the image. The three cases this source declared
+// (.plane/.vr/.vrBox) have no counterpart at all: the binary models them as CLASSES that
+// conform, which is why `KSOptions.display` is field 47 with a `_p` existential mangle rather
+// than an enum tag.
+//
+// CLASS-CONSTRAINED: protocol_signature reports NumRequirementsInSignature 1 with a single
+// `Layout` requirement on Self, so `: AnyObject` is required here (contrast PreLoadProtocol,
+// which reports 0 and must NOT carry it). No associated types.
+//
+// Exactly three requirements, in witness order, recovered from BOTH conformers' validated
+// witness tables (PlaneDisplayModel wt 0x1041d9e18, SphereDisplayModel wt 0x1041da228):
+//   0 Getter  isSphere — a STORED Bool at offset 0x38 in both classes, with a declaration
+//     default. Its getters are constant-folded (`mov w0,#0; ret` on Plane @0x10002dab0,
+//     `mov w0,#1; ret` on Sphere @0x10002c740), which is what a `let` with a literal default
+//     compiles to; it is not a computed property.
+//   1 Method  set(frame:encoder:) — arity 2. This source declared `set(encoder:)` at arity 1.
+//   2 Method  touchesMoved(touch:) — PlaneDisplayModel's witness is a bare `ret`, an empty body.
+// `pipeline(...)` is NOT a requirement: all three slots are accounted for above.
+//
+// @MainActor is carried over from the enum this replaces. It is NOT binary-derived — actor
+// isolation leaves no reflection record — but it is load-bearing for the existing source,
+// whose SphereDisplayModel.touchesMoved is already @MainActor and could not otherwise witness
+// requirement 2.
 @MainActor
-public enum DisplayEnum {
-    case plane
-    // swiftlint:disable identifier_name
-    case vr
-    // swiftlint:enable identifier_name
-    case vrBox
+public protocol DisplayEnum: AnyObject {
+    // nonisolated: it is a stored immutable Bool, and KSOptions reads it from a nonisolated
+    // context (isUseDisplayLayer). Isolation is not reflection-visible, so neither the
+    // @MainActor above nor this is binary-derived — both are carried over from the enum.
+    nonisolated var isSphere: Bool { get }
+    func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder)
+    func touchesMoved(touch: UITouch)
 }
 
 public struct VideoAdaptationState {
