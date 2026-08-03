@@ -101,6 +101,28 @@ closure `FUN_1019df4a8` is a 3-instruction adapter into an unnamed 68-instructio
 already documents slot 35 as CONFIRMED-but-deferred and its s34 sibling verdict names it a
 prerequisite-linked unit — that groundwork is real, the closure cluster is what remains.
 
+
+## 3.5 ⭐ NEW ORACLE — chained-fixup binds are readable (`scripts/bind_oracle.py`)
+
+The project had been treating dyld chained-fixup binds as unreadable. That was wrong, and it cost
+real deferrals. `bind_oracle.py` walks the bind table (**39,899 sites**, cached at
+`reconstruction/bind_table.txt`) and resolves any `__got` slot, ObjC classref or import to its
+symbol. The belief came from `dyld_info` crashing on this image — a bug in that ONE reader, not a
+property of the binary.
+
+Session 99 deferred six classrefs in `S99_DERIVED_IOSVideoPlayerView.md` as "chained-fixup BINDs,
+so the class name is not readable by chasing the pointer" (idx131, idx140). **All six resolve on
+the first try** — UIImage, UIImageSymbolConfiguration, UIStackView, UIImageView,
+UITapGestureRecognizer, UISwipeGestureRecognizer — and they are now the tool's positive goldens.
+
+**Action for session 101:** re-check every pre-s100 deferral of the form "classref / __got /
+import is a chained-fixup bind, not readable". They are all suspect. Memory:
+`chained-fixup-binds-are-readable`.
+
+It already discharged one blocker in §3: `__got 0x104112d00` binds `__swiftEmptyArrayStorage` and
+`0x104112d08` binds `__swiftEmptyDictionarySingleton`, which together ESTABLISH (no longer infer)
+that `DynamicInfo`'s `metadataBlock` closure returns `[:]`.
+
 ## 4. Open defects
 
 1. **`classify_accessor_slots` drops bodies silently.** It extracts class+slot from a free-text
