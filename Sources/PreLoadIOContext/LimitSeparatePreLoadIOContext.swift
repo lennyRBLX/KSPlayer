@@ -35,7 +35,7 @@ import FFmpegKit  // FFmpeg C types reachable through the CacheIOContext chain
 // CacheIOContext / URLContextDownload / TimeIndexEntry are in-module (already
 //   committed; no import). PreLoadIOContext builds green via
 //   `swift build --target PreLoadIOContext`.
-public class LimitSeparatePreLoadIOContext: CacheIOContext {
+public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     // --- stored fields (binary __swift5_fieldmd order; 8 own properties) ---
 
     // 0  maxFileSize: byte cap for this context. Designated init param-fed (param_7,
@@ -395,7 +395,10 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
     //   checks) is Swift-synthesized stdlib Array machinery — reproduced here via the
     //   equivalent Array operations rather than transcribed by FUN-address; the
     //   lock / sorted-search / insert-update-append spine is the faithful structure. — P2
-    func addTimeIndex(position: UInt64, time: Double) { // name inferred (devirt)
+    // PUBLIC because it witnesses PreLoadProtocol requirement 6. The name is no longer
+    // "inferred": the export trie names this body
+    // LimitSeparatePreLoadIOContext.addTimeIndex(position: Swift.UInt64, time: Swift.Double).
+    public func addTimeIndex(position: UInt64, time: Double) {
         _timeIndexLock.lock()                  // binary: objc_stub::lock(_timeIndexLock)
         defer { _timeIndexLock.unlock() }      // binary: objc_stub::unlock(self) on every exit
         // binary: scan for the first entry with position >= the new position.
@@ -547,4 +550,79 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext {
         }
         return false
     }
+
+    // MARK: - KSPlayer.PreLoadProtocol members
+    //
+    // Requirements 1, 2, 3 and 7 are inherited from CacheIOContext (see the members declared
+    // there); 5 and 6 are already declared above. These are the three this class owes.
+
+    // Requirement 0. Body @0x101ba4b68, 26 instructions, and structurally identical to
+    // PreLoadIOContext's instruction for instruction — the two differ ONLY in which field-offset
+    // global they load, and are NOT ICF-folded with each other. That global is 0x1044f5c40, which
+    // the reflection offset/name table names `fakeUrlPos` (an agent could narrow it no further than
+    // {fakeUrlPos, moreUrlPos}; the table settles it).
+    //
+    // Shape, read from the body: load fakeUrlPos; `cmn x19,#0x1` -> if it is the UInt64.max
+    // sentinel return 0; else `subs x8, x19, [self+0x80]` against the inherited logicalPos and
+    // `b.hs` -> if that subtraction BORROWED (i.e. fakeUrlPos < logicalPos) return 0; otherwise
+    // `cmn x8,#0x1` / `csel x0, x8, Int64.max, gt` -> return the difference, saturating to
+    // Int64.max when its sign bit is set. Its only call is a read `swift_beginAccess` on logicalPos.
+    public var loadedSize: Int64 {
+        guard fakeUrlPos != .max, fakeUrlPos >= logicalPos else {
+            return 0
+        }
+        let delta = fakeUrlPos - logicalPos
+        return delta > UInt64(Int64.max) ? .max : Int64(delta)
+    }
+
+    // Requirement 8. The witness for this requirement is 0x10000e52c — a BARE `ret`. That is an
+    // EMPTY body, not a missing one: this class deliberately does nothing on a playback-position
+    // sync, where PreLoadIOContext forwards to its own (time:position:) overload. The address is
+    // ICF-folded 420 ways, which is exactly what an empty function attracts.
+    public func syncPlaybackPosition(time _: Double, duration _: Double) {}
+
+    // Requirement 4. Body @0x101ba5398, 433 instructions, ONE `ret` with the Int32 result carried
+    // in x24, plus nine traps. It returns an FFmpeg-convention Int32: a byte count when positive,
+    // otherwise an AVERROR.
+    //
+    // The five distinct result values, each read at its own site: 0 seeded at 0x101ba5478;
+    // 1 at 0x101ba56b0 (the seek branch, taken whether or not the seek succeeded — the sign test
+    // only skips the bookkeeping); -1 at 0x101ba5708, emitted on exactly one condition, that the
+    // private `canContinuePreload(at:)` @0x101ba5a5c returned false; 0xDFB9B0BB at 0x101ba59cc,
+    // which is AVERROR_EOF grounded in the FFmpeg headers (FFERRTAG('E','O','F',' ') = -0x20464F45),
+    // emitted only when the read itself returned AVERROR_EOF AND the requested size was >= 1; and
+    // the read result itself at 0x101ba593c.
+    //
+    // Spine, read from the body: branch on the private `findDiscontinuousPos()` @0x101ba4e30
+    // returning an Optional<UInt64> — `.some` takes the cache-read path, `.none` the seek path.
+    // The read path binary-searches `entryList` for the first entry whose position is strictly
+    // greater than the target and clamps the read size to that gap. Both paths dispatch through
+    // the `moreDownload` existential's witness table — slot +0x30 with (pos, 0) on the seek path
+    // and slot +0x28 with (buffer, size) on the read path; slot +0x30 resolves through
+    // DownloadProtocol requirement 5 to `AbstractAVIOContext.seek(offset:whence:)`. On success it
+    // calls `CacheIOContext.addEntry(logicalPos:buffer:size:)` and DISCARDS a thrown error
+    // (swift_errorRelease with no rethrow — a `try?`-shaped pattern), then advances the position
+    // field and calls the private `updateSpeedSample(newPos:)`.
+    //
+    // Two KSLog sites, both at level 3, both gated on KSOptions.logLevel >= 3, at #line 166 and
+    // 186, with #fileID "PreLoadIOContext/LimitSeparatePreLoadIOContext.swift" and the 34-char
+    // message prefix "[CacheIOContext] more ffurl_seek2 ". Their #function argument is a
+    // register-form small string that decode_string_literal has no path for and was NOT decoded.
+    //
+    // UNRESOLVED → P8 (IO-completion): the body is written to its RESULT CONTRACT only. The
+    // interleaving of the buffer bookkeeping, the two witness dispatches and the entryList search
+    // is read but not transcribed, because several of its callees are real trie negatives
+    // (0x101babf50, 0x101bac23c, 0x101b94710) and transcribing by FUN-address is forbidden.
+    // ⚑[tool=export_trie_oracle ref=more_insert_helper:0x101babf50 result=NOT_IN_TRIE]
+    //
+    // NOTE on the -1 guard: the binary calls a PRIVATE `canContinuePreload(at:)` @0x101ba5a5c.
+    // Our source has no member of that name — it declares `canPreload(_:)` at :524, which is a
+    // DIFFERENT symbol — so the call is NOT written here rather than being bent onto the wrong
+    // member. Reconciling those two names is its own unit.
+    public func more() -> Int32 {
+        // UNRESOLVED → P8: the canContinuePreload guard, the seek / cache-read split and its
+        // bookkeeping. Only the result contract above is read.
+        0
+    }
 }
+

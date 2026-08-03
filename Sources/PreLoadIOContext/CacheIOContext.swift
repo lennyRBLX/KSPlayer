@@ -313,6 +313,55 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         isReadComplete = true
     }
 
+    // MARK: - KSPlayer.PreLoadProtocol members inherited by both conformers
+    //
+    // PreLoadProtocol requirements 1, 2, 3 and 7 are satisfied for BOTH
+    // LimitSeparatePreLoadIOContext and PreLoadIOContext by members declared HERE, on their shared
+    // superclass — not by the conformers and not by protocol extensions. The evidence is that reqs
+    // 1/2/3 resolve to ONE ICF-folded witness body in both conformance tables, and that body reads
+    // only this class's stored fields.
+
+    // Requirement 2. The witness body @0x101b914d0 is `ldr x8,[x20]` / `ldr d0,[x8,#0x68]` / `ret`,
+    // and this class's own exported downloadSpeed getter @0x100d362bc is the same load at the same
+    // offset — 0x68 is `_downloadSpeed`. A plain read of the private stored value.
+    public var downloadSpeed: Double {
+        _downloadSpeed
+    }
+
+    // Requirement 1. Declared here rather than on either conformer because its single ICF-folded
+    // witness @0x101ba66bc (23 instr) touches ONLY superclass state: it takes a read access on
+    // self+0x50 and returns it unless it is the UInt64.max sentinel, in which case it takes a
+    // second read access on self+0x80 and returns that. Both offsets are anchored by this class's
+    // own exported getters — urlPos @0x100a4e368 reads +0x50, logicalPos @0x101b86138 reads +0x80.
+    public var position: UInt64 {
+        urlPos == .max ? logicalPos : urlPos
+    }
+
+    // Requirement 7, the base implementation. LimitSeparatePreLoadIOContext does NOT override it —
+    // its req7 witness @0x101b914dc dispatches virtually through metadata +0x438, which is this
+    // class's vtable slot 84 — while PreLoadIOContext overrides it with a timeIndex-based version.
+    //
+    // Body @0x101b8eed0, 210 instr. Guard ladder, in order: `fcmp d0,#0.0` / `b.le` rejects a
+    // non-positive duration; then `eof` (offset global 0x104c63938) must be true; then `end`
+    // (self+0x48) must be non-zero. EVERY failure returns the empty-array storage loaded from
+    // __got 0x104112d00 — a literal `[]`, with no tail call anywhere (unlike the override, whose
+    // failure path tail-calls THIS method). On the live path it takes a read access and walks
+    // `entryList` (self+0x88), reading each element's `CacheFileEntry.position` through offset
+    // global 0x104c63948.
+    //
+    // UNRESOLVED → P8 (IO-completion): the per-entry accumulation between the guard and the return
+    // is carried by two unnamed helpers, 0x101b91580 and 0x101b94c7c, both real trie negatives, so
+    // how consecutive entries are turned into ranges is NOT read and is not written here. The guard
+    // ladder and the empty-result contract above ARE read, and are what this body promises.
+    // ⚑[tool=export_trie_oracle ref=cachedTimeRanges_accumulator:0x101b91580 result=NOT_IN_TRIE]
+    public func cachedTimeRanges(duration: Double) -> [CachedTimeRange] {
+        guard duration > 0, eof, end != 0 else {
+            return []
+        }
+        // UNRESOLVED → P8: the entryList walk that builds the ranges.
+        return []
+    }
+
     // MARK: - KSPlayer.PlayList conformance
     //
     // Names, types and ORDER are the witness table's, not chosen: conformance descriptor

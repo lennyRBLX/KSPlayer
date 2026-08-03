@@ -26,7 +26,7 @@ import FFmpegKit  // AVIOInterruptCB (inherited interrupt chain — FFmpeg C str
 // CacheIOContext / URLContextDownload / TimeIndexEntry are in-module (already
 // committed; no import). AVIOInterruptCB resolves via `import FFmpegKit` (the
 // inherited interrupt field). Builds via `swift build --target PreLoadIOContext`.
-public class PreLoadIOContext: CacheIOContext {
+public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackPositionSyncProtocol {
     // --- stored fields (binary __swift5_fieldmd order; defaults are the binary's
     //     flattened init constants. Swift synthesizes accessors — do NOT hand-write
     //     get/set; do NOT write an init — all inherited from CacheIOContext) ---
@@ -95,7 +95,15 @@ public class PreLoadIOContext: CacheIOContext {
     //   If invalid OR the explicit `invalid` flag is set → store nil (writes 0,0 and
     //   the optional tag byte = 1). Else → store the (time, position) pair (tag = 0).
     //   `position` is the UInt64 second word (param_2), `invalid` the char param_3.
-    func updatePlaybackSnapshot(time: Double, position: UInt64, invalid: Bool) { // name inferred (devirt)
+    // s98 RENAMED. The name was inferred as `updatePlaybackSnapshot(time:position:invalid:)`;
+    // the marker below already carried the real one. It is
+    // `syncPlaybackPosition(time: Double, position: UInt64?)` — PreLoadProtocol's SIBLING
+    // protocol requirement (PreLoadPlaybackPositionSyncProtocol req0), body @0x101ba6980,
+    // 54 instr, vtable slot 31 / metadata +0x590. The `invalid:` third parameter
+    // corresponds to NOTHING in the binary: the nil-vs-value distinction is carried by the
+    // Optional tag of `position` itself, which the body tests with `and w9,w21,#0xff` /
+    // `cmp w9,#0x1` before choosing between the value store and the nil store.
+    public func syncPlaybackPosition(time: Double, position: UInt64?) {
         _playbackSnapshotLock.lock()
         // Binary gate (FUN_101ba6980): isNaN || isInfinite || time < 0 || invalid.  ⚑[tool=resolve_fun_pins ref=FUN_101ba6980:0x101ba6980 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.syncPlaybackPosition(time: Swift.Double, position: Swift.UInt64?) -> ()
         // The `time < 0` (negative-finite) clause was RECOVERED by the M1C audit's
@@ -103,10 +111,10 @@ public class PreLoadIOContext: CacheIOContext {
         // (`(long)param_1 < 0`) finite-exponent tests that reject every negative
         // finite time (counterexample -1.0 = 0xBFF0… → nil). The original
         // reconstruction omitted it. -0.0 is NOT rejected (matches strict `< 0`).
-        if time.isNaN || time.isInfinite || time < 0 || invalid {
-            _playbackSnapshot = nil      // binary: *puVar1=0; puVar1[1]=0; tag byte=1
-        } else {
+        if let position, !time.isNaN, !time.isInfinite, time >= 0 {
             _playbackSnapshot = (time: time, position: position) // binary: tag byte=0
+        } else {
+            _playbackSnapshot = nil      // binary: *puVar1=0; puVar1[1]=0; tag byte=1
         }
         _playbackSnapshotLock.unlock()
     }
@@ -407,4 +415,129 @@ public class PreLoadIOContext: CacheIOContext {
     //     • slot 54  (1183 instr) @ —   — preload/download IO (deepest)
     //   DEVIRT (null, no body): slots 22, 23, 24, 25, 26, 27, 28, 29, 30, 34.
     //   thumbnail-result typing is P3; preload/download IO is P2. — NOT fabricated.
+
+    // MARK: - KSPlayer.PreLoadProtocol members
+    //
+    // Requirements 1, 2 and 3 are inherited from CacheIOContext; 5 is declared above; the sibling
+    // protocol's sole requirement is the renamed syncPlaybackPosition(time:position:) above.
+
+    // Requirement 0. Body @0x101ba9e44, 26 instr, vtable slot 52 — structurally identical to
+    // LimitSeparatePreLoadIOContext's, differing only in its field-offset global (0x1044f6238,
+    // which the reflection offset/name table names `fakeUrlPos`). Same shape: sentinel test, then
+    // a borrowing subtraction against the inherited logicalPos, then saturation at Int64.max.
+    public var loadedSize: Int64 {
+        guard fakeUrlPos != .max, fakeUrlPos >= logicalPos else {
+            return 0
+        }
+        let delta = fakeUrlPos - logicalPos
+        return delta > UInt64(Int64.max) ? .max : Int64(delta)
+    }
+
+    // Requirement 8. Body @0x101bab2d8, 49 instr, slot 36. It is a pure FORWARDER: every path
+    // tail-calls the (time:position:) overload above through metadata +0x590. Guard ladder, in
+    // order: a float ladder on `time` rejecting negative / ±Inf / NaN; the same on `duration`; the
+    // inherited `eof` must be true; the inherited `end` must be non-zero. All pass -> forward with
+    // `.some(timeToPosition(time:fileSize:duration:))`, where the converter is 0x101ba7dc8 and
+    // `fileSize` is `end` (the body loads self+0x48 straight into x0). Any fail -> forward with
+    // `nil`, and note the body does NOT reset d0, so the original time is still passed.
+    //
+    // UNRESOLVED → P8: `timeToPosition(time:fileSize:duration:)` @0x101ba7dc8 is 200 instructions
+    // and is NOT reconstructed, so the success arm cannot be written without inventing it. Only
+    // the guard ladder and the nil arm are expressed.
+    // ⚑[tool=export_trie_oracle ref=PreLoadIOContext.timeToPosition:0x101ba7dc8 result=name-recovered]
+    public func syncPlaybackPosition(time: Double, duration: Double) {
+        guard !time.isNaN, !time.isInfinite, time >= 0,
+              !duration.isNaN, !duration.isInfinite, duration > 0,
+              eof, end != 0
+        else {
+            syncPlaybackPosition(time: time, position: nil)
+            return
+        }
+        // UNRESOLVED → P8: forward with .some(timeToPosition(time:fileSize:duration:)).
+        syncPlaybackPosition(time: time, position: nil)
+    }
+
+    // Requirement 6. Body @0x101ba7914, 301 instr — a DIFFERENT method from the 109-instruction
+    // sibling on LimitSeparatePreLoadIOContext, not a copy of it. Four things it does that the
+    // sibling does not: (a) a leading NaN/±Inf/negative guard on `time` taken BEFORE the lock, so
+    // it returns without locking at all; (b) a BINARY SEARCH (lower-bound partition on position)
+    // where the sibling does a linear firstIndex scan; (c) strict `time` monotonicity enforcement
+    // around the insertion point — it REJECTS the write, unlocking and returning, if the new time
+    // is <= the previous entry's or >= the next entry's; (d) on an exact position match it compares
+    // the stored time and NO-OPS when equal, where the sibling replaces unconditionally. It always
+    // inserts through the shared helper 0x101babf50 with no append fast-path, and ends with a KSLog
+    // at #line 84 whose #fileID is "PreLoadIOContext/PreLoadIOContext.swift" and #function
+    // "addTimeIndex(position:time:)".
+    //
+    // UNRESOLVED → P8: the search/insert interior. Its Array machinery runs through unnamed
+    // helpers (0x101babf50 insert, 0x101bac23c COW) that are real trie negatives, and transcribing
+    // by FUN-address is forbidden. The leading guard IS read and is expressed.
+    // ⚑[tool=export_trie_oracle ref=addTimeIndex_insert_helper:0x101babf50 result=NOT_IN_TRIE]
+    public func addTimeIndex(position: UInt64, time: Double) {
+        guard !time.isNaN, !time.isInfinite, time >= 0 else {
+            return
+        }
+        _timeIndexLock.lock()
+        defer { _timeIndexLock.unlock() }
+        // UNRESOLVED → P8: binary-search insertion with monotonicity rejection.
+    }
+
+    // Requirement 7, overriding CacheIOContext's entryList-based implementation with a
+    // timeIndex-based one. Body @0x101ba6fa0, 526 instr, and its FAILURE PATH IS A TAIL CALL TO
+    // SUPER (`b 0x101b8eed0`) rather than an empty array — which is why the guard is expressed as
+    // a fall-through to `super`. Three conjuncts: duration finite and strictly positive; the
+    // inherited `eof` true; the inherited `end` non-zero.
+    //
+    // On the live path it takes TWO sequential non-overlapping locks — _timeIndexLock around a
+    // read of _timeIndex, then _playbackSnapshotLock around a read of the 17-byte
+    // _playbackSnapshot — then loops over the private `cachedByteRanges(clampedTo: end)`,
+    // converting each byte endpoint to seconds, stretching whichever range CONTAINS the playback
+    // snapshot so that it covers the snapshot time, and appending only when start < end. A second
+    // coalescing pass merges touching ranges, and ITS output is what is returned. It ends with a
+    // KSLog at #line 412.
+    //
+    // UNRESOLVED → P8: both loops. The byte→seconds conversion and the coalescing pass run through
+    // unnamed helpers (0x101bac70c, 0x101ba6880, 0x101bac458), all real trie negatives.
+    // ⚑[tool=export_trie_oracle ref=cachedTimeRanges_convert:0x101bac70c result=NOT_IN_TRIE]
+    override public func cachedTimeRanges(duration: Double) -> [CachedTimeRange] {
+        guard !duration.isNaN, !duration.isInfinite, duration > 0, eof, end != 0 else {
+            return super.cachedTimeRanges(duration: duration)
+        }
+        // UNRESOLVED → P8: the timeIndex-based range build and its coalescing pass.
+        return []
+    }
+
+    // Requirement 4. Body @0x101ba9eac, 1183 instr, vtable slot 201 — ONE `ret` at 0x101baa6bc
+    // with every path funnelling through a shared epilogue, plus ten traps.
+    //
+    // The guard ladder, in order, is fully read: (1) `isPreloadPaused` -> KSLog #line 636 ->
+    // return -1 WITHOUT unlocking (the lock has not been taken yet); (2) an objc `tryLock` on the
+    // inherited downloadLock -> on failure KSLog 642 -> return 1, again without unlocking;
+    // (3) `isPreloadPaused` re-read AFTER the lock -> KSLog 649 -> unlock -> -1;
+    // (4) `processThumbnailFetchRequest()` true -> unlock -> 1; (5) a lazy
+    // `swift_slowAlloc(Int(bufferSize), -1)` into the load-more buffer when it is nil;
+    // (6) `CacheIOContext.canAccessNetwork()` false -> KSLog 670 -> unlock -> -1;
+    // (7) `preloadCount()` == 0 -> KSLog 678 -> unlock -> -1.
+    //
+    // Beyond it: `findDiscontinuousPos()` .some takes a seek path (KSLog 686); .none gates a second
+    // findDiscontinuousPos behind a four-part conjunction (eof AND urlPos != end AND
+    // logicalPos + bufferSize < urlPos), whose .none zeroes the three speed-sample fields and
+    // returns 0. The read path binary-searches entryList, clamps the size to the gap, calls
+    // `readComplete(buffer:size:isReadComplete:)`, substitutes AVERROR(EAGAIN) = -35 when at EOF
+    // but not finished, and on success calls `addEntry(...)` virtually while DISCARDING a thrown
+    // error, then advances urlPos and calls `updateSpeedSample(newPos:)`. Nine KSLog sites in all,
+    // at #lines 636, 642, 649, 670, 678, 686, 698, 712, 735.
+    //
+    // UNRESOLVED → P8 (IO-completion): this is written to its RESULT CONTRACT and its first guard
+    // only. The remainder depends on members our source does not yet declare
+    // (processThumbnailFetchRequest, canAccessNetwork, preloadCount, findDiscontinuousPos,
+    // readComplete, addEntry, updateSpeedSample), and inventing any of them is worse than the pin.
+    public func more() -> Int32 {
+        guard !isPreloadPaused else {
+            return -1
+        }
+        // UNRESOLVED → P8: the lock, the six remaining guards, and the seek / cache-read split.
+        return 0
+    }
 }
+
