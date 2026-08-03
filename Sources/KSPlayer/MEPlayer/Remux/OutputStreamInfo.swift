@@ -86,16 +86,36 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     public init(formatContext: FormatContext,
                 filename: String,
                 forceTranscode: Bool = false,          // ⚑ p4 name INFERRED
-                formatContextOptions: [String: Any],
-                formatName: String,
+                // ⚑ p5/p6-p7 OPTIONALITY DERIVED s102 — both are nil-tested by the binary, so neither
+                // can be the non-optional type this init used to declare:
+                //   p5  `cbz x24` @0x101a1d0f8 — an empty Dictionary is a non-null singleton, so a
+                //       non-optional Dictionary can never be zero. The nil arm builds the substitute
+                //       from `__swiftEmptyArrayStorage` (__got 0x104112d00) via 0x1019c3148, which is
+                //       how an empty DICTIONARY LITERAL `[:]` is constructed, and both arms converge
+                //       on one stack slot — i.e. the callee itself applies `?? [:]`.
+                //   p6+p7 `cbz x25` @0x101a1d11c and `cbz x20` @0x101a1e154 — `""` is
+                //       (0, 0xE000000000000000), never (0,0), so a non-optional String cannot be zero.
+                // Slot identity is NOT in doubt — which is what rules out "the parameter ORDER is
+                // wrong" as the competing explanation. The p5 value is converted by 0x101a322c0 and
+                // passed as the AVDictionary** of  ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
+                // (`bl 0x1031941d8` @0x101a1e4a4), then released by  ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
+                // (@0x101a1e4b0). So p5 IS the format-context options and only its optionality was wrong.
+                // ⚑[tool=bind_oracle ref=__swiftEmptyArrayStorage:0x104112d00 result=CONFIRMED]
+                formatContextOptions: [String: Any]?,
+                formatName: String?,
                 // ⚑ p8 DERIVED (was `flag: Int`, inferred). MODULE-QUALIFIED: FFmpeg's C `AVMediaType`
                 // enum collides with AVFoundation's here, the same collision MEPlayerItem.swift:271 names.
                 mediaType: AVFoundation.AVMediaType? = nil,
                 transcodeCodecIDs: [AVCodecID] = []) throws {   // ⚑ p9 name/type INFERRED
         // ── C1: resolve muxer name → avformat_alloc_output_context2 → throw on failure ──────────────
-        // ⚑ DEFERRED general-path (L196-381, dead for write() which passes "hls"): empty formatName →
+        // ⚑ DEFERRED general-path (L196-381, dead for write() which passes "hls"): NIL formatName →
         //   derive the muxer name from filename.pathExtension via a runtime format-registry match; the
         //   loop internals are not deterministically recoverable (P36/P43 — no static-switch fit).
+        //   CORRECTED s102: the guard is `formatName == nil`, not `formatName.isEmpty`. The binary
+        //   tests the String's DISCRIMINATOR word (`cbz x25` @0x101a1d11c) and the nil arm runs the
+        //   filename-derived path with x28/x2 (the filename String) @0x101a1d150-0x101a1d174; the
+        //   non-nil arm instead converts formatName to a buffer pointer (result +0x20, the
+        //   _StringObject.nativeBias) @0x101a1d13c and skips that path entirely.
         let resolvedFormatName = formatName
         var contextPointer: UnsafeMutablePointer<AVFormatContext>?
         // ⚑[tool=ffmpeg_name_oracle ref=0x103193858 result=CONFIRMED] avformat_alloc_output_context2 (79/316)
@@ -153,7 +173,10 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
 
         // ── C4: assemble the 12 stored fields + return (implicit) — L1311-1380 ───────────────────────
         //   removeADTS = isHLS && options["hls_segment_type"]=="fmp4"  (fMP4 segments need raw AAC; L1267-1310)
-        let segmentType = formatContextOptions["hls_segment_type"] as? String
+        // `?? [:]` is the callee's OWN substitution, read at 0x101a1d0f8-0x101a1d114 (see the init's
+        // p5 note): both the nil and non-nil arms converge on one slot, so every later use sees a
+        // dictionary whether or not the caller passed one.
+        let segmentType = (formatContextOptions ?? [:])["hls_segment_type"] as? String
         self.formatCtx       = outputContext                                       // +0x58
         self.url             = filename                                            // +0x30/+0x38
         self.timeBaseMap     = timeBaseMap                                         // +0x20
