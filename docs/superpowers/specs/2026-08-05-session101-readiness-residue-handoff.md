@@ -107,6 +107,33 @@ So the remaining tail is real reconstruction, and the cheap screens are spent.
   `_indirect_all_witness` requires every site to be glue. Sized twice, corrected once. Do not build it.
 - **11** behind one blocker each, 82-364 instructions, all read and all genuine.
 
+### ⭐ SOME BLOCKERS ARE ALREADY FAITHFUL AND MERELY UNVERDICTED
+
+The most useful discovery of the tail. `VideoPlayerView.isMaskShow`'s didSet (`0x101b2e124`, 82
+instr) needed **NO SOURCE CHANGE** — the reconstruction already matched Forward. It was blocked
+purely because it carried no FAITHFUL verdict, which is what `topo_readiness` requires to admit a
+callee to its DONE set. Audited and adjudicated; floor 331 -> 332.
+
+That reverses the working assumption. The first three units all needed rewrites, so the tail was
+being costed as "16 rewrite-then-audit units". It is not: **an unknown fraction is audit-only**,
+which is far cheaper per body. Try the audit first on every remaining blocker whose class has
+source, and only reach for a rewrite when the comparison actually fails.
+
+Method note from that unit: check a ternary as a TRUTH TABLE, not by reading the decompile's branch
+order. `alpha` verified as isMaskShow=false -> 0.0, true+selected -> 0.0, true+unselected -> 1.0,
+which is `isMaskShow && !isLock ? 1.0 : 0.0`; and `isLock` is `{ lockButton.isSelected }` at :91,
+INLINED, not diverged.
+
+### Partial, for whoever takes `KSAVPlayer#78`
+
+`0x1019a24a8` (128 instr) is `playbackState`'s didSet (KSAVPlayer.swift:230-239). Structure matches
+— `if playbackState != oldValue { ...; if playbackState == .finished (raw 4) { ... } }`. The OPEN
+question is the middle call: source calls `playOrPause()` directly, the binary calls
+`FUN_1019a26a8(FUN_1019b293c, FUN_1019b2c64, &DAT_1041d4280, &DAT_1035671a8)` — two function
+pointers plus metadata, with a `MainActor` cast and a `TaskPriority` local. Establish whether that
+is a compiler-emitted actor hop (because `playOrPause` is `@MainActor`) or a real divergence
+BEFORE writing a verdict either way.
+
 ## 3.5 ⭐ NEW ORACLE — `scripts/bind_oracle.py`, and the BIND vs REBASE distinction
 
 A chained fixup is one of two things, and they need different reads:
