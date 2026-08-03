@@ -102,26 +102,34 @@ already documents slot 35 as CONFIRMED-but-deferred and its s34 sibling verdict 
 prerequisite-linked unit — that groundwork is real, the closure cluster is what remains.
 
 
-## 3.5 ⭐ NEW ORACLE — chained-fixup binds are readable (`scripts/bind_oracle.py`)
+## 3.5 ⭐ NEW ORACLE — `scripts/bind_oracle.py`, and the BIND vs REBASE distinction
 
-The project had been treating dyld chained-fixup binds as unreadable. That was wrong, and it cost
-real deferrals. `bind_oracle.py` walks the bind table (**39,899 sites**, cached at
-`reconstruction/bind_table.txt`) and resolves any `__got` slot, ObjC classref or import to its
-symbol. The belief came from `dyld_info` crashing on this image — a bug in that ONE reader, not a
-property of the binary.
+A chained fixup is one of two things, and they need different reads:
 
-Session 99 deferred six classrefs in `S99_DERIVED_IOSVideoPlayerView.md` as "chained-fixup BINDs,
-so the class name is not readable by chasing the pointer" (idx131, idx140). **All six resolve on
-the first try** — UIImage, UIImageSymbolConfiguration, UIStackView, UIImageView,
-UITapGestureRecognizer, UISwipeGestureRecognizer — and they are now the tool's positive goldens.
+- **BIND** — an external import (a UIKit class, a libswiftCore singleton). `bind_oracle.py --addr
+  <a>` names it from the Mach-O bind table (**39,899 sites**, cached at
+  `reconstruction/bind_table.txt`). Golden-gated on 8 positives + 2 negatives.
+- **REBASE** — an internal pointer. It has NO bind row; you must apply the fixup chain. Session 92
+  did this correctly for `__got 0x1041079e8` -> `0x1039ee4c4` -> protocol descriptor -> `Name`
+  rel32 -> `'KSSliderDelegate'` (verdict `KSSlider_idx15_slot30_s92`).
 
-**Action for session 101:** re-check every pre-s100 deferral of the form "classref / __got /
-import is a chained-fixup bind, not readable". They are all suspect. Memory:
-`chained-fixup-binds-are-readable`.
+**A miss from bind_oracle therefore means REBASE — go apply the chain. It never means unreadable.**
 
-It already discharged one blocker in §3: `__got 0x104112d00` binds `__swiftEmptyArrayStorage` and
-`0x104112d08` binds `__swiftEmptyDictionarySingleton`, which together ESTABLISH (no longer infer)
-that `DynamicInfo`'s `metadataBlock` closure returns `[:]`.
+⚠️ An earlier draft of this section claimed the project had been treating the bind table as
+unavailable. That was WRONG and is corrected here: s92 used `--macho --bind` correctly. What was
+actually missing was applying it systematically to ObjC classrefs — `S99_DERIVED_IOSVideoPlayerView`
+idx131/idx140 pinned six as "not readable by chasing the pointer", and all six are plain BINDs that
+resolve immediately (UIImage, UIImageSymbolConfiguration, UIStackView, UIImageView,
+UITapGestureRecognizer, UISwipeGestureRecognizer). They are now the tool's positive goldens.
+
+It also discharged a live blocker in §3: `__got 0x104112d00` binds `__swiftEmptyArrayStorage` and
+`0x104112d08` binds `__swiftEmptyDictionarySingleton`, which together ESTABLISH that `DynamicInfo`'s
+`metadataBlock` closure returns `[:]` — the fact that let the slot-35 init be written.
+
+**Action for session 101:** re-check pre-s100 deferrals that pin a classref or `__got` as
+unreadable. The sweep is started, not finished: the corpus grep is in this session's transcript and
+the hits worth re-reading are in `S99_DERIVED_IOSVideoPlayerView.md` (done) and the `Anime4KPipeline`
+/ `FormatContext` verdicts (not done).
 
 ## 4. Open defects
 
