@@ -315,7 +315,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
                                     forceTranscode: false,                  // p4 = 0
                                     formatContextOptions: options,
                                     formatName: "hls",                      // p6+p7 = "hls" (0x736c68)
-                                    flag: 0,                                // p8 = 0
+                                    mediaType: nil,                         // p8 = 0 (null AVMediaType?)
                                     transcodeCodecIDs: [])                  // ⚑ p9 = static [AVCodecID] &DAT_1044f3788 — passed [] (flagged)
     }
 

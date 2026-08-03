@@ -10,6 +10,7 @@
 //
 //  The per-output-stream config the Phase-2 Remuxer writes packets through.
 //
+import AVFoundation   // AVMediaType — the p8 slot's type, read from the binary (see the init below)
 import FFmpegKit
 import Libavcodec
 import Libavformat
@@ -61,7 +62,17 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     //    offset-grounded, field-name-INFERRED (the shared +0x40 / 18-vs-37 layout debt, P34/§1).
     //  ⚑ signature (P28, devirt-inferred names): formatContext/filename/formatContextOptions/formatName
     //    GROUNDED; `forceTranscode` = p4 (tested `& 1`, write→false; CORRECTS the pinned "String?");
-    //    `flag`:Int = p8 (write→0); `transcodeCodecIDs` = p9 (a codec-id list: count@+0x10, elems@+0x20).
+    //    `mediaType`:AVMediaType? = p8 — DERIVED, no longer inferred, and it CORRECTS the pinned
+    //    `flag`:Int. The slot is nil-tested (`ldur x8,[x29-0x140]` / `cbz x8` @0x101a1d4b4) inside the
+    //    per-track loop, then bridged and STRING-COMPARED against the loop element's +0x78 field:
+    //    both sides go through `String._unconditionallyBridgeFromObjectiveC` and the results are
+    //    compared pairwise (`cmp x0,x2` / `ccmp x20,x1,#0,eq` @0x101a1d4e4). An Int slot cannot be
+    //    nil-tested nor bridged. The caller confirms the type: MEPlayerItem.startRecord's trie
+    //    signature is `(url: Foundation.URL, mediaType: __C.AVMediaType?)` and it moves that very
+    //    parameter into x7 (`mov x7,x21` @0x101a484d8) with x21 <- x1 at entry.
+    //    ⚑[tool=bind_oracle ref=String._unconditionallyBridgeFromObjectiveC:0x10410a250 result=CONFIRMED]
+    //    ⚑[tool=export_trie_oracle ref=MEPlayerItem.startRecord(url:mediaType:):0x101a483d4 result=AVMediaType-optional]
+    //    `transcodeCodecIDs` = p9 (a codec-id list: count@+0x10, elems@+0x20).
     //  FFmpeg provenance — every symbol below is ffmpeg_name_oracle result=CONFIRMED (instr/size fp vs the
     //  symbolicated FFmpegKit static libs; reconstruction/osi_factory_ffmpeg_map.json):
     //   ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_output_context2:0x103193858 result=CONFIRMED]
@@ -77,7 +88,9 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
                 forceTranscode: Bool = false,          // ⚑ p4 name INFERRED
                 formatContextOptions: [String: Any],
                 formatName: String,
-                flag: Int = 0,                         // ⚑ p8 name INFERRED
+                // ⚑ p8 DERIVED (was `flag: Int`, inferred). MODULE-QUALIFIED: FFmpeg's C `AVMediaType`
+                // enum collides with AVFoundation's here, the same collision MEPlayerItem.swift:271 names.
+                mediaType: AVFoundation.AVMediaType? = nil,
                 transcodeCodecIDs: [AVCodecID] = []) throws {   // ⚑ p9 name/type INFERRED
         // ── C1: resolve muxer name → avformat_alloc_output_context2 → throw on failure ──────────────
         // ⚑ DEFERRED general-path (L196-381, dead for write() which passes "hls"): empty formatName →
@@ -154,7 +167,11 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         self.outPacket       = av_packet_alloc()                                   // +0x60 (L1325)
         self.formatName      = String(cString: outputContext.pointee.oformat.pointee.name)  // +0x68 (L1343; binary preconditions oformat/name non-nil)
         self.removeADTS      = isHLS && (segmentType == "fmp4")                    // +0x78 (bVar10)
-        _ = flag              // ⚑ p8: mode selector read in the dead extension-switch + the loop's param_8 branches (write→0)
+        // ⚑ p8: READ as a per-track media-type FILTER — non-nil gates a bridged string compare of
+        //   this argument against the loop element's +0x78 field (@0x101a1d4b4-0x101a1d4ec). What the
+        //   equal / not-equal arms then DO is NOT read, so no filtering is expressed here.
+        //   ⚑[tool=bind_oracle ref=String._unconditionallyBridgeFromObjectiveC:0x10410a250 result=CONFIRMED]
+        _ = mediaType
         _ = forceTranscode    // ⚑ p4: gates frameRate accumulation + a streamMapping-value branch (write→false)
         _ = transcodeCodecIDs // ⚑ p9: the transcode codec allowlist — consumed by the deferred transcode arms
     }
