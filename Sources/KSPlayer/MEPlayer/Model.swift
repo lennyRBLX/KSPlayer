@@ -101,7 +101,11 @@ extension ObjectQueueItem {
 }
 
 public protocol FrameOutput: AnyObject {
-    var renderSource: OutputRenderSourceDelegate? { get set }
+    // The binary SPLITS renderSource by output kind: AudioBaseOutput and AudioDataBuffer carry
+    // `AudioOutputRenderSourceDelegate?` while MetalPlayView carries
+    // `VideoOutputRenderSourceDelegate?` — all six accessors and both direct field offsets say
+    // so. One combined requirement cannot express that, so it moves down to AudioOutput and
+    // VideoOutput.
     func pause()
     func flush()
     func play()

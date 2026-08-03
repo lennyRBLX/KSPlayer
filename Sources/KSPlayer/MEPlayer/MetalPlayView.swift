@@ -16,6 +16,8 @@ public protocol DisplayLayerDelegate: NSObjectProtocol {
 }
 
 public protocol VideoOutput: FrameOutput {
+    var renderSource: VideoOutputRenderSourceDelegate? { get set }
+    // Source-only; removal derived and ready, but it lands with unit 6 (see the field below).
     var displayLayerDelegate: DisplayLayerDelegate? { get set }
     var options: KSOptions { get set }
     var displayLayer: AVSampleBufferDisplayLayer { get }
@@ -43,9 +45,9 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
                 if KSOptions.preferredFrame {
                     let preferredFramesPerSecond = ceil(fps)
                     if #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
-                        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
+                        displayLink?.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
                     } else {
-                        displayLink.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
+                        displayLink?.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
                     }
                 }
                 options.updateVideo(refreshRate: fps, isDovi: isDovi, formatDescription: formatDescription)
@@ -54,13 +56,11 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     }
 
     public private(set) var pixelBuffer: PixelBufferProtocol?
-    /// 用displayLink会导致锁屏无法draw，
-    /// 用DispatchSourceTimer的话，在播放4k视频的时候repeat的时间会变长,
-    /// 用MTKView的draw(in:)也是不行，会卡顿
-    private var displayLink: CADisplayLink!
-//    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
     public var options: KSOptions
-    public weak var renderSource: OutputRenderSourceDelegate?
+    // Binary type is the NARROWER `VideoOutputRenderSourceDelegate?`; OutputRenderSourceDelegate
+    // refines it with the audio half, which this view never uses.
+    public weak var renderSource: VideoOutputRenderSourceDelegate?
+    private let metalView = MetalView()
     // AVSampleBufferAudioRenderer AVSampleBufferRenderSynchronizer AVSampleBufferDisplayLayer
     private var displayView = AVSampleBufferDisplayView() {
         didSet {
@@ -68,7 +68,18 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
-    private let metalView = MetalView()
+    /// 用displayLink会导致锁屏无法draw，
+    /// 用DispatchSourceTimer的话，在播放4k视频的时候repeat的时间会变长,
+    /// 用MTKView的draw(in:)也是不行，会卡顿
+    // Binary type is `DisplayLinkProtocol?`, not `CADisplayLink!`. DisplayLinkProtocol was
+    // reconstructed precisely to abstract UIKit's CADisplayLink and the macOS CVDisplayLink shim
+    // behind one interface, and CADisplayLink already conforms — this field never migrated.
+    private var displayLink: DisplayLinkProtocol?
+//    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+    // displayLayerDelegate is a source-only construct — zero-hit across the whole demangled trie,
+    // and MetalPlayView's field descriptor does not list it. Its REMOVAL is derived and ready, but
+    // it lands with unit 6: dropping it forces an edit to KSMEPlayer.swift, and that file cannot be
+    // staged until its `pipController` type block is resolved (see the unit-6 note).
     public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
@@ -79,16 +90,16 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         //        displayLink = CADisplayLink(block: renderFrame)
         displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
         // 一定要用common。不然在视频上面操作view的话，那就会卡顿了。
-        displayLink.add(to: .main, forMode: .common)
+        displayLink?.add(to: .main, forMode: .common)
         pause()
     }
 
     public func play() {
-        displayLink.isPaused = false
+        displayLink?.isPaused = false
     }
 
     public func pause() {
-        displayLink.isPaused = true
+        displayLink?.isPaused = true
     }
 
     @available(*, unavailable)
@@ -151,7 +162,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     }
 
     public func invalidate() {
-        displayLink.invalidate()
+        displayLink?.invalidate()
     }
 
     public func readNextFrame() {
@@ -240,7 +251,9 @@ extension MetalPlayView {
 }
 
 class MetalView: UIView {
-    private let render = MetalRender()
+    // NO STORED PROPERTIES. MetalView's binary field descriptor reports NumFields=0, so the
+    // `private let render = MetalRender()` that used to sit here is a field the binary does not
+    // have. MetalRender.draw is static, so nothing needed it.
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { CAMetalLayer.self }
     #endif
@@ -297,7 +310,7 @@ class MetalView: UIView {
             KSLog("[video] CAMetalLayer not readyForMoreMediaData")
             return
         }
-        render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
+        MetalRender.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
     }
 }
 

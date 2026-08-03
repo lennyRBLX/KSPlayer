@@ -9,6 +9,7 @@ import AVFoundation
 import CoreAudio
 
 public protocol AudioOutput: FrameOutput {
+    var renderSource: AudioOutputRenderSourceDelegate? { get set }
     var playbackRate: Float { get set }
     var volume: Float { get set }
     var isMuted: Bool { get set }

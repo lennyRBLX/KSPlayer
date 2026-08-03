@@ -91,7 +91,9 @@ class MetalRender {
     }
 
     @MainActor
-    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable) {
+    // STATIC: MetalView's binary field descriptor reports NumFields=0, so it cannot hold a
+    // stored MetalRender, and nothing in this method needs instance state.
+    static func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable) {
         let inputTextures = pixelBuffer.textures()
         MetalRender.renderPassDescriptor.colorAttachments[0].texture = drawable.texture
         guard !inputTextures.isEmpty, let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(), let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor) else {
