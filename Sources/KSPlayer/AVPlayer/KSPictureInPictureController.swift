@@ -39,112 +39,40 @@ public class KSPictureInPictureController: AVPictureInPictureController {
     //   `didStart` corroborates independently: the s63 member sweep already listed it as a name the binary
     //   carries and this source does not declare.
     //
-    //   ⛔ THE BODIES ARE AUDITED DIVERGENT AND THE FIX IS BLOCKED — DO NOT REDUCE THEM.
-    //   start and stop are each a bare 2-instruction ObjC tail call against the 8- and 9-statement bodies
-    //   below (verdicts KSPictureInPictureController_slot0_1019c75cc / _slot2_1019c7648). The reason is
-    //   structural: the binary class has ZERO stored properties, and THREE of its four methods take
-    //   `KSComplexPlayerLayer` — a type carrying 44 symbols in the binary and ZERO occurrences anywhere in
-    //   this reconstruction. In 1.3.17 this class was gutted into a thin wrapper and its state moved into
-    //   that type. Deleting the logic below before locating where the state went would destroy information,
-    //   so it stays until KSComplexPlayerLayer is reconstructed. That is the unblocking step, and it is a
-    //   new-class job, not a per-slot one.
-    nonisolated(unsafe) private static var pipController: KSPictureInPictureController?
-    private var originalViewController: UIViewController?
-    private var view: KSPlayerLayer?
-    private weak var viewController: UIViewController?
-    private weak var presentingViewController: UIViewController?
-    #if canImport(UIKit)
-    private weak var navigationController: UINavigationController?
-    #endif
+    //   ✅ SESSION 98 — THE BLOCK IS LIFTED AND THE BODIES ARE REDUCED. The standing instruction here was
+    //   "do not reduce these until KSComplexPlayerLayer is reconstructed", because the class was gutted
+    //   into a thin wrapper and its state had to be FOUND, not assumed deleted. Both halves are now done:
+    //     · KSComplexPlayerLayer is declared (KSPlayerLayer.swift), superclass and all three fields
+    //       gate-verified — and its fields are urls / isPictureInPictureStoped / enterBackgroundTask,
+    //       so the view-controller state did NOT move there;
+    //     · it moved nowhere. `originalViewController`, `presentingViewController`,
+    //       `navigationController` and `isPipPopViewController` are each ZERO-hit across all 57,138
+    //       demangled trie symbols, as are the substrings `ipPop` and `PopView`. Forward 1.3.17 removed
+    //       the pop-view-controller restoration feature outright.
+    //   With the state located as absent, reducing is the derived answer rather than an assumption, so
+    //   slot 0 and slot 2 are now one statement each and the six stored properties are gone.
+    // ZERO STORED PROPERTIES, and that is now DERIVED rather than assumed. The six properties that
+    // used to sit here (static pipController, originalViewController, view, viewController,
+    // presentingViewController, navigationController) are gone, together with `start(view:)` and
+    // `mute()`, because the state they carried does not exist ANYWHERE in Forward 1.3.17:
+    //   · dump_binary_field_types reports "total fields: 0" for this class;
+    //   · `originalViewController`, `presentingViewController`, `navigationController` and
+    //     `isPipPopViewController` each return ZERO hits across all 57,138 demangled trie symbols,
+    //     as do the substrings `ipPop` and `PopView`;
+    //   · this class's complete member list in the trie is exactly seven entries — init, deinit,
+    //     start(layer:), didStart(layer:), stop(restoreUserInterface:) and static play(layer:).
+    // The two open verdicts both required the removed behaviour to be LOCATED before the source was
+    // reduced, "not deleted on assumption". It was located: Forward deleted the pop-view-controller
+    // restoration feature outright. It did not move to KSComplexPlayerLayer either — that class has
+    // three fields (urls, isPictureInPictureStoped, enterBackgroundTask) and none of them is
+    // view-controller state.
+    // ⚑[tool=fieldrec ref=KSPlayer.KSPictureInPictureController:0x1039ece54 result=zero-fields]
 
-    public func stop(restoreUserInterface: Bool) {
+    // Body read at slot 2 @0x1019c7648: two instructions, `mov x0,x20` / `b <objc stub>`, whose
+    // selref 0x10440e2c8 is "stopPictureInPicture". The parameter is declared but never read — the
+    // function contains no comparison and no branch — so it is spelled `_`.
+    public func stop(restoreUserInterface _: Bool) {
         stopPictureInPicture()
-        delegate = nil
-        guard KSOptions.isPipPopViewController else {
-            return
-        }
-        KSPictureInPictureController.pipController = nil
-        if restoreUserInterface {
-            #if canImport(UIKit)
-            runOnMainThread { [weak self] in
-                guard let self, let viewController, let originalViewController else { return }
-                if let nav = viewController as? UINavigationController,
-                   nav.viewControllers.isEmpty || (nav.viewControllers.count == 1 && nav.viewControllers[0] != originalViewController)
-                {
-                    nav.viewControllers = [originalViewController]
-                }
-                if let navigationController {
-                    var viewControllers = navigationController.viewControllers
-                    if viewControllers.count > 1, let last = viewControllers.last, type(of: last) == type(of: viewController) {
-                        viewControllers[viewControllers.count - 1] = viewController
-                        navigationController.viewControllers = viewControllers
-                    }
-                    if viewControllers.firstIndex(of: viewController) == nil {
-                        // 新的swiftUI push之后。view会变成是emptyView。所以页面就空白了。
-                        navigationController.pushViewController(viewController, animated: true)
-                    }
-                } else {
-                    presentingViewController?.present(originalViewController, animated: true)
-                }
-            }
-            #endif
-            view?.player.isMuted = false
-            view?.play()
-        }
-
-        originalViewController = nil
-        view = nil
-    }
-
-    func start(view: KSPlayerLayer) {
-        startPictureInPicture()
-        delegate = view
-        guard KSOptions.isPipPopViewController else {
-            #if canImport(UIKit)
-            // 直接退到后台
-            runOnMainThread {
-                UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
-            }
-            #endif
-            return
-        }
-        self.view = view
-        #if canImport(UIKit)
-        runOnMainThread { [weak self] in
-            guard let self, let viewController = view.player.view?.viewController else { return }
-
-            originalViewController = viewController
-            if let navigationController = viewController.navigationController, navigationController.viewControllers.count == 1 {
-                self.viewController = navigationController
-            } else {
-                self.viewController = viewController
-            }
-            navigationController = self.viewController?.navigationController
-            if let pre = KSPictureInPictureController.pipController {
-                view.player.isMuted = true
-                pre.view?.isPipActive = false
-            } else {
-                if let navigationController {
-                    navigationController.popViewController(animated: true)
-                    #if os(iOS)
-                    if navigationController.tabBarController != nil, navigationController.viewControllers.count == 1 {
-                        DispatchQueue.main.async { [weak self] in
-                            self?.navigationController?.setToolbarHidden(false, animated: true)
-                        }
-                    }
-                    #endif
-                } else {
-                    presentingViewController = originalViewController?.presentingViewController
-                    originalViewController?.dismiss(animated: true)
-                }
-            }
-        }
-        #endif
-        KSPictureInPictureController.pipController = self
-    }
-
-    static func mute() {
-        pipController?.view?.player.isMuted = true
     }
 }
 

@@ -100,11 +100,13 @@ open class KSPlayerLayer: NSObject {
                     // 一定要async才不会pip之后就暂停播放
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
-                        // The cast is OURS. `contentSource`, `canStartPictureInPictureAutomaticallyFromInline` and the
-                        // source-only `start(view:)` are NOT requirements of the binary protocol, so they are not
-                        // reachable through the existential. Casting back to the concrete class keeps each site's
-                        // existing behaviour byte for byte while the DECLARED field type becomes faithful.
-                        (pipController as? KSPictureInPictureController)?.start(view: self)
+                        // `start(layer:)` IS a protocol requirement, so no cast is needed — but it takes a
+                        // KSComplexPlayerLayer, the only PiP-start entry the binary has. A plain KSPlayerLayer
+                        // cannot be passed. `isPipActive` is itself source-only scaffolding (zero trie hits),
+                        // so narrowing here is OURS, not a claim about Forward.
+                        if let layer = self as? KSComplexPlayerLayer {
+                            pipController.start(layer: layer)
+                        }
                     }
                 } else {
                     pipController.stop(restoreUserInterface: true)
@@ -320,9 +322,10 @@ open class KSPlayerLayer: NSObject {
         }
         state = player.loadState == .playable ? .bufferFinished : .buffering
         MPNowPlayingInfoCenter.default().playbackState = .playing
-        if #available(tvOS 14.0, *) {
-            KSPictureInPictureController.mute()
-        }
+        // `KSPictureInPictureController.mute()` REMOVED: the method does not exist in the binary
+        // (the class's complete trie member list has seven entries and mute is not among them), and
+        // this call is one of the four statements KSPlayerLayer.play's own verdict records as absent
+        // from the binary body.
     }
 
     open func pause() {
