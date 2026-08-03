@@ -108,10 +108,10 @@ open class KSAVPlayer {
     var observerCancellables: Set<AnyCancellable> = []
     var observerPlayerItemCancellables: Set<AnyCancellable> = []
     var observerLoopCancellables: Set<AnyCancellable> = []
-    // ⚑ DIVERGENCE-DEFERRED (user-gated s16): binary field 11 `pipController` is `(any KSPictureInPictureProtocol)?`
-    //   — a NEW protocol absent from recon (field-record `KSPictureInPictureProtocol_pSg`). Kept the recon concrete type to
-    //   avoid a MediaPlayerProtocol version-ripple; l2 UNCHECKED (no class-scoped symbol). → MediaPlayerProtocol-version follow-on.
-    public private(set) var pipController: KSPictureInPictureController?
+    // DIVERGENCE DISCHARGED (opened s16, closed s98). Binary field 11 is
+    // `(any KSPictureInPictureProtocol)?` — field record `KSPictureInPictureProtocol_pSg`, and the
+    // trie prints the same for this class's accessors. The protocol it needed is now declared.
+    public private(set) var pipController: (any KSPictureInPictureProtocol)?
     public weak var delegate: MediaPlayerDelegate?
     public private(set) var duration: TimeInterval = 0
     // Forward 1.3.17: `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via Foundation.Progress / Alamofire

@@ -187,7 +187,12 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
     var playbackCoordinator: AVPlaybackCoordinator { get }
     @available(tvOS 14.0, *)
-    var pipController: KSPictureInPictureController? { get }
+    // The existential, not the concrete class. Both conformers agree in the trie:
+    // `KSMEPlayer.pipController` and `KSAVPlayer.pipController` each print
+    // `KSPlayer.KSPictureInPictureProtocol?` on getter, setter, modify, property descriptor
+    // and direct field offset. Rippled only after verifying BOTH conformers, which is the
+    // precondition this migration carries.
+    var pipController: (any KSPictureInPictureProtocol)? { get }
     var dynamicInfo: DynamicInfo? { get }
     init(url: URL, options: KSOptions)
     func replace(url: URL, options: KSOptions)

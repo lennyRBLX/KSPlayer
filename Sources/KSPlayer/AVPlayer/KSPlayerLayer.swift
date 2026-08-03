@@ -100,7 +100,11 @@ open class KSPlayerLayer: NSObject {
                     // 一定要async才不会pip之后就暂停播放
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
-                        pipController.start(view: self)
+                        // The cast is OURS. `contentSource`, `canStartPictureInPictureAutomaticallyFromInline` and the
+                        // source-only `start(view:)` are NOT requirements of the binary protocol, so they are not
+                        // reachable through the existential. Casting back to the concrete class keeps each site's
+                        // existing behaviour byte for byte while the DECLARED field type becomes faithful.
+                        (pipController as? KSPictureInPictureController)?.start(view: self)
                     }
                 } else {
                     pipController.stop(restoreUserInterface: true)
@@ -256,7 +260,7 @@ open class KSPlayerLayer: NSObject {
 
     isolated deinit {
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            player.pipController?.contentSource = nil
+            (player.pipController as? KSPictureInPictureController)?.contentSource = nil
         }
         NotificationCenter.default.removeObserver(self)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -405,7 +409,7 @@ open class KSPlayerLayer: NSObject {
         #if !os(macOS) && !os(tvOS)
         if #available(iOS 14.2, *) {
             if options.canStartPictureInPictureAutomaticallyFromInline {
-                player.pipController?.canStartPictureInPictureAutomaticallyFromInline = true
+                (player.pipController as? KSPictureInPictureController)?.canStartPictureInPictureAutomaticallyFromInline = true
             }
         }
         #endif
@@ -727,4 +731,31 @@ extension KSPlayerLayer {
             player.enterForeground()
         }
     }
+}
+
+// KSComplexPlayerLayer — a Forward-NEW class, absent from this reconstruction until now, and the
+// reason KSPictureInPictureController could not be reduced (see that file's header). Nominal type
+// descriptor 0x1039ed208; superclass_conformance_gate reads `super=KSPlayerLayer`.
+//
+// THE FIELD SET IS COMPLETE AND EXACT: dump_binary_field_types reports "total fields: 3", and all
+// three carry a `variable initialization expression` in the trie, so all three have declaration
+// defaults. Order is __swift5_fieldmd order.
+//
+// THE MEMBER SET IS NOT COMPLETE HERE. The trie carries 44 symbols under
+// `KSPlayer.KSComplexPlayerLayer.`, including change(state:), finish(player:error:),
+// readyToPlay(player:), pipStart(), play/pause/stop, playNextURL(), reCheckSubtitle(),
+// set(urls:), register/removeRemoteControllEvent() and the six AVPictureInPictureControllerDelegate
+// callbacks. Those are DECLARED NOWHERE YET — this unit reconstructs the class's SHAPE so that
+// `KSPictureInPictureProtocol` can name it, which is what unblocks KSMEPlayer.pipController. Their
+// bodies are a separate unit; writing them from the member list alone would be invention.
+// ⚑[tool=export_trie_oracle ref=KSPlayer.KSComplexPlayerLayer:0x1039ed208 result=44-symbols-shape-only]
+//
+// Placement in this file follows the superclass, NOT a #fileID literal — no body of this class has
+// been decompiled far enough to surface one.
+public class KSComplexPlayerLayer: KSPlayerLayer {
+    public var urls: [URL] = []
+    public var isPictureInPictureStoped: Bool = false
+    // private, and the trie prints the module-hash discriminator on all three accessors:
+    // `(enterBackgroundTask in _B3181C2628785004269C41BC3433122F) : Swift.Task<(), Swift.Never>?`
+    private var enterBackgroundTask: Task<(), Never>?
 }

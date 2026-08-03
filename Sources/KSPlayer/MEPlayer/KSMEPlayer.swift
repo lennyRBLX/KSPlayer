@@ -36,7 +36,13 @@ public final class KSMEPlayer: NSObject {
     //   flag alone, so this is left as `var` and deferred as its own unit rather than forced.
     //   One of 33 such refutations across 15 classes; 62 of the 95 mismatches WERE fixed.
     //   Detail + the full 33, categorised: reconstruction/binding_refuted_s61.json
-    public private(set) var videoOutput: (VideoOutput & UIView)? {
+    // NON-OPTIONAL in the binary: the trie prints `KSMEPlayer.videoOutput.getter : __C.UIView &
+    // KSPlayer.VideoOutput`, with no `?`. Written as the sanctioned IUO STAND-IN — the l2 gate's
+    // own name for a binary non-optional reference whose real construction is not yet derived —
+    // rather than as a true `let`, because three sites still assign nil and what the binary does
+    // at those points has NOT been read. Composition order follows the binary; the parens are
+    // Swift's requirement for attaching `!` to a composition, not a type difference.
+    public private(set) var videoOutput: (UIView & VideoOutput)! {
         didSet {
             oldValue?.invalidate()
             runOnMainThread {
@@ -54,10 +60,13 @@ public final class KSMEPlayer: NSObject {
         }
     }
 
-    // ⚑ DIVERGENCE-DEFERRED (session 16c): binary field 6 `pipController` is `(any KSPictureInPictureProtocol)?` (a NEW 10-req
-    //   protocol — MediaPlayerProtocol-version follow-on). Kept the recon concrete type; l2 UNCHECKED. Was a `_pipController`
-    //   lazy + computed; binary stores it directly. ⚑ M2: the PiP-controller construction from videoOutput's displayLayer.
-    public private(set) var pipController: KSPictureInPictureController?
+    // DIVERGENCE DISCHARGED (opened s16c, closed s98). Binary field 6 is the existential, and the
+    // trie agrees on all five spellings — getter, setter, modify, property descriptor and direct
+    // field offset all print `KSPlayer.KSPictureInPictureProtocol?`. KSPictureInPictureProtocol is
+    // now declared (see KSPictureInPictureController.swift), so the concrete stand-in is gone.
+    // Still open, and NOT part of this unit: ⚑ M2, the PiP-controller construction from
+    // videoOutput's displayLayer. Was a `_pipController` lazy + computed; the binary stores it.
+    public private(set) var pipController: (any KSPictureInPictureProtocol)?
 
     private lazy var _playbackCoordinator: Any? = {
         if #available(macOS 12.0, iOS 15.0, tvOS 15.0, *) {
@@ -399,7 +408,10 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         KSLog("play \(self)")
         playbackState = .playing
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            pipController?.invalidatePlaybackState()
+            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
+            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
+            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
+            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
         }
     }
 
@@ -407,7 +419,10 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         KSLog("pause \(self)")
         playbackState = .paused
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            pipController?.invalidatePlaybackState()
+            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
+            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
+            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
+            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
         }
     }
 
