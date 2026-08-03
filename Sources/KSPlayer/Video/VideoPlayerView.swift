@@ -198,11 +198,8 @@ open class VideoPlayerView: PlayerView {
 
         loadingIndector.isHidden = true
         controllerView.addSubview(loadingIndector)
-        // Top views
-        topMaskView.addSubview(navigationBar)
-        navigationBar.addArrangedSubview(titleLabel)
-        titleLabel.textColor = .white
-        titleLabel.font = .systemFont(ofSize: 16)
+        // FOUR STATEMENTS REMOVED — no counterpart in the binary: topMaskView.addSubview(navigationBar),
+        // navigationBar.addArrangedSubview(titleLabel), and the two titleLabel appearance sets.
         // Bottom views
         bottomMaskView.addSubview(toolBar)
         toolBar.timeSlider.delegate = self
@@ -229,17 +226,14 @@ open class VideoPlayerView: PlayerView {
         controllerView.addSubview(lockButton)
         controllerView.addSubview(topMaskView)
         controllerView.addSubview(bottomMaskView)
-        controllerView.addSubview(speedTipLabel)
-        speedTipLabel.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            speedTipLabel.topAnchor.constraint(equalTo: safeTopAnchor, constant: 50),
-            speedTipLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            speedTipLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
-            speedTipLabel.heightAnchor.constraint(equalToConstant: 30),
-        ])
+        // THE speedTipLabel BLOCK IS REMOVED — the addSubview, the
+        // translatesAutoresizingMaskIntoConstraints set and the four-element activate([...]) have no
+        // counterpart in the binary.
+        // setupSrtControl() IS NEVER CALLED: the tail of the binary body is exactly three calls —
+        // addConstraint (0x101b2ed64), the slot-41 blr for customizeUIComponents, and the objc
+        // layoutIfNeeded — where the source had four.
         addConstraint()
         customizeUIComponents()
-        setupSrtControl()
         layoutIfNeeded()
     }
 
