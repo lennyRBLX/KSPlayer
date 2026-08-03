@@ -258,20 +258,55 @@ extension MEPlayerItem {
     // Remuxer+0x20 with `objc_retain` @0x101a484b4 and forwarded as x7; and Remuxer field 3 is
     // `mediaType: AVMediaType?`. The sole caller passes nil — MEASURED (`mov x1,#0x0` immediately
     // before `bl 0x101a483d4` at KSMEPlayer.startRecord @0x101a444b8), not assumed.
-    // ⚑ BODY UNRESOLVED — verdict MEPlayerItem_startRecord_101a483d4.json (HIGH). The binary has a
-    // complete 183-instruction body (guard formatContext → tear down the old remuxer → build one
-    // inline → install; on throw, deallocPartialClassInstance + KSLog(.error)). It is NOT written
-    // here because it depends on two things the reconstruction cannot yet express:
-    // ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=LOCATED]
-    //   — `URL.ffmpegString` exists in the binary and is ABSENT from our source; and
-    // ⚑[tool=function_sizes ref=FUN_101a1d014:0x101a1d014 result=INFERRED]
-    //   — the throwing callee takes 9 argument slots with an object in x7, which the reconstructed
-    //   `OutputStreamInfo.init(formatContext:filename:…)` has no parameter able to receive, so the
-    //   two cannot both be right. Guessing either would fabricate; this is the pinned deferral.
     // `AVFoundation.AVMediaType`, not FFmpeg's `AVMediaType` C enum — the two collide in this module
     // and the binary disambiguates them: x1 is stored with `objc_retain` @0x101a484b4, so it is the
     // ObjC NSString-backed type, not a plain C int.
-    func startRecord(url _: URL, mediaType _: AVFoundation.AVMediaType?) {}
+    //
+    // BODY WRITTEN s102. Both blockers of the former pinned deferral are cleared:
+    // ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=LOCATED]
+    //   — `URL.ffmpegString` now exists in the reconstruction (Utility.swift), landed s76; and
+    //   — all NINE argument slots of the throwing callee 0x101a1d014 are now derived, not inferred:
+    //     p5 `[String: Any]?`, p6+p7 `String?`, p8 `AVMediaType?` (was the un-receivable `flag: Int`),
+    //     p9 `[AVCodecID]?` — each proved by the callee's own nil test. See OutputStreamInfo.swift.
+    //
+    // Extent 0x101a483d4-0x101a486b0, 183 instr; `self` in x20, `url` x0, `mediaType` x1. Read:
+    //   guard      `ldr x19,[x20,x8]` / `cbz x19` @0x101a483fc — the formatContext field
+    //   teardown   `x20 = [x24,#0x18]` then 0x101a1b8d4 / 0x101a1bb5c, which the trie names
+    //              OutputStreamInfo.writeTrailer() and .stop(); +0x18 is Remuxer.outputStreamInfo
+    //   clear      `str xzr,[x22,x26]` @0x101a48458 — BEFORE the filename and the allocation
+    //   filename   `bl 0x1019f59c4` @0x101a4846c = URL.ffmpegString.getter -> (x24,x25)
+    //   arguments  w3=1, x4=0, x5=0, x6=0, x7=mediaType (`mov x7,x21` @0x101a484d8), [sp]=0
+    //   install    on success `str x24,[x23,#0x18]` then `str x23,[x22,x26]` @0x101a48564-0x101a4856c
+    //   throw      x21 is swifterror (zeroed @0x101a484dc, tested @0x101a484f8); the arm releases
+    //              +0x28, calls swift_deallocPartialClassInstance @0x101a4851c, then logs
+    //
+    // ⚑ The binary ALLOCATES the Remuxer before the throwing call and populates +0x10/+0x20/+0x28/
+    //   +0x30 up front, storing +0x18 only on the success path; `Remuxer(...)` here is the
+    //   source-level spelling of that inlined init, with identical resulting field values.
+    // ⚑ PLACEMENT: the catch-arm log bakes in #line 701, so in Forward's own source this method sits
+    //   far later in the file than it does here. Not moved — that is a file-placement unit of its own.
+    func startRecord(url: URL, mediaType: AVFoundation.AVMediaType?) {
+        guard let formatContext else { return }
+        if let remuxer {
+            remuxer.outputStreamInfo.writeTrailer()
+            remuxer.outputStreamInfo.stop()
+        }
+        remuxer = nil
+        do {
+            let outputStreamInfo = try OutputStreamInfo(formatContext: formatContext,
+                                                        filename: url.ffmpegString,
+                                                        forceTranscode: true,
+                                                        formatContextOptions: nil,
+                                                        formatName: nil,
+                                                        mediaType: mediaType,
+                                                        transcodeCodecIDs: nil)
+            remuxer = Remuxer(formatCtx: formatContext.formatCtx,
+                              outputStreamInfo: outputStreamInfo,
+                              mediaType: mediaType)
+        } catch {
+            KSLog(error)
+        }
+    }
 
     // createCodec() = FUN_101a53c44 (~2145 lines w/ 3 inline closures FUN_101a556b0/36964/36cf0). ARGLESS —
     //   reads self.formatContext (the commit-1 `formatCtx:` param was the BASE signature; Forward is argless).

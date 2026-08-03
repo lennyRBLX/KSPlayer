@@ -9,6 +9,7 @@
 //
 //  `final` not binary-pinned (no library evolution) — M2 verifies; matches the Copy/BSF/OSI `final` choice.
 //
+import AVFoundation   // AVMediaType — see the mediaType field: unqualified it resolves to Libavutil's C enum
 import Foundation
 import Libavcodec
 import Libavformat
@@ -18,7 +19,13 @@ public final class Remuxer {
     let formatCtx: UnsafeMutablePointer<AVFormatContext>  // +0x10 ⚑ inferred (symref); driver stores formatContext[+0x18];
                                                           //   matches the 1C.5 FormatContext convention (OSI.formatCtx is exactly this)
     let outputStreamInfo: OutputStreamInfo               // +0x18  grounded (write reads it; the P3 builder returns OSI here)
-    let mediaType: AVMediaType?                           // +0x20  l2_field_gate property-symbol (class-proven) = AVMediaType? (OPTIONAL)
+    // ⚑ MODULE-QUALIFIED s102. Unqualified, `AVMediaType` resolved HERE to Libavutil's C enum, because
+    //   this file imports Libavcodec/Libavformat and not AVFoundation — a silent wrong type, since the
+    //   binary `objc_retain`s this field (@0x101a484b4, stored `str x21,[x23,#0x20]` @0x101a484b0) and
+    //   a C enum is not retainable. The value arrives from MEPlayerItem.startRecord, whose trie
+    //   signature types it `__C.AVMediaType?` (mangled `So07AVMediaH0aSg`, an `a`-kind typealias).
+    //   ⚑[tool=export_trie_oracle ref=MEPlayerItem.startRecord(url:mediaType:):0x101a483d4 result=AVMediaType-optional]
+    let mediaType: AVFoundation.AVMediaType?              // +0x20  l2_field_gate property-symbol (class-proven) = AVMediaType? (OPTIONAL)
     var startTime: [Int32: Int64] = [:]                  // +0x28  per-stream DTS map. CLASS-SCOPED field-record = SDy (DICTIONARY),
                                                          //   key Int32 (stream_index), value Int64 (clamped DTS) — corroborated by write()'s
                                                          //   keyed-set. NOT Array, NOT CMTime?, NOT Double: l2_field_gate's `Double` is an
@@ -31,7 +38,7 @@ public final class Remuxer {
     //   exact signature unrecoverable.
     public init(formatCtx: UnsafeMutablePointer<AVFormatContext>,
                 outputStreamInfo: OutputStreamInfo,
-                mediaType: AVMediaType?) {
+                mediaType: AVFoundation.AVMediaType?) {
         self.formatCtx = formatCtx
         self.outputStreamInfo = outputStreamInfo
         self.mediaType = mediaType

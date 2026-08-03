@@ -261,11 +261,13 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     /// `DemuxerIO.cancelReading` on `ioAction` (witness deleted → devirt). No-arg, `Void`, non-throwing (P44:
     /// plain-`ret` epilogue; the FileManager error is caught + logged internally). ⚑ NAME `cancel()` inferred
     /// (recover_swift_function_name = None). RECONSTRUCTED (later·62): OutputStreamInfo's slot14/15
-    /// (finishWriting/close) are now reconstructed + OSI is non-final, so they dispatch through the OSI vtable
+    /// (writeTrailer/stop — names recovered from the trie s102) are now reconstructed + OSI is non-final, so they dispatch through the OSI vtable
     /// (+0x120/+0x128) exactly as the binary does.
     func cancel() {
-        outputStreamInfo.finishWriting()             // OSI vtable +0x120 = slot14 (drain + av_write_trailer) [retain/call/release]
-        outputStreamInfo.close()                     // OSI vtable +0x128 = slot15 (close-all)
+        // OSI vtable +0x120 = slot14 (drain, then the container trailer) [retain/call/release]
+        // ⚑[tool=ffmpeg_name_oracle ref=av_write_trailer:0x103194e1c result=CONFIRMED]
+        outputStreamInfo.writeTrailer()
+        outputStreamInfo.stop()                      // OSI vtable +0x128 = slot15 (close-all)
         var p = packet                               // binary loads self.packet into a local (local_50)…
         av_packet_free(&p)                           // …and frees the LOCAL — FUN_102d618b8, ffmpeg_name_oracle CONFIRMED av_packet_free (46/184 exact). ⚑ self.packet is NOT nulled (no writeback) — faithful to the binary's local-copy free.
         do {

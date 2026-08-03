@@ -106,7 +106,15 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
                 // ⚑ p8 DERIVED (was `flag: Int`, inferred). MODULE-QUALIFIED: FFmpeg's C `AVMediaType`
                 // enum collides with AVFoundation's here, the same collision MEPlayerItem.swift:271 names.
                 mediaType: AVFoundation.AVMediaType? = nil,
-                transcodeCodecIDs: [AVCodecID] = []) throws {   // ⚑ p9 name/type INFERRED
+                // ⚑ p9 OPTIONALITY DERIVED s102. The stack argument (`ldr x12,[x29,#0x10]`
+                // @0x101a1d354) is NIL-TESTED at 0x101a1dcd4 — on the reloaded slot, not on x12 — then
+                // its count is read at +0x10 and zero-tested (0x101a1dcd8-0x101a1dcdc), and only then
+                // is the element base (x12+0x20, computed speculatively @0x101a1d3f0) walked. The
+                // ELEMENT TYPE is corroborated, not merely inherited: the loop reads 32-bit elements
+                // (`ldr w11,[x10],#0x4` @0x101a1dcf0) and compares each against `[x22,#0x4]`, i.e. a
+                // linear search for a matching codec id. So the list type was right and only the
+                // optionality was wrong; startRecord passes `str xzr,[sp]` @0x101a484b8, i.e. nil.
+                transcodeCodecIDs: [AVCodecID]? = nil) throws {
         // ── C1: resolve muxer name → avformat_alloc_output_context2 → throw on failure ──────────────
         // ⚑ DEFERRED general-path (L196-381, dead for write() which passes "hls"): NIL formatName →
         //   derive the muxer name from filename.pathExtension via a runtime format-registry match; the
@@ -363,7 +371,12 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     //    plain-ret epilogue). ⚑ method NAME `finishWriting()` INFERRED (devirt; recover_swift_function_name
     //    = None). Called by RemuxerIOAction.cancel (OSI vtable +0x120). The FFmpeg call is
     //    ffmpeg_name_oracle-CONFIRMED (not eyeballed). Cache: decompiles/OutputStreamInfo#14.txt.
-    public func finishWriting() {                           // public (was internal): RemuxerIOAction (ProAVPlayer) calls it cross-module via the OSI vtable +0x120 — binary-arbitrated cross-module access (P34/§1; `open`/override NOT proven → `public` under-included)
+    // ⚑ NAME RECOVERED s102, superseding the inferred `finishWriting()`. The export trie carries a
+    //   single symbol at this body address — no ICF fold — and it demangles unambiguously:
+    //   ⚑[tool=export_trie_oracle ref=$s8KSPlayer16OutputStreamInfoC12writeTraileryyF:0x101a1b8d4 result=writeTrailer]
+    //   Corroborated by the caller: MEPlayerItem.startRecord tears the old remuxer down with
+    //   `bl 0x101a1b8d4` on `remuxer.outputStreamInfo` (+0x18) @0x101a48430.
+    public func writeTrailer() {                            // public (was internal): RemuxerIOAction (ProAVPlayer) calls it cross-module via the OSI vtable +0x120 — binary-arbitrated cross-module access (P34/§1; `open`/override NOT proven → `public` under-included)
         guard !hasWriteTrailer else { return }              // self+0x50 (& 1) — run-once guard [0x101a1b904]
         hasWriteTrailer = true                              // self+0x50 = 1
         for (_, ctx) in transcodeMap {                      // self+0x18 iteration (Swift Dictionary bucket-walk)
@@ -382,7 +395,13 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // ── slot15 @0x101a1bb5c (181 instr) — close-all: close every transcode ctx + asset track, free the
     //    out-packet and the format context. Void (P44). ⚑ method NAME `close()` INFERRED (devirt). Called by
     //    RemuxerIOAction.cancel (+0x128) + reconstruct. Cache: decompiles/OutputStreamInfo#15.txt.
-    public func close() {                                   // public (was internal): RemuxerIOAction calls it cross-module via the OSI vtable +0x128 (P34/§1; `open` not proven → `public` under-included)
+    // ⚑ NAME RECOVERED s102, superseding the inferred `close()`. Single trie symbol at this body
+    //   address, no fold:
+    //   ⚑[tool=export_trie_oracle ref=$s8KSPlayer16OutputStreamInfoC4stopyyF:0x101a1bb5c result=stop]
+    //   Corroborated by the caller: startRecord calls `bl 0x101a1bb5c` on the same +0x18 receiver
+    //   immediately after writeTrailer @0x101a48438. The inner `ctx.close()` below is a DIFFERENT
+    //   method — TranscodeProtocol's witness +0x18 — and is deliberately not renamed.
+    public func stop() {                                    // public (was internal): RemuxerIOAction calls it cross-module via the OSI vtable +0x128 (P34/§1; `open` not proven → `public` under-included)
         for (_, ctx) in transcodeMap {                      // self+0x18
             ctx.close()                                     // TranscodeProtocol.close (witness +0x18) [0x101a1bce8]
         }
