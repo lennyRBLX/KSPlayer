@@ -116,6 +116,12 @@ open class KSPlayerLayer: NSObject {
     }
 
     public private(set) var options: KSOptions
+    // Binary field 5, between options and player. `KSPlayerLayer.subtitleView.getter :
+    // KSPlayer.MetalSubtitleView` in the trie; the type already exists in Subtitle/.
+    // internal, not public: MetalSubtitleView is an internal type, so `public` cannot compile.
+    // The binary's access level for this field is not tool-readable (the impl oracle is
+    // final-types-only and this class is open), so the narrowest spelling that builds is used.
+    private(set) var subtitleView = MetalSubtitleView()
 
     public var player: MediaPlayerProtocol {
         didSet {
@@ -184,6 +190,11 @@ open class KSPlayerLayer: NSObject {
 
     /// 播发器的几种状态
 
+    // PROPERTY-WRAPPED in the binary: the trie carries `property wrapper backing initializer of
+    // KSPlayer.KSPlayerLayer.state : KSPlayer.KSPlayerState` and a `property wrapped field init
+    // accessor`, and the field record for the storage is named `_state`. A plain stored property
+    // emits neither. @Published is the wrapper the rest of this class already uses.
+    @Published
     public private(set) var state = KSPlayerState.initialized {
         willSet {
             if state != newValue {
@@ -210,11 +221,23 @@ open class KSPlayerLayer: NSObject {
     }
 
     private var urls = [URL]()
+    // Binary fields 9 and 10, between the `state` backing store and isAutoPlay.
+    // `variable initialization expression of KSPlayerLayer.playerTickClock : Swift.ContinuousClock`
+    // gives both the type and the fact that it carries a declaration default;
+    // `KSPlayerLayer.playerTickTask.getter : Swift.Task<(), Swift.Never>?` gives the other.
+    private var playerTickClock = ContinuousClock()
+    private var playerTickTask: Task<(), Never>?
     var isAutoPlay: Bool
     private var isWirelessRouteActive = false
     private var bufferedCount = 0
     private var shouldSeekTo: TimeInterval = 0
-    private var startTime: TimeInterval = 0
+    // RENAMED from the source's `startTime`: binary field 15 is `bufferingStartTime`, and this is the Double
+    // that changeLoadState reads and clears.
+    private var bufferingStartTime: TimeInterval = 0
+    // Binary fields 16 and 17. `KSPlayerLayer.subtitleModel.getter : KSPlayer.SubtitleModel` and
+    // `KSPlayerLayer.isAutoReplaceAndConstrainPlayerView.getter : Swift.Bool`.
+    public private(set) var subtitleModel = SubtitleModel()
+    public var isAutoReplaceAndConstrainPlayerView = false
     public init(url: URL, isAutoPlay: Bool = KSOptions.isAutoPlay, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
         self.url = url
         self.options = options
@@ -299,12 +322,20 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
+    // FIVE SOURCE STATEMENTS ARE ABSENT FROM THE BINARY BODY and are removed here:
+    //   · `runOnMainThread { UIApplication.shared.isIdleTimerDisabled = true }` — the extent's ONLY
+    //     swift_allocObject is the seek completion box below, and there is no UIApplication reference;
+    //   · `timer.fireDate = Date.distantPast`;
+    //   · `state = player.loadState == .playable ? .bufferFinished : .buffering` — there is NO Combine
+    //     Published SETTER anywhere in the extent; all four `state` touches are getter reads;
+    //   · `MPNowPlayingInfoCenter.default().playbackState = .playing`;
+    //   · `KSPictureInPictureController.mute()` — and that method does not exist in the binary at all.
+    // ORDER: the binary's very first instruction pair writes isAutoPlay, so it leads the body.
+    // GUARD: the binary's prepareToPlay guard has a THIRD arm reaching the same call —
+    // `state == .playedToTheEnd && !player.seekable`.
     open func play() {
-        runOnMainThread {
-            UIApplication.shared.isIdleTimerDisabled = true
-        }
         isAutoPlay = true
-        if state == .error || state == .initialized {
+        if state == .error || state == .initialized || (state == .playedToTheEnd && !player.seekable) {
             prepareToPlay()
         }
         if player.isReadyToPlay {
@@ -318,14 +349,7 @@ open class KSPlayerLayer: NSObject {
             } else {
                 player.play()
             }
-            timer.fireDate = Date.distantPast
         }
-        state = player.loadState == .playable ? .bufferFinished : .buffering
-        MPNowPlayingInfoCenter.default().playbackState = .playing
-        // `KSPictureInPictureController.mute()` REMOVED: the method does not exist in the binary
-        // (the class's complete trie member list has seven entries and mute is not among them), and
-        // this call is one of the four statements KSPlayerLayer.play's own verdict records as absent
-        // from the binary body.
     }
 
     open func pause() {
@@ -385,7 +409,7 @@ open class KSPlayerLayer: NSObject {
     // ⚑[tool=vtable_walk ref=KSPlayerLayer:0x1039ecf38 result=82-slots-vtable-offset-27]
     open func prepareToPlay() {
         state = .preparing
-        startTime = CACurrentMediaTime()
+        bufferingStartTime = CACurrentMediaTime()
         bufferedCount = 0
         player.prepareToPlay()
     }
@@ -432,19 +456,19 @@ open class KSPlayerLayer: NSObject {
 
     public func changeLoadState(player: some MediaPlayerProtocol) {
         guard player.playbackState != .seeking else { return }
-        if player.loadState == .playable, startTime > 0 {
-            let diff = CACurrentMediaTime() - startTime
+        if player.loadState == .playable, bufferingStartTime > 0 {
+            let diff = CACurrentMediaTime() - bufferingStartTime
             delegate?.player(layer: self, bufferedCount: bufferedCount, consumeTime: diff)
             if bufferedCount == 0 {
                 var dic = ["firstTime": diff]
                 if options.tcpConnectedTime > 0 {
-                    dic["initTime"] = options.dnsStartTime - startTime
+                    dic["initTime"] = options.dnsStartTime - bufferingStartTime
                     dic["dnsTime"] = options.tcpStartTime - options.dnsStartTime
                     dic["tcpTime"] = options.tcpConnectedTime - options.tcpStartTime
                     dic["openTime"] = options.openTime - options.tcpConnectedTime
                     dic["findTime"] = options.findTime - options.openTime
                 } else {
-                    dic["openTime"] = options.openTime - startTime
+                    dic["openTime"] = options.openTime - bufferingStartTime
                 }
                 dic["findTime"] = options.findTime - options.openTime
                 dic["readyTime"] = options.readyTime - options.findTime
@@ -455,14 +479,14 @@ open class KSPlayerLayer: NSObject {
                 KSLog(dic)
             }
             bufferedCount += 1
-            startTime = 0
+            bufferingStartTime = 0
         }
         guard state.isPlaying else { return }
         if player.loadState == .playable {
             state = .bufferFinished
         } else {
             if state == .bufferFinished {
-                startTime = CACurrentMediaTime()
+                bufferingStartTime = CACurrentMediaTime()
             }
             state = .buffering
         }
