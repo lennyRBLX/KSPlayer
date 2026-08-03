@@ -304,19 +304,21 @@ extension MEPlayerItem {
                               outputStreamInfo: outputStreamInfo,
                               mediaType: mediaType)
         } catch {
-            // ⚑ THE LOGGING CALL IS READ; ITS SOURCE SPELLING IS NOT. What the catch arm does at
-            //   0x101a4858c-0x101a48658 is: gate on a log level (`ldrb w8,[x20]` / `cmp w8,#2` /
-            //   `b.hs` @0x101a48540), materialize two 27-char string literals for #file and #function
-            //   (tagged `orr …,#0x8000000000000000` @0x101a48634/0x101a48638), pass the line as
-            //   `mov w6,#0x2bd` = 701, and dispatch `blr x8` where `x8 = [x26,#0x8]` @0x101a48658.
-            //   That is a WITNESS/VTABLE dispatch through a logger object, not a direct call to any
-            //   KSLog symbol, so the overload cannot be read off the call site. The leading
-            //   `mov w0,#0x2` @0x101a4863c is NOT `LogLevel.error`, whose raw value is 16
-            //   (KSOptions.swift:861) — so the level argument is not this module's LogLevel either.
-            //   `KSLog(error)` below is therefore the SPELLING THAT COMPILES, not a derived fact;
-            //   the error value is genuinely consumed (`mov x0,x21` -> `bl 0x1034521f4`
-            //   @0x101a485f0), which is the only part of this line the binary supports.
-            // ⚑[tool=export_trie_oracle ref=MEPlayerItem.startRecord.catch-log-dispatch:0x101a48658 result=pinned-witness-dispatch]
+            // The OVERLOAD is derived, not chosen. `KSLog(_ error:)` (KSOptions.swift:1016) forwards
+            // as `KSLog(level: .error, error() as NSError, …)`, and that `as NSError` step is what
+            // identifies it: the arm calls  ⚑[tool=bind_oracle ref=_convertErrorToNSError:0x104109940 result=CONFIRMED]
+            // on the in-flight error (`mov x0,x21` -> `bl 0x1034521f4` @0x101a485f0). A direct
+            // `KSLog(level:_:)` on a String message would not bridge an Error at all.
+            // The rest of the arm matches that forwarding body exactly, at 0x101a4858c-0x101a48658:
+            //   level    `mov w0,#0x2` @0x101a4863c — the CASE INDEX of `.error`, not its rawValue
+            //            (16). Same encoding this file's own logLevel note records at KSOptions.swift:783.
+            //   gate     `ldrb w8,[x20]` / `cmp w8,#2` / `b.hs` @0x101a48540 — `level.rawValue <=
+            //            KSOptions.logLevel.rawValue` folded to the tag compare (KSOptions.swift:1029-1034)
+            //   handler  `blr x8`, `x8 = [x26,#0x8]` @0x101a48658 — the LogHandler witness, i.e.
+            //            `KSOptions.logger.log(level:message:file:function:line:)`; x26 is the witness
+            //            table of the global existential projected at 0x101a485e8
+            //   file/fn  two 27-char literals tagged `orr …,#0x8000000000000000` @0x101a48634/0x101a48638
+            //   line     `mov w6,#0x2bd` = 701
             KSLog(error)
         }
     }
