@@ -30,7 +30,11 @@ extension UIActivityIndicatorView: @preconcurrency LoadingIndector {}
 #endif
 // swiftlint:disable type_body_length file_length
 open class VideoPlayerView: PlayerView {
-    private var delayItem: DispatchWorkItem?
+    // Task<(), Error>?, not DispatchWorkItem? — that is the binary's field-record type. The two
+    // construction sites below therefore become Tasks. The DELAY VALUES are unchanged from the
+    // source (1s and KSOptions.animateDelayTimeInterval); the field type forces the mechanism, but
+    // the sleep call itself is not read from the binary.
+    private var delayItem: Task<(), Error>?
     /// Gesture used to show / hide control view
     public let tapGesture = UITapGestureRecognizer()
     public let doubleTapGesture = UITapGestureRecognizer()
@@ -252,9 +256,6 @@ open class VideoPlayerView: PlayerView {
         tapGesture.require(toFail: doubleTapGesture)
         controllerView.addGestureRecognizer(doubleTapGesture)
         #if canImport(UIKit)
-        longPressGesture.addTarget(self, action: #selector(longPressGestureAction(_:)))
-        longPressGesture.minimumPressDuration = 0.5
-        controllerView.addGestureRecognizer(longPressGesture)
         addRemoteControllerGestures()
         #endif
     }
@@ -367,10 +368,11 @@ open class VideoPlayerView: PlayerView {
         }
         currentDefinition = definitionIndex >= resource.definitions.count ? resource.definitions.count - 1 : definitionIndex
         let asset = resource.definitions[currentDefinition]
+        // THE TRAILING STATEMENT IS DIFFERENT. The source guarded on `shouldSeekTo > 0` and called
+        // seek AFTER super.set; the binary writes asset.options.startPlayTime UNCONDITIONALLY and
+        // BEFORE super.set, and never calls seek at all — the extent contains no seek call.
+        asset.options.startPlayTime = shouldSeekTo
         super.set(url: asset.url, options: asset.options)
-        if shouldSeekTo > 0 {
-            seek(time: shouldSeekTo) { _ in }
-        }
     }
 
     open func set(resource: KSPlayerResource, definitionIndex: Int = 0, isSetUrl: Bool = true) {
@@ -438,26 +440,12 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
-    #if canImport(UIKit)
-    public let longPressGesture = UILongPressGestureRecognizer()
-    @objc open func longPressGestureAction(_ gesture: UILongPressGestureRecognizer) {
-        guard let playerLayer else { return }
-
-        switch gesture.state {
-        case .began:
-            originalPlaybackRate = playerLayer.player.playbackRate
-            playerLayer.player.playbackRate = 2.0
-            showSpeedTip("2x")
-
-        case .ended, .cancelled:
-            playerLayer.player.playbackRate = originalPlaybackRate
-            showSpeedTip("1x")
-
-        default:
-            break
-        }
-    }
-    #endif
+    // longPressGesture REMOVED, field and action together. The field is absent from
+    // VideoPlayerView's 20 binary field records, and no symbol matching longPress appears under
+    // KSPlayer.VideoPlayerView anywhere in the trie — while tapGesture, doubleTapGesture,
+    // panGesture and controllerView all do. The 65 longPress symbols in this image belong to the
+    // app's own `Components` module, not to KSPlayer, so the feature lives there.
+    // ⚑[tool=fieldrec ref=KSPlayer.VideoPlayerView:longPressGesture result=ABSENT]
 
     private func showSpeedTip(_ text: String) {
         speedTipLabel.text = text
@@ -470,7 +458,8 @@ open class VideoPlayerView: PlayerView {
 
         // 延迟后隐藏
         delayItem?.cancel()
-        delayItem = DispatchWorkItem { [weak self] in
+        delayItem = Task { [weak self] in
+            try await Task.sleep(nanoseconds: 1_000_000_000)
             guard let self else { return }
             UIView.animate(withDuration: 0.2) {
                 self.speedTipLabel.alpha = 0
@@ -478,7 +467,6 @@ open class VideoPlayerView: PlayerView {
                 self.speedTipLabel.isHidden = true
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: delayItem!)
     }
 }
 
@@ -730,11 +718,10 @@ extension VideoPlayerView {
         delayItem?.cancel()
         // 播放的时候才自动隐藏
         guard toolBar.playButton.isSelected else { return }
-        delayItem = DispatchWorkItem { [weak self] in
+        delayItem = Task { [weak self] in
+            try await Task.sleep(nanoseconds: UInt64(KSOptions.animateDelayTimeInterval * 1_000_000_000))
             self?.isMaskShow = false
         }
-        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + KSOptions.animateDelayTimeInterval,
-                                      execute: delayItem!)
     }
 
     private func showLoader() {
