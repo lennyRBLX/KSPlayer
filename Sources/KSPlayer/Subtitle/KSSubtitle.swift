@@ -362,9 +362,7 @@ open class SubtitleModel: ObservableObject {
         }
     }
     #endif
-    // NOT private: KSPlayerLayer.changeLoadState appends player.subtitleDataSource into this
-    // array, so the binary reaches it across a class boundary.
-    var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
+    private var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
     @Published public private(set) var subtitleInfos: [any SubtitleInfo] = []
     @Published public private(set) var searchedSubtitleInfos: [URLSubtitleInfo] = []
     // slots 30/31/32 (keypaths d1e8/d210) + the `$parts` projection 33/34/35 — all Combine machinery.
@@ -473,6 +471,14 @@ open class SubtitleModel: ObservableObject {
     //   `mov w2, #1 ; b <addSubtitle(info:rebindSelection:)>`
     // i.e. instruction-for-instruction the binary's slot 95. So the source is an overload PAIR.
     // Slot 95's trie name carries NO private discriminator, so this 1-arg overload is not private.
+    // Trie: `KSPlayer.SubtitleModel.addSubtitle(dataSource: KSPlayer.SubtitleDataSource) -> ()`,
+    // WITH a method descriptor. KSPlayerLayer.changeLoadState calls this; my first pass reached
+    // into `subtitleDataSources` directly and widened it, which compiled and matched by type but
+    // was not the member the binary names.
+    public func addSubtitle(dataSource: any SubtitleDataSource) {
+        subtitleDataSources.append(dataSource)
+    }
+
     public func addSubtitle(info: any SubtitleInfo) {
         addSubtitle(info: info, rebindSelection: true)
     }

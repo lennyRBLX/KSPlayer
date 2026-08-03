@@ -512,7 +512,7 @@ open class KSPlayerLayer: NSObject {
         if player.loadState == .playable {
             if bufferedCount == 0 {
                 if let subtitleDataSource = player.subtitleDataSource {
-                    subtitleModel.subtitleDataSources.append(subtitleDataSource)
+                    subtitleModel.addSubtitle(dataSource: subtitleDataSource)
                 }
                 bufferedCount += 1
             }
