@@ -74,33 +74,38 @@ production does.** The dim 5 control originally passed a SYNTHETIC callee list a
 exercised the prefilter it existed to cover — which is how an `objc_allocWithZone` miss got past
 it; caught only by reading the instructions.
 
-## 3. The 22 remaining COMPUTED_ACCESSOR blocks — measured, do not re-derive
+## 3. The 17 remaining COMPUTED_ACCESSOR blocks — every blocker READ, do not re-derive
 
-Read `reconstruction/S100_FINDING_makePipelineState_divergence.md` and
-`reconstruction/S100_FINDING_published_accessor_blockers.md` first. The decomposition:
+Session 100 ended at **17** (from 52). Findings:
+`S100_FINDING_makePipelineState_divergence.md`, `S100_FINDING_published_accessor_blockers.md`,
+`S100_FINDING_playerview_playerLayer_didset.md`.
 
-- **4 bodies** behind two blockers held ONLY by dim 1b's `_genuine_work == 0` threshold
-  (`0x1019d98dc` scores 1, `0x1019def64` scores 2; neither has a blocking callee or an indirect
-  site). Both are `Combine.Published` accessors that call `_swift_getKeyPath` twice — which is the
-  case `topo_readiness`'s s42 block excludes BY NAME, on the grounds that "a false-accessor would
-  DROP real work — never acceptable". **Lifting these reverses that decision. It is a human call,
-  and relaxing the threshold to `<= 2` is NOT the way to do it.**
-- **1 body** behind devirtualisation. `vtable_walk KSAVPlayer --metadata-offset 0x458` resolves to
-  slot 101 `impl=0x10002d9d4`, which already classifies `callable` — but the other indirect sites
-  are stored function pointers in object fields (`ldr x8,[x21,#0x40]`, `ldr x8,[x23,#0x8]`), not
-  vtable dispatches, and `_indirect_all_witness` requires EVERY site to be glue. Net payoff at most
-  1 body against receiver-class inference plus the subclass-override question. Sized, not built.
-- **~17 bodies** each behind a SOURCE blocker gating exactly 1. These need real reconstruction.
+**THE SCREEN IS DONE.** Every one of the blockers was read, not sized. The result is a clean size
+split, and it is why four "the structural vein is exhausted" calls during the session were wrong:
 
-**Cost, measured on two units, not estimated.** `makePipelineState` was the outlier and it is
-spent. The next most tractable, `DynamicInfo.init(displayFPSBlock:accessLogEvent:)` @`0x1019df2f0`
-(slot 35, 110 instr), has NO source counterpart and expands into a cluster: its `metadataBlock`
-closure `FUN_1019df4a8` is a 3-instruction adapter into an unnamed 68-instruction helper
-`0x1019c2f60`, and `FUN_1019e0e38` is a 2-instruction adapter into another unnamed body
-`0x1019df4b4`. Writing that init faithfully means characterising those first. `MediaPlayerProtocol.swift`
-already documents slot 35 as CONFIRMED-but-deferred and its s34 sibling verdict names it a
-prerequisite-linked unit — that groundwork is real, the closure cluster is what remains.
+- **<= 32 instructions => compiler glue or a misclassification.** All now cleared:
+  `0x101abff3c` / `0x101ac0004` (20 each, outlined value-witness copy/assign — dim 8),
+  `0x101b15cc4` (8, released by dim 8), `0x1019b6d54` (26, a SHARED OUTLINED SETTER taking the
+  field offset as a pointer-to-global and the observer as a function pointer — hand-adjudicated
+  SOURCE -> HELPER, releasing KSOptions#100 and #103).
+- **>= 82 instructions => a genuine body.** Spot-checked at the boundary: `0x101b2e124` (82) reads
+  `VideoPlayerView.isMaskShow` and builds animation blocks; `0x101b13374` (72) is a
+  `CustomProgressView` initializer wiring itself from a `PlayerView`'s toolBar;
+  `0x1019d5978` (32) is `KSPlayerLayer.player`'s outlined setter with a REAL didSet body
+  (`FUN_1019c925c`) behind it — one caller, offset baked in, so unlike `0x1019b6d54` it is genuine.
 
+So the remaining tail is real reconstruction, and the cheap screens are spent.
+
+**The 17 decompose as:**
+
+- **4** behind the two `Combine.Published` keypath accessors (`0x1019d98dc` gw=1, `0x1019def64`
+  gw=2; no blocking callee, no indirect). Held ONLY by dim 1b's `_genuine_work == 0` threshold.
+  Lifting them reverses the s42 keypath exclusion BY NAME — a human call. dim 8's negatives assert
+  they still block, so that guard is provably intact.
+- **2** (`KSAVPlayer#45`, `#59`) behind indirect dispatch. Devirtualisation pays **ZERO** here —
+  both carry a non-vtable site (`ldr x8,[x21,#0x40]`, `ldr x8,[x27,#0x8]`) and
+  `_indirect_all_witness` requires every site to be glue. Sized twice, corrected once. Do not build it.
+- **11** behind one blocker each, 82-364 instructions, all read and all genuine.
 
 ## 3.5 ⭐ NEW ORACLE — `scripts/bind_oracle.py`, and the BIND vs REBASE distinction
 
