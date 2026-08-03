@@ -19,8 +19,9 @@ are cheaper than they look.**
    quote a count from this document; a count is a fact about a moment.
 4. Read `MEMORY.md`, then `reconstruction/STANDUP_PROTOCOL.md` end to end (it SUPERSEDES
    `AGENT_PROTOCOL.md` for every unit here), then `reconstruction/DISPATCH_CONTRACT_s64.md`.
-5. Read **`reconstruction/S99_STANDUP_INTELLIGENCE.md`** before you plan or dispatch anything. It is
-   the reason §2 is true.
+5. Read **`reconstruction/S99_STANDUP_INTELLIGENCE.md`**, **`S99_DERIVED_SettingsView.md`** and
+   **`S99_DERIVED_IOSVideoPlayerView.md`** before you plan or dispatch anything. They are the reason
+   §2 is true, and together they carry the whole of session 99's derivation for the remaining 75.
 6. Read the `captured_session99_STANDUP_109_TO_75` block in `reconstruction/handoff_baseline.json`.
 
 ## 1. Where the wave stands
@@ -41,9 +42,18 @@ with the cache bypassed — `MSP.classify(cls, idx, addr, use_cache=False)` — 
 
 Session 99 ran 14 derivation agents covering all 109 units. The 43 SettingsView and 32
 IOSVideoPlayerView units were fully derived; their verdicts were simply not written before the session
-ended. `reconstruction/S99_STANDUP_INTELLIGENCE.md` preserves the structural findings that cost the
-most to obtain. **Per-unit shape detail was not preserved and must be re-derived** — but the following
-are recorded there with their evidence and will save a whole dispatch round:
+ended. **The derivation was preserved in full**, across three files you must read before you
+dispatch anything:
+
+- `reconstruction/S99_STANDUP_INTELLIGENCE.md` — the class-level structural findings.
+- `reconstruction/S99_DERIVED_SettingsView.md` — per-unit shape for all 43 SettingsView units.
+- `reconstruction/S99_DERIVED_IOSVideoPlayerView.md` — per-unit shape for all 32 IOSVideoPlayerView units.
+
+Those two per-unit files are **agent-derived and NOT fully orchestrator-verified** — session 99
+re-verified the class-level facts and the naming routes, not every per-unit claim. Each entry carries
+its own evidence; re-read the load-bearing instructions with the xcrun-resolved disassembler before a
+claim enters a verdict (MEMORY rule 5). **You should not need a fresh derivation round for these 75 —
+you need a verification round and then the writer.** The findings most likely to save you time:
 
 7. The SettingsView **25-entry unexported field-offset table at `0x1044f1400`–`0x1044f14c0`**. This is
    the single most valuable finding of session 99. `field_offset_vector` refuses the class and it
