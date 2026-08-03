@@ -23,11 +23,11 @@ import UIKit
 // lets ThumbnailDoviDisplayModel subclass it from another file.
 @MainActor
 public class PlaneDisplayModel: DisplayEnum {
-    private lazy var yuv = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture")
-    private lazy var yuvp010LE = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", bitDepth: 10)
-    private lazy var nv12 = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture")
-    private lazy var p010LE = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", bitDepth: 10)
-    private lazy var bgra = MetalRender.makePipelineState(fragmentFunction: "displayTexture")
+    private lazy var yuv = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayYUVTexture")
+    private lazy var yuvp010LE = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayYUVTexture", bitDepth: 10)
+    private lazy var nv12 = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayNV12Texture")
+    private lazy var p010LE = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayNV12Texture", bitDepth: 10)
+    private lazy var bgra = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayTexture")
 
     // DisplayEnum requirement 0. STORED with a declaration default, at offset 0x38 — the class's
     // field_offset_vector is 5 lazy slots (0x10..0x37) then isSphere, InstanceSize 0x39.
@@ -105,11 +105,11 @@ public class SphereDisplayModel: DisplayEnum {
     // 0x10002c740 (`mov w0,#1; ret`) is anchored solely by this class's witness table.
     public nonisolated let isSphere = true
 
-    private lazy var yuv = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", isSphere: true)
-    private lazy var yuvp010LE = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", isSphere: true, bitDepth: 10)
-    private lazy var nv12 = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", isSphere: true)
-    private lazy var p010LE = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", isSphere: true, bitDepth: 10)
-    private lazy var bgra = MetalRender.makePipelineState(fragmentFunction: "displayTexture", isSphere: true)
+    private lazy var yuv = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture")
+    private lazy var yuvp010LE = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture", bitDepth: 10)
+    private lazy var nv12 = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture")
+    private lazy var p010LE = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture", bitDepth: 10)
+    private lazy var bgra = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayTexture")
     private var fingerRotationX = Float(0)
     private var fingerRotationY = Float(0)
     fileprivate var modelViewMatrix = matrix_identity_float4x4
