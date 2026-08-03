@@ -52,8 +52,12 @@ public protocol PixelBufferProtocol: AnyObject {
     // those keys named plus the four setters — that is the remaining work, and it is now a
     // bounded body-reconstruction task rather than an unverifiable one.
     // ⚑[tool=decode_witness_table ref=KSPlayer.PixelBufferProtocol:0x1039f108c result=40-reqs-vs-28]
+    var hdr10PlusData: Data? { get set }
     var cvPixelBuffer: CVPixelBuffer? { get }
     var isFullRangeVideo: Bool { get }
+    var displayInfo: Data? { get set }
+    var contentInfo: Data? { get set }
+    var ambientViewingEnvironment: Data? { get set }
     func cgImage() -> CGImage?
     func textures() -> [MTLTexture]
     func widthOfPlane(at planeIndex: Int) -> Int
@@ -66,6 +70,52 @@ extension PixelBufferProtocol {
 }
 
 extension CVPixelBuffer: PixelBufferProtocol {
+    // The four HDR-attachment properties, all read from CVBuffer attachments and differing only
+    // in their key. Shape read from the binary: the getter is CVBufferGetAttachment(self, key,
+    // nil), a nil test, a retain, then a conditional cast to Data; the setter bridges Data to
+    // NSData and calls CVBufferSetAttachment(self, key, value, mode) with mode immediate
+    // `mov w3, #0x1` = .shouldPropagate.
+    //
+    // displayInfo and contentInfo are 3-instruction thunks that load their key from __got and
+    // tail-call one shared getter at 0x101a899b0; the bind table names those two slots
+    // _kCVImageBufferMasteringDisplayColorVolumeKey (0x1041088e8) and
+    // _kCVImageBufferContentLightLevelInfoKey (0x1041088c8), and hdr10PlusData's key slot
+    // (0x1041091a8) _kCMSampleAttachmentKey_HDR10PlusPerFrameData.
+    //
+    // ambientViewingEnvironment is the odd one out: its key is not a CoreVideo constant but a
+    // Swift string literal bridged to NSString — the 25-char "AmbientViewingEnvironment",
+    // decoded at the adrp+add result 0x103d39fe0. (Decoding at the biased register value
+    // 0x103d39fc0 instead yields 'nCreateForImageBuffer ...', which is the nativeBias trap.)
+    private func hdrAttachment(_ key: CFString) -> Data? {
+        CVBufferGetAttachment(self, key, nil)?.takeUnretainedValue() as? Data
+    }
+
+    private func setHDRAttachment(_ key: CFString, _ newValue: Data?) {
+        if let newValue {
+            CVBufferSetAttachment(self, key, newValue as NSData, .shouldPropagate)
+        }
+    }
+
+    public var hdr10PlusData: Data? {
+        get { hdrAttachment(kCMSampleAttachmentKey_HDR10PlusPerFrameData) }
+        set { setHDRAttachment(kCMSampleAttachmentKey_HDR10PlusPerFrameData, newValue) }
+    }
+
+    public var displayInfo: Data? {
+        get { hdrAttachment(kCVImageBufferMasteringDisplayColorVolumeKey) }
+        set { setHDRAttachment(kCVImageBufferMasteringDisplayColorVolumeKey, newValue) }
+    }
+
+    public var contentInfo: Data? {
+        get { hdrAttachment(kCVImageBufferContentLightLevelInfoKey) }
+        set { setHDRAttachment(kCVImageBufferContentLightLevelInfoKey, newValue) }
+    }
+
+    public var ambientViewingEnvironment: Data? {
+        get { hdrAttachment("AmbientViewingEnvironment" as CFString) }
+        set { setHDRAttachment("AmbientViewingEnvironment" as CFString, newValue) }
+    }
+
     public var leftShift: UInt8 { 0 }
     public var cvPixelBuffer: CVPixelBuffer? { self }
     public var width: Int { CVPixelBufferGetWidth(self) }
