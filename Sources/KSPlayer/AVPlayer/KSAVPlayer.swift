@@ -390,8 +390,15 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         nil
     }
 
-    public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
+    // The completion carries @MainActor and @Sendable in the binary symbol; the source declared a
+    // bare escaping closure.
+    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
         let time = max(time, 0)
+        // AN ENTIRE KSLog STATEMENT WAS MISSING. The binary opens with this gated log, and the
+        // shouldSeekTo-vs-currentTime coalesce exists only to build the message — which is also why
+        // it has to run BEFORE the `shouldSeekTo = time` store below, or it would read the new value
+        // and the "from" half would always equal the "to" half.
+        KSLog("\(self) seek from \(shouldSeekTo ?? player.currentTime().seconds) to \(time)")
         shouldSeekTo = time
         playbackState = .seeking
         runOnMainThread { [weak self] in

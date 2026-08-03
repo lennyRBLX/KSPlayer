@@ -25,7 +25,9 @@ public protocol MediaPlayback: AnyObject {
     // `shutdown` symbol at all. The other shutdown() methods in this tree belong to different
     // protocols (CircularBuffer, FFmpegDecode, MEPlayerItemTrack, VideoSwresample) and are untouched.
     func stop()
-    func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void))
+    // The completion carries @MainActor and @Sendable — read off KSAVPlayer's seek symbol, whose
+    // implementation satisfies this requirement.
+    func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void))
 }
 
 // 14 stored fields; the source order below IS the binary reflection order (scripts/dump_field_bindings.py

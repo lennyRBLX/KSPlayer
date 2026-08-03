@@ -370,7 +370,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         playerItem.dynamicInfo
     }
 
-    public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
+    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
         let time = max(time, 0)
         playbackState = .seeking
         runOnMainThread { [weak self] in

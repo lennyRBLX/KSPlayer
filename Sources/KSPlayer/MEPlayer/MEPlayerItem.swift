@@ -427,10 +427,14 @@ extension MEPlayerItem: MediaPlayback {
         //   recording through `remuxer` (field 8). Deferred to the remuxer migration commit.
     }
 
-    public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
+    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
         // ⚑ UNRESOLVED (commit-1 stub): base used the removed `condition` (NSCondition.broadcast) + read() to drive
         //   seeking. Forward signals the read loop via `ioWaiter`. Deferred to the seek migration commit.
-        completion(false)
+        // The MainActor hop is OURS, forced by the requirement's isolation (read off KSAVPlayer's
+        // seek symbol); this class is not MainActor-isolated, so the stub cannot call it inline.
+        Task { @MainActor in
+            completion(false)
+        }
     }
 }
 
