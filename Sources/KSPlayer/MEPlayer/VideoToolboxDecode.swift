@@ -139,8 +139,13 @@ class VideoToolboxDecode: DecodeProtocol {
                     }
                     return
                 }
-                let frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
-                frame.pixelBuffer = imageBuffer
+                // VideoVTBFrame.pixelBuffer is non-optional in the binary, but the VT completion
+                // handler hands us a CVImageBuffer?. How Forward's handler treats a nil buffer is
+                // NOT read — its closure body @0x101a6eb44 is a separate, unnamed function — so this
+                // unwrap is OURS, not Forward's.
+                // ⚑[tool=export_trie_oracle ref=vt_output_handler_closure:0x101a6eb44 result=NOT_IN_TRIE]
+                guard let imageBuffer else { return }
+                let frame = VideoVTBFrame(pixelBuffer: imageBuffer, fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
                 frame.timebase = session.assetTrack.timebase
                 if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.maxTimestamp > 0 { // ⚑P3 lastPosition→maxTimestamp
                     self.startTime = self.maxTimestamp - timestamp // ⚑P3 lastPosition→maxTimestamp

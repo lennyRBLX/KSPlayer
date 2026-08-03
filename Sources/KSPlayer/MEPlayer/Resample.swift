@@ -117,13 +117,18 @@ class VideoSwresample: FrameChange {
     // That ~12-requirement protocol layer is unverifiable with current tools (no witness-table verifier) →
     // DEFERRED as a unit with transfer (slot30). Kept upstream with isDovi → `dovi != nil` to compile.
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
-        let frame = VideoVTBFrame(fps: fps, isDovi: dovi != nil)
+        // The binary obtains the buffer BEFORE allocating the frame, and passes it in: the
+        // _swift_allocObject for VideoVTBFrame @0x101a661d0 follows the buffer work at
+        // 0x101a6615c. It also does NOT nil-test transfer's result — after `bl 0x101a666f8` it
+        // takes both existential words straight into x20/x23 and calls swift_getObjectType on
+        // them, which a nil would crash. The only test is `cbnz x21`, the swifterror check.
+        let pixelBuffer: PixelBufferProtocol
         if avframe.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue {
-            frame.pixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
+            pixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
         } else {
-            frame.pixelBuffer = transfer(frame: avframe.pointee)
+            pixelBuffer = try transfer(frame: avframe.pointee)
         }
-        return frame
+        return VideoVTBFrame(pixelBuffer: pixelBuffer, fps: fps, isDovi: dovi != nil)
     }
 
     // T2 — slot29 @0x101a662e8. sws spine FAITHFUL (body-audited).
@@ -166,7 +171,28 @@ class VideoSwresample: FrameChange {
     // DV-format branch (FUN_101a8a318 builds a 224B DV pixel-buffer type) + the shared FUN_101a88b68 colorspace
     // helper — the same Forward-NEW HDR-pixelBuffer-decoration layer as change (deferred together; see change()).
     // Kept upstream (color attributes only; no isDovi).
-    func transfer(frame: AVFrame) -> PixelBufferProtocol? {
+    // THROWS and returns NON-OPTIONAL. Slot 54 @0x101a666f8, 349 instr. Its single `ret`
+    // returns the pair (x20, x24), and x24 — the witness-table word — is only ever set to
+    // 0x1041d9f98 (CVBuffer's PixelBufferProtocol witness table) or 0x1041da0e0
+    // (PixelBuffer's); it is never zeroed, and neither is x20 by any constant. The error
+    // path is explicit: _swift_allocError @0x10345cae4 with type metadata 0x1041d5790 =
+    // `KSPlayer.KSPlayerError`, `str wzr,[x1]` writing code 0 (.unknown) and
+    // `stp x19,x20,[x1,#8]` writing the message String, then _swift_willThrow.
+    //
+    // The thrown message is READ IN FULL, not inferred. It is a string interpolation built
+    // inline at 0x101a66a64-0x101a66b3c from three literal pieces:
+    //   · head @0x103d36e50, len 0x24=36 — "pixelBufferPool Create fail. format=". The
+    //     register holds 0x103d36e30 because the pointer carries the 0x20 nativeBias
+    //     (`sub x8,x8,#0x20`); the UTF-8 starts at the adrp+add result, not the biased value.
+    //   · ", width="  — REGISTER-FORM small string, x0 = 0x3d68746469772 02c, x1 = 0xE8..(count 8)
+    //   · " height="  — REGISTER-FORM small string, x0 = 0x3d746867696568 20, same discriminator
+    // The first interpolated value goes through a type-metadata ACCESSOR (mov x0,#0 /
+    // bl 0x10199c2c0) while the other two take Int32's metadata straight from the GOT
+    // (0x104112928/0x104112950) — which is why the first is `format` (AVPixelFormat) and not
+    // `format.rawValue`, an Int32 that would have used the same GOT pair.
+    // 0x1019b2bec is NOT a message builder: its result becomes x1 of _swift_allocError, i.e.
+    // the `KSPlayerError: Error` conformance witness table.
+    func transfer(frame: AVFrame) throws -> PixelBufferProtocol {
         let format = AVPixelFormat(rawValue: frame.format)
         let width = frame.width
         let height = frame.height
@@ -174,21 +200,22 @@ class VideoSwresample: FrameChange {
             return PixelBuffer(frame: frame)
         }
         let pbuf = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize))
-        if let pbuf {
-            pbuf.aspectRatio = frame.sample_aspect_ratio.size
-            pbuf.yCbCrMatrix = frame.colorspace.ycbcrMatrix
-            pbuf.colorPrimaries = frame.color_primaries.colorPrimaries
-            pbuf.transferFunction = frame.color_trc.transferFunction
-            // vt_pixbuf_set_colorspace
-            if pbuf.transferFunction == kCVImageBufferTransferFunction_UseGamma {
-                let gamma = NSNumber(value: frame.color_trc == AVCOL_TRC_GAMMA22 ? 2.2 : 2.8)
-                CVBufferSetAttachment(pbuf, kCVImageBufferGammaLevelKey, gamma, .shouldPropagate)
-            }
-            if let chroma = frame.chroma_location.chroma {
-                CVBufferSetAttachment(pbuf, kCVImageBufferChromaLocationTopFieldKey, chroma, .shouldPropagate)
-            }
-            pbuf.colorspace = KSOptions.colorSpace(ycbcrMatrix: pbuf.yCbCrMatrix, transferFunction: pbuf.transferFunction)
+        guard let pbuf else {
+            throw KSPlayerError(description: "pixelBufferPool Create fail. format=\(format), width=\(width) height=\(height)")
         }
+        pbuf.aspectRatio = frame.sample_aspect_ratio.size
+        pbuf.yCbCrMatrix = frame.colorspace.ycbcrMatrix
+        pbuf.colorPrimaries = frame.color_primaries.colorPrimaries
+        pbuf.transferFunction = frame.color_trc.transferFunction
+        // vt_pixbuf_set_colorspace
+        if pbuf.transferFunction == kCVImageBufferTransferFunction_UseGamma {
+            let gamma = NSNumber(value: frame.color_trc == AVCOL_TRC_GAMMA22 ? 2.2 : 2.8)
+            CVBufferSetAttachment(pbuf, kCVImageBufferGammaLevelKey, gamma, .shouldPropagate)
+        }
+        if let chroma = frame.chroma_location.chroma {
+            CVBufferSetAttachment(pbuf, kCVImageBufferChromaLocationTopFieldKey, chroma, .shouldPropagate)
+        }
+        pbuf.colorspace = KSOptions.colorSpace(ycbcrMatrix: pbuf.yCbCrMatrix, transferFunction: pbuf.transferFunction)
         return pbuf
     }
 
@@ -344,7 +371,7 @@ class AudioSwresample: FrameChange {
         var bufferSize = [Int32(0)]
         // 返回值是有乘以声道，所以不用返回值
         _ = av_samples_get_buffer_size(&bufferSize, channels, outSamples, descriptor.audioFormat.sampleFormat, 1)
-        let frame = AudioFrame(dataSize: Int(bufferSize[0]), audioFormat: descriptor.audioFormat)
+        let frame = AudioFrame(dataSize: UInt32(bufferSize[0]), audioFormat: descriptor.audioFormat)
         frame.numberOfSamples = UInt32(swr_convert(swrContext, &frame.data, outSamples, &frameBuffer, numberOfSamples))
         return frame
     }

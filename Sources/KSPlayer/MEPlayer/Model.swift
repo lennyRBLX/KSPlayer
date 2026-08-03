@@ -238,7 +238,7 @@ final class Packet: ObjectQueueItem {
     // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o, instr 16 / size 64)
     public private(set) var corePacket = av_packet_alloc()
     public var timebase: Timebase {
-        assetTrack.timebase
+        assetTrack!.timebase
     }
 
     var isKeyFrame: Bool {
@@ -249,7 +249,10 @@ final class Packet: ObjectQueueItem {
         }
     }
 
-    public var assetTrack: FFmpegAssetTrack! {
+    // OPTIONAL, not IUO. The trie prints `Packet.assetTrack.getter : KSPlayer.FFmpegAssetTrack?`,
+    // and a field record cannot tell `T!` from `T?` — so `?` is the only spelling the binary
+    // supports, and MEMORY forbids writing `T!` off a field record.
+    public var assetTrack: FFmpegAssetTrack? {
         didSet {
             guard let packet = corePacket?.pointee else {
                 return
@@ -281,7 +284,9 @@ final class SubtitleFrame: MEFrame {
 }
 
 public final class AudioFrame: MEFrame {
-    public let dataSize: Int
+    // UInt32, not Int. The trie prints both `AudioFrame.dataSize.getter : Swift.UInt32` and
+    // `AudioFrame.init(dataSize: Swift.UInt32, audioFormat: __C.AVAudioFormat)`.
+    public let dataSize: UInt32
     public let audioFormat: AVAudioFormat
     public internal(set) var timebase = Timebase.defaultValue
     public var timestamp: Int64 = 0
@@ -290,12 +295,12 @@ public final class AudioFrame: MEFrame {
     public var size: Int32 = 0
     public var data: [UnsafeMutablePointer<UInt8>?]
     public var numberOfSamples: UInt32 = 0
-    public init(dataSize: Int, audioFormat: AVAudioFormat) {
+    public init(dataSize: UInt32, audioFormat: AVAudioFormat) {
         self.dataSize = dataSize
         self.audioFormat = audioFormat
         let count = audioFormat.isInterleaved ? 1 : audioFormat.channelCount
         data = (0 ..< count).map { _ in
-            UnsafeMutablePointer<UInt8>.allocate(capacity: dataSize)
+            UnsafeMutablePointer<UInt8>.allocate(capacity: Int(dataSize))
         }
     }
 
@@ -304,7 +309,7 @@ public final class AudioFrame: MEFrame {
         timebase = array[0].timebase
         timestamp = array[0].timestamp
         position = array[0].position
-        var dataSize = 0
+        var dataSize = UInt32(0)
         for frame in array {
             duration += frame.duration
             dataSize += frame.dataSize
@@ -314,20 +319,20 @@ public final class AudioFrame: MEFrame {
         self.dataSize = dataSize
         let count = audioFormat.isInterleaved ? 1 : audioFormat.channelCount
         data = (0 ..< count).map { _ in
-            UnsafeMutablePointer<UInt8>.allocate(capacity: dataSize)
+            UnsafeMutablePointer<UInt8>.allocate(capacity: Int(dataSize))
         }
         var offset = 0
         for frame in array {
             for i in 0 ..< data.count {
-                data[i]?.advanced(by: offset).initialize(from: frame.data[i]!, count: frame.dataSize)
+                data[i]?.advanced(by: offset).initialize(from: frame.data[i]!, count: Int(frame.dataSize))
             }
-            offset += frame.dataSize
+            offset += Int(frame.dataSize)
         }
     }
 
     deinit {
         for i in 0 ..< data.count {
-            data[i]?.deinitialize(count: dataSize)
+            data[i]?.deinitialize(count: Int(dataSize))
             data[i]?.deallocate()
         }
         data.removeAll()
@@ -338,7 +343,7 @@ public final class AudioFrame: MEFrame {
         for i in 0 ..< data.count {
             switch audioFormat.commonFormat {
             case .pcmFormatInt16:
-                let capacity = dataSize / MemoryLayout<Int16>.size
+                let capacity = Int(dataSize) / MemoryLayout<Int16>.size
                 data[i]?.withMemoryRebound(to: Int16.self, capacity: capacity) { src in
                     var des = ContiguousArray<Float>(repeating: 0, count: Int(capacity))
                     for j in 0 ..< capacity {
@@ -347,7 +352,7 @@ public final class AudioFrame: MEFrame {
                     array.append(des)
                 }
             case .pcmFormatInt32:
-                let capacity = dataSize / MemoryLayout<Int32>.size
+                let capacity = Int(dataSize) / MemoryLayout<Int32>.size
                 data[i]?.withMemoryRebound(to: Int32.self, capacity: capacity) { src in
                     var des = ContiguousArray<Float>(repeating: 0, count: Int(capacity))
                     for j in 0 ..< capacity {
@@ -356,7 +361,7 @@ public final class AudioFrame: MEFrame {
                     array.append(des)
                 }
             default:
-                let capacity = dataSize / MemoryLayout<Float>.size
+                let capacity = Int(dataSize) / MemoryLayout<Float>.size
                 data[i]?.withMemoryRebound(to: Float.self, capacity: capacity) { src in
                     var des = ContiguousArray<Float>(repeating: 0, count: Int(capacity))
                     for j in 0 ..< capacity {
@@ -377,17 +382,17 @@ public final class AudioFrame: MEFrame {
         for i in 0 ..< min(Int(pcmBuffer.format.channelCount), data.count) {
             switch audioFormat.commonFormat {
             case .pcmFormatInt16:
-                let capacity = dataSize / MemoryLayout<Int16>.size
+                let capacity = Int(dataSize) / MemoryLayout<Int16>.size
                 data[i]?.withMemoryRebound(to: Int16.self, capacity: capacity) { src in
                     pcmBuffer.int16ChannelData?[i].update(from: src, count: capacity)
                 }
             case .pcmFormatInt32:
-                let capacity = dataSize / MemoryLayout<Int32>.size
+                let capacity = Int(dataSize) / MemoryLayout<Int32>.size
                 data[i]?.withMemoryRebound(to: Int32.self, capacity: capacity) { src in
                     pcmBuffer.int32ChannelData?[i].update(from: src, count: capacity)
                 }
             default:
-                let capacity = dataSize / MemoryLayout<Float>.size
+                let capacity = Int(dataSize) / MemoryLayout<Float>.size
                 data[i]?.withMemoryRebound(to: Float.self, capacity: capacity) { src in
                     pcmBuffer.floatChannelData?[i].update(from: src, count: capacity)
                 }
@@ -461,7 +466,12 @@ public final class VideoVTBFrame: MEFrame {
     // Forward-NEW vs upstream: pixelBuffer (RENAMED from corePixelBuffer), adjustBuffer,
     // isKeyFrame, dovi, doviData, rpuBuffer. Types reflection/field-record-resolved.
     public var timebase: Timebase = Timebase.defaultValue
-    public var pixelBuffer: PixelBufferProtocol? // @+0x18 (was corePixelBuffer)
+    // NON-OPTIONAL `let`, supplied at init. Field record 1 is flags=0 with tail `_p` and NO
+    // `Sg`; the trie exports pixelBuffer.getter with no setter and no modify; and
+    // VideoSwresample.change(avframe:) allocates the frame AFTER obtaining the buffer
+    // (_swift_allocObject @0x101a661d0 follows the buffer work at 0x101a6615c) — three
+    // independent reads of the same fact.
+    public let pixelBuffer: PixelBufferProtocol // @+0x18 (was corePixelBuffer)
     // 交叉视频的duration会不准，直接减半了
     public var duration: Int64 = 0
     public var position: Int64 = 0
@@ -485,7 +495,8 @@ public final class VideoVTBFrame: MEFrame {
     // implicit nil; writing `= nil` would emit a declaration default the binary does not have.
     var doviData: KSDOVIMetadata?
     public var rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
-    init(fps: Float, isDovi: Bool) {
+    init(pixelBuffer: PixelBufferProtocol, fps: Float, isDovi: Bool) {
+        self.pixelBuffer = pixelBuffer
         self.fps = fps
         self.isDovi = isDovi
     }
@@ -508,9 +519,9 @@ extension VideoVTBFrame {
                 return CAEDRMetadata.hlg
             }
         }
-        if pixelBuffer?.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+        if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
             return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
-        } else if pixelBuffer?.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+        } else if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
             return CAEDRMetadata.hlg
         }
         return nil

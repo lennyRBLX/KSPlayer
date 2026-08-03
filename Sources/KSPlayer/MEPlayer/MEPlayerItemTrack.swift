@@ -133,7 +133,7 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     //   is the body that would settle it — left as recorded type debt, its own unit.
     var bitrate = Double(0)
     fileprivate func doDecode(packet: Packet) {
-        if packet.isKeyFrame, packet.assetTrack.mediaType != .subtitle {
+        if packet.isKeyFrame, packet.assetTrack!.mediaType != .subtitle {
             let seconds = packet.seconds
             let diff = seconds - lastPacketSeconds
             if lastPacketSeconds < 0 || diff < 0 {
@@ -147,14 +147,14 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
             }
         }
         lastPacketBytes += packet.size
-        let decoder = decoderMap.value(for: packet.assetTrack.trackID, default: makeDecode(assetTrack: packet.assetTrack))
+        let decoder = decoderMap.value(for: packet.assetTrack!.trackID, default: makeDecode(assetTrack: packet.assetTrack!))
 //        var startTime = CACurrentMediaTime()
         decoder.decodeFrame(from: packet) { [weak self] result in
             guard let self else {
                 return
             }
             do {
-//                if packet.assetTrack.mediaType == .video {
+//                if packet.assetTrack!.mediaType == .video {
 //                    print("[video] decode time: \(CACurrentMediaTime()-startTime)")
 //                    startTime = CACurrentMediaTime()
 //                }
@@ -164,7 +164,7 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                 }
                 if self.seekTime > 0 {
                     let timestamp = frame.timestamp + frame.duration
-//                    KSLog("seektime \(self.seekTime), frame \(frame.seconds), mediaType \(packet.assetTrack.mediaType)")
+//                    KSLog("seektime \(self.seekTime), frame \(frame.seconds), mediaType \(packet.assetTrack!.mediaType)")
                     if timestamp <= 0 || frame.timebase.cmtime(for: timestamp).seconds < self.seekTime {
                         return
                     } else {
@@ -173,13 +173,13 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                 }
                 if let frame = frame as? Frame {
                     self.outputRenderQueue.push(frame)
-                    self.outputRenderQueue.fps = packet.assetTrack.nominalFrameRate
+                    self.outputRenderQueue.fps = packet.assetTrack!.nominalFrameRate
                 }
             } catch {
                 KSLog("Decoder did Failed : \(error)")
                 if decoder is VideoToolboxDecode {
                     decoder.shutdown()
-                    self.decoderMap[packet.assetTrack.trackID] = FFmpegDecode(assetTrack: packet.assetTrack, options: self.options)
+                    self.decoderMap[packet.assetTrack!.trackID] = FFmpegDecode(assetTrack: packet.assetTrack!, options: self.options)
                     KSLog("VideoCodec switch to software decompression")
                     self.doDecode(packet: packet)
                 } else {

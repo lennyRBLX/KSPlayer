@@ -47,21 +47,21 @@ class FFmpegDecode: DecodeProtocol {
             return
         }
         // 需要avcodec_send_packet之后，properties的值才会变成FF_CODEC_PROPERTY_CLOSED_CAPTIONS
-        if packet.assetTrack.mediaType == .video {
+        if packet.assetTrack!.mediaType == .video {
             // ⚑ Forward retyped FFmpegAssetTrack.codecpar value→pointer, so the synthetic CC codecpar is
             //   heap-allocated (stable pointer the track stores) — the alloc folds into the compound `if`
             //   to match the binary (FUN_101a23404 L33-38: alloc-fail skips the block, not a return).
             //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_alloc:0x1029f543c result=CONFIRMED]
             //   ⚑ ownership/free deferred to the FFmpegAssetTrack lifecycle audit (the alloc'd params are now owned by the track; the base value-copy had no free step).
             if Int32(codecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0,
-               packet.assetTrack.closedCaptionsTrack == nil,
+               packet.assetTrack!.closedCaptionsTrack == nil,
                let codecpar = avcodec_parameters_alloc() {
                 codecpar.pointee.codec_type = AVMEDIA_TYPE_SUBTITLE
                 codecpar.pointee.codec_id = AV_CODEC_ID_EIA_608
                 if let subtitleAssetTrack = FFmpegAssetTrack(codecpar: codecpar) {
                     subtitleAssetTrack.name = "Closed Captions"
-                    subtitleAssetTrack.startTime = packet.assetTrack.startTime
-                    subtitleAssetTrack.timebase = packet.assetTrack.timebase
+                    subtitleAssetTrack.startTime = packet.assetTrack!.startTime
+                    subtitleAssetTrack.timebase = packet.assetTrack!.timebase
                     // ⚑[tool=export_trie_oracle ref=FUN_101a23404:0x101a23404 result=NOT_IN_TRIE — enclosing function
                     //   unnamed (a real negative, not a lookup failure); identified by its own body, below]
                     // Call @0x101a235a0 (thunk 0x101a3340c) inside that function: `w1 = 0x80` @0x101a23594 and
@@ -71,7 +71,7 @@ class FFmpegDecode: DecodeProtocol {
                     // the result is stored to +0x100 (`subtitle`) @0x101a235ac.
                     let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
                     subtitleAssetTrack.subtitle = subtitle
-                    packet.assetTrack.closedCaptionsTrack = subtitleAssetTrack
+                    packet.assetTrack!.closedCaptionsTrack = subtitleAssetTrack
                     subtitle.decode()
                 }
             }
@@ -87,7 +87,7 @@ class FFmpegDecode: DecodeProtocol {
                     for i in 0 ..< inputFrame.pointee.nb_side_data {
                         if let sideData = inputFrame.pointee.side_data[Int(i)]?.pointee {
                             if sideData.type == AV_FRAME_DATA_A53_CC {
-                                if let closedCaptionsTrack = packet.assetTrack.closedCaptionsTrack,
+                                if let closedCaptionsTrack = packet.assetTrack!.closedCaptionsTrack,
                                    let subtitle = closedCaptionsTrack.subtitle
                                 {
                                     let closedCaptionsPacket = Packet()
@@ -128,7 +128,7 @@ class FFmpegDecode: DecodeProtocol {
                                     if seiTimestamp < 0 {
                                         seiTimestamp = inputFrame.pointee.pkt_dts
                                     }
-                                    options.sei(string: str, time: packet.assetTrack.timebase.cmtime(for: max(0, seiTimestamp)) - packet.assetTrack.startTime)
+                                    options.sei(string: str, time: packet.assetTrack!.timebase.cmtime(for: max(0, seiTimestamp)) - packet.assetTrack!.startTime)
                                 }
                             } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
                                 let data = sideData.data.withMemoryRebound(to: [UInt8].self, capacity: 1) { $0 }
@@ -176,9 +176,9 @@ class FFmpegDecode: DecodeProtocol {
                 filter.filter(options: options, inputFrame: inputFrame) { avframe in
                     do {
                         var frame = try frameChange.change(avframe: avframe)
-                        if let videoFrame = frame as? VideoVTBFrame, let pixelBuffer = videoFrame.pixelBuffer {
-                            if let pixelBuffer = pixelBuffer as? PixelBuffer {
-                                pixelBuffer.formatDescription = packet.assetTrack.formatDescription
+                        if let videoFrame = frame as? VideoVTBFrame {
+                            if let pixelBuffer = videoFrame.pixelBuffer as? PixelBuffer {
+                                pixelBuffer.formatDescription = packet.assetTrack!.formatDescription
                             }
                             if displayData != nil || contentData != nil || ambientViewingEnvironment != nil {
                                 videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment)
@@ -216,7 +216,7 @@ class FFmpegDecode: DecodeProtocol {
                 } else if result == AVError.tryAgain.code {
                     break
                 } else {
-                    let error = NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
+                    let error = NSError(errorCode: packet.assetTrack!.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
                     KSLog(error)
                     completionHandler(.failure(error))
                 }
