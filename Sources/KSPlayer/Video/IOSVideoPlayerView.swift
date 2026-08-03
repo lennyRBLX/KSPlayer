@@ -24,7 +24,10 @@ open class IOSVideoPlayerView: VideoPlayerView {
     // Kept rather than deleted: it is READ at `updateUI(isFullScreen:)` below, so removing it means
     // reconstructing that body against the binary, which is a separate unit with its own evidence.
     // Deleting the field and inventing replacement logic would be fabrication; this is the deferral.
-    private var originalOrientations: UIInterfaceOrientationMask?
+    // originalOrientations REMOVED: IOSVideoPlayerView's FieldDescriptor holds 65 records and this
+    // is not among them — records 0-3 are originalSuperView, originalframeConstraints,
+    // originalFrame, fullScreenDelegate — and no such field symbol exists for the class. Its two
+    // uses go with it: the capture in the enter-fullscreen arm and the restore in the exit arm.
     private weak var fullScreenDelegate: PlayerViewFullScreenDelegate?
     private var isVolume = false
     private let volumeView = BrightnessVolume()
@@ -271,7 +274,6 @@ open class IOSVideoPlayerView: VideoPlayerView {
                 NSLayoutConstraint.deactivate(originalframeConstraints)
             }
             originalFrame = frame
-            originalOrientations = viewController.supportedInterfaceOrientations
             let fullVC = PlayerFullScreenViewController(isHorizonal: isHorizonal)
             fullScreenDelegate = fullVC
             fullVC.view.addSubview(self)
@@ -293,9 +295,6 @@ open class IOSVideoPlayerView: VideoPlayerView {
                 return
             }
             let presentingVC = viewController.presentingViewController ?? viewController
-            if let originalOrientations {
-                KSOptions.supportedInterfaceOrientations = originalOrientations
-            }
             presentingVC.dismiss(animated: true) {
                 self.originalSuperView?.addSubview(self)
                 if let constraints = self.originalframeConstraints, !constraints.isEmpty {

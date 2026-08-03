@@ -198,10 +198,26 @@ open class KSPlayerLayer: NSObject {
     public private(set) var state = KSPlayerState.initialized {
         willSet {
             if state != newValue {
-                KSLog("playerStateDidChange - \(newValue)")
-                delegate?.player(layer: self, state: newValue)
+                // The inlined observer logs 'state change <old> -> <new>' — both values, not just
+                // the new one — and then calls change(state:), a real KSPlayerLayer method the
+                // source did not declare. The delegate notification moves into it: the observer's
+                // only two acts in the binary are this log and that call.
+                KSLog("state change \(state) -> \(newValue)")
+                change(state: newValue)
             }
         }
+    }
+
+    // Slot 58 @0x1019cc0ac, exported as `KSPlayer.KSPlayerLayer.change(state:)` — note the mangling
+    // is `$s8KSPlayer0A5LayerC6change5state...`, with `0A5Layer` word-substituting "KSPlayer", which
+    // is why a hand-built `13KSPlayerLayerC` spelling reads as a false trie negative.
+    // OVERRIDDEN by KSComplexPlayerLayer, which carries its own change(state:).
+    // UNRESOLVED → P8: the interior. All three of this body's callees — 0x10002d984, 0x101a04674
+    // and 0x101a03fd4 — are real trie negatives, so what it does beyond notifying the delegate is
+    // not read.
+    // ⚑[tool=export_trie_oracle ref=change_state_callee:0x101a04674 result=NOT_IN_TRIE]
+    open func change(state: KSPlayerState) {
+        delegate?.player(layer: self, state: state)
     }
 
     private lazy var timer: Timer = .scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -429,10 +445,12 @@ open class KSPlayerLayer: NSObject {
     // 74 finish 0x1019ce7d0, 78 wirelessRouteActiveDidChange 0x1019cedcc,
     // 79 audioInterrupted 0x1019cef60. Bodies are unchanged by this move.
     // ⚑[tool=vtable_walk ref=KSPlayerLayer:0x1039ecf38 result=82-slots-vtable-offset-27]
+    // TWO OF THE FOUR SOURCE STATEMENTS ARE ABSENT and are removed: `bufferingStartTime =
+    // CACurrentMediaTime()` — the body contains no time call of any kind — and `bufferedCount = 0`,
+    // which would be a store to a field of self, and the extent has none outside the Published
+    // setter.
     open func prepareToPlay() {
         state = .preparing
-        bufferingStartTime = CACurrentMediaTime()
-        bufferedCount = 0
         player.prepareToPlay()
     }
 
