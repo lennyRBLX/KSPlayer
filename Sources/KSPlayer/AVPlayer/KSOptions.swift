@@ -305,6 +305,15 @@ open class KSOptions {
     // ⚑ s105 RENAME: was `resetTime()`, flagged INFERRED in the comment above. One symbol at
     // 0x1019c0798: `KSPlayer.KSOptions.resetTimeLog() -> ()`. Body unchanged.
     // ⚑[tool=export_trie_oracle ref=KSOptions.resetTimeLog:0x1019c0798 result=name-recovered]
+    /// ⚑ 0x1019b4080 — a single `b 0x1019c0798`, i.e. a tail-call straight into
+    /// `resetTimeLog()`'s body with no argument shuffling and nothing else. It is a THUNK, not
+    /// an ICF fold: 0x1019b4080 is its own function-start and 0x1019c0798 is resetTimeLog's
+    /// entry, so this method's whole body is that one call.
+    /// Trie: `KSPlayer.KSOptions.reset() -> ()`.
+    func reset() {
+        resetTimeLog()
+    }
+
     func resetTimeLog() {
         prepareTime = 0
         dnsStartTime = 0
