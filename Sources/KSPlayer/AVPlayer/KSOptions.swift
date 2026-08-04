@@ -900,6 +900,13 @@ public extension KSOptions {
     nonisolated(unsafe) static var subtitleFontSizeScale = 1.0
     nonisolated(unsafe) static var subtitleImageScale = 1.0
     nonisolated(unsafe) static var trackHeight: CGFloat = 5.0
+    /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
+    /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
+    /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
+    /// `type metadata accessor for KSPlayer.KSComplexPlayerLayer`, which is the subclass, not
+    /// the declared `KSPlayerLayer` base.
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.metadataAccessor:0x1019d5d24 result=named]
+    nonisolated(unsafe) static var playerLayerType: KSPlayerLayer.Type = KSComplexPlayerLayer.self
 
     // ── s105, the zero-fill half of KSOptions' statics ───────────────────────────────────────
     // Seventeen more `static var` settings. Their defaults are read from the IMAGE'S LAYOUT
