@@ -100,6 +100,27 @@ open class KSPlayerLayer: NSObject {
     /// `UIView` resolves on every platform here: PlayerDefines declares
     /// `public typealias UIView = NSView` in its non-UIKit branch.
     open func updateUIView(_: UIView) {}
+
+    /// ⚑ 0x1019ceaf4 is a 3-instruction thunk (`mov x0,x1 / mov x1,x2 / b 0x1019d58f8`); the body
+    /// is the 32 instructions there, read in full. Every callee named from the bind table:
+    ///   swift_unknownObjectWeakLoadStrong  ⚑[tool=bind_oracle ref=0x1041130e8 result=libswiftCore]
+    ///   swift_getObjectType                ⚑[tool=bind_oracle ref=0x104112f08 result=libswiftCore]
+    ///   swift_unknownObjectRelease         ⚑[tool=bind_oracle ref=0x1041130a0 result=libswiftCore]
+    /// Shape: weak-load `delegate`, return if nil, then dispatch witness-table slot +0x48 with
+    /// self, then release. The `?.` is the nil check; the retain/release pair is what a weak load
+    /// compiles to, not source.
+    ///
+    /// SLOT +0x48 WAS DECODED, NOT COUNTED off the protocol's declaration order — FrameOutput
+    /// proved that order can be wrong. Coordinator's KSPlayerLayerDelegate witness table
+    /// (0x1041d4d18, conformance descriptor 0x103567f38) has 11 requirements, and +0x48 is index
+    /// 8. Reqs 0-4 carry real bodies and 5-10 all carry the canonical empty body 0x10000e52c —
+    /// which matches this protocol exactly: five `player(...)` requirements Coordinator
+    /// implements, six with empty extension defaults it does not. That 5/6 split is what
+    /// corroborates the ordering, so index 8 is `playerDidClear(layer:)`.
+    /// ⚑[tool=decode_witness_table ref=Coordinator:KSPlayerLayerDelegate:0x1041d4d18 result=req8]
+    open func playerDidClear(player _: some MediaPlayerProtocol) {
+        delegate?.playerDidClear(layer: self)
+    }
     @Published
     public var bufferingProgress: UInt8 = 0
     @Published
