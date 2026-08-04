@@ -189,6 +189,17 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //   (stores 0,0 + tag byte 1). The _playbackSnapshot/_playbackSnapshotLock writes
     //   touch INHERITED PreLoadIOContext fields (out of this class's field scope — owned
     //   by 1C.7) → that tail is preserved as an UNRESOLVED note, not re-derived here.
+    // ⚑ 0x10002c740 — `mov w0, #0x1` / `ret`. Unconditional true; the body reads no field and
+    // takes no branch. That address is the image's canonical `return true` and is ICF-folded, so
+    // the constant is precisely what it establishes, and precisely what this declares.
+    // Signature from the trie:
+    // `PreLoadIOContext.LimitPreLoadIOContext.canReadFromNetwork() -> Swift.Bool`.
+    // Unlike the sibling name on CacheIOContext, this one is NOT the same body — CacheIOContext's
+    // canReadFromNetwork is 3 instructions at 0x101b885ac and stays open.
+    public func canReadFromNetwork() -> Bool {
+        true
+    }
+
     func resetPlaybackPosition() { // name inferred (devirt)
         // binary s21: _swift_beginAccess(&playbackBytePosition); store payload 0 + tag 1.
         //   Brief default is nil; the binary writes .some(0). Match the binary store here:
