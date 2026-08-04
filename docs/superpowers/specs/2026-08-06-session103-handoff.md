@@ -35,10 +35,11 @@ You are the ORCHESTRATOR. Agents derive; you alone adjudicate, edit source, buil
 | quantity | value |
 |---|---|
 | faithful floor | **333** (was 332; +1 this session) |
-| verdicts | FAITHFUL 333 · STOOD_UP 92 · DIVERGENT 13 · UNRESOLVED 1 |
+| verdicts | FAITHFUL 333 · STOOD_UP **117** (was 92) · DIVERGENT 13 · UNRESOLVED 1 |
 | fix queue | CRITICAL **6** (was 7) · HIGH 19 · MED 16 · LOW 10 |
-| readiness | ready 754 · blocked 305 · done_faithful 320 (unmoved — no readiness work) |
-| stages | **11 of 18**, unmoved |
+| stand-up wave | **50** units (was 75) — 27 SettingsView, 23 IOSVideoPlayerView |
+| readiness | ready 754 · blocked 305 · done_faithful 320 (unmoved — a STOOD_UP unblocks nothing, §7) |
+| stages | **11 of 18**, unmoved — and both open marks are now DERIVED, not literals |
 | gate | PASS 50 · ANOMALY 0 · FAIL 3 |
 
 ## 2. What session 102 landed — six commits, `ec8b914..b76d699`
@@ -83,6 +84,49 @@ calls `MediaPlayerProtocol.replace(url:options:)`, then dispatches `play()` and 
 ⚠️ **Partial work on this unit moves NO number.** `aggregate_verdicts` keys the severity counts off
 `final_verdict == "DIVERGENT"` for the whole FILE, so the verdict flips only when every divergence in
 it is resolved. Budget the body, or pick a different unit.
+
+## 3b. The STAND-UP WAVE — 75 → 50, and how to keep going
+
+Twenty-five units stood up, every one through `write_standup_verdict.py` (which re-derives extent,
+dispatch, ICF fold and the vtable row itself and REFUSES on a mismatch with your premise, so the
+structural half is never typed) and adjudicated with per-unit evidence. Re-derive with
+`wave_worklist.py --wave standup`; do not trust this number.
+
+**Work smallest-first and look for families.** The first twelve were 5-7 instruction trampolines
+that batched eight at a time because they shared a shape; everything since costs about one working
+cycle per unit. Four families were mapped, each identified by a SHARED TAIL-BRANCH TARGET or a
+shared spine rather than by any name — that is the only identification available when the trie is a
+real negative, which it is for all 27 remaining SettingsView units:
+
+- idx156/158 — `_AVMediaTypeVideo`/`Audio` → `0x101b20598`
+- idx180-185 — base global `0x104c631c0` at +0x10/+0x18/+0x20 × two targets, all six combinations
+- idx153/161 and idx177/179 — ASCII immediate pairs → `0x101b20c88` / `0x101b24450`
+- **idx172/173/174/175** — the associated-object callback family: read a byte field, use its stack
+  slot's ADDRESS as an `objc_getAssociatedObject` key on the x0 sender, bridge to `Any`,
+  `swift_dynamicCast` to a function type, invoke. Members differ by the type the callback receives,
+  established from the STORE WIDTH before any name was known: `strb`→`isOn`, `str s0`→`value`,
+  two-word→`text`, and idx172 fetches nothing.
+
+⚠️ **One anomaly is open across all four of that family and should not be smoothed away.**
+`objc_getAssociatedObject` takes `(object, key)`; the key here is a STACK ADDRESS, which is not
+stable between calls. Four consistent sightings make it a pattern, not an accident — but consistency
+is not an explanation and none of the four bodies contains one.
+
+## 3c. ⭐ NEW TOOL — `decode_objc_selector.py`, and use it FIRST
+
+Selfcheck PASS, golden-anchored on `0x10346be40` → `setText:`, which `OutputStreamInfo.swift`
+recorded from an independent reading long before the tool existed.
+
+**Run it on every `__objc_stubs` call site before writing a verdict.** It removes the one open item
+every UIKit stand-up in this wave carries. The key fact it encodes: an `__objc_selrefs` slot is a
+chained REBASE, not a pointer — the target is `image_base + (v & 0xF_FFFF_FFFF)` — so a plain
+`struct.unpack` read lands nowhere and the address looks like a dead end.
+
+Its first run decoded all 13 selectors left open across the wave, and every one CONFIRMED the shape
+that verdict had already derived from instructions alone (idx144's 0.6/12.0 are
+`colorWithAlphaComponent:`/`setCornerRadius:`; idx139's send is `addArrangedSubview:`). **The 25
+landed verdicts still record their selrefs, so back-filling those names is a lookup, not a
+re-derivation — that is the single highest-leverage follow-up for this wave.**
 
 ## 4. A LEAD, deliberately not acted on
 
