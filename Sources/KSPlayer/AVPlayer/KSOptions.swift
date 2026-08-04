@@ -29,28 +29,28 @@ open class KSOptions {
     //    (dump_binary_field_types.py, desc 0x1039ec4c0). Inline DEFAULTS = KSOptions.init (FUN_1019b2f7c,  ⚑[tool=resolve_fun_pins ref=FUN_1019b2f7c:0x1019b2f7c result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.init() -> KSPlayer.KSOptions
     //    symbolic-offset stores). Removed extras (cache/probesize/maxAnalyzeDuration/nobuffer/codecLowDelay/
     //    autoDeInterlace/autoRotate/videoInterlacingType/idetTypeMap) migrated to their callers.
-    public var context = ""
-    public var avOptions = [String: Any]()
+    public var context: String = ""
+    public var avOptions: [String: Any] = [String: Any]()
     public var isLive: Bool?
     public var startPlayTime: TimeInterval = 0
-    public var startPlayTimePercentage = 0.0
+    public var startPlayTimePercentage: Double = 0.0
     public var startPlayRate: Float = 1.0
     public var registerRemoteControll: Bool = true // 默认支持来自系统控制中心的控制
-    public var isAutoPlay = KSOptions.isAutoPlay
-    public var enterForgeResumePlay = false
-    public var isDLNARunning = false
-    public var disableVideoFrameRateMatching = false
+    public var isAutoPlay: Bool = KSOptions.isAutoPlay
+    public var enterForgeResumePlay: Bool = false
+    public var isDLNARunning: Bool = false
+    public var disableVideoFrameRateMatching: Bool = false
     /// 是否开启秒开
-    public var isSecondOpen = KSOptions.isSecondOpen
-    public var playbackTimeInterval = 0.04
+    public var isSecondOpen: Bool = KSOptions.isSecondOpen
+    public var playbackTimeInterval: Double = 0.04
     // playerTypes default reads the static KSOptions.playerTypes (not an inline literal).
     // ⚑[tool=decompile_function ref=FUN_1019b4334:0x1019b4334 result=static [KSAVPlayer.self,KSMEPlayer.self] — element class-descriptor names confirmed @0x1039ec148/@0x1039ef750]
     public var playerTypes: [MediaPlayerProtocol.Type] = KSOptions.playerTypes
-    public var mixAudio = false
-    public var canBackgroundPlay = true
+    public var mixAudio: Bool = false
+    public var canBackgroundPlay: Bool = true
     public var contentMode = UIViewContentMode.scaleAspectFit  // macOS: KSPlayer.ContentMode (== binary); iOS/tvOS: UIView.ContentMode
     /// Applies to short videos only
-    public var isLoopPlay = KSOptions.isLoopPlay
+    public var isLoopPlay: Bool = KSOptions.isLoopPlay
     // ── SLOT→MEMBER ALIGNMENT (basis for every `vtable slot N` note in this class) ─────────────
     // `scripts/vtable_walk.py KSOptions` gives 284 slots in DECLARATION order;
     // `scripts/dump_field_bindings.py KSOptions` gives the 84 stored fields in the same order with
@@ -83,26 +83,26 @@ open class KSOptions {
     // shape slot 59's own body shows one word lower. Writing a name here would be invention.
     // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_10047da30:0x10047da30 result=LOCATED pinned=member-identity-undetermined]
     /// 开启精确seek
-    public var isAccurateSeek = KSOptions.isAccurateSeek
+    public var isAccurateSeek: Bool = KSOptions.isAccurateSeek
     /// seek完是否自动播放
-    public var isSeekedAutoPlay = KSOptions.isSeekedAutoPlay
+    public var isSeekedAutoPlay: Bool = KSOptions.isSeekedAutoPlay
     /*
      AVSEEK_FLAG_BACKWARD: 1
      AVSEEK_FLAG_BYTE: 2
      AVSEEK_FLAG_ANY: 4
      AVSEEK_FLAG_FRAME: 8
      */
-    public var seekFlags = Int32(1)
+    public var seekFlags: Int32 = Int32(1)
     //  record stream
     public var outputURL: URL?
     public var outputMediaType: AVMediaType?
-    public internal(set) var formatName = ""
-    public var formatContextOptions = [String: Any]()
-    public var outputFormatContextOptions = [String: Any]()
+    public internal(set) var formatName: String = ""
+    public var formatContextOptions: [String: Any] = [String: Any]()
+    public var outputFormatContextOptions: [String: Any] = [String: Any]()
     public var ioContext: AbstractAVIOContext?
-    public var decoderOptions = [String: Any]()
-    public var lowres = UInt8(0)
-    public let useSystemHTTPProxy = KSOptions.useSystemHTTPProxy
+    public var decoderOptions: [String: Any] = [String: Any]()
+    public var lowres: UInt8 = UInt8(0)
+    public let useSystemHTTPProxy: Bool = KSOptions.useSystemHTTPProxy
     public var referer: String? {
         didSet {
             if let referer {
@@ -119,15 +119,15 @@ open class KSOptions {
         }
     }
 
-    public var seekUsePacketCache = false
+    public var seekUsePacketCache: Bool = false
     /// 最低缓存视频时间
     @Published
     public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
     /// 最大缓存视频时间
-    public var maxBufferDuration = KSOptions.maxBufferDuration
+    public var maxBufferDuration: Double = KSOptions.maxBufferDuration
     // audio
-    public var audioFilters = [String]()
-    public var syncDecodeAudio = false
+    public var audioFilters: [String] = [String]()
+    public var syncDecodeAudio: Bool = false
     // Slots 128-130 are three methods declared HERE, between `syncDecodeAudio` (slots 125-127, the
     // named-anchor getter) and `fontsDir` (131-133, all three impls null in the descriptor).
     // Slot 129 @0x1019b91c8 is an audioFrameMaxCount-shaped body: when a once-initialised static
@@ -161,11 +161,11 @@ open class KSOptions {
     internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     public var audioRecognizes: [AudioRecognize] = []
     // sutile
-    public var autoSelectEmbedSubtitle = true
-    public var isSeekImageSubtitle = false
-    public let yadifMode = KSOptions.yadifMode
-    public let deInterlaceAddIdet = KSOptions.deInterlaceAddIdet
-    public var dynamicRange = DynamicRange.sdr
+    public var autoSelectEmbedSubtitle: Bool = true
+    public var isSeekImageSubtitle: Bool = false
+    public let yadifMode: Int = KSOptions.yadifMode
+    public let deInterlaceAddIdet: Bool = KSOptions.deInterlaceAddIdet
+    public var dynamicRange: DynamicRange = DynamicRange.sdr
     // Field record 44 of 84 (FieldDescriptor 0x103cba11c, desc 0x1039ec4c0). Its mangled type is a
     // ctrl-0x02 SYMBOLIC REFERENCE, not a literal mangle: raw bytes `02 5f 43 4e 00 53 67`, i.e.
     // ctrl 0x02 + rel32 0x004e435f + tail `Sg`. Resolving per MEMORY rule 28 — add the rel32 to the
@@ -183,21 +183,21 @@ open class KSOptions {
     // setter AND modify in the trie, so it is a `var`.
     public var display: any DisplayEnum = PlaneDisplayModel()
     public var videoPipeline: VideoPipeline?
-    public var videoDelay = 0.0 // s
-    public var isRotateByFilter = false
+    public var videoDelay: Double = 0.0 // s
+    public var isRotateByFilter: Bool = false
     public var destinationDynamicRange: DynamicRange?
-    public var videoAdaptable = false // Forward default = false (init stores 0)
-    public var videoFilters = [String]()
-    public var syncDecodeVideo = false
-    public var decodeType = DecodeType.avplayer
-    public var hardwareDecode = KSOptions.hardwareDecode
-    public var asynchronousDecompression = KSOptions.asynchronousDecompression
-    public var videoDisable = false
-    public var canStartPictureInPictureAutomaticallyFromInline = KSOptions.canStartPictureInPictureAutomaticallyFromInline
-    public var automaticWindowResize = true
-    public var videoSoftDecodeThreadCount = KSOptions.videoSoftDecodeThreadCount
-    public var isDoubleRefreshRate = false
-    public var renderUseDispatchSourceTimer = false
+    public var videoAdaptable: Bool = false // Forward default = false (init stores 0)
+    public var videoFilters: [String] = [String]()
+    public var syncDecodeVideo: Bool = false
+    public var decodeType: DecodeType = DecodeType.avplayer
+    public var hardwareDecode: Bool = KSOptions.hardwareDecode
+    public var asynchronousDecompression: Bool = KSOptions.asynchronousDecompression
+    public var videoDisable: Bool = false
+    public var canStartPictureInPictureAutomaticallyFromInline: Bool = KSOptions.canStartPictureInPictureAutomaticallyFromInline
+    public var automaticWindowResize: Bool = true
+    public var videoSoftDecodeThreadCount: Int = KSOptions.videoSoftDecodeThreadCount
+    public var isDoubleRefreshRate: Bool = false
+    public var renderUseDispatchSourceTimer: Bool = false
     public var brightness: Float = 1.0 {
         didSet {
             adjustBuffer = KSOptions.makeAdjustBuffer(brightness: brightness, contrast: contrast, saturation: saturation)
@@ -276,22 +276,22 @@ open class KSOptions {
     // claimed by a second, different type descriptor (0x1039efab4) — so the body proves the return
     // shape and nothing about which member this is.
     // ⚑[tool=vtable_walk+get_xrefs_to ref=FUN_100232cd4:0x100232cd4 result=LOCATED pinned=member-identity-undetermined]
-    public var forceDisableDisplayLayer = false
+    public var forceDisableDisplayLayer: Bool = false
     public var onPossibleDisplayLayerFlicker: (@MainActor @Sendable () -> Void)?
-    private var videoClockDelayCount = 0
-    public internal(set) var lastVideoClockDropLogTime = 0.0
-    public internal(set) var prepareTime = 0.0
-    public internal(set) var dnsStartTime = 0.0
-    public internal(set) var tcpStartTime = 0.0
-    public internal(set) var tcpConnectedTime = 0.0
-    public internal(set) var openTime = 0.0
-    public internal(set) var findTime = 0.0
-    public internal(set) var readyTime = 0.0
-    public internal(set) var readAudioTime = 0.0
-    public internal(set) var readVideoTime = 0.0
-    public internal(set) var decodeAudioTime = 0.0
-    public internal(set) var decodeVideoTime = 0.0
-    public internal(set) var firstPlayableTime = 0.0
+    private var videoClockDelayCount: Int = 0
+    public internal(set) var lastVideoClockDropLogTime: Double = 0.0
+    public internal(set) var prepareTime: Double = 0.0
+    public internal(set) var dnsStartTime: Double = 0.0
+    public internal(set) var tcpStartTime: Double = 0.0
+    public internal(set) var tcpConnectedTime: Double = 0.0
+    public internal(set) var openTime: Double = 0.0
+    public internal(set) var findTime: Double = 0.0
+    public internal(set) var readyTime: Double = 0.0
+    public internal(set) var readAudioTime: Double = 0.0
+    public internal(set) var readVideoTime: Double = 0.0
+    public internal(set) var decodeAudioTime: Double = 0.0
+    public internal(set) var decodeVideoTime: Double = 0.0
+    public internal(set) var firstPlayableTime: Double = 0.0
 
     // ⚑ INFERRED name `resetTime`: #function unrecoverable (direct call @0x1019c0798, no vtable slot).
     //   KSMEPlayer's prepare path (caller @0x101a432fc, logs "Preparing to Play") calls
