@@ -248,6 +248,19 @@ extension KSVideoPlayer: UIViewRepresentable {
 }
 
 extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
+    // Two PiP callbacks the binary declares on this type and this source did not. Both bodies
+    // are 0x10000e52c — a bare `ret`, i.e. empty. That address is the image's canonical empty
+    // body and is heavily ICF-folded, so "the method does nothing" is the whole of what it
+    // establishes, and the whole of what these two declare.
+    // Signatures from the trie: `KSPlayer.KSVideoPlayer.Coordinator.playerDidStartPip() -> ()`
+    // and `…playerDidStopPip() -> ()` — no parameters, no return.
+    // Placed in this conformance extension because that is where the binary's own siblings sit;
+    // whether they are KSPlayerLayerDelegate REQUIREMENTS is not asserted here, because that
+    // would need the protocol descriptor, not a member symbol.
+    public func playerDidStartPip() {}
+
+    public func playerDidStopPip() {}
+
     public func player(layer: KSPlayerLayer, state: KSPlayerState) {
         onStateChanged?(layer, state)
         if state == .readyToPlay {
