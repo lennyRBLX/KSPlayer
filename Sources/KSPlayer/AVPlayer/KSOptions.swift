@@ -483,12 +483,32 @@ open class KSOptions {
         reorderSize > 2 ? 8 : 4
     }
 
-    open func audioFrameMaxCount(fps: Float, channelCount: Int) -> UInt8 {
-        let count = (Int(fps) * channelCount) >> 2
-        if count >= UInt8.max {
-            return UInt8.max
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019b91c8 (extent 0x1019b91c8-0x1019b9330, 90 instr, all
+    // accounted for). The trie prints the return type as UInt16, and the body proves it independently:
+    // the renderer arm caps at 0x1000 = 4096, which cannot be held in the UInt8 the source declared.
+    // The branch is `cmp x20,x0 / b.eq 0x1019b9284` @0x1019b9228 where x20 is the static loaded under
+    // swift_beginAccess from 0x104c63118 and x0 is the AudioRendererPlayer metadata accessor's result;
+    // EQUAL takes the max(channelCount,6) / >>1 / 4096 arm, NOT-equal the channelCount / >>2 / 1024 arm.
+    // Both `mul` sites are checked (smulh + cmp asr #63) and both tails `tbz/tbnz #0x3f`, i.e. the Int
+    // arithmetic traps on overflow and on a negative result — the shape of a UInt16(_:) conversion.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.audioFrameMaxCount(fps:channelCount:):0x1019b91c8 result=signature+body-recovered]
+    // ⚑[tool=export_trie_oracle ref=static KSPlayer.KSOptions.audioPlayerType:0x104c63118 result=OWNER_MATCH]
+    // ⚑[tool=export_trie_oracle ref=type metadata accessor for KSPlayer.AudioRendererPlayer:0x101a14c08 result=OWNER_MATCH]
+    open func audioFrameMaxCount(fps: Float, channelCount: Int) -> UInt16 {
+        if KSOptions.audioPlayerType == AudioRendererPlayer.self {
+            let count = (Int(fps) * max(channelCount, 6)) >> 1
+            if count >= 4096 {
+                return 4096
+            } else {
+                return UInt16(count)
+            }
         } else {
-            return UInt8(count)
+            let count = (Int(fps) * channelCount) >> 2
+            if count >= 1024 {
+                return 1024
+            } else {
+                return UInt16(count)
+            }
         }
     }
 
