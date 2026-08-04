@@ -328,7 +328,10 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
 
     // s67 @101b8a768 — `func markReadComplete()` (name inferred, devirt). Faithful
     //   (full): sets isReadComplete = true.
-    func markReadComplete() { // name inferred (devirt)
+    // ⚑ s105 RENAME: was `markReadComplete()`, self-declared "name inferred". One symbol at
+    // 0x101b8a768: `enableReadComplete() -> ()`. Body unchanged.
+    // ⚑[tool=export_trie_oracle ref=CacheIOContext.enableReadComplete:0x101b8a768 result=name-recovered]
+    func enableReadComplete() {
         isReadComplete = true
     }
 

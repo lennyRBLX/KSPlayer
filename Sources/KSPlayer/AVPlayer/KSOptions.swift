@@ -302,7 +302,10 @@ open class KSOptions {
     //   `options.<this>()` to zero the prepare-pipeline timing telemetry before a fresh measurement.
     //   Resets exactly the 12 *Time fields above (prepareTime…firstPlayableTime), in declaration
     //   order; each Double → 0. Access modifier not binary-determinable → internal (same-module caller).
-    func resetTime() {
+    // ⚑ s105 RENAME: was `resetTime()`, flagged INFERRED in the comment above. One symbol at
+    // 0x1019c0798: `KSPlayer.KSOptions.resetTimeLog() -> ()`. Body unchanged.
+    // ⚑[tool=export_trie_oracle ref=KSOptions.resetTimeLog:0x1019c0798 result=name-recovered]
+    func resetTimeLog() {
         prepareTime = 0
         dnsStartTime = 0
         tcpStartTime = 0
