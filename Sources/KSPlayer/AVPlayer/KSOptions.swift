@@ -250,10 +250,12 @@ open class KSOptions {
     // `wantedAudio` nor `wantedVideo` is called anywhere under Sources/, inside this file or out
     // (a recursive search for either name under Sources/ returns only the declarations). Whatever
     // made wantedVideo a separate unit, it was not ripple.
-    // 220/221 remain UNDECLARED: names recovered, bodies not yet reconstructed.
-    // Context (not in this batch): slot 220 @0x1019be928 = `staticBool || fpsArg > 61.0` → Bool;
-    // slot 221 @0x1019be98c reads UITraitCollection.current.userInterfaceIdiom; slot 223
-    // @0x1019bea14 retains arg+0x20 when arg+0x10 is non-nil.
+    // 220 DECLARED with its body (s103): the scouted `staticBool || fpsArg > 61.0` is confirmed, and
+    // the staticBool is named — `static KSPlayer.KSOptions.preferredFrame : Swift.Bool` @0x104c63262.
+    // 223 DECLARED with its body (s103): the scouted "retains arg+0x20 when arg+0x10 is non-nil" is
+    // `tracks.first`, arg+0x10 being the array COUNT and not a nil-able field.
+    // 221 remains UNDECLARED: name recovered, body not yet reconstructed — slot 221 @0x1019be98c
+    // reads UITraitCollection.current.userInterfaceIdiom.
     //
     // Slot 222 @0x1019bea08 — DISCHARGED (s64): identity recovered, declared and audited below as
     // `recreateContext(hasDecodeSuccess:isKeyFrame:)`. Body `orn w8,w1,w0; and w0,w8,#0x1; ret` =
@@ -447,6 +449,22 @@ open class KSOptions {
         !hasDecodeSuccess || isKeyFrame
     }
 
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019be928 (extent 0x1019be928-0x1019be98c, 25 instr, all
+    // accounted for) — idx220, one of the two this file recorded above as "names recovered, bodies
+    // not yet reconstructed". The instance method reads the STATIC of the same name; Swift permits
+    // the overload, and the trie names both independently:
+    //   0x104c63262  static KSPlayer.KSOptions.preferredFrame : Swift.Bool   (`ldrb w8,[x19]` under
+    //                swift_beginAccess; a byte, and there is no swift_once token on this one)
+    // The float immediate is materialised as `mov w9,#0x42740000 / fmov s0,w9` @0x1019be960, which
+    // is 61.0 exactly, and the comparison is `fcmp s8,s0 / cset w9,gt` — strictly greater. The two
+    // are combined with `orr w8,w8,w9` then masked `and w0,w8,#0x1`, i.e. a non-short-circuiting
+    // `||` over two already-computed Bools.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.preferredFrame(fps:):0x1019be928 result=OWNER_MATCH]
+    // ⚑[tool=export_trie_oracle ref=static KSPlayer.KSOptions.preferredFrame:0x104c63262 result=OWNER_MATCH]
+    open func preferredFrame(fps: Float) -> Bool {
+        KSOptions.preferredFrame || fps > 61.0
+    }
+
     /// wanted video track, or nil for automatic selection
     /// - Parameter : video track
     /// - Returns: The selected track
@@ -523,6 +541,20 @@ open class KSOptions {
                 return UInt16(count)
             }
         }
+    }
+
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019b9330 (extent 0x1019b9330-0x1019b93a8, 30 instr, all
+    // accounted for) — idx130, the slot immediately after audioFrameMaxCount, which is why it is
+    // declared here. Same static and same swift_once token (0x1044e5248) as the body above, but
+    // ⚠️ NOT the same comparand: this one calls the metadata accessor at 0x101a160a4, which the trie
+    // names AudioUnitPlayer, where audioFrameMaxCount calls 0x101a14c08 = AudioRendererPlayer. The
+    // scouting note above this class described idx130 as returning "that same static-type equality";
+    // it is the same static but a different class, read from the accessor rather than assumed.
+    // `cmp x19,x0 / cset w0,eq` @0x1019b9378 is the whole result.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.isAudioRateByFilter():0x1019b9330 result=OWNER_MATCH]
+    // ⚑[tool=export_trie_oracle ref=type metadata accessor for KSPlayer.AudioUnitPlayer:0x101a160a4 result=OWNER_MATCH]
+    open func isAudioRateByFilter() -> Bool {
+        KSOptions.audioPlayerType == AudioUnitPlayer.self
     }
 
     /// customize dar
