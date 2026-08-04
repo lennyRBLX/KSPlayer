@@ -254,8 +254,9 @@ open class KSOptions {
     // the staticBool is named — `static KSPlayer.KSOptions.preferredFrame : Swift.Bool` @0x104c63262.
     // 223 DECLARED with its body (s103): the scouted "retains arg+0x20 when arg+0x10 is non-nil" is
     // `tracks.first`, arg+0x10 being the array COUNT and not a nil-able field.
-    // 221 remains UNDECLARED: name recovered, body not yet reconstructed — slot 221 @0x1019be98c
-    // reads UITraitCollection.current.userInterfaceIdiom.
+    // 221 DECLARED with its body (s103): the scouted "reads UITraitCollection.current
+    // .userInterfaceIdiom" is confirmed, and the rest of the guard is a `ccmp` against 7680 that
+    // halves both dimensions only on .phone. All four of 220/221/222/223 are now declared.
     //
     // Slot 222 @0x1019bea08 — DISCHARGED (s64): identity recovered, declared and audited below as
     // `recreateContext(hasDecodeSuccess:isKeyFrame:)`. Body `orn w8,w1,w0; and w0,w8,#0x1; ret` =
@@ -463,6 +464,33 @@ open class KSOptions {
     // ⚑[tool=export_trie_oracle ref=static KSPlayer.KSOptions.preferredFrame:0x104c63262 result=OWNER_MATCH]
     open func preferredFrame(fps: Float) -> Bool {
         KSOptions.preferredFrame || fps > 61.0
+    }
+
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019be98c (extent 0x1019be98c-0x1019bea08, 31 instr, all
+    // accounted for) — idx221, the last of the four this file listed as name-recovered/body-not-yet.
+    // The receiver chain is read, not guessed: 0x104410730 is `_OBJC_CLASS_$_UITraitCollection`
+    // (__objc_classrefs, UIKit), realized through `_objc_opt_self`, then two selectors decoded from
+    // their selrefs — 0x1034606c0 = `currentTraitCollection` and 0x10346e920 = `userInterfaceIdiom`.
+    // So this is UITraitCollection.current, NOT the UIDevice.current the rest of this codebase uses
+    // for idiom checks.
+    // The guard is one `ccmp`: `cmp x22,#0x0` then `ccmp w20,w8,#0x8,eq` @0x1019be9d4 with w8=0x1e00
+    // = 7680. When the idiom is non-zero the immediate #0x8 sets N=1/V=0, so `b.ge` is false and no
+    // halving happens; only idiom == 0 (.phone) AND width >= 7680 takes the halving arm.
+    // Halving is `lsr w8,w20,#1` for width (unsigned, because the branch already proves width>=7680)
+    // and the signed `add w9,w19,w19,lsr #31 / asr #1` for height — both are `/ 2`, spelled the same.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.decodeSize(width:height:):0x1019be98c result=OWNER_MATCH]
+    // ⚑[tool=bind_oracle ref=_OBJC_CLASS_$_UITraitCollection:0x104410730 result=CONFIRMED]
+    // ⚠️ The image is the iOS build, so ONLY the UIKit arm is readable. The non-UIKit arm is NOT
+    // reconstructed from evidence — it falls through to the unnarrowed size because that is what the
+    // UIKit arm does when its guard fails, not because macOS was observed to do so.
+    // ⚑[tool=bind_oracle ref=UITraitCollection-absent-on-macOS:0x104410730 result=pinned-platform-arm-unread]
+    open func decodeSize(width: Int32, height: Int32) -> CGSize {
+        #if canImport(UIKit)
+        if UITraitCollection.current.userInterfaceIdiom == .phone, width >= 7680 {
+            return CGSize(width: CGFloat(width / 2), height: CGFloat(height / 2))
+        }
+        #endif
+        return CGSize(width: CGFloat(width), height: CGFloat(height))
     }
 
     /// wanted video track, or nil for automatic selection
