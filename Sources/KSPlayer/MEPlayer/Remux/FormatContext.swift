@@ -553,7 +553,7 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
         if findResult == swift_AVERROR_EOF {
             // ⚑ binary: err.code@0 = AVERROR_EOF (raw), message nil. The enum-typed `code` cannot hold a raw
             //   AVERROR — P8 (KSPlayerError-owner); reconstructed as an empty-message unknown.
-            throw KSPlayerError(code: .unknown, message: nil)
+            throw KSPlayerError(code: Int32(KSPlayerErrorCode.unknown.rawValue), message: nil)
         }
         // throw #3. ⚑ binary embeds the find AVERROR in code@0 (P8). message = .formatFindStreamInfo.description
         //   (str-length 0x24=36).

@@ -131,7 +131,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         guard let outputContext = contextPointer else {          // L398 guards on ctx == nil
             _ = allocResult   // ⚑ binary embeds this AVERROR in the KSPlayerError box (code@0); the exact
                               //   code-field mechanics (enum-vs-Int) = KSPlayerError-owner/P8 (throwing bodies throw KSPlayerError)
-            throw KSPlayerError(code: .formatOutputCreate, message: KSPlayerErrorCode.formatOutputCreate.description)
+            throw KSPlayerError(code: Int32(KSPlayerErrorCode.formatOutputCreate.rawValue), message: KSPlayerErrorCode.formatOutputCreate.description)
         }
         // ⚑ binary also sets an AVFormatContext numeric field (+0x80 = 0x200000 / 2 MiB tuning, L410) —
         //   which field UNRESOLVED → omitted (non-load-bearing for stream/map setup).
@@ -176,7 +176,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         let headerResult = avformat_write_header(outputContext, &options)
         av_dict_free(&options)   // ⚑[tool=ffmpeg_name_oracle ref=0x10323b034 result=CONFIRMED] av_dict_free (27/108)
         guard headerResult >= 0 else {                          // L1266 / L1356
-            throw KSPlayerError(code: .formatWriteHeader, message: KSPlayerErrorCode.formatWriteHeader.description)
+            throw KSPlayerError(code: Int32(KSPlayerErrorCode.formatWriteHeader.rawValue), message: KSPlayerErrorCode.formatWriteHeader.description)
         }
 
         // ── C4: assemble the 12 stored fields + return (implicit) — L1311-1380 ───────────────────────
