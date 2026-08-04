@@ -241,6 +241,15 @@ final class Packet: ObjectQueueItem {
     // ⚑[tool=export_trie_oracle ref=Packet.corePacket:vpMV result=property descriptor present ⇒ the GETTER is public; the private setter is unobservable and is kept as reconstructed]
     // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o, instr 16 / size 64)
     public private(set) var corePacket = av_packet_alloc()
+    // ⚑ s105: field record [5] of 7 on descriptor 0x1039effec, mangle `Sb` = Swift.Bool. Declared
+    // HERE rather than appended because a stored property's order is its layout: the record sits
+    // between corePacket [4] and assetTrack [6], and `timebase`/`isKeyFrame` below are computed,
+    // so they occupy no slot and do not displace it.
+    // `var` (not `let`) is established by the trie exporting getter, setter AND modify for it.
+    // The default is read, not assumed: the variable-initialization expression is at 0x10002dab0,
+    // which is `mov w0, #0 / ret` — false.
+    // ⚑[tool=export_trie_oracle ref=Packet.isFlush:vpfi@0x10002dab0 result=false]
+    public var isFlush = false
     public var timebase: Timebase {
         assetTrack!.timebase
     }
