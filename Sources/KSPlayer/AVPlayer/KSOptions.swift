@@ -868,6 +868,35 @@ public extension KSOptions {
     // 默认不用自研的硬解，因为有些视频的AVPacket的pts顺序是不对的，只有解码后的AVFrame里面的pts是对的。
     nonisolated(unsafe) static var asynchronousDecompression = false
     nonisolated(unsafe) static var videoSoftDecodeThreadCount = 4
+
+    // ── Forward statics recovered s105 ──────────────────────────────────────────────────────
+    // Fourteen `static var` settings the binary declares here and this source did not. Each one's
+    // DEFAULT was read from the global its own `unsafeMutableAddressor` returns — the addressor is
+    // `adrp/add/ret` onto a statically-initialised global, so the value is in the image rather than
+    // built at runtime. Read at the width its trie type gives (Bool 1, UInt16 2, Int64/Double 8).
+    // ⚑[tool=export_trie_oracle ref=KSOptions.audioVideoClockSync.unsafeMutableAddressor:0x1019bcae0 result=static-global]
+    //
+    // These 14 are the subset whose global is statically initialised. The other 35 statics on this
+    // class are NOT declared here: their globals sit in __bss with no readable value, 18 of them
+    // behind a `swift_once` guard, and writing `false`/`0` for a global whose initialiser has not
+    // been read would be inventing the default rather than reading it.
+    //
+    // DECLARATION ORDER is alphabetical and carries NO claim: a static's storage is a module
+    // global, so its address ordering is not source ordering the way a stored field's is.
+    nonisolated(unsafe) static var audioVideoClockSync = true
+    nonisolated(unsafe) static var forceDVForProfile7 = true
+    nonisolated(unsafe) static var isUseNewSubtitleRender = true
+    nonisolated(unsafe) static var localHLSServerPort: UInt16 = 8887
+    nonisolated(unsafe) static var lockAspectRatio = true
+    nonisolated(unsafe) static var maxM3U8FileSize: Int64 = 1_073_741_824
+    nonisolated(unsafe) static var minM3U8BufferDuration: Int64 = 60
+    nonisolated(unsafe) static var seekInterruptIO = false
+    nonisolated(unsafe) static var seekRequireConfirmation = true
+    nonisolated(unsafe) static var stripSubtitleStyle = true
+    nonisolated(unsafe) static var subtitleFontSize = 11.0
+    nonisolated(unsafe) static var subtitleFontSizeScale = 1.0
+    nonisolated(unsafe) static var subtitleImageScale = 1.0
+    nonisolated(unsafe) static var trackHeight: CGFloat = 5.0
     nonisolated(unsafe) static var isPipPopViewController = false
     nonisolated(unsafe) static var canStartPictureInPictureAutomaticallyFromInline = true
     nonisolated(unsafe) static var preferredFrame = true
