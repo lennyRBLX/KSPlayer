@@ -22,9 +22,16 @@ import CoreAudio
 public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProcessor {
     public private(set) var audioUnitForDynamicsProcessor: AudioUnit
     private let graph: AUGraph
-    private var audioUnitForMixer: AudioUnit!
-    private var audioUnitForTimePitch: AudioUnit!
-    private var audioUnitForOutput: AudioUnit!
+    // ⚑ s105 IUO ALIGNMENT. These were `AudioUnit!`. The l2 gate reads the binary record as
+    // `OpaquePointer?` and flagged all three — but `T!` and `T?` emit an IDENTICAL typeref, so
+    // IUO is not reflection-visible and the flag is NULL, not a divergence: both spellings
+    // compile to the same bytes. Per the standing rule for a null flag the SOURCE TEXT is
+    // aligned so the gate agrees, and the undecidability is recorded rather than presented as a
+    // divergence fixed. The binary cannot tell us which of `!` or `?` Forward wrote; `?` is the
+    // spelling that claims less, so it is the one written.
+    private var audioUnitForMixer: AudioUnit?
+    private var audioUnitForTimePitch: AudioUnit?
+    private var audioUnitForOutput: AudioUnit?
     // Vestigial: the binary retains this own field (init zeroes it), but nothing in the
     // re-parented class reads or writes it — the render loop is now the inherited
     // AudioBaseOutput.audioPlayerShouldInputData, which uses its own currentRenderReadOffset.
@@ -43,14 +50,29 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
         AUGraphStop(graph)
     }
 
+    /// ⚑ 0x101a11138 — the full AUGraph teardown, in this order. The body loads ONE field and
+    /// passes it to three calls plus a tail-call; `graph` is this class's only `AUGraph`-typed
+    /// field, so the operand is forced by TYPE rather than inferred from its +0x58 offset.
+    /// Each callee is a lazy stub through __got, named from the dyld chained-fixup bind table:
+    /// ⚑[tool=bind_oracle ref=AUGraphStop:0x10410ace8 result=AudioToolbox]
+    /// ⚑[tool=bind_oracle ref=AUGraphUninitialize:0x10410acf0 result=AudioToolbox]
+    /// ⚑[tool=bind_oracle ref=AUGraphClose:0x10410acb8 result=AudioToolbox]
+    /// ⚑[tool=bind_oracle ref=DisposeAUGraph:0x10410ad90 result=AudioToolbox]
+    public func invalidate() {
+        AUGraphStop(graph)
+        AUGraphUninitialize(graph)
+        AUGraphClose(graph)
+        DisposeAUGraph(graph)
+    }
+
     public var playbackRate: Float {
         get {
             var playbackRate = AudioUnitParameterValue(0.0)
-            AudioUnitGetParameter(audioUnitForTimePitch, kNewTimePitchParam_Rate, kAudioUnitScope_Global, 0, &playbackRate)
+            AudioUnitGetParameter(audioUnitForTimePitch!, kNewTimePitchParam_Rate, kAudioUnitScope_Global, 0, &playbackRate)
             return playbackRate
         }
         set {
-            AudioUnitSetParameter(audioUnitForTimePitch, kNewTimePitchParam_Rate, kAudioUnitScope_Global, 0, newValue, 0)
+            AudioUnitSetParameter(audioUnitForTimePitch!, kNewTimePitchParam_Rate, kAudioUnitScope_Global, 0, newValue, 0)
         }
     }
 
@@ -62,7 +84,7 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
             #else
             let inID = kMultiChannelMixerParam_Volume
             #endif
-            AudioUnitGetParameter(audioUnitForMixer, inID, kAudioUnitScope_Input, 0, &volume)
+            AudioUnitGetParameter(audioUnitForMixer!, inID, kAudioUnitScope_Input, 0, &volume)
             return volume
         }
         set {
@@ -71,7 +93,7 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
             #else
             let inID = kMultiChannelMixerParam_Volume
             #endif
-            AudioUnitSetParameter(audioUnitForMixer, inID, kAudioUnitScope_Input, 0, newValue, 0)
+            AudioUnitSetParameter(audioUnitForMixer!, inID, kAudioUnitScope_Input, 0, newValue, 0)
         }
     }
 
@@ -79,9 +101,9 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
         get {
             var value = AudioUnitParameterValue(1.0)
             #if os(macOS)
-            AudioUnitGetParameter(audioUnitForMixer, kStereoMixerParam_Volume, kAudioUnitScope_Input, 0, &value)
+            AudioUnitGetParameter(audioUnitForMixer!, kStereoMixerParam_Volume, kAudioUnitScope_Input, 0, &value)
             #else
-            AudioUnitGetParameter(audioUnitForMixer, kMultiChannelMixerParam_Enable, kAudioUnitScope_Input, 0, &value)
+            AudioUnitGetParameter(audioUnitForMixer!, kMultiChannelMixerParam_Enable, kAudioUnitScope_Input, 0, &value)
             #endif
             return value == 0
         }
@@ -91,9 +113,9 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
             if value == 0 {
                 volumeBeforeMute = volume
             }
-            AudioUnitSetParameter(audioUnitForMixer, kStereoMixerParam_Volume, kAudioUnitScope_Input, 0, min(Float(value), volumeBeforeMute), 0)
+            AudioUnitSetParameter(audioUnitForMixer!, kStereoMixerParam_Volume, kAudioUnitScope_Input, 0, min(Float(value), volumeBeforeMute), 0)
             #else
-            AudioUnitSetParameter(audioUnitForMixer, kMultiChannelMixerParam_Enable, kAudioUnitScope_Input, 0, AudioUnitParameterValue(value), 0)
+            AudioUnitSetParameter(audioUnitForMixer!, kMultiChannelMixerParam_Enable, kAudioUnitScope_Input, 0, AudioUnitParameterValue(value), 0)
             #endif
         }
     }
@@ -176,9 +198,9 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
         AUGraphNodeInfo(graph, nodeForMixer, &descriptionForMixer, &audioUnitForMixer)
         AUGraphNodeInfo(graph, nodeForOutput, &descriptionForOutput, &audioUnitForOutput)
         super.init()
-        addRenderNotify(audioUnit: audioUnitForOutput)
+        addRenderNotify(audioUnit: audioUnitForOutput!)
         var value = UInt32(1)
-        AudioUnitSetProperty(audioUnitForTimePitch,
+        AudioUnitSetProperty(audioUnitForTimePitch!,
                              kAudioOutputUnitProperty_EnableIO,
                              kAudioUnitScope_Output, 0,
                              &value,
