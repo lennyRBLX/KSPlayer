@@ -381,10 +381,20 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
         }
     }
 
-    // @0x101a0f6f8 (binary own-vtable entry 22) — FrameOutput requirement 3. New in Forward; upstream had no
-    // stop(). flush() is NOT overridden here: the inherited slot 30 @meta+0x180 still
-    // holds AudioBaseOutput.flush @0x101a117b0.
-    public func stop() {
+    // @0x101a0f6f8 (binary own-vtable entry 22). New in Forward; upstream had no such method.
+    // flush() is NOT overridden here: the inherited slot 30 @meta+0x180 still holds
+    // AudioBaseOutput.flush @0x101a117b0.
+    //
+    // ⚑ s105 RENAME: this was declared `stop()`, an INFERRED name. The trie names it
+    // `invalidate()` and that is decisive — 0x101a0f6f8 carries exactly ONE symbol, so it is not
+    // an ICF fold, and it has its own method descriptor. There is no `stop` symbol anywhere on
+    // this class or on AudioOutput / FrameOutput, so the old comment's "FrameOutput requirement
+    // 3" was part of the same wrong inference. Only the NAME was wrong: the body below already
+    // matched the two calls the binary makes, `reset` then `stop` on the field at +0x50, which
+    // field_offset_vector resolves to `engine`.
+    // ⚑[tool=decode_objc_selector ref=reset:0x1034676c0 result=reset]
+    // ⚑[tool=decode_objc_selector ref=stop:0x10346d2e0 result=stop]
+    public func invalidate() {
         engine.reset()
         engine.stop()
     }
