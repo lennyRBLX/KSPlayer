@@ -325,9 +325,14 @@ public struct KSPlayerError: Error {
     public let code: Int32
     public let message: String?
 
-    public init(code: Int32, message: String? = nil) {
+    // ⚑ s105: the label is `description:`, not `message:` — pin_sweep compares this init's
+    // labels against the mangled name the linker wrote and reports (code, description). The
+    // STORED PROPERTY is still `message` (that name comes from the field record); only the
+    // parameter label differs, which is exactly the kind of difference the trie can settle and
+    // reflection cannot.
+    public init(code: Int32, description: String? = nil) {
         self.code = code
-        self.message = message
+        message = description
     }
 
     /// ⚑ inferred convenience: matches the binary's throw payload {code = 0, message}.
@@ -337,6 +342,14 @@ public struct KSPlayerError: Error {
     public init(description: String) {
         code = 0
         message = description
+    }
+
+    /// ⚑ getter 0x1019e223c — `sxtw x0, w0` / `ret`, the whole body. `self.code` is the struct's
+    /// first field and arrives in w0, so this is a plain sign-extension of the Int32 to Int: no
+    /// field is loaded, no branch is taken, and nothing else is consulted.
+    /// Trie: `KSPlayer.KSPlayerError.errorCode.getter : Swift.Int`.
+    public var errorCode: Int {
+        Int(code)
     }
 
     // ── The 33 `static let` constants Forward declares here ──────────────────────────────────
