@@ -199,7 +199,10 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     // in deinit; that deinit is gone (AudioUnitUninitialize has exactly two callers now, prepare
     // and stop). flush() is NOT overridden: FrameOutput requirement 2 resolves to the inherited
     // AudioBaseOutput.flush @0x101a117b0.
-    public func stop() {
+    // ⚑ s105 RENAME: was `stop()`, an inferred name. The trie names 0x101a15b28
+    // `invalidate()` and carries exactly ONE symbol there, so it is not an ICF fold; there is
+    // no `stop` symbol on this class at all. Body unchanged — only the name was invented.
+    public func invalidate() {
         AudioUnitUninitialize(audioUnitForOutput)
     }
 }

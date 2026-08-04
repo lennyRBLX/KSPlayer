@@ -168,7 +168,10 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
     // NOT yet a FrameOutput requirement in source (the binary FrameOutput has {pause,flush,play,stop};
     // the source has {renderSource,pause,flush,play}); formalizing stop()/renderSource on the protocol
     // belongs to the render-output protocol subsystem reconstruction (a separate follow-on unit).
-    public func stop() {
+    // ⚑ s105 RENAME: was `stop()`, an inferred name. The trie names 0x101a144d0
+    // `invalidate()` and carries exactly ONE symbol there, so it is not an ICF fold; there is
+    // no `stop` symbol on this class at all. Body unchanged — only the name was invented.
+    public func invalidate() {
         flushTime = true
         requestQueue.sync {
             currentRender = nil
