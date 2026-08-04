@@ -246,6 +246,19 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         true
     }
 
+    // ⚑ 0x10002d9d4 — `mov x0, #0` / `ret`. Unconditional nil: the body reads no field, takes no
+    // branch, and never touches either parameter. That address is the image's canonical
+    // `return nil` and is the most-folded in the whole binary (605 symbols share it), so it
+    // carries nothing unique to this method beyond the constant — which is all this declares.
+    // Trie: `PreLoadIOContext.CacheIOContext.reuseEntry(pos: Swift.UInt64, size: Swift.Int32)
+    //        -> PreLoadIOContext.CacheFileEntry?`.
+    // NOTE the subclass differs: LimitPreLoadIOContext.reuseEntry is a real 2255-instruction body
+    // at 0x101b9f9a0, so this base implementation returning nil is the overridable default, not
+    // the behaviour of the hierarchy.
+    public func reuseEntry(pos _: UInt64, size _: Int32) -> CacheFileEntry? {
+        nil
+    }
+
     public override func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
         super.read(buffer: buffer, size: size)
     }
