@@ -909,6 +909,19 @@ public extension KSOptions {
     nonisolated(unsafe) static var subtitleFontSizeScale = 1.0
     nonisolated(unsafe) static var subtitleImageScale = 1.0
     nonisolated(unsafe) static var trackHeight: CGFloat = 5.0
+    // ── s105, three statics read out of FILE-BACKED storage ──────────────────────────────────
+    // Unlike the __common group below, these three globals carry their bytes in the image, so the
+    // values are read directly rather than inferred from zero-fill.
+    //   interactiveSize @0x1044efdf0  00..3940 00..3940  -> two Doubles, 25 and 25
+    //   thumbSize       @0x1044efde0  00..2e40 00..2e40  -> two Doubles, 15 and 15
+    //   textFontName    @0x1044e50a8  "SF Pro" as an inline small string, discriminator 0xE6
+    // ⚑ textFontName's discriminator is 0xE6, not 0xA6: an ASCII small string sets the isASCII
+    // flag. decode_string_literal only accepted the 0xA form until this session and returned
+    // "no literal" for every ASCII one — a silent false negative, now goldened on these bytes.
+    // ⚑[tool=decode_string_literal ref=KSOptions.textFontName:0x1044e50a8 result=SF Pro]
+    nonisolated(unsafe) static var interactiveSize = CGSize(width: 25, height: 25)
+    nonisolated(unsafe) static var thumbSize = CGSize(width: 15, height: 15)
+    nonisolated(unsafe) static var textFontName = "SF Pro"
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
