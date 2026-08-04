@@ -237,6 +237,15 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   calls stripped FFmpeg the P2 oracle names; not separable from the cache path
     //   → not reconstructed. Inherited AbstractAVIOContext.read is the compilable
     //   spine; the binary returns −1 on interrupt-cancel. — P2
+    // ⚑ 0x10002c740 — `mov w0, #0x1` / `ret`. Unconditional true; the body reads no field and
+    // takes no branch. The address is the image's canonical `return true` and is ICF-folded, so
+    // what it establishes is exactly the constant — which is the whole of what this declares.
+    // Signature from the trie: `PreLoadIOContext.CacheIOContext.canAccessNetwork() -> Swift.Bool`.
+    // One of the seven members the PreLoadIOContext s30 pass recorded as undeclared here.
+    public func canAccessNetwork() -> Bool {
+        true
+    }
+
     public override func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
         super.read(buffer: buffer, size: size)
     }
