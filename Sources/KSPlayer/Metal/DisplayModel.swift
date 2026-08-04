@@ -100,16 +100,28 @@ public class PlaneDisplayModel: DisplayEnum {
 
 @MainActor
 public class SphereDisplayModel: DisplayEnum {
+    // FIELD ORDER: the five lazy pipeline slots come FIRST in this class's field records
+    // (indices 0-4, offsets 0x10..0x37) and isSphere is index 5 at 0x38 — the same layout
+    // PlaneDisplayModel has. The declarations are ordered to match; leading with isSphere, as this
+    // file previously did, put the source out of order with the binary.
+    //
+    // ⚠️ NAMES: these five carry a `Sphere` SUFFIX that Plane's do not, and that is not a mangling
+    // artifact. Plane's records read $__lazy_storage_$_yuv / _yuvp010LE / _nv12 / _p010LE / _bgra;
+    // this class's read $__lazy_storage_$_yuvSphere / _yuvp010LESphere / _nv12Sphere /
+    // _p010LESphere / _bgraSphere. The text inside $__lazy_storage_$_ IS the source property name,
+    // so the two classes genuinely spell these differently and the unsuffixed spelling here was
+    // wrong.
+    // ⚑[tool=fieldrec ref=SphereDisplayModel:0x1039f134c result=suffixed-names-confirmed]
+    private lazy var yuvSphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture")
+    private lazy var yuvp010LESphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture", bitDepth: 10)
+    private lazy var nv12Sphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture")
+    private lazy var p010LESphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture", bitDepth: 10)
+    private lazy var bgraSphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayTexture")
+
     // DisplayEnum requirement 0, stored at offset 0x38 with a declaration default, exactly as on
     // PlaneDisplayModel. NOTE its getter is NOT in the trie — only Plane's is — so the address
     // 0x10002c740 (`mov w0,#1; ret`) is anchored solely by this class's witness table.
     public nonisolated let isSphere = true
-
-    private lazy var yuv = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture")
-    private lazy var yuvp010LE = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture", bitDepth: 10)
-    private lazy var nv12 = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture")
-    private lazy var p010LE = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture", bitDepth: 10)
-    private lazy var bgra = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayTexture")
     private var fingerRotationX = Float(0)
     private var fingerRotationY = Float(0)
     fileprivate var modelViewMatrix = matrix_identity_float4x4
@@ -239,18 +251,18 @@ public class SphereDisplayModel: DisplayEnum {
         switch pixelBuffer.planeCount {
         case 3:
             if pixelBuffer.bitDepth == 10 {
-                return yuvp010LE
+                return yuvp010LESphere
             } else {
-                return yuv
+                return yuvSphere
             }
         case 2:
             if pixelBuffer.bitDepth == 10 {
-                return p010LE
+                return p010LESphere
             } else {
-                return nv12
+                return nv12Sphere
             }
         default:
-            return bgra
+            return bgraSphere
         }
     }
 }
