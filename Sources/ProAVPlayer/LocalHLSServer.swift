@@ -221,14 +221,19 @@ class LocalHLSServer {
         // ⚑ trailing debug log ("stop HLS Server" / "stop()") omitted — KSLog form UNRESOLVED.
     }
 
-    /// Binary: FUN_101b70ed4 (vtable slot9), `throws`. ⚑ name/param-labels inferred (stripped).  ⚑[tool=resolve_fun_pins ref=FUN_101b70ed4:0x101b70ed4 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.getURL(for: Foundation.URL, local: Swift.Bool) throws -> Foundation.URL
+    /// Binary: 0x101b70ed4 (vtable slot9), `throws`. ⚑ s105: the name is no longer inferred —
+    /// the export trie names the address outright, one symbol, and the pin on this very line
+    /// already recorded it. Renamed `url(for:local:)` -> `getURL(for:local:)`; the argument
+    /// labels `for:` / `local:` were already right, so only the base name moves. No call
+    /// sites in this module — the cross-class caller reaches it through the vtable.
+    /// ⚑[tool=export_trie_oracle ref=LocalHLSServer.getURL:0x101b70ed4 result=name-recovered]  ⚑[tool=resolve_fun_pins ref=FUN_101b70ed4:0x101b70ed4 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.getURL(for: Foundation.URL, local: Swift.Bool) throws -> Foundation.URL
     /// Builds the local-server URL for a file in the HLS output directory:
     ///   http://<host>:<port>/<fileURL's path relative to rootDirectory>
     /// host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1"). Throws Forward's
     /// `KSPlayerError` (descriptor 0x1039edbd4) on an invalid URL — the binary boxes {code = .unknown
     /// (0), message = "can not get url "} via `_swift_allocError`, matching `KSPlayerError(description:)`.
     /// ⚑ internal: a cross-class caller (FUN_101b69880) invokes it via the vtable; widen if needed.
-    func url(for fileURL: URL, local: Bool) throws -> URL {
+    func getURL(for fileURL: URL, local: Bool) throws -> URL {
         let host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1")
         let path = relativePath(from: rootDirectory, to: fileURL)
         guard let url = URL(string: "http://\(host):\(port)/\(path)") else {
