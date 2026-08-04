@@ -268,7 +268,13 @@ public protocol MediaPlayerTrack: AnyObject, CustomStringConvertible {
     var bitDepth: Int32 { get }
     var isEnabled: Bool { get set }
     var isImageSubtitle: Bool { get }
-    var rotation: Int16 { get }
+    // ⚑ s104: UInt16, not Int16. All THREE conformers spell it UInt16 in the binary —
+    // KSPlayer.FFmpegAssetTrack.rotation.getter, KSPlayer.MetalPlayView.rotation.getter and
+    // KSPlayer.AVMediaSelectionTrack.rotation.getter all demangle to `: Swift.UInt16`, and
+    // FFmpegAssetTrack's field record resolves through __got 0x104112ad8 to the UInt16 nominal
+    // type descriptor. Rippling the protocol only after every conformer agreed is the rule this
+    // change was made under.
+    var rotation: UInt16 { get }
     var dovi: DOVIDecoderConfigurationRecord? { get }
     var fieldOrder: FFmpegFieldOrder { get }
     var formatDescription: CMFormatDescription? { get }

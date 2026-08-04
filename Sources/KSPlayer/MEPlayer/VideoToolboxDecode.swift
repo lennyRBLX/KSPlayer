@@ -115,7 +115,7 @@ class VideoToolboxDecode: DecodeProtocol {
             }
         }
         do {
-            let sampleBuffer = try session.formatDescription.getSampleBuffer(isConvertNALSize: session.assetTrack.isConvertNALSize, data: data, size: Int(corePacket.size))
+            let sampleBuffer = try session.formatDescription.getSampleBuffer(data: data, size: Int(corePacket.size))
             let flags: VTDecodeFrameFlags = [
                 ._EnableAsynchronousDecompression,
             ]
@@ -273,30 +273,21 @@ class DecompressionSession {
 #endif
 
 extension CMFormatDescription {
-    fileprivate func getSampleBuffer(isConvertNALSize: Bool, data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
-        if isConvertNALSize {
-            var ioContext: UnsafeMutablePointer<AVIOContext>?
-            let status = avio_open_dyn_buf(&ioContext)
-            if status == 0 {
-                var nalSize: UInt32 = 0
-                let end = data + size
-                var nalStart = data
-                while nalStart < end {
-                    nalSize = UInt32(nalStart[0]) << 16 | UInt32(nalStart[1]) << 8 | UInt32(nalStart[2])
-                    avio_wb32(ioContext, nalSize)
-                    nalStart += 3
-                    avio_write(ioContext, nalStart, Int32(nalSize))
-                    nalStart += Int(nalSize)
-                }
-                var demuxBuffer: UnsafeMutablePointer<UInt8>?
-                let demuxSze = avio_close_dyn_buf(ioContext, &demuxBuffer)
-                return try createSampleBuffer(data: demuxBuffer, size: Int(demuxSze))
-            } else {
-                throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
-            }
-        } else {
-            return try createSampleBuffer(data: data, size: size)
-        }
+    // ⚑ REMOVED (s106): the `isConvertNALSize` parameter and the AVCC→AnnexB rewrite it guarded
+    //   (avio_open_dyn_buf → avio_wb32/avio_write → avio_close_dyn_buf). The flag's only producer,
+    //   FFmpegAssetTrack's `extradata[4] == 0xFE` test, is proven absent from that class's designated
+    //   init, so the branch is unreachable in Forward. Corroborated from the consumer side:
+    //   VideoToolboxDecode.decodeFrame has 40 callees and exactly three in the FFmpeg band
+    //   (ff_dovi_get_metadata CONFIRMED, one UNKNOWN, one an ICF-folded free/close family) — no
+    //   avio_* call of any kind, where this branch would need four.
+    //   ⚑ FAITHFUL-PARTIAL: proven the branch cannot be entered and that decodeFrame does not call
+    //   avio_*; NOT proven that no outlined copy of this helper exists — it emits no symbol under
+    //   this name (a real trie negative, since the trie does carry fileprivate members with
+    //   discriminators), which is equally consistent with having been inlined.
+    //   ⚑[tool=llvm-objdump ref=VideoToolboxDecode.decodeFrame:0x101a6ce44-0x101a6d734 result=no-avio-callee]
+    //   ⚑[tool=export_trie_oracle ref=CMFormatDescription.getSampleBuffer:trie result=NOT-IN-TRIE]
+    fileprivate func getSampleBuffer(data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
+        try createSampleBuffer(data: data, size: size)
     }
 
     private func createSampleBuffer(data: UnsafeMutablePointer<UInt8>?, size: Int) throws -> CMSampleBuffer {

@@ -26,8 +26,9 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     //   (scripts/dump_binary_field_types.py FFmpegAssetTrack). NEW fields carry safe defaults = the
     //   confirmed unconditional prologue init values (scale 1.0, translateY 0) or ⚑ nil/false pending
     //   branch-conditional population (audit-gated commit-2). `codecpar` retyped value→pointer (+0xb8).
-    //   `isConvertNALSize` is source-only (Forward dropped it; l2 WARNs extra, non-blocking) — kept
-    //   trailing, read by the H.264 NAL-size path.
+    //   `isConvertNALSize` was removed in s106 — see the note at its former declaration site below.
+    //   (The claim it carried here, "l2 WARNs extra, non-blocking", was wrong: it was a REAL_FLAG
+    //   and it blocked every commit to this file.)
     public private(set) var trackID: Int32 = 0
     public let codecName: String
     public var profileName: String?                        // ⚑ 3 NEW · init population deferred (codec profile name via FUN_102e676a0); layout-first nil
@@ -54,21 +55,40 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     public var translateY: Float = 0                       // ⚑ 24 NEW · prologue init 0 — confirmed unconditional
     var subtitle: SyncPlayerItemTrack<SubtitleFrame>?
     public var subtitleRender: (any KSSubtitleProtocol)?   // ⚑ 26 NEW · 40b optional existential (+0x108..+0x130); protocol resolved via name_type_at_addr
-    public private(set) var rotation: Int16 = 0     // ⚑ bin field-record reads UInt16 (unmapped/UNCHECKED); kept Int16 — MediaPlayerProtocol requires `var rotation: Int16`, layout-identical (2b)
+    // ⚑ s104: was Int16 "because MediaPlayerProtocol requires Int16". The protocol was the thing
+    // that was wrong: the field record here resolves through __got 0x104112ad8 to the Swift.UInt16
+    // nominal type descriptor, and all three conformers' getters demangle to `: Swift.UInt16`.
+    // The protocol has been retyped to match, so this no longer diverges from either side.
+    public private(set) var rotation: UInt16 = 0
     public var dovi: DOVIDecoderConfigurationRecord?
     public let fieldOrder: FFmpegFieldOrder
     public var isImage: Bool = false                       // ⚑ 30 NEW · init population deferred (disposition/side-data)
     public var isStillImage: Bool = false                  // ⚑ 31 NEW · init population deferred
     var closedCaptionsTrack: FFmpegAssetTrack?
-    // ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter result=TYPE DIVERGENCE — the binary spells this
-    //   `KSPlayer.BitStreamFilter.Type?`, a METATYPE, where this declares `(any BitStreamFilter & AnyObject)?`, an
-    //   existential. Those are different things; changing it rewrites every use site, so it is PINNED as its own unit]
-    public var bitStreamFilter: (any BitStreamFilter & AnyObject)?   // ⚑ 33 NEW · 16b class-existential (+0x148..+0x158); BitStreamFilter Forward-added (declared above)
+    // ⚑ s104: CLOSED. The pin here said the divergence was PINNED because "changing it rewrites
+    // every use site". It does not: a tree-wide grep for `bitStreamFilter` returns this
+    // declaration and its own comment and NOTHING else, so the blast radius was zero and the
+    // deferral was resting on an unchecked claim.
+    // The field record reads `symref->__got 0x104107970` with tail `_pXpSg` — `_p` existential,
+    // `Xp` existential METATYPE, `Sg` optional — i.e. `(any BitStreamFilter).Type?`. That also
+    // explains the 16 bytes at +0x148..+0x158 without the `& AnyObject` this used to carry: an
+    // existential metatype is metatype-pointer + witness-table pointer. The old `& AnyObject` was
+    // added to force a class layout the descriptor does not ask for — its class-constraint flag
+    // reads Any — so removing it makes the declaration agree with the descriptor as well.
+    // Written `BitStreamFilter.Type?` rather than `(any BitStreamFilter).Type?`: for a protocol the
+    // two are the same existential metatype and compile identically, so the parenthesised form was
+    // a NULL flag — a text difference the gate could see and the binary could not. Aligned rather
+    // than suppressed.
+    public var bitStreamFilter: BitStreamFilter.Type?   // ⚑ 33 NEW · 16b existential metatype (+0x148..+0x158)
     public var reorderSize: Int32 = 0                      // ⚑ 34 NEW · init param[0x1e]; population deferred
     var seekByBytes = false
     public var isDefault: Bool = false                     // ⚑ 36 NEW · init population deferred (disposition)
     public var isBilingual: Bool = false                   // ⚑ 37 NEW · init population deferred
-    let isConvertNALSize: Bool                      // ⚑ source-only: Forward dropped this stored field (binary lacks it; l2 WARNs extra, non-blocking). Kept — read by H.264 NAL-size path.
+    // ⚑ s106: `isConvertNALSize` REMOVED. It was absent from the field records AND carried no symbol
+    //   of any kind in the export trie — not even a vpfi, which a declaration default would have
+    //   emitted — so it is absent from the binary in both directions, not merely unnamed.
+    //   ⚑[tool=l2_field_gate ref=FFmpegAssetTrack.isConvertNALSize:field-records result=absent]
+    //   ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.isConvertNALSize:trie result=no-symbol-of-any-kind]
     public var description: String {
         var description = codecName
         if let formatName {
@@ -174,7 +194,6 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         if codecpar.codec_type == AVMEDIA_TYPE_AUDIO {
             mediaType = .audio
             audioDescriptor = AudioDescriptor(codecpar: codecpar)
-            isConvertNALSize = false
             bitDepth = 0
             let layout = codecpar.ch_layout
             let channelsPerFrame = UInt32(layout.nb_channels)
@@ -202,7 +221,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                         if rawRotation.isFinite {
                             let degrees = Int(rawRotation.rounded())
                             let normalized = ((degrees % 360) + 360) % 360
-                            rotation = Int16(normalized)
+                            rotation = UInt16(normalized)
                         } else {
                             rotation = 0
                         }                        
@@ -215,12 +234,12 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             let atomsData: Data?
             if let extradata {
                 extradataSize = codecpar.extradata_size
-                if extradataSize >= 5, extradata[4] == 0xFE {
-                    extradata[4] = 0xFF
-                    isConvertNALSize = true
-                } else {
-                    isConvertNALSize = false
-                }
+                // ⚑ REMOVED (s106): the AVCC marker test `extradata[4] == 0xFE → 0xFF`, which was the
+                //   ONLY producer of a true `isConvertNALSize`. It is absent from this designated init:
+                //   the whole 705-instruction body contains no 0xFE immediate and no byte load or store
+                //   at offset 4 of any pointer. The one byte read-modify-write it does contain
+                //   (@0x101a20608-0x101a20638) tests 2/8/1/4/0x10 and writes 4-or-5 into a different field.
+                //   ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.init(stream:):0x101a202a8-0x101a20dac result=no-0xFE-immediate]
                 atomsData = Data(bytes: extradata, count: Int(extradataSize))
             } else {
                 // ⚑ REMOVED (session 37): the base VP9-synthetic-extradata path (avio_open_dyn_buf →
@@ -234,7 +253,6 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                 //   faithful form; exact VP9-no-extradata handling deferred to the init-body pass (commit-2).
                 //   ⚑[tool=get_function_callees ref=isom_vpcc_writer:absent-in-FUN_101a202a8 result=FAILED-SEARCH] (writer confirmed dead-stripped; only the reader survives)
                 atomsData = nil
-                isConvertNALSize = false
             }
             let format = AVPixelFormat(rawValue: codecpar.format)
             bitDepth = format.bitDepth
@@ -268,7 +286,6 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             audioDescriptor = nil
             formatName = nil
             bitDepth = 0
-            isConvertNALSize = false
             _ = CMFormatDescriptionCreate(allocator: kCFAllocatorDefault, mediaType: kCMMediaType_Subtitle, mediaSubType: codecType.rawValue, extensions: nil, formatDescriptionOut: &formatDescriptionOut)
         } else {
             bitDepth = 0

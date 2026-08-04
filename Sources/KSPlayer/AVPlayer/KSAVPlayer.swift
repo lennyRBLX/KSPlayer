@@ -512,12 +512,27 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
     // is not cosmetic reshuffling, and `l2_field_gate` BLOCKs on `order differs` precisely
     // because a wrong order is a wrong layout.
     //
-    // ⚑[tool=dump_binary_field_types ref=AVMediaPlayerTrack.reorderSize:idx8 result=pinned]
-    //   The binary has 16 fields; this source has 15. `reorderSize: Swift.Int32` sits at
-    //   index 8, between `trackID` and `bitDepth`, and is NOT declared here. It is left out
-    //   rather than invented: adding a stored property changes the layout, and nothing in
-    //   this class reads or writes it, so there is no body to derive its use from. The gate
-    //   reports it as `field in binary, absent in source` — that FLAG is the marker.
+    // ⚑[tool=dump_binary_field_types ref=AVMediaPlayerTrack.reorderSize:idx7 result=pinned]
+    //   The binary has 16 fields; this source has 15. `reorderSize` is field-record index 7
+    //   (0-based), between `trackID` (6) and `bitDepth` (8). Both its TYPE and its POSITION are
+    //   decidable and are recorded here; only its VALUE is not, which is what pins it:
+    //     · type — the field record is a symref to `__got 0x104112920`, which binds
+    //       `_$ss5Int32VMn`, the Swift.Int32 nominal type descriptor. Same slot as `trackID`
+    //       and `bitDepth`, both of which this source already spells `Int32`.
+    //       ⚑[tool=bind_oracle ref=__got:0x104112920 result=_$ss5Int32VMn]
+    //     · value — UNREADABLE, for two independent reasons. (1) The class exports ZERO symbols
+    //       in the trie, so there is no vpfi to read a declaration default from; absence here is
+    //       ignorance, NOT the usual "no vpfi ⇒ no default" evidence, which only holds for a
+    //       class that exports something. (2) The vtable's Init slot 3 carries a NULL Impl in
+    //       the descriptor, i.e. the initializer is dead-stripped — there is no init body left
+    //       to read a store from.
+    //       ⚑[tool=export_trie_oracle ref=AVMediaPlayerTrack:trie result=0-symbols]
+    //       ⚑[tool=vtable_walk ref=AVMediaPlayerTrack:slot3-Init result=null-Impl-dead-stripped]
+    //   So no faithful spelling of the initializer exists anywhere in the image. Declaring it
+    //   would mean inventing a value; leaving it out keeps the source honest at the cost of one
+    //   standing `field in binary, absent in source` FLAG, which is carried as a DEFERRAL.
+    //   (s104's note said the reason was "nothing in this class reads or writes it". That was
+    //   the weaker claim — the decisive one is the dead-stripped init above.)
     private let track: AVPlayerItemTrack
     let mediaType: AVFoundation.AVMediaType
     let name: String
@@ -527,7 +542,7 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
     let trackID: Int32
     // reorderSize: Int32 — binary index 8, undeclared (see the pin above)
     let bitDepth: Int32
-    let rotation: Int16 = 0
+    let rotation: UInt16 = 0
     let fieldOrder: FFmpegFieldOrder = .unknown
     let isImageSubtitle = false
     var isPlayable: Bool
