@@ -49,6 +49,16 @@ public enum DynamicRange: Int32 {
     case hlg = 3
     case dolbyVision = 5
 
+    /// ⚑ getter 0x1019e1af0 — `tst w0, #0xff` / `cset w0, ne` / `ret`.
+    /// The predicate is "the low byte is non-zero". That resolves to `!= .sdr` under EITHER
+    /// reading of w0, which is what makes it decidable here: the case TAGS are 0,1,2,3 and the
+    /// RAW VALUES are 0,2,3,5, and `.sdr` is the only case that is zero in both numberings.
+    /// (The body is ICF-folded — it is also `Anime4KQuality.autoDowngrade`'s — so it carries no
+    /// information unique to this property beyond the predicate itself.)
+    public var isHDR: Bool {
+        self != .sdr
+    }
+
     #if canImport(UIKit)
     var hdrMode: AVPlayer.HDRMode {
         switch self {
@@ -416,6 +426,21 @@ public enum DecodeType {
 // KSOptions field type + offset are correct either way. ⚑ requirements deferred (not fabricated).
 public protocol VideoPipeline {
     // 5 requirements (1 getter + 4 methods) UNRESOLVED — see the PlayList/VideoPipeline no-conformer protocol pass.
+}
+
+// Two bodies the binary places in an EXTENSION of this protocol, not in the protocol itself —
+// both demangle as `(extension in KSPlayer):KSPlayer.VideoPipeline.…`. They are declared here for
+// that reason, and the protocol above stays empty: which of the 5 deferred requirements (if any)
+// these two default-implement is NOT decidable from an extension symbol, and asserting it by
+// adding a requirement would be inventing the protocol's signature.
+public extension VideoPipeline {
+    /// ⚑ 0x10002c740 — `mov w0, #0x1` / `ret`. Unconditional; `force` is never read.
+    func beginFrameRendering(force _: Bool) -> Bool {
+        true
+    }
+
+    /// ⚑ 0x10000e52c — a bare `ret`: the body is empty.
+    func cancelFrameRendering() {}
 }
 
 // Forward-only protocol. Name and module are the trie's, not inferred: the protocol descriptor
