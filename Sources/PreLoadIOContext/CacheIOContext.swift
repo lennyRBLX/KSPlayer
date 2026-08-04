@@ -260,10 +260,14 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         (download as? AbstractAVIOContext)?.nextAVOptions() ?? nil
     }
 
-    // s22 @101b86038 — `func resetDownloadSpeed()` (name inferred, devirt). Faithful
+    // s22 @101b86038 — ⚑ s105 RENAME: was `resetDownloadSpeed()`, self-declared "name
+    //   inferred". The trie names 0x101b86038 `resetSpeedSample()` and carries exactly ONE
+    //   symbol there, so it is not a fold. Body unchanged — only the name was invented.
+    //   ⚑[tool=export_trie_oracle ref=CacheIOContext.resetSpeedSample:0x101b86038 result=name-recovered]
+    //   Faithful
     //   (full): zeroes the speed-sampler triple lastSpeedSampleTime / lastSpeedSamplePos
     //   / _downloadSpeed (self+0x58/0x60/0x68).
-    func resetDownloadSpeed() { // name inferred (devirt)
+    func resetSpeedSample() {
         lastSpeedSampleTime = 0
         lastSpeedSamplePos = 0
         _downloadSpeed = 0
@@ -310,9 +314,15 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // member has not been established, and inventing one is worse than the pin.
     // ⚑[tool=export_trie_oracle ref=PreLoadIOContext.CacheIOContext.canReadFromNetwork:0x101b885ac result=name-recovered]
 
-    // s64 @101b8a0e0 — `var isOpen: Bool` (name inferred, devirt). Faithful (full):
+    // s64 @101b8a0e0 — ⚑ s105 RENAME+KIND: was `var isOpen: Bool`, self-declared "name
+    //   inferred". The trie names 0x101b8a0e0 `shouldContinueRead() -> Swift.Bool` — a FUNC,
+    //   not a computed var. The address is ICF-folded across the hierarchy (CacheIOContext,
+    //   LimitPreLoadIOContext and PreLoadIOContext all export it), which is consistent: all
+    //   three compile to the same one-field negation. Body unchanged.
+    //   ⚑[tool=export_trie_oracle ref=CacheIOContext.shouldContinueRead:0x101b8a0e0 result=name-recovered]
+    //   Faithful (full):
     //   returns the logical negation of _isClosed (`(_isClosed ^ 0xff) & 1`).
-    var isOpen: Bool { // name inferred (devirt)
+    func shouldContinueRead() -> Bool {
         !_isClosed
     }
 
