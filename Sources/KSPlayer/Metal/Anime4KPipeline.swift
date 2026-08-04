@@ -111,6 +111,29 @@ public class Anime4KPipeline: VideoPipeline {
         cachedUpscaleSupport
     }
 
+    // ⚑ 0x101a78abc is a 1-instruction thunk `b 0x101a7c288`; the body is the 23 instructions
+    // there, read in full. `force` is NEVER read — no argument register is touched.
+    //   ldr x19,[x20,#0x38] -> frameStateLock ; objc `lock`     (selref 0x10440c080)
+    //   ldr x8, [x20,#0x40] -> inFlightFrameCount
+    //   if x8 == 0 { store 1 to +0x40 ; adds/b.vs +1 into +0x48 -> reservedFrameCount }
+    //   cset w20, eq        -> the RETURN is "inFlightFrameCount WAS zero", computed from the
+    //                          value loaded BEFORE the store, which is why it is captured first
+    //   objc `unlock` (selref 0x10440e750) ; return w20
+    // Offsets resolved to names by field_offset_vector (this class's vector is static and fully
+    // decoded), so +0x38/+0x40/+0x48 are read, not matched by position.
+    // ⚑[tool=decode_objc_selector ref=lock:0x103464ae0 result=lock]
+    // ⚑[tool=decode_objc_selector ref=unlock:0x10346e620 result=unlock]
+    public func beginFrameRendering(force _: Bool) -> Bool {
+        frameStateLock.lock()
+        let wasIdle = inFlightFrameCount == 0
+        if wasIdle {
+            inFlightFrameCount = 1
+            reservedFrameCount += 1
+        }
+        frameStateLock.unlock()
+        return wasIdle
+    }
+
     // Body @0x101a78ac0, 20 instr, read in full. The guard is `subs x8, [x20,#0x48], #1` + `b.lt`,
     // so the block runs only when reservedFrameCount >= 1; the decrement reuses that same
     // subtraction. `bic x8, x8, x8, asr #63` is max(_, 0), and the unlock at 0x101a78b08 is a TAIL
