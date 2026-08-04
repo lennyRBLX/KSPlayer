@@ -595,9 +595,16 @@ open class AbstractAVIOContext {
     // (URLContextDownload returns self.context; HLSCacheIOContext returns download.context;
     // CacheIOContext dynamic-casts + recurses). Return type is binary-grounded: URLContextDownload's
     // first field `context: UnsafeMutablePointer<URLContext>?` @+0x18, and the getter's `return self+0x18`.
-    // ⚑ name INFERRED — no #function on any override (0x100822e00 / 0x101b99cac / 0x101b8d8b8)
-    // ⚑[tool=recover_swift_function_name ref=urlContext:0x100822e00 result=inferred]
-    open var urlContext: UnsafeMutablePointer<URLContext>? { nil }
+    // ⚑ s105 RENAME+RETYPE. This was `var urlContext: UnsafeMutablePointer<URLContext>?`, an
+    // INFERRED name. It is refuted three ways: the trie names this member `nextAVOptions()` on
+    // this class AND on all three overriders; the return type it gives is
+    // `Swift.UnsafeMutableRawPointer?`, not a typed URLContext pointer; and a scan of the WHOLE
+    // image finds ZERO symbols containing `urlContext` — the name existed only here.
+    // It is a FUNC, not a computed var: the mangling carries `yF`, and each overrider has a
+    // method descriptor for the function form.
+    // ⚑[tool=export_trie_oracle ref=AbstractAVIOContext.nextAVOptions:0x10002d9d4 result=func-returning-raw-pointer]
+    // Body 0x10002d9d4 is `mov x0, #0 / ret` — the 605-symbol canonical `return nil`.
+    open func nextAVOptions() -> UnsafeMutableRawPointer? { nil }
 
     // +0xb0 — open a sub-URL, returning the child AVIOContext* (the custom io_open dispatches here
     // via ioContext.metadata[+0xb0], storing the result into *pb and PBClass.pb). Sole concrete

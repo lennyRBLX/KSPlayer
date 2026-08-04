@@ -256,8 +256,8 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   AVIO cache stack; a non-AVIO or nil download yields nil. The binary's swift_dynamicCast (vs a
     //   free upcast) is exactly why download must be the existential, not URLContextDownload.
     // ⚑[tool=name_type_at_addr ref=FUN_101b8d8b8:0x101b8d8b8 result=(download as? AbstractAVIOContext)?.urlContext; cast src=any DownloadProtocol, target=AbstractAVIOContext (metadata 0x1044e69b0), recursion=vtable+0xa8]  ⚑[tool=resolve_fun_pins ref=FUN_101b8d8b8:0x101b8d8b8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.nextAVOptions() -> Swift.UnsafeMutableRawPointer?
-    public override var urlContext: UnsafeMutablePointer<URLContext>? {
-        (download as? AbstractAVIOContext)?.urlContext
+    public override func nextAVOptions() -> UnsafeMutableRawPointer? {
+        (download as? AbstractAVIOContext)?.nextAVOptions() ?? nil
     }
 
     // s22 @101b86038 — `func resetDownloadSpeed()` (name inferred, devirt). Faithful

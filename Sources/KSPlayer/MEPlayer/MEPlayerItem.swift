@@ -783,7 +783,7 @@ extension AbstractAVIOContext {
         child_next: { obj, prev in
             guard let obj, prev == nil else { return nil }
             let context = Unmanaged<AbstractAVIOContext>.fromOpaque(obj).takeUnretainedValue()
-            return context.urlContext.map { UnsafeMutableRawPointer($0) }
+            return context.nextAVOptions()
         },
         child_class_iterate: nil,
         state_flags_offset: 0

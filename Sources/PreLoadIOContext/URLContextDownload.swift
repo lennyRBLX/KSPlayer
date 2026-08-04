@@ -57,7 +57,10 @@ public class URLContextDownload: AbstractAVIOContext {
     //   exclusivity read of self.context (beginAccess then the load) — the beginAccess is
     //   compiler-emitted instrumentation, invisible at source; the body is `{ context }`.
     // ⚑[tool=prefetch_decompiles ref=FUN_10081cbbc:0x10081cbbc result=_swift_beginAccess(self+0x18);return*(self+0x18) == self.context]
-    public override var urlContext: UnsafeMutablePointer<URLContext>? { context }
+    // ⚑ s105: renamed with the base — see AbstractAVIOContext.nextAVOptions. Body 0x100822e00
+    // is a 1-instruction `b 0x10081cbbc`, and that target is a plain `return *(self+0x18)`, i.e.
+    // this class's first field `context`. The raw-pointer conversion is a no-op bitcast.
+    public override func nextAVOptions() -> UnsafeMutableRawPointer? { context.map { UnsafeMutableRawPointer($0) } }
 
     // UNRESOLVED: read(buffer:size:) / write(buffer:size:) / seek(offset:whence:)
     //   overrides are devirtualized in the binary (no readable body) — inherited

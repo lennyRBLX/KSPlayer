@@ -119,7 +119,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //   load, no cast) and returns download.context. The decompile loads self.download
     //   (self+0x18), then does a checked-exclusivity read of download.context (its +0x18).
     // ⚑[tool=prefetch_decompiles ref=FUN_101b99cac:0x101b99cac result=lVar1=*(self+0x18)[download];beginAccess(lVar1+0x18);return*(lVar1+0x18) == download.context]  ⚑[tool=resolve_fun_pins ref=FUN_101b99cac:0x101b99cac result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.nextAVOptions() -> Swift.UnsafeMutableRawPointer?
-    public override var urlContext: UnsafeMutablePointer<URLContext>? { download.context }
+    public override func nextAVOptions() -> UnsafeMutableRawPointer? { download.context.map { UnsafeMutableRawPointer($0) } }
 
     // addSub (base slot +0xb0) — the io_open sub-URL router; the SOLE concrete +0xb0 override (every
     //   other AbstractAVIOContext subclass inherits the base `nil`). io_open (the reconstructed ioOpen,
