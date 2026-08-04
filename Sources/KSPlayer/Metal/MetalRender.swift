@@ -23,6 +23,13 @@ class MetalRender {
     }()
 
     nonisolated(unsafe) static let renderPassDescriptor = MTLRenderPassDescriptor()
+    /// ⚑ static getter 0x10002d9d4 — `mov x0, #0` / `ret`, the image's canonical constant-zero
+    /// body. Its storage at 0x10356c4e0 independently reads 0 as well, so both routes agree on
+    /// the value. `0` is `MTLStorageModeShared` per the SDK's own MTLResource.h
+    /// (`typedef NS_ENUM(NSUInteger, MTLStorageMode) { MTLStorageModeShared = 0, ... }`), which
+    /// is what licenses spelling it `.shared` rather than `MTLStorageMode(rawValue: 0)!`.
+    /// Trie: `static KSPlayer.MetalRender.fragmentTextureStorageMode.getter : __C.MTLStorageMode`.
+    nonisolated(unsafe) static var fragmentTextureStorageMode: MTLStorageMode = .shared
     static let commandQueue = MetalRender.device.makeCommandQueue()
     static let samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()
