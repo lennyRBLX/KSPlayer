@@ -21,6 +21,30 @@ public protocol AudioDynamicsProcessor {
     var audioUnitForDynamicsProcessor: AudioUnit { get }
 }
 
+// ⚑ s105: a body the binary places in an EXTENSION of AudioOutput —
+// `(extension in KSPlayer):KSPlayer.AudioOutput.resetTime() -> ()` @0x101a11b10. Three
+// instructions, and all three are the dispatch:
+//     ldr x1, [x1, #0x8]     ; x1 is Self's AudioOutput witness table; +0x8 is its INHERITED
+//                            ; FrameOutput table (a refined protocol's WT holds the base's there)
+//     ldr x2, [x1, #0x18]    ; FrameOutput requirement index 2
+//     br  x2                 ; tail-call it — the whole body is that one call
+// Requirement 2 was NAMED, not counted off the source's declaration order: decoding
+// AudioGraphPlayer's FrameOutput witness table (0x1041d70b0, via conformance descriptor
+// 0x10356a0f0) gives req0 play() @0x101a10284, req1 pause() @0x101a1029c, req2 a thunk to
+// AudioBaseOutput.flush() @0x101a117b0, req3 invalidate() @0x101a11138. So this calls flush().
+// ⚑[tool=decode_witness_table ref=AudioGraphPlayer:FrameOutput:0x1041d70b0 result=req2=flush]
+//
+// ⚠️ SEPARATE FINDING, not acted on here: that decode also shows FrameOutput has FOUR
+// requirements in the order play / pause / flush / invalidate, where the protocol above declares
+// three as pause / flush / play. Requirement order IS the witness-table layout, so that is a real
+// divergence — but reordering a protocol's requirements ripples to every conformer's table and
+// needs its own unit.
+public extension AudioOutput {
+    func resetTime() {
+        flush()
+    }
+}
+
 public extension AudioDynamicsProcessor {
     var attackTime: Float {
         get {
