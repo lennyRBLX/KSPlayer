@@ -242,13 +242,14 @@ open class KSOptions {
     // independently (220 = `staticBool || fps > 61.0`; 222 = `!arg0 || arg1`; 223 retains an
     // element when a field is non-nil) — corroboration, not just nomination.
     // 222 is now DECLARED below with its body; 224/225 are declared and audited FAITHFUL.
-    // ⛔ idx223 `wantedVideo` returns MediaPlayerTrack?, NOT the Int? this file declares — the
-    // index->object migration. `wantedAudio` (idx128) was migrated in s97; `wantedVideo` is a
-    // DIFFERENT vtable slot and so a different unit, and is NOT changed here.
+    // ✅ idx223 `wantedVideo` — DISCHARGED (s103). The index->object migration is now done for both:
+    // `wantedAudio` (idx128) in s97, `wantedVideo` here. It returns MediaPlayerTrack?, and its body
+    // is `tracks.first` rather than the `nil` this file used to declare — the count load
+    // `ldr x8,[x0,#0x10]` + `cbz` and the retained 16-byte element at +0x20/+0x28 are read below.
     // ⚠️ s97 — the "call-site ripple" this note cites is ZERO for both methods: neither
     // `wantedAudio` nor `wantedVideo` is called anywhere under Sources/, inside this file or out
-    // (`grep -rn "wantedAudio\|wantedVideo" Sources/` returns only the declarations). Whatever
-    // makes wantedVideo a separate unit, it is not ripple.
+    // (a recursive search for either name under Sources/ returns only the declarations). Whatever
+    // made wantedVideo a separate unit, it was not ripple.
     // 220/221 remain UNDECLARED: names recovered, bodies not yet reconstructed.
     // Context (not in this batch): slot 220 @0x1019be928 = `staticBool || fpsArg > 61.0` → Bool;
     // slot 221 @0x1019be98c reads UITraitCollection.current.userInterfaceIdiom; slot 223
@@ -446,11 +447,23 @@ open class KSOptions {
         !hasDecodeSuccess || isKeyFrame
     }
 
-    ///  wanted video stream index, or nil for automatic selection
+    /// wanted video track, or nil for automatic selection
     /// - Parameter : video track
-    /// - Returns: The index of the track
-    open func wantedVideo(tracks _: [MediaPlayerTrack]) -> Int? {
-        nil
+    /// - Returns: The selected track
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019bea14 (extent 0x1019bea14-0x1019bea54, 16 instr, all
+    // accounted for). Return type is MediaPlayerTrack?, NOT Int? — the same correction the sibling
+    // wantedAudio carries above, and on the same two independent grounds: the trie demangles this
+    // address as `wantedVideo(tracks: [KSPlayer.MediaPlayerTrack]) -> KSPlayer.MediaPlayerTrack?`,
+    // and the ABI agrees, since MediaPlayerTrack is AnyObject-constrained so the existential is
+    // (ref, witness) and the nil arm is exactly `mov x0,#0x0 / mov x19,#0x0 / mov x1,x19`.
+    // The body is NOT `nil`: `ldr x8,[x0,#0x10]` reads the array buffer's COUNT and `cbz x8` takes
+    // the nil arm only when empty; otherwise it loads the 16-byte element 0 from +0x20/+0x28 and
+    // retains it. There is no `brk` anywhere in the extent, so there is no bounds check — which is
+    // `.first`, not a subscript.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.wantedVideo(tracks:):0x1019bea14 result=OWNER_MATCH]
+    // ⚑[tool=bind_oracle ref=_swift_unknownObjectRetain:0x1041130b0 result=CONFIRMED]
+    open func wantedVideo(tracks: [MediaPlayerTrack]) -> MediaPlayerTrack? {
+        tracks.first
     }
 
     /// wanted audio track, or nil for automatic selection
