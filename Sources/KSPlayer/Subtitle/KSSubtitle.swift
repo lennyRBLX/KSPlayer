@@ -176,6 +176,13 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifia
 
 public extension SubtitleInfo {
     var id: String { subtitleID }
+    /// ⚑ getter 0x10002c740 — `mov w0, #0x1` / `ret`. Unconditional true: the body reads no
+    /// field and takes no branch, so it does NOT inspect the subtitle's type or extension.
+    /// The address is the image's canonical `return true` and is ICF-folded, so the constant is
+    /// the whole of what it establishes and the whole of what this declares.
+    /// Trie: `(extension in KSPlayer):KSPlayer.SubtitleInfo.isSrt.getter : Swift.Bool`, i.e. the
+    /// binary places it in an extension of the protocol, which is where it is written here.
+    var isSrt: Bool { true }
     // FUN_101aa3cc8: `Locale.Language(identifier:)` from `languageCode`, or nil when `languageCode` is nil.
     var subtitleLanguage: Locale.Language? {
         languageCode.map { Locale.Language(identifier: $0) }
