@@ -91,6 +91,15 @@ open class KSPlayerLayer: NSObject {
     /// is the whole of what is declared here. Signature from the trie:
     /// `KSPlayer.KSPlayerLayer.preview(time: Swift.Double?) -> ()`.
     open func preview(time _: Double?) {}
+
+    /// ⚑ 0x10000e52c — a bare `ret`, the same canonical empty body as `preview` above. The
+    /// parameter is never read.
+    /// Trie: `KSPlayer.KSPlayerLayer.updateUIView(__C.UIView) -> ()` — ONE unlabelled parameter.
+    /// It is NOT SwiftUI's `UIViewRepresentable.updateUIView(_:context:)`, which takes a second
+    /// `context` argument; this is a plain method that happens to share the base name.
+    /// `UIView` resolves on every platform here: PlayerDefines declares
+    /// `public typealias UIView = NSView` in its non-UIKit branch.
+    open func updateUIView(_: UIView) {}
     @Published
     public var bufferingProgress: UInt8 = 0
     @Published
