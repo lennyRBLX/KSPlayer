@@ -74,7 +74,11 @@ public actor DirectoryWatcher {
 
     /// Cancels the installed source and clears it. Binary: if `source != nil`
     /// → retain, `OS_dispatch_source.cancel()`, release; then `source = nil`.
-    func stop() {
+    // ⚑ s105 RENAME: was `stop()`, self-declared "name inferred". The trie names
+    // 0x101a06150 `cancel()` and carries exactly ONE symbol there, and no `stop` symbol
+    // exists on this class. Body unchanged — only the name was invented.
+    // ⚑[tool=export_trie_oracle ref=DirectoryWatcher.cancel:0x101a06150 result=name-recovered]
+    func cancel() {
         source?.cancel()                          // guarded cancel on the live source
         source = nil                              // *(self+0x70) = 0; release old
     }
