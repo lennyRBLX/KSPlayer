@@ -41,6 +41,18 @@ public struct SubtitleTextInfo {
     public var displaySize: CGSize?
     public var styleRole: SubtitleTextRole
     public var usesForcedPosition: Bool
+
+    /// ⚑ getter 0x10047dc78, eight instructions and only two of them are the body:
+    ///   ldr x20, [x20]        ; self's FIRST field, i.e. `text` — offset 0, no addend
+    ///   bl  0x10345868c       ; a stub through __got 0x104113628
+    /// and that GOT slot binds `_$sSo8NSObjectC10ObjectiveCE9hashValueSivg`, the ObjectiveC
+    /// overlay's `NSObject.hashValue` getter. NSAttributedString is an NSObject, so the whole
+    /// body is `text.hashValue` — no other field is loaded and nothing else is called.
+    /// ⚑[tool=bind_oracle ref=NSObject.hashValue:0x104113628 result=libswiftObjectiveC]
+    /// Trie: `KSPlayer.SubtitleTextInfo.id.getter : Swift.Int`.
+    public var id: Int {
+        text.hashValue
+    }
 }
 
 // SubtitleTextStyle @0x1039f2220 — all-optional override
