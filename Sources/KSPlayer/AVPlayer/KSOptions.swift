@@ -900,6 +900,34 @@ public extension KSOptions {
     nonisolated(unsafe) static var subtitleFontSizeScale = 1.0
     nonisolated(unsafe) static var subtitleImageScale = 1.0
     nonisolated(unsafe) static var trackHeight: CGFloat = 5.0
+
+    // ── s105, the zero-fill half of KSOptions' statics ───────────────────────────────────────
+    // Seventeen more `static var` settings. Their defaults are read from the IMAGE'S LAYOUT
+    // rather than from a stored byte: each one's unsafeMutableAddressor is `adrp/add/ret` with
+    // NO swift_once guard anywhere in it, and the global it returns lives in __common
+    // (0x104c5bb00..+0x185198), a zero-fill section with no file backing. No initialiser exists,
+    // so the value at load IS the default, and for these types that is the zero literal.
+    // The other 18 statics on this class are NOT here: their addressors DO carry a once guard,
+    // so they are built at runtime and their defaults are unread. That split is what makes this
+    // set decidable — it is not "the read returned nothing, assume zero".
+    // ⚑[tool=bind_oracle ref=KSOptions.hudLog.unsafeMutableAddressor:0x1019bfe44 result=__common-no-once]
+    nonisolated(unsafe) static var enableHDRSubtitle: Bool = false
+    nonisolated(unsafe) static var hudLog: Bool = false
+    nonisolated(unsafe) static var isASSUseImageRender: Bool = false
+    nonisolated(unsafe) static var isResizeImageSubtitle: Bool = false
+    nonisolated(unsafe) static var isSRTUseImageRender: Bool = false
+    nonisolated(unsafe) static var isSpatialAudioEnable: Bool = false
+    nonisolated(unsafe) static var preferEffectSubtitle: Bool = false
+    nonisolated(unsafe) static var showTranslateSourceText: Bool = false
+    nonisolated(unsafe) static var subtitleExposure: Float = 0.0
+    nonisolated(unsafe) static var subtitleImageOffset: CGSize = .zero
+    nonisolated(unsafe) static var subtitleOffset: CGFloat = 0.0
+    nonisolated(unsafe) static var textBold: Bool = false
+    nonisolated(unsafe) static var textItalic: Bool = false
+    nonisolated(unsafe) static var textShadowBlurRadius: Double = 0.0
+    nonisolated(unsafe) static var textShadowOffset: CGSize = .zero
+    nonisolated(unsafe) static var textStrokeWidth: CGFloat = 0.0
+    nonisolated(unsafe) static var useMACaptionAppearance: Bool = false
     nonisolated(unsafe) static var isPipPopViewController = false
     nonisolated(unsafe) static var canStartPictureInPictureAutomaticallyFromInline = true
     nonisolated(unsafe) static var preferredFrame = true
