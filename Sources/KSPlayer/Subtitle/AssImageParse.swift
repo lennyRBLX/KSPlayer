@@ -12,6 +12,17 @@ import Foundation
 // FFmpegSubtitleParse) — ASS-image is rendered via AssIncrementImageRenderer (Batch 5), not this text path.
 public class AssImageParse: KSParseProtocol {
     public init() {}
+
+    // ⚑ s105: the binary declares this member ON THIS CLASS — the trie carries
+    // `KSPlayer.AssImageParse.parsePart(scanner: __C.NSScanner) -> [KSPlayer.SubtitlePart]` directly, not as a
+    // protocol-witness thunk, so it is an explicit declaration rather than the inheritance the
+    // file header assumed. Body 0x10002d9dc is three instructions:
+    //   adrp x0, 0x104112000 / ldr x0, [x0, #0xd00] / ret
+    // and that GOT slot binds libswiftCore `__swiftEmptyArrayStorage`, i.e. it returns [].
+    // ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
+    // Identical to the KSParseProtocol extension default, which is why ICF folded the two onto
+    // one address — the fold is the CONSEQUENCE of them matching, not evidence of inheritance.
+    public func parsePart(scanner _: Scanner) -> [SubtitlePart] { [] }
     // ⚑ TERMINAL DEFERRAL → P4 M2 (existence-CHECKED session 19, RE-VERIFIED session 25 [2026-07-10] — the block
     //   HOLDS; name recovery EXHAUSTED — safe `false` fallback per the cardinal rule, NOT fabricated. Unblock needs a
     //   symbolicated/app-context build or upstream Forward source; NOT further binary analysis — do NOT re-open as
@@ -55,7 +66,13 @@ public class AssImageParse: KSParseProtocol {
 actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitleProtocol conformer (reverse-walk-confirmed)
     private let uuid: UUID = UUID()                                                  // ⚑ UUID inferred (GOT-indirect) → recon/mangle-evidenced
     private var header: String?
-    private var subtitles: [(subtitle: String, start: Double, duration: Double)] = [] // §8.6
+    // ⚑ s105 RETYPE: the tuple elements are Int64, not Double. The l2 gate reads the field
+    // record as `[(subtitle: String, start: Int64, duration: Int64)]` and has been blocking
+    // every commit to this file on it. Double vs Int64 is a REAL spelling difference — not
+    // an IUO-style null flag where both forms emit one typeref — so it is fixed here rather
+    // than suppressed. Nothing reads the field yet (the render bodies are still deferred),
+    // so the retype has no use sites to ripple through.
+    private var subtitles: [(subtitle: String, start: Int64, duration: Int64)] = [] // §8.6
     // ⚑[tool=binding_gate ref=AssIncrementImageRenderer:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
