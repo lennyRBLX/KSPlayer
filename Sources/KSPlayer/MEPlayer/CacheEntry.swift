@@ -66,15 +66,21 @@ final class CacheEntry: CacheEntryProtocol, Codable {
         self.maxSize = maxSize
     }
 
-    // Slot 10 method @0x1019e29e4 (bounds/space check). NAME inferred — no symbol
-    // in binary (devirtualized). Behaviour is faithful to the decompile:
+    // Slot 10 method @0x1019e29e4 (bounds/space check).
+    // ⚑ s105 RENAME+LABEL: this was `isExceeded(_ length:)` and the comment below claimed
+    // "no symbol in binary (devirtualized)". That is refuted — the export trie names the address
+    // `KSPlayer.CacheEntry.isOut(size: Swift.UInt32) -> Swift.Bool`, one symbol, not a fold. So
+    // both the method name AND the argument label were invented; the label is `size:`, not `_`.
+    // Written `size length:` so the external label matches the binary while the body keeps its
+    // own name — `size` alone would shadow the stored property this method reads.
+    // ⚑[tool=export_trie_oracle ref=CacheEntry.isOut:0x1019e29e4 result=name-recovered]
+    // The BODY was already right and is unchanged. Behaviour is faithful to the decompile:
     //   reads size(+0x20) and maxSize(+0x28/+0x2c); returns Bool.
     //   if size >= 0x1000001 (> 16MB)                       -> true
     //   else if maxSize != nil && maxSize < size + length   -> true   (size+length
     //        is a checked UInt32 add: the binary traps on CARRY4 overflow)
     //   else                                                -> false
-    // name inferred — no symbol in binary
-    func isExceeded(_ length: UInt32) -> Bool {
+    func isOut(size length: UInt32) -> Bool {
         if size > 0x100_0000 {
             return true
         }
