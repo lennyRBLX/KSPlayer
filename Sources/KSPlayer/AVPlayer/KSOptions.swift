@@ -1182,6 +1182,14 @@ public extension Array {
 public struct KSClock {
     public private(set) var lastMediaTime = CACurrentMediaTime()
     public internal(set) var position = Int64(0)
+    // ⚑ s105: field record [2] of 4 on descriptor 0x1039edfd0, mangle `Sd` = Swift.Double, and it
+    // sits BETWEEN `position` and `time` — so it is declared here, not appended, because a stored
+    // property's order is its layout. Default read from its own variable-initialization
+    // expression @0x1000b783c, which is `fmov d0, #1.00000000 / ret`.
+    // ⚑[tool=vpfi_initializer_oracle ref=KSClock.rate:0x1000b783c result=1.0]
+    // Access ⚑ INFERRED from the two fields it sits between; the trie exports getter, setter and
+    // modify for it, which is what establishes `var` rather than `let`.
+    public internal(set) var rate = 1.0
     public internal(set) var time = CMTime.zero {
         didSet {
             lastMediaTime = CACurrentMediaTime()
