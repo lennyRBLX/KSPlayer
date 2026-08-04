@@ -84,6 +84,13 @@ public extension KSPlayerLayerDelegate {
 @MainActor
 open class KSPlayerLayer: NSObject {
     public weak var delegate: KSPlayerLayerDelegate?
+
+    /// ⚑ 0x10000e52c — a bare `ret`. The body is empty; `time` is never read.
+    /// The address is heavily ICF-folded (it is the image's canonical empty body), so it carries
+    /// no information unique to this method beyond the fact that the method does nothing — which
+    /// is the whole of what is declared here. Signature from the trie:
+    /// `KSPlayer.KSPlayerLayer.preview(time: Swift.Double?) -> ()`.
+    open func preview(time _: Double?) {}
     @Published
     public var bufferingProgress: UInt8 = 0
     @Published
