@@ -326,6 +326,27 @@ open class KSAVPlayer {
     public func nominalFrameRate(track: some MediaPlayerTrack) -> Float {
         track.nominalFrameRate
     }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.thumbnailImage(atTime:handler:):0x1019a9a1c result=32-instr]
+    /// ⚠️ The two paths are ASYMMETRIC, and that is read, not inferred. `ldrb` of the
+    /// `isReadyToPlay` ivar (offset global 0x104c630d0) then `cmp w8,#0x1`:
+    ///   · NOT ready — `mov x0,#0` and `blr` the handler, i.e. `handler(nil)`;
+    ///   · ready — builds a CMTime from the incoming seconds with timescale 600
+    ///     (`mov w0,#0x258` into CMTime.init(seconds:preferredTimescale:)) and then branches
+    ///     STRAIGHT to the epilogue. The handler is never invoked on that path and the CMTime is
+    ///     discarded.
+    /// The construction survives dead-code elimination only because that initialiser can trap, so
+    /// it is genuine evidence the conversion is in the source — but whatever consumed it (an
+    /// AVAssetImageGenerator path, by analogy with the AVAsset extension at the bottom of this
+    /// file) is NOT in this binary. Transcribed as read rather than completed by analogy.
+    /// ⚑[tool=bind_oracle ref=__got:0x1041132c8 result=CMTime.init(seconds:preferredTimescale:)]
+    public func thumbnailImage(atTime: TimeInterval, handler: @escaping @Sendable (CGImage?) -> Void) {
+        guard isReadyToPlay else {
+            handler(nil)
+            return
+        }
+        _ = CMTime(seconds: atTime, preferredTimescale: 600)
+    }
 }
 
 extension KSAVPlayer {
