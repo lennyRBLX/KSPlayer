@@ -340,6 +340,38 @@ public extension MediaPlayerProtocol {
         (tracks(mediaType: .audio).first { $0.isEnabled } as? FFmpegAssetTrack)?.codecName
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.videoFormat.getter:0x1019e04f0 result=101-instr]
+    /// Also a `PAAE` extension member with a `vpMV` — public proven, no witness slot.
+    ///
+    /// ⚠️ It is NOT the audio getter with the media type swapped, which is what its near-identical
+    /// size suggests. The track search is the same shape — __got 0x104108740 binds
+    /// `AVMediaTypeVideo`, the same witness `[x2,#0x158]` returns the array, the same
+    /// `[x26,#0x58]`/`tbnz` picks the first enabled track — but the TAIL is a different mechanism
+    /// entirely, so the two were read separately.
+    /// ⚑[tool=bind_oracle ref=__got:0x104108740 result=AVMediaTypeVideo]
+    ///
+    /// Where `audioFormat` reads a stored String off a cast, this one calls
+    /// `MediaPlayerTrack.dynamicRange` (0x1019de560, trie:
+    /// `…MediaPlayerTrackPAAE12dynamicRange…` — itself an extension member) and turns the result
+    /// into a String through an INLINED table rather than a call:
+    ///   `ubfiz x8, x19, #3, #8` scales the returned case index by 8 and indexes two parallel
+    ///   word tables at 0x1035684a8 and 0x1035684d0 — the (bytes, count/flags) halves of a Swift
+    ///   String. The tables sit 0x28 apart, so there are exactly FIVE entries, matching
+    ///   `DynamicRange?`: four cases plus nil.
+    ///
+    /// The five entries were decoded, not assumed:
+    ///   0 → 'SDR' · 1 → 'HDR10' · 2 → 'HLG' · 3 → 'Dolby Vision' · 4 → (0,0)
+    /// That is `DynamicRange.description` (PlayerDefines.swift:105) inlined verbatim — the strings
+    /// and their tag order match that already-reconstructed switch exactly, which cross-checks both
+    /// this decode and that earlier body.
+    ///
+    /// ⚑ There is NO branch on the dynamicRange result, and that is not a missing nil check: entry
+    ///   4 is the (0,0) word pair, which IS `String?.none`. The optional chain is folded into the
+    ///   table, so `?.description` returning nil for a nil range is the table lookup itself.
+    var videoFormat: String? {
+        tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange?.description
+    }
+
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.updateProgress(to:):0x1019e076c result=23-instr]
     /// `fmul d0, d8, d0` multiplies the incoming CGFloat by req0 (`duration`), then tail-calls
     /// word 12 = req11 = `seek(time:completion:)`. The completion is passed as function pointer
