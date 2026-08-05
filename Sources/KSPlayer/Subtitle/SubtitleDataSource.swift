@@ -96,6 +96,32 @@ public class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
         }
         return []
     }
+
+    // isSrt.getter @0x101aa3914, 90 instr. `public` is proven by the property descriptor
+    // $s8KSPlayer15URLSubtitleInfoC5isSrtSbvpMV @0x10356cbe0; there is no `…Sbvs`, so get-only.
+    // This SHADOWS the `SubtitleInfo` extension default (`var isSrt: Bool { true }`,
+    // KSSubtitle.swift) — the class carries its own getter symbol, not an extension one, and it
+    // is the conformer that actually inspects itself instead of answering the folded `true`.
+    //
+    // Both halves are read end to end:
+    //  · the literal is the small string "srt" — word0 0x00747273 (bytes 73 72 74), word1
+    //    0xE300000000000000 = 0xE0|3, the all-ASCII discriminator carrying count 3.
+    //  · `hasSuffix` takes the suffix in (x0,x1) and `self` in (x2,x3). This site loads "srt"
+    //    into x0/x1 and the `name` String pair into x2/x3, so the RECEIVER is `name`. The
+    //    register order is not assumed: a compiled probe of `s.hasSuffix("srt")` emits the same
+    //    `mov x3,x1` / `mov x2,x0` / `mov w0,#0x7273` / `movk #0x74,lsl #16` / `mov x1,#0xE3<<56`.
+    //  · a true result short-circuits — `tbz w23,#0` falls through to `mov w19,#1` and the
+    //    epilogue — which is exactly `||`. The false arm copies `downloadURL` through its value
+    //    witness into a stack temp, calls the URL getter, destroys the temp, then compares with
+    //    the same "srt" pair (an inline identical-representation fast path, then the general
+    //    _stringCompareWithSmolCheck with `expecting` = 0 = .equal).
+    // ⚑[tool=export_trie_oracle ref=URLSubtitleInfo.name:0x104c63790 result=name]
+    // ⚑[tool=export_trie_oracle ref=URLSubtitleInfo.downloadURL:0x104c63780 result=downloadURL]
+    // ⚑[tool=bind_oracle ref=Foundation.URL.pathExtension.getter:0x104109a08 result=pathExtension]
+    // ⚑[tool=bind_oracle ref=String.hasSuffix:0x1041114e0 result=hasSuffix]
+    public var isSrt: Bool {
+        name.hasSuffix("srt") || downloadURL.pathExtension == "srt"
+    }
 }
 
 // §7.1 — correct-spelled datasource hierarchy. The base is a 0-req MARKER (drops the recon's `infos`
