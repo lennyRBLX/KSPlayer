@@ -32,6 +32,25 @@ public struct SubtitleImageInfo {
     public var source: BitmapSource
     public var displaySize: CGSize
     public var styleRole: SubtitleTextRole
+
+    /// ⚑[tool=disassemble ref=SubtitleImageInfo.id.getter:0x101abb9f4 result=3-instr-thunk]
+    /// The row's own body loads four Doubles — `ldp d0,d1,[x20]` / `ldp d2,d3,[x20,#0x10]`, i.e.
+    /// the 32 bytes at self+0, which is `rect` — and tail-calls a 49-instruction body at
+    /// 0x101abba00. Every call in that body is named, and together they are exactly CGRect's
+    /// Hashable conformance:
+    ///   `Hasher.init()`            __got 0x104112a98  `_$ss6HasherVABycfC`
+    ///   `CGRectStandardize`        __got 0x104109018  — the standardize step, taking and
+    ///                                                  returning the four Doubles
+    ///   `Hasher._combine(UInt64)`  __got 0x104112a80  — called four times, once per component
+    ///   `Hasher.finalize() -> Int` __got 0x104112a88
+    /// Each combine is preceded by `fcmp d,#0.0` / `fcsel d0,0.0,d,eq` — the `-0.0 → +0.0`
+    /// normalisation `Double.hash(into:)` performs so the two zeroes hash alike. No other field of
+    /// this struct is loaded and nothing else is called.
+    /// Same shape as the sibling `SubtitleTextInfo.id` above, which is `text.hashValue`.
+    /// Trie: `KSPlayer.SubtitleImageInfo.id.getter : Swift.Int`; access read from its vpMV.
+    public var id: Int {
+        rect.hashValue
+    }
 }
 
 // SubtitleTextInfo @0x1039f21cc
