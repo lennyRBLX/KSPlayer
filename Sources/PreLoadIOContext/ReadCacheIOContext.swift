@@ -56,6 +56,36 @@ public class ReadCacheIOContext: AbstractAVIOContext {
         super.init(bufferSize: bufferSize)
     }
 
+    /// @0x101bad688, 42 instructions. `override_table.py --impl` answers YES at index 3.
+    ///
+    ///   · the first statement loads a field, stores `xzr` over it and calls `swift_release`
+    ///     (__got 0x104113030) on the old value. ONE word stored and a NATIVE release — not
+    ///     `swift_unknownObjectRelease` — so the field is a plain class Optional, which among this
+    ///     class's eight fields is `entryCache`; `download` is an existential several words wide
+    ///     and would not be cleared by a single `str xzr`.
+    ///   · the rest is a `download?.close()`. The helper at 0x10002e588 is a generic outlined
+    ///     COPY — it instantiates a type from a mangled name and calls that type's
+    ///     `initializeWithCopy` (VWT+0x10) — so the existential is copied to the stack; the copy's
+    ///     +0x18 and +0x20 words are its metadata and witness table, `cbz` on the first is the
+    ///     Optional's nil test (the `?.`), and `[witness + 0x40]` is req7 of DownloadProtocol.
+    ///     0x100012a78 / 0x10003751c are the matching outlined destroys on the two exits.
+    ///   · req7 is `close()`, and that is resolved rather than assumed: its witness thunk
+    ///     @0x1019e2564 dereferences the box and dispatches `[metadata + 0xa0]`, which
+    ///     `vtable_walk AbstractAVIOContext --metadata-offset 0xa0` maps to slot 8 with impl
+    ///     0x10000e52c — this image's canonical ICF-folded empty body, matching the empty
+    ///     `AbstractAVIOContext.close()`. Declaring that requirement on DownloadProtocol (see
+    ///     PlayerDefines.swift) is what makes this call expressible.
+    /// ⚑ The binary dispatches `download` as an EXISTENTIAL; this file declares it
+    ///   `URLContextDownload?`, which its own comment already marks "type inferred". The field
+    ///   record carries a symbolic ref with a `_pSg` tail, i.e. `(any …)?` — a divergence that is
+    ///   its own unit and does not change what this body does.
+    /// ⚑[tool=override_table ref=ReadCacheIOContext.close():0x101bad688 result=YES-index-3]
+    /// ⚑[tool=vtable_walk ref=AbstractAVIOContext:metadata+0xa0 result=slot8-impl-0x10000e52c-empty]
+    override public func close() {
+        entryCache = nil
+        download?.close()
+    }
+
     // UNRESOLVED: slot 18 @101bad730 — the 576-instr cache-read engine (the lone
     //   AbstractAVIOContext override; deep IO calling stripped FFmpeg/Foundation) →
     //   NOT reconstructed; named only by the P2 oracle. — P2

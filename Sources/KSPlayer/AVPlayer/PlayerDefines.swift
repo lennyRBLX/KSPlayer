@@ -714,7 +714,18 @@ open class AbstractAVIOContext {
 //   declared minimally. `any DownloadProtocol` is a 40-byte non-class-constrained existential
 //   regardless of requirement count, so CacheIOContext.download's field layout is faithful as-is.
 // ⚑[tool=conformance_walker ref=DownloadProtocol:0x1039edd38 result=8 reqs (2 vars + 4 methods), sole conformer=AbstractAVIOContext (witness table 0x1041d5330 validated), all 8 witnesses #function-unrecoverable → reqs deferred]
-public protocol DownloadProtocol {}
+// ⚑ s109: `close()` IS DECLARED, and it is the FIRST of the eight deferred requirements to be
+// named. Witness table 0x1041d5330 req7 (offset 0x40) is a thunk that dereferences the boxed
+// existential and dispatches `[metadata + 0xa0]`; `vtable_walk AbstractAVIOContext
+// --metadata-offset 0xa0` resolves that to slot 8, whose impl is 0x10000e52c — this image's
+// canonical ICF-folded EMPTY body. `AbstractAVIOContext.close()` is the one member of that class
+// declared with an empty body, so the slot and the requirement agree.
+// It is declared now because ReadCacheIOContext.close() calls it through this protocol.
+// ⚑[tool=vtable_walk ref=AbstractAVIOContext:metadata+0xa0 result=slot8-impl-0x10000e52c-empty]
+// ⚑[tool=decode_witness_table ref=AbstractAVIOContext:DownloadProtocol:0x1041d5330 result=req7-dispatches-slot8]
+public protocol DownloadProtocol {
+    func close()
+}
 
 // AbstractAVIOContext is DownloadProtocol's sole conformer (conformance_walker), so every AVIO
 // subclass conforms via inheritance. The extension body is empty because the 8 requirements are the
