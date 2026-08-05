@@ -76,6 +76,28 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     // 6  _timeIndex: sorted-by-position index of (position,time) entries. Designated
     //    init defaults it to [] (PTR___swiftEmptyArrayStorage). field-record.
     private var _timeIndex: [TimeIndexEntry] = []
+
+    /// ⚑[tool=export_trie_oracle ref=LimitSeparatePreLoadIOContext.close():0x101ba4ad0 result=38-instr]
+    /// Both fields are named by ELIMINATION ON TYPE — neither global carries a `vpWvd`, but this
+    /// class has exactly EIGHT fields and among them exactly one `NSLock` and exactly one Array:
+    ///   · global 0x1044f5c30 receives the ObjC `lock` / `unlock` sends (0x103464ae0 / 0x10346e620,
+    ///     the same pair decoded for Anime4KFrameDump.reset) ⇒ `_timeIndexLock`.
+    ///   · global 0x1044f5c38 is overwritten with `_swiftEmptyArrayStorage` (__got 0x104112d00)
+    ///     under a MODIFY access (`w2 = 1`), with the old value released ⇒ `_timeIndex = []`.
+    ///     Storing the empty-array singleton is what makes it `= []` rather than
+    ///     `removeAll(keepingCapacity:)`, which would leave the buffer in place.
+    ///
+    /// ⚑ `super.close()` is a DIRECT `bl 0x101b8c83c` = `CacheIOContext.close()`, which is this
+    ///   class's immediate superclass — so the call is `super`, not a re-dispatch. It resolves
+    ///   against `AbstractAVIOContext.close()` (PlayerDefines.swift:610) until CacheIOContext's own
+    ///   override is reconstructed; that row is still open and 284 instructions.
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.close():0x101b8c83c result=super-target]
+    override public func close() {
+        _timeIndexLock.lock()
+        _timeIndex = []
+        _timeIndexLock.unlock()
+        super.close()
+    }
     // 7  _timeIndexLock: serializes _timeIndex mutation. Designated init allocs
     //    NSLock() (objc_allocWithZone + init on __NSLock) — that store is the DECLARATION
     //    DEFAULT being materialized, not a user assignment, so it is spelled here.
