@@ -822,12 +822,27 @@ and gets silently "fixed"; it is what the binary says.
 and Bitrate's equivalent — plus the values for **Title** and **Color Depth** (Title's key is
 materialised twice, at L275 and L325, which is itself unexplained).
 
-⚑ A warning for whoever traces that operand: `FFmpegAssetTrack.formatDescription` sits at **0xd0**
-and the body does `ldr x23, [x25,#0xd0]`, which makes "x25 is the track" look immediate. Do not
-take it — the subsequent `ldr s0,[x23,#0x40]` does not fit that holder (the track's Floats are
-`nominalFrameRate` 0x58 / `avgFrameRate` 0x5c / `realFrameRate` 0x64, and a CMFormatDescription has
-no Swift field at 0x40). One of the two reads is against a different object; the register must be
-traced, not matched on a single offset coincidence.
+**The register trace is done, and the offset coincidence was real after all.** `x25` IS an
+`FFmpegAssetTrack` and `x23` IS its `formatDescription` (0xd0) — proven not by the offset but by
+what happens next: `x23` is `objc_retain`ed and passed straight to
+`CMFormatDescriptionRef.naturalSize.getter` @0x101a0aeac, which only accepts a format description.
+It is `cbz`-guarded first, so `formatDescription` is optional. Two independent reads agree, which
+is the bar the bare offset match did not meet.
+
+**The literal's layout is read**: the dictionary is built as an array of alternating
+key/value strings — key at `+N`, value at `+N+0x10`, one pair every `0x20`. Confirmed on a pair
+whose halves are independently known: `"Frame Rate"` is stored at `[x28,#0x60]` and the
+`String(format:)`+`append` result is stored at `[x28,#0x70]`.
+
+**There are TWO arrays, one per branch** — stores run `[x27,#0x50…0xd0]` in one and
+`[x28,#0x30…0xb0]` in the other, nine `stp` pairs each. One branch supplies the literal
+**`"Unknown"`** (`x20/x21` = 0x6e55/0x6e6b/0x776f/0x6e, count 7) as a VALUE, which is the
+fallback arm.
+
+**What remains** is mechanical rather than uncertain: walk each array's slots in order and read off
+the pairs. Note a `stp xN, xM` grep finds only nine stores per array where six pairs need twelve —
+some slots are written by other instruction forms, so enumerate by OFFSET (0x20, 0x30, 0x40, …),
+not by grepping one mnemonic.
 
 ## 20. Not started, deliberately
 
