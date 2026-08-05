@@ -733,10 +733,28 @@ wrong**, so it was not landed here.
    sweep over all three class names crossed with `transcode` returns **0 symbols** — all three
    implementations are devirtualized and unnamed.
 
-So the closure's optionality is **not recoverable** on current evidence, and this row is blocked by
-a measured negative rather than by caution. Do not re-walk those two routes. What would break it:
-reading one conformer's body at its (unnamed) address and deciding the parameter shape from how it
-uses the argument — a body read, not a signature lookup.
+So no *signature lookup* recovers it. **But the body read does, and I did it — the optionality is
+now READ, and the two signatures genuinely differ.**
+
+* `conformance_walker --protocols TranscodeProtocol:0x1039eefa0` gives all five conformers and
+  their witness tables (3 requirements each). `CopyTranscodeContext`'s substantive witness is
+  **0x101a1bee0** (18 instr): copy input→output, `str x8,[x21,#0x48]` with `x8 = -1` (pts =
+  AV_NOPTS_VALUE), then **`blr x19` UNCONDITIONALLY**. No nil test — so the WITNESS's `completion`
+  is NON-optional, and source's `TranscodeProtocol` is already right.
+* `OutputStreamInfo.transcode`'s `block` really is optional, and the check is explicit. The
+  completion handed to the witness is NOT the caller's block: `x2 = 0x101a1f1a8` is a 5-instruction
+  partial-apply forwarder onto a CONSTRUCTED closure at **0x101a1af90**, and that closure opens
+  `cbz x1, …` / `blr x1` on the block's function pointer — an optional closure invoked only when
+  present, i.e. `block?(…)`.
+
+⚑ That also **refutes this file's own note** at the call site, which says "the completion is passed
+through, not constructed here". A closure IS constructed; 0x101a1af90 is its body.
+
+**What still blocks the rename** is therefore not the optionality but that constructed closure:
+0x101a1af90 is **593 instructions**, and `block?(…)` is only its first step. The current source
+already simplifies that site to a bare forward, so landing the rename means either keeping that
+simplification while changing the signature — which needs an adapter whose shape is not read — or
+reconstructing the 593-instruction closure as its own unit. The second is the honest route.
 
 ## 19. Not started, deliberately
 
