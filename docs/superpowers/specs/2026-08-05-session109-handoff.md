@@ -867,7 +867,37 @@ filled in by elimination — and why "Resolution", which is certainly built (bot
 named), does not appear in the `x28` list above. It belongs to the other branch. Finishing this
 means walking the two branches separately, not completing this table.
 
-## 20. Not started, deliberately
+## 20. `displayEnumVR` / `displayEnumVRBox` — the recorded blocker VERIFIED, not taken on trust
+
+KSOptions.swift's own note says these two are read but blocked by
+`error: main actor-isolated default value in a nonisolated(unsafe) context`, and that the fix
+depends on whether `@MainActor` on `SphereDisplayModel` is an over-annotation. Per MEMORY rule 15
+I re-checked rather than trusting it, because the getters are only 7 instructions and looked cheap.
+
+The blocker is real. What I confirmed:
+
+* the bodies are the ordinary lazy-static shape — addressor @0x1019bc684 is `swift_once` on token
+  0x1044e52b8 returning storage 0x104c632b0; the 7-instruction getter @0x1019bc6c4 tail-calls the
+  shared once-then-load helper 0x1000837f0. Nothing exotic; identical in shape to
+  `displayEnumPlane`/`displayEnumDovi`, which ARE declared.
+* so the difference is purely the initialiser. **Every** `*DisplayModel` class is `@MainActor` in
+  this tree — Plane and Dovi included — and those two compile fine. What separates them is that
+  Plane and Dovi have no explicit `init`, while `VRDisplayModel`/`VRBoxDisplayModel` declare
+  `override required init()`.
+* I could not cheaply refute those inits. `vtable_walk` reports **no vtable at all** for either VR
+  class (`override_table.py` accordingly answers `no-vtable`), and `export_trie_oracle --class`
+  reports **`inits: 0`** for both. But absent-from-the-trie means UNNAMED, not absent (rule 3), and
+  an init demonstrably runs: the shared once-init tail does `swift_allocObject` then `blr` an init
+  then stores. Both classes also carry stored `let` fields that must be initialised somewhere. So
+  the source's `override required init()` is consistent with the binary, and deleting it to unblock
+  the statics would be unfounded.
+
+**Conclusion: KSOptions.swift's note is correct as written and these two rows stay blocked.** The
+deciding question is unchanged — is `@MainActor` on `SphereDisplayModel` right? — and it is a claim
+about a different declaration, needing its own read. Do not re-walk the cheap-getter angle; the
+getters were never the problem.
+
+## 21. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
