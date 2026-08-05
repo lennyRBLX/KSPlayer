@@ -970,6 +970,29 @@ unnamed one is your cost. Two levels deep is enough. That immediately reorders t
   *resume* half, which is a separate function, so it scores 32. Treat any `.modify` row as
   unsized until both halves are walked.
 
+## 2ai. NEGATIVE, MEASURED: a runtime-init class's offset globals are NEVER written by our code
+
+Before reaching for the §2u store-run on a `metadata_init=1` class, know what does **not** work, so
+the search is not repeated:
+
+- **No symbol.** If the field has no `vpWvd`, nothing in the trie names the global.
+  (`SubtitleModel`: 8 `vpWvd` for 24 field records.)
+- **No static value.** The word reads `0x0`; the offsets are installed at runtime. §2ab's value-read
+  route correctly refuses.
+- **No store site.** Scanning all of `__text` for an `adrp` to the globals' page followed by a
+  matching `str` finds **zero** writes to a given offset global (checked on
+  `0x104c634f0` = `KSPlayerLayer.player`). The class's metadata **completion function** — reachable
+  from the descriptor's `SingletonMetadataInitialization` record at `desc+44+8`, e.g.
+  `KSPlayerLayer` → 0x1019d66b4 — builds the field-type array and calls
+  `swift_initClassMetadata` with `x4 = metadata + 0x50`, i.e. it fills the metadata's OWN
+  field-offset vector and never touches the globals. The runtime patches them.
+
+⚑ **This does NOT refute §2u**, and the distinction matters. §2u never read an offset global's
+  store — it anchored on the **values a class's initializer writes into its FIELDS**, matched
+  against the field records' declaration defaults. That works regardless of `metadata_init`, and it
+  remains the route of last resort. What is ruled out is the tempting shortcut of looking for where
+  the *global itself* gets its number: nowhere, in this image.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
