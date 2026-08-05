@@ -669,6 +669,56 @@ singletons.
 
 ⚑ Lives in `play/scripts/`, which is gitignored. Disk-only, like the `field_offset_vector` fix.
 
+## 2ac. ⭐⭐ THE BIG ONE — `recover_field_offsets` was blind to substitution too. +156 globals.
+
+This is the same defect as §2aa, in the second tool, and it is what has been blocking the
+`metadata_init=1` majority all session.
+
+`globals_from_trie` prefiltered candidates with the literal `<len><Class>` token. Swift
+word-substitution deletes that token whenever the class name reuses a word from its module:
+**`KSPlayerLayer` in module `KSPlayer` is spelled `0A5Layer`**, so `13KSPlayerLayer` matches
+**nothing** and the tool answered *"0 offset-globals recovered"* — for a class whose globals the
+trie names outright. `export_trie_oracle --addr 0x104c634f0` returns
+`direct field offset for KSPlayer.KSPlayerLayer.player`, and s107 had already read that same
+global as `player` by hand while reconstructing `KSComplexPlayerLayer.pause()`.
+
+**Fix:** drop the class token from the prefilter — only the MODULE token is substitution-safe —
+and let the demangled `parts[-2] == cls` test that already followed do the work. It was always the
+authoritative check; the class token was only narrowing the list. Demangles are cached per module.
+
+**Measured like-for-like over 1039 classes** (both sides counting the FILTERED map, not raw
+candidates — the first pass compared raw counts and understated the gain as "+8"):
+
+| | globals named |
+|---|---|
+| before | 1419 |
+| after | **1575** |
+| gained | **+156 across 43 classes**, **0 lost** |
+
+Strictly additive: an explicit sweep confirms **no class lost a single global**.
+
+**Reach: 81 of the 113 open rows** are on classes that now have named offset globals, including
+every one that previously reported zero:
+
+| rows | class | globals: was → now |
+|---|---|---|
+| 8 | `CacheIOContext` | 0 → 8 |
+| 7 | `LimitPreLoadIOContext` | 0 → 5 |
+| 6 | `HLSCacheIOContext` | 0 → 4 |
+| 5 | `KSPlayerLayer` | 0 → 7 |
+| 4 | `LimitSeparatePreLoadIOContext` | 0 → 2 |
+
+⚑ This is the FOURTH substitution miss this session (`CacheIOContext` in a search,
+  `KSPictureInPictureProtocol`'s `WP`, `KSPlayerError`'s 60+ symbols, and now two tools). The
+  pattern is now unmistakable: **never prefilter on a literal class token.** The module token is
+  safe; the class name is not. Where a name must be matched, demangle and compare.
+
+⚑ Three goldens pin it: `KSPlayerLayer.player` resolves to the hand-verified global, the class
+  recovers ≥7, and — the control that keeps it honest — the literal `13KSPlayerLayer` token is
+  asserted to match NOTHING, so the positive is not vacuous. Plus a bogus-class negative.
+
+⚑ `play/scripts/` is gitignored; disk-only, like the other two fixes.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
