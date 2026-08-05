@@ -195,8 +195,13 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     // Signature from the trie:
     // `PreLoadIOContext.LimitPreLoadIOContext.canReadFromNetwork() -> Swift.Bool`.
     // Unlike the sibling name on CacheIOContext, this one is NOT the same body — CacheIOContext's
-    // canReadFromNetwork is 3 instructions at 0x101b885ac and stays open.
-    public func canReadFromNetwork() -> Bool {
+    // canReadFromNetwork is 3 instructions at 0x101b885ac (a forward to canAccessNetwork), while
+    // this one is the constant.
+    // ⚑ s106: `override` added. The base declared no `canReadFromNetwork` until this session, so
+    //   this declaration was previously a new member rather than an override; once the base's was
+    //   declared the compiler required the keyword, which is the inheritance the vtable showed all
+    //   along — this class's slot overrides CacheIOContext's.
+    override public func canReadFromNetwork() -> Bool {
         true
     }
 

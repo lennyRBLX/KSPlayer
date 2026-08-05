@@ -323,9 +323,22 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // instructions are `ldr x8,[x20]` / `ldr x0,[x8,#0x388]` / `br x0`, i.e. a single indirect
     // dispatch through metadata word 0x388/8 = 113 = this class's own idx62 slot113 (@0x10002c740,
     // a 2-instruction `mov w0,#1; ret`). It is one devirtualised forward, not a branch table.
-    // Still NOT declared here: what source spelling produces a forward to another overridable
-    // member has not been established, and inventing one is worse than the pin.
     // ⚑[tool=export_trie_oracle ref=PreLoadIOContext.CacheIOContext.canReadFromNetwork:0x101b885ac result=name-recovered]
+    // ⚑ s106 DECLARED. The open question above was "what source spelling produces a forward to
+    //   another overridable member" — the answer is just a call to it, once the target is named.
+    //   Metadata word 0x388 against this class's VTableOffset of 51 words (0x198) gives
+    //   slot (0x388-0x198)/8 = 62, which `vtable_walk` reports as kind **Method** with impl
+    //   0x10002c740.
+    //   That impl is a 270-symbol ICF fold — `mov w0,#1` / `ret` is maximally foldable — so
+    //   address→name is a coin flip and `export_trie_oracle --addr` correctly refuses it. It
+    //   resolves the other way: among CacheIOContext's OWN symbols at that address there is
+    //   exactly one METHOD, `canAccessNetwork() -> Swift.Bool`; the others are `vpfi`s, which the
+    //   vtable's Method kind excludes. That member is already declared above at line 245, and its
+    //   body is the same `return true` those two instructions encode.
+    //   ⚑[tool=vtable_walk ref=CacheIOContext:slot62@0x10002c740 result=Method-canAccessNetwork]
+    func canReadFromNetwork() -> Bool {
+        canAccessNetwork()
+    }
 
     // s64 @101b8a0e0 — ⚑ s105 RENAME+KIND: was `var isOpen: Bool`, self-declared "name
     //   inferred". The trie names 0x101b8a0e0 `shouldContinueRead() -> Swift.Bool` — a FUNC,
