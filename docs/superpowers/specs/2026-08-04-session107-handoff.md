@@ -904,7 +904,48 @@ What is left is the §2u treatment — anchor the class's initializer store run 
 same technique that named `IOSVideoPlayerView`'s configs, and it is the only route left here.
 Until it lands, the whole four-step chain is stalled behind six field names.
 
-**Step 0, sized and assessed.** `SubtitleModel.init(url:options:)` @0x101ab34a0 is **340 instr**,
+### ✅ STEP 0 IS DONE — the six `SubtitleModel` globals are NAMED
+
+The store run in `init(url:options:)` @0x101ab34a0 resolves all six. Sequence of offset-global
+accesses (deduped, in order), with the trie-named ones as checkpoints:
+
+```
+1 0xe38   2 0xe50   3 0xe60   4 [0x7c8=subtitleDelay f7]  5 [0x7d0=dynamicRange f8]
+6 0xe78   7 0xe80   8 [0x7e0=playRatio f12]   9 0xe88
+10 0xea0  11 0xea8  12 0xeb0  13 0xeb8  14 0xec0
+15 [0x7f0=selectedSubtitleInfo f20]  16 0xec8  17 [0x7f8=secondarySubtitleInfo f22]
+18 0xed0  19 0xed8   |  20 [0x7d8=options f9]  21 [0x7e8=url f18]
+```
+
+**The run is field-ordered, and three checkpoints prove it independently**: entry 4→f7 and 5→f8
+(consecutive), entry 8→f12, entry 15→f20, entry 17→f22. Entries 20–21 fall outside the run because
+`options` and `url` are the initializer's PARAMETERS, assigned after the defaults — which is also
+why the class exports exactly **22** `vpfi` for 24 fields (24 − options − url).
+
+Walking the gaps (f9 and f18 skipped, being the parameters):
+
+| global | field | name |
+|---|---|---|
+| 0x1044eeea0 | 14 | **`subtitleSearchGeneration`** |
+| 0x1044eeea8 | 15 | **`subtitleSearchSequence`** |
+| 0x1044eeeb0 | 16 | **`latestPrimarySubtitleQueryTime`** |
+| 0x1044eeeb8 | 17 | **`latestSecondarySubtitleQueryTime`** |
+| 0x1044eeec0 | 19 | **`firstSubtitleActor`** |
+| 0x1044eeec8 | 21 | **`secondarySubtitleActor`** |
+
+⚑ The middle pair is pinned by VALUE SHAPE, not only by position: 0xeb0 and 0xeb8 are each written
+  as `str xzr` **plus `strb w9(=1)` at +8** — an 8-byte payload with a separate nil tag. Fields 16
+  and 17 are the only remaining ones typed `SdSg` (`Double?`), and no other candidate has that
+  shape. Position and value agree.
+
+⚑ 0xec0 and 0xec8 are pinned by BRACKETING: each is written immediately before a trie-named global
+  (f20, then f22), which places them at 19 and 21 with no counting from the far end of the run.
+
+Remaining unnamed on this page — 0xe38/0xe50/0xe60/0xe78/0xe80/0xe88/0xed0/0xed8 — map by the same
+walk to fields 4,5,6,10,11,13,23 plus one extra at entry 19; not needed for
+`subtitle(currentTime:playRatio:screenSize:)`, so not asserted here.
+
+**Step 0 sizing, for the record.** `SubtitleModel.init(url:options:)` @0x101ab34a0 is **340 instr**,
 and the class exports **22 `vpfi`** symbols for its 24 field records — i.e. 22 of 24 fields carry a
 declaration default whose value the init writes. That is an unusually rich anchor set (compare
 `IOSVideoPlayerView`, where §2u had to lean on a single 15.0 and one `str xzr`), so the store run
