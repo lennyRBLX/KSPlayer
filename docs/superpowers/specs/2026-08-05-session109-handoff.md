@@ -1329,3 +1329,30 @@ before that field can be typed; do NOT guess it from the name.
 That is a real unit with a known size, not an unknown. Landing `FFmpegSubtitleParse.parse`
 (46 instructions, body already read as `try FFmpegSubtitle(url: url)`) is its payoff, and the
 168-byte `swift_allocObject` is the layout check to match when the standup is done.
+
+
+### §24i — `FFmpegSubtitle`: the complete typed layout, read. Only the init remains.
+Every field type is now resolved, so the standup no longer needs any type discovery — and it does
+NOT cascade: both class-typed fields already exist in Sources.
+
+| # | field | binding | type | how |
+|---|---|---|---|---|
+| 1 | `$defaultActor` | var | — | compiler-synthesised ⇒ this is an `actor`, not a class |
+| 2 | `formatContext` | let | `FormatContext` | symref ctrl=2 → 0x1039ef5c0 = `KSPlayer.FormatContext` (declared, Remux/FormatContext.swift:49) |
+| 3 | `decode` | let | `SubtitleDecode` | symref ctrl=1 → 0x1039f0530 = `KSPlayer.SubtitleDecode` (declared, MEPlayer/SubtitleDecode.swift:20) |
+| 4 | `subtitleStreamIndex` | let | `Int32` | fieldrec symref → __got 0x104112920 = `Swift.Int32` nominal descriptor |
+| 5 | `preTime` | var | `Double` | mangle `Sd` |
+| 6 | `startTime` | var | `Double` | mangle `Sd` |
+| 7 | `endTime` | var | `Double` | mangle `Sd` |
+| 8 | `parts` | var | `[SubtitlePart]` | mangle `Say<SYM@0x1039f21e8>G`, 0x1039f21e8 = `KSPlayer.SubtitlePart` |
+
+Conformance: `FFmpegSubtitle : KSSubtitleProtocol`, witness table 0x1041da3a8, **1 requirement**
+(req0 at 0x10356c9f0, `in_text=False`).
+
+**What is still missing is exactly one thing: the init.** Three fields are `let` (flags=0), so
+`init(url:) throws` @0x101a9f27c must assign all three, and those assignments are inside its 409
+instructions — unread, therefore uninventable. A spine init cannot stand in, because a spine cannot
+supply a `let`'s value. Match the result against the caller's `swift_allocObject(168, 15)`.
+
+With the init read, this lands `FFmpegSubtitleParse.parse` too — its 46-instruction body is already
+decoded as `try FFmpegSubtitle(url: url)` with `scanner` provably unused (§24g).
