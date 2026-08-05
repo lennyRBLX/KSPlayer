@@ -398,6 +398,34 @@ public extension MediaPlayerProtocol {
         tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.subtitlesTracks.getter:0x1019dffb8 result=130-instr]
+    /// The fourth and last `PAAE` extension member of this protocol; `vpMV` proves public.
+    ///
+    /// Unlike the three above it does NOT filter on `isEnabled` — there is no predicate call in
+    /// the loop at all. The only `tbnz` in the body is the tail of the main-actor executor check
+    /// (`swift_task_isCurrentExecutor`), which is easy to misread as a filter; the element test
+    /// here is the conformance cast, nothing else.
+    ///
+    ///   · __got 0x104108738 binds `AVMediaTypeSubtitle`, dereferenced into the same
+    ///     `[x2,#0x158]` witness that the siblings use — `tracks(mediaType: .subtitle)`.
+    ///     ⚑[tool=bind_oracle ref=__got:0x104108738 result=AVMediaTypeSubtitle]
+    ///   · the accumulator is seeded from __got 0x104112d00 `_swiftEmptyArrayStorage`, so it
+    ///     starts `[]` with no reserved capacity.
+    ///   · per element: `swift_conformsToProtocol(track, 0x1039f18dc)` where that descriptor is
+    ///     `SubtitleInfo`'s own `…12SubtitleInfoMp`. A null result (`cbz x20`) skips the element —
+    ///     that IS the `as?`, and skipping-on-nil is what makes it `compactMap` rather than `map`.
+    ///     ⚑[tool=bind_oracle ref=__got:0x104112db8 result=swift_conformsToProtocol]
+    ///   · on success it appends the TWO-word existential with
+    ///     `stp x27, x20, [x9,#0x20]` — instance and witness table together — after the usual
+    ///     uniqueness check and a `cmp x21, x8, lsr #1` capacity test.
+    ///
+    /// ⚑ `compactMap` vs `filter`-then-`map` is not decidable from this body: both lower to one
+    ///   append loop over an empty seed. `compactMap` is written because the cast and the skip are
+    ///   the SAME test here — there is no separate predicate pass to correspond to a `filter`.
+    var subtitlesTracks: [any SubtitleInfo] {
+        tracks(mediaType: .subtitle).compactMap { $0 as? SubtitleInfo }
+    }
+
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.updateProgress(to:):0x1019e076c result=23-instr]
     /// `fmul d0, d8, d0` multiplies the incoming CGFloat by req0 (`duration`), then tail-calls
     /// word 12 = req11 = `seek(time:completion:)`. The completion is passed as function pointer
