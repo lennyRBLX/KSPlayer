@@ -927,7 +927,31 @@ So this row needs that engine reconstructed (or at minimum named) first — and 
 @0x101ac0a90 is itself an undeclared private member shared with a second caller, so landing
 `mtkView` alone still means declaring the helper.
 
-## 22. Not started, deliberately
+## 22. `KSAVPlayer.cachedTimeRanges` — guard read, tail outstanding
+
+Getter @0x1019a1244, 76 instr, returning `[KSPlayer.CachedTimeRange]`. The opening guard is read:
+
+* a vtable call on self at metadata `+0x458`. KSAVPlayer's `VTableOffset` is 38 words (0x130), so
+  the slot is `(0x458-0x130)/8` = **101**, whose Impl is **0x10002d9d4** — an ICF-folded tiny body
+  (the trie name at that address belongs to an unrelated SwiftUI `Namespace` initializer, which is
+  the fold, not a mismatch). Result is `cbz`-guarded.
+* `__swift_instantiateConcreteTypeFromMangledName` (mangle 0x103566c50) then
+  `swift_dynamicCast(..., w4 = 6)` — a CONDITIONAL cast — against the metadata from **0x1019e4db4 =
+  type metadata accessor for `KSPlayer.AbstractAVIOContext`**. `tbz` on failure returns the empty
+  result.
+* then `duration` (offset global **0x104c63070**, named) is read under `swift_beginAccess` and
+  `fcmp d8, #0.0` / `b.le` bails when it is not positive.
+
+So the shape is `guard let <slot-101 value> as? AbstractAVIOContext, duration > 0 else { return [] }`.
+
+**Outstanding:** the range-building tail from 0x1019a12e8 — `ldp x19, x21, [sp,#0x40]`, a call to
+0x10002abb8, then `ldr x8, [x21,#0x40]` and an indirect call with `v0 = duration`. That is where
+the `CachedTimeRange` values are actually produced, and it is unread.
+
+Note this row is NOT the same member as `PreLoadIOContext.cachedTimeRanges(duration:)`, which the
+tree already declares — same name, different type, different arity.
+
+## 23. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
