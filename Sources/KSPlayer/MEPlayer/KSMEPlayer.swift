@@ -736,6 +736,48 @@ extension KSMEPlayer: DisplayLayerDelegate {
 }
 
 public extension KSMEPlayer {
+    /// @0x101a445c8, 64 instructions. Trie: `KSMEPlayer.configPIP() -> ()`; no `Tq`.
+    ///
+    /// The KSAVPlayer twin builds its controller from an `AVPlayerLayer`; this one has no such
+    /// layer and goes through a content source instead, which is why the two bodies differ:
+    ///   · offset global 0x1044ea160 is `videoOutput`'s own `vpWvd`
+    ///     (`… videoOutput : __C.UIView & KSPlayer.VideoOutput`), and `ldp x20, x21` takes it as the
+    ///     (instance, witness-table) pair. `ldr x8,[x21,#0x40]` is requirement 7 of VideoOutput,
+    ///     which conformance_walker types as the protocol's ONLY bare read-only Getter. It is named
+    ///     by the parameter it feeds, not by counting: the result goes straight into
+    ///     `initWithSampleBufferDisplayLayer:playbackDelegate:`, whose first parameter is an
+    ///     `AVSampleBufferDisplayLayer`, and `displayLayer` is this protocol's only property of
+    ///     that type.
+    ///   · `objc_allocWithZone` on the AVKit `AVPictureInPictureControllerContentSource` classref,
+    ///     then selref 0x10440bb28 = `initWithSampleBufferDisplayLayer:playbackDelegate:` with
+    ///     x2 = that layer and x3 = self. KSMEPlayer already conforms to
+    ///     `AVPictureInPictureSampleBufferPlaybackDelegate`, so `self` type-checks as the delegate.
+    ///   · then the same `swift_once` static as the KSAVPlayer twin — token 0x1044e5178, storage
+    ///     0x104c632c0, `KSOptions.pictureInPictureType` — read under a (0, 0) beginAccess, and
+    ///     `ldr x8,[x21,#0x20]` dispatches witness 3, which this protocol's requirement table maps
+    ///     to `init(contentSource:)`. Unlike the KSAVPlayer twin there is NO `cmp`/`csel` on the
+    ///     result, so this requirement is non-failable and the existential is stored unconditionally.
+    ///   · the store is a beginAccess on offset global 0x1044ea170, `pipController`, then `stp` of
+    ///     the new pair and a release of the old.
+    /// ⚑[tool=decode_objc_selector ref=0x10440bb28 result=initWithSampleBufferDisplayLayer-playbackDelegate]
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.videoOutput:0x1044ea160 result=UIView-and-VideoOutput]
+    /// ⚑[tool=conformance_walker ref=KSPlayer.VideoOutput:0x1039efc54 result=req7-sole-readonly-getter]
+    ///
+    /// ⚑ `@MainActor` is NOT binary-derived — actor isolation leaves no reflection record, and this
+    ///   body shows no hop. It is required because `KSPictureInPictureProtocol` carries `@MainActor`
+    ///   (itself carried over, as KSPictureInPictureController.swift records) while `KSMEPlayer` is
+    ///   a plain `final class: NSObject`. This file already marks individual members that way rather
+    ///   than isolating the whole type, and the KSAVPlayer twin needs no marking only because that
+    ///   class is `@MainActor` outright — so the two `configPIP`s end up equally isolated either way.
+    @MainActor
+    func configPIP() {
+        let contentSource = AVPictureInPictureController.ContentSource(
+            sampleBufferDisplayLayer: videoOutput.displayLayer,
+            playbackDelegate: self
+        )
+        pipController = KSOptions.pictureInPictureType.init(contentSource: contentSource)
+    }
+
     func startRecord(url: URL) {
         playerItem.startRecord(url: url, mediaType: nil)
     }

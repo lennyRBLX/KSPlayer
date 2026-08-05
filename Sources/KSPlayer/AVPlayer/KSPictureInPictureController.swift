@@ -68,6 +68,27 @@ public class KSPictureInPictureController: AVPictureInPictureController {
     // view-controller state.
     // ⚑[tool=fieldrec ref=KSPlayer.KSPictureInPictureController:0x1039ece54 result=zero-fields]
 
+    // s109: `required` is DERIVED, and the body is READ — this init used to be recorded as
+    // undeclarable on the ground that "adding `required` would put an initializer in the source
+    // that the binary does not show". The binary shows it twice over:
+    //   · the trie carries BOTH entry points, `…cfC` __allocating_init @0x1019c74e4 and `…cfc`,
+    //     the initializing entry, @0x1019c751c. A purely INHERITED ObjC initializer produces only
+    //     the allocating thunk; the presence of the initializing entry is what proves a
+    //     Swift-written body exists.
+    //   · that body is 19 instructions: build an `objc_super` from this class's metadata
+    //     (0x1044217e0) and self, then `objc_msgSendSuper2` with selref 0x10440b938 =
+    //     "initWithContentSource:", passing the parameter through unchanged. That is
+    //     `super.init(contentSource:)` and nothing else — no field is written, consistent with
+    //     this class having zero stored properties.
+    // `required` itself is not reflection-visible, but it is forced rather than chosen: the
+    // witness table makes req3 an Init requirement, this class is the sole conformer and is not
+    // final, and Swift satisfies an init requirement on a non-final class only through `required`.
+    // ⚑[tool=decode_objc_selector ref=0x10440b938 result=initWithContentSource:]
+    // ⚑[tool=export_trie_oracle ref=KSPictureInPictureController.init(contentSource:):0x1019c751c result=initializing-entry-present]
+    override public required init(contentSource: AVPictureInPictureController.ContentSource) {
+        super.init(contentSource: contentSource)
+    }
+
     // Body read at slot 2 @0x1019c7648: two instructions, `mov x0,x20` / `b <objc stub>`, whose
     // selref 0x10440e2c8 is "stopPictureInPicture". The parameter is declared but never read — the
     // function contains no comparison and no branch — so it is spelled `_`.
@@ -121,6 +142,7 @@ public class KSPictureInPictureController: AVPictureInPictureController {
 @MainActor
 public protocol KSPictureInPictureProtocol: AnyObject {
     init?(playerLayer: AVPlayerLayer)
+    init(contentSource: AVPictureInPictureController.ContentSource)
     var isPictureInPictureActive: Bool { get }
     func start(layer: KSComplexPlayerLayer)
     func didStart(layer: KSComplexPlayerLayer)
