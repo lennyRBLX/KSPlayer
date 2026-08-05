@@ -839,10 +839,33 @@ whose halves are independently known: `"Frame Rate"` is stored at `[x28,#0x60]` 
 **`"Unknown"`** (`x20/x21` = 0x6e55/0x6e6b/0x776f/0x6e, count 7) as a VALUE, which is the
 fallback arm.
 
-**What remains** is mechanical rather than uncertain: walk each array's slots in order and read off
-the pairs. Note a `stp xN, xM` grep finds only nine stores per array where six pairs need twelve —
-some slots are written by other instruction forms, so enumerate by OFFSET (0x20, 0x30, 0x40, …),
-not by grepping one mnemonic.
+**Slot enumeration, done by offset.** Each `stp` writes ONE String (two words), so slots step by
+0x10 and a key/value pair spans 0x20. The `x28` array:
+
+    0x20 ?        0x30 "Unknown"    0x40 "Title"      0x50 [x23,#0x20]
+    0x60 "Frame Rate"               0x70 the "%.2f"+"FPS" string
+    0x80 "Bitrate"                  0x90 the "…Kbps" string
+    0xa0 "Color Depth"              0xb0 ?
+
+Keys land on the 0x20 boundaries and values at +0x10, which is self-consistent across the three
+pairs whose halves are independently known. The `0x90` slot is written at 0x101b120f8, four bytes
+BEFORE "Color Depth" is materialised at 0x101b120fc — that ordering is what places the Kbps string
+as Bitrate's value rather than Color Depth's.
+
+**Two cautions, both load-bearing:**
+
+* `x27`'s array opens with `str x8, [x27,#0x20]!` — a PRE-INDEX that also advances `x27` by 0x20.
+  Every later `[x27,#N]` is therefore at original `+N+0x20`. Read those offsets shifted or the
+  whole second branch comes out misaligned by one slot.
+* The two branches are **interleaved in the listing, not sequential**: "Codec Format" is
+  materialised at 0x101b11eb8, before any `x28` store, and feeds the `x27` array. So slot contents
+  cannot be assigned by reading the dump top-to-bottom; each store must be matched to its own
+  branch.
+
+That second point is why the `x28` slots at `0x20` and `0xb0` are left as `?` here rather than
+filled in by elimination — and why "Resolution", which is certainly built (both its getters are
+named), does not appear in the `x28` list above. It belongs to the other branch. Finishing this
+means walking the two branches separately, not completing this table.
 
 ## 20. Not started, deliberately
 
