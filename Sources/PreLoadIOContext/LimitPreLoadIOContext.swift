@@ -309,4 +309,32 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         }
         return (readed, contiguousPreload, disconnected, disconnectedStartIndex)
     }
+
+    /// ⚑[tool=export_trie_oracle ref=LimitPreLoadIOContext.preloadProgress():0x101ba2618 result=43-instr]
+    /// Both fields are named by their own `vpWvd`, and their SIGNEDNESS is confirmed by the
+    /// conversion opcode rather than assumed:
+    ///   · `maxFileSize` (global 0x104c63988) → `ucvtf` — UNSIGNED, matching its `UInt64`.
+    ///   · `fetchedSize` (global 0x104c63928, inherited from CacheIOContext) → `scvtf` —
+    ///     SIGNED, matching its `Int64`.
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.fetchedSize:0x104c63928 result=vpWvd-named-Int64]
+    ///
+    /// `cbz x19` on the loaded `maxFileSize` returns **1.0** for a zero cap — a guard, not a
+    /// division-by-zero fallthrough.
+    ///
+    /// ⚑ The 2^-20 scaling in the binary is NOT part of the semantics and is deliberately not
+    ///   reproduced. Numerator and denominator are each multiplied by 2^-10 twice
+    ///   (`0x3f50000000000000`), and the `ucvtf …, #0xa` fixed-point form folds one of those in —
+    ///   the factors cancel in the quotient. It is overflow avoidance for the Int64/UInt64 range,
+    ///   which Swift's `Double(_:)` conversions already handle.
+    ///
+    /// ⚑ Clamp ORDER is read off the opcodes: `fminnm` against 1.0 first, then `fmaxnm` against
+    ///   the constant at 0x103487958, whose value is **0.01** (read from the pool, not assumed).
+    ///   So it is `max(min(x, 1), 0.01)` — the floor wins on a tie, and a zero `fetchedSize`
+    ///   reports 0.01 rather than 0.
+    public func preloadProgress() -> Double {
+        guard maxFileSize != 0 else {
+            return 1
+        }
+        return max(min(Double(fetchedSize) / Double(maxFileSize), 1), 0.01)
+    }
 }
