@@ -997,6 +997,31 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         KSLog(error)
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStartPictureInPicture:0x1019d29d0 result=34-instr]
+    /// Two statements, both read:
+    ///   · `strb wzr, [x20, <global 0x104c63530>]` writes a ZERO BYTE. Of this class's three
+    ///     fields only `isPictureInPictureStoped: Bool` is one byte (`urls` is an Array,
+    ///     `enterBackgroundTask` a Task?), so the target is identified by TYPE, not by adjacency —
+    ///     which matters because that global carries no `vpWvd`.
+    ///   · `player` comes from its own `vpWvd` (offset global 0x104c634f0) and is loaded as the
+    ///     two-word existential; `ldr x22,[x19,#0xd8]` then selects witness **26**.
+    ///
+    /// ⚑ Witness 26 is NAMED, not counted — this protocol's indices are shifted by unrecovered
+    ///   requirements, so an index argument would be worthless. Escalation: `KSMEPlayer`'s witness
+    ///   at that slot is an unnamed forwarding thunk, so follow it — it loads `KSMEPlayer.videoOutput`
+    ///   (global 0x1044ea160) and tail-calls 0x103468f80, whose selref 0x10440d1a8 decodes to
+    ///   **`setContentMode:`**. So requirement 26 is `contentMode`'s SETTER, which also matches the
+    ///   protocol's kind table (req25/26/27 = one `{get set}` triple).
+    /// ⚑[tool=decode_objc_selector ref=0x10440d1a8 result='setContentMode:']
+    /// ⚑[tool=protocol_signature ref=MediaPlayerProtocol:0x1039ed6c4 result=req26=Setter]
+    ///
+    /// ⚑ The argument is `mov w0, #1` — a CASE INDEX, not a rawValue. `UIViewContentMode` is
+    ///   `UIView.ContentMode` (UIKitExtend.swift:167), whose case 1 is `.scaleAspectFit`.
+    public func pictureInPictureControllerWillStartPictureInPicture(_: AVPictureInPictureController) {
+        isPictureInPictureStoped = false
+        player.contentMode = .scaleAspectFit
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.set(urls:):0x1019d181c result=29-instr]
     /// A NEW method, not an override: the superclass's nearest member is `set(urls:options:)`
     /// (this file, above), a different selector. vtable_walk puts this at the class's OWN slot 11,
