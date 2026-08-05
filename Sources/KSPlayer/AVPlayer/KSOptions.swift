@@ -1083,9 +1083,19 @@ public extension KSOptions {
     //   over-annotation this reconstruction added. That is a claim about a DIFFERENT declaration
     //   and needs its own read, so the two statics wait rather than being forced through with an
     //   isolation workaround the binary does not show.
-    // ⚑ displayEnumDovi is NOT declared either: its storage types as `KSPlayer.DoviDisplayModel`,
-    //   and that class does not exist in Sources at all. It needs standing up first.
     nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
+    /// ⚑ s107: NOW DECLARED. The blocker recorded above — "`DoviDisplayModel` does not exist in
+    /// Sources at all; it needs standing up first" — is cleared: that class is stood up in
+    /// DisplayModel.swift, with its superclass read from the descriptor's SuperclassType symbolic
+    /// reference and its three fields from the static field-offset vector.
+    ///
+    /// The addressor @0x1019bc608 is the ordinary `swift_once` shape — `cmn x8,#1` on the token at
+    /// 0x1044e52b0, returning storage 0x104c632a8 — and the once-initializer @0x1019bc5c0 is
+    /// `swift_allocObject(0x58, 7)` followed by field zeroing and the empty-dictionary store, i.e.
+    /// plain no-argument construction. `DoviDisplayModel` has no explicit init, so like
+    /// `PlaneDisplayModel` (and unlike the two `SphereDisplayModel` subclasses) it does not trip
+    /// the main-actor-isolated-default-value rule that still blocks `displayEnumVR`/`displayEnumVRBox`.
+    nonisolated(unsafe) static var displayEnumDovi = DoviDisplayModel()
     /// ⚑ s106: `nil`, and the encoding is read rather than assumed.
     /// This static has NO `swift_once` — its addressor @0x1019ba7e4 is three instructions
     /// returning the storage address — so the value is simply the bytes sitting in `__data` at
