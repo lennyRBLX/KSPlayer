@@ -719,6 +719,53 @@ every one that previously reported zero:
 
 ⚑ `play/scripts/` is gitignored; disk-only, like the other two fixes.
 
+## 2ad. ⭐ THE OVERRIDE TABLE IS THE TEST FOR "REAL OVERRIDE vs INHERITED" — nothing else is
+
+Three sections of this handoff have now tried to answer the same question — *when N classes name
+one address, is that N declarations or one inherited body?* — and two of them got it wrong. There
+is a decisive structural answer and it should be used every time.
+
+**The test.** A subclass that OVERRIDES a base method gets an entry in its class descriptor's
+**override table**; a subclass that merely INHERITS gets none. Parse it directly:
+
+```
+ot   = <VTableDescriptorHeader> + 8 + VTableSize*8      # both from vtable_walk's header line
+n    = u32 at ot                                        # NumEntries
+entry i at ot+4+i*12 = { Class rel32, Method rel32, Impl rel32 }
+```
+
+An entry whose `Impl` equals the shared address proves the subclass declares its own override —
+even when ICF has folded that override onto the parent's bytes.
+
+**What it settles here:**
+
+| address | classes naming it | override-table entry? | verdict |
+|---|---|---|---|
+| 0x101b10bc0 | `VideoPlayerView` + `IOSVideoPlayerView` | **yes** — entry 13 of 16 | real override; declared |
+| 0x101b8a0e0 | `CacheIOContext` + `PreLoadIOContext` + `LimitPreLoadIOContext` | **yes in both subclasses** | three real declarations |
+
+**Two earlier conclusions are corrected by this.**
+
+1. **§2o's screen** flagged `tapGestureAction` as an inheritance artifact. It is not — the override
+   entry exists. The screen's premise (shared address ⇒ inherited) cannot see an ICF fold.
+2. **§2n** ruled the two `shouldContinueRead` subclass rows FALSE POSITIVES on the argument that
+   `_isClosed` is private, so a subclass in another file could not compile `!_isClosed`. The
+   override entries refute the conclusion. The access argument was reasonable but it was reasoning
+   ABOUT the source; the override table is a fact IN the binary, and it wins.
+
+⚑ I also used `export_trie_oracle --addr … --owner <Class>` as the discriminator earlier in this
+  session. **It is not one.** `OWNER_MATCH` only confirms a symbol bearing that class's name exists
+  at the address, which is equally true for both explanations — both cases above answer
+  `OWNER_MATCH`. It disambiguates an ICF fold for NAMING; it says nothing about ownership of a
+  declaration.
+
+⚑ **What is still open on `shouldContinueRead`:** the body is `!<field>` where the field's offset
+  global 0x1044f3848 has NO `vpWvd` anywhere in the image (checked by reverse lookup across every
+  module) and reads **0x0** statically because all three classes are `metadata_init=1`. So the
+  members are real and the body shape is read, but the field NAME is not yet recoverable — which
+  also means §2n's identification of it as `_isClosed` rests on the earlier `CacheIOContext` unit,
+  not on a descriptor. Re-derive before declaring the two subclass overrides.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
@@ -1437,7 +1484,15 @@ blocked on two unnamed helpers.** Settled so far, do not re-derive:
 (width, height) → an Int pair, the second returns a Double later compared against
 `0x7fefffffffffffff` (`Double.greatestFiniteMagnitude`, i.e. a finite check).
 
-## 2n. ✅ The `shouldContinueRead` 3-symbol fold is EXPLAINED — and reduces to one access question
+## 2n. ⚠️ SUPERSEDED BY §2ad — its "FALSE POSITIVE" verdict is REFUTED by the override table
+
+> Read §2ad first. The reasoning below is sound about WHY the three symbols fold, but its
+> conclusion — that the two subclass rows are false positives to be skipped — is wrong.
+> `PreLoadIOContext` and `LimitPreLoadIOContext` each carry a genuine **override-table entry**
+> whose implementation is 0x101b8a0e0. An inherited method has no such entry. Both rows are real
+> work. What remains open is the field NAME, not whether the members exist.
+
+## 2n (original). The `shouldContinueRead` 3-symbol fold is EXPLAINED — and reduces to one access question
 
 A prior session logged this as an open puzzle ("3-symbol fold over a private field, classes proven
 to be in separate files"). The fold itself is no longer mysterious.
