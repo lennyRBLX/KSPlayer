@@ -1066,6 +1066,23 @@ public extension KSOptions {
     // ⚑ displayEnumDovi is NOT declared either: its storage types as `KSPlayer.DoviDisplayModel`,
     //   and that class does not exist in Sources at all. It needs standing up first.
     nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
+    /// ⚑ s106: `nil`, and the encoding is read rather than assumed.
+    /// This static has NO `swift_once` — its addressor @0x1019ba7e4 is three instructions
+    /// returning the storage address — so the value is simply the bytes sitting in `__data` at
+    /// 0x1044e50c8 (a real section with contents, not `__common` zero-fill). Those bytes are
+    /// `01 00 00 00 00 00 00 00 …`.
+    /// `SubtitleTextStyle` is 128 bytes and its layout was recovered from its own eleven getters,
+    /// each two-to-eleven instructions touching one offset — `textColor: UIColor?` is at offset 0,
+    /// and the recovered field order matches this file's existing declaration exactly.
+    /// So offset 0 is a class-reference slot. `UIColor?` spends inhabitant 0 on its own nil, which
+    /// is why all-zero bytes would mean `.some(SubtitleTextStyle())` with every field nil — and the
+    /// bytes are NOT all-zero. The stored 1 is the next extra inhabitant, i.e. the OUTER
+    /// `Optional<SubtitleTextStyle>.none`. The absence of any once-init is what rules out the
+    /// remaining alternative: a `.some` carrying real content would need one to build its String?
+    /// and UIColor? payloads.
+    /// ⚑[tool=llvm-objdump ref=KSOptions.secondaryTextStyle:addressor@0x1019ba7e4 result=no-swift_once]
+    /// Access read: carries a vpMV, so public.
+    nonisolated(unsafe) static var secondaryTextStyle: SubtitleTextStyle?
     // ── s106, two more once-statics ──────────────────────────────────────────────────────────
     /// ⚑[tool=llvm-objdump ref=KSOptions.doviMatrix:once-init@0x1019bc3ac result=11-instr]
     /// The init copies 48 bytes of constant into the storage as three 16-byte columns, from
