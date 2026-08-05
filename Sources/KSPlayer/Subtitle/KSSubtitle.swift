@@ -116,6 +116,54 @@ public struct TextPosition {
         return edgeInsets
     }
 
+    // alignment.getter @0x101abb264, 99 instr — the INVERSE of `ass(alignment:)` below.
+    // public proven by the property descriptor $s8KSPlayer12TextPositionV9alignmentSSvpMV
+    // @0x10356d858; no `…SSvs` and no `…SSvM`, so it is get-only.
+    //
+    // The body is a flat chain of nine two-part conjunctions, each re-loading both cases —
+    // which is what a `switch` over a TUPLE of Equatable structs lowers to (SwiftUI's
+    // alignments are structs, so each `case` is an `==` call, not a tag compare). The
+    // prologue is `ldp x21, x19, [x20]`: x21 = field 0 tested against VerticalAlignment,
+    // x19 = field 1 tested against HorizontalAlignment — the declared order of
+    // verticalAlign / horizontalAlign above.
+    //
+    // Every returned value is a one-character small string: w0 carries the ASCII byte and
+    // the shared epilogue sets word1 = 0xE100000000000000 (0xE0|1, all-ASCII, count 1).
+    // The nine bytes read 0x31…0x39 = "1"…"9" in numeric-keypad order, and the
+    // (.bottom, .center) arm branches into the SAME block as the fallback, which is why
+    // "2" appears both as an explicit case and as the default. That case IS tested
+    // explicitly at 0x101abb2b0 — it is not folded away — so the source names all nine.
+    // ⚑[tool=bind_oracle ref=SwiftUI.VerticalAlignment.bottom:0x10410ec98 result=bottom]
+    // ⚑[tool=bind_oracle ref=SwiftUI.VerticalAlignment.center:0x10410eca0 result=center]
+    // ⚑[tool=bind_oracle ref=SwiftUI.VerticalAlignment.top:0x10410ec90 result=top]
+    // ⚑[tool=bind_oracle ref=SwiftUI.HorizontalAlignment.leading:0x10410eef0 result=leading]
+    // ⚑[tool=bind_oracle ref=SwiftUI.HorizontalAlignment.center:0x10410eee8 result=center]
+    // ⚑[tool=bind_oracle ref=SwiftUI.HorizontalAlignment.trailing:0x10410eef8 result=trailing]
+    public var alignment: String {
+        switch (verticalAlign, horizontalAlign) {
+        case (.bottom, .leading):
+            return "1"
+        case (.bottom, .center):
+            return "2"
+        case (.bottom, .trailing):
+            return "3"
+        case (.center, .leading):
+            return "4"
+        case (.center, .center):
+            return "5"
+        case (.center, .trailing):
+            return "6"
+        case (.top, .leading):
+            return "7"
+        case (.top, .center):
+            return "8"
+        case (.top, .trailing):
+            return "9"
+        default:
+            return "2"
+        }
+    }
+
     public mutating func ass(alignment: String?) {
         switch alignment {
         case "1":
