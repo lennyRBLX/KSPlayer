@@ -347,6 +347,28 @@ open class KSAVPlayer {
         }
         _ = CMTime(seconds: atTime, preferredTimescale: 600)
     }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.checkShouldResume():0x1019aaa10 result=38-instr]
+    /// Reads `options` (offset global 0x104c63098) then the Bool at `options + 0x46`. If that bit
+    /// is set the result is 1 immediately and the second read is skipped — that short-circuit IS
+    /// the `||`. Otherwise it reads `playbackState` (0x104c630b8) and compares against 1. The
+    /// result is stored through 0x104c630d8.
+    ///
+    /// Three names, none guessed:
+    ///   · `options + 0x46` = `enterForgeResumePlay`. KSOptions has metadata_init=1 so its offset
+    ///     vector is unreadable, and this is a constant-immediate touch so no global names it.
+    ///     Recovered instead from KSOptions' own trie-named accessors, 21 of which open
+    ///     `add x0, x20, #IMM`; the resulting map is strictly increasing in field-record order.
+    ///   · `playbackState == 1` is the CASE TAG. MediaPlaybackState is
+    ///     idle/playing/paused/seeking/finished/stopped, so tag 1 is `.playing`.
+    ///   · the store target 0x104c630d8 is `shouldResumePlayback`, by elimination: it is the only
+    ///     KSAVPlayer offset global with no trie symbol, and the other Bool field
+    ///     (`isReadyToPlay`) is already claimed by 0x104c630d0.
+    /// ⚑[tool=recover_field_offsets ref=KSOptions:+0x46 result=enterForgeResumePlay]
+    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer:0x104c630d8 result=unnamed-only-Bool-left]
+    public func checkShouldResume() {
+        shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
+    }
 }
 
 extension KSAVPlayer {
