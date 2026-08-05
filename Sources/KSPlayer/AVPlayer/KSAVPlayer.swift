@@ -405,6 +405,42 @@ open class KSAVPlayer {
 extension KSAVPlayer {
     public var player: AVQueuePlayer { playerView.player }
     public var playerLayer: AVPlayerLayer { playerView.playerLayer }
+
+    /// @0x1019a9a9c, 116 instructions.
+    ///
+    /// It lives in an EXTENSION, and that is derived rather than stylistic: the whole export trie
+    /// carries exactly ONE symbol containing `canQuickSeek` — the function
+    /// `$s8KSPlayer10KSAVPlayerC12canQuickSeek4timeSbSd_tF` — and no `method descriptor`. No
+    /// descriptor means no vtable slot, which is what distinguishes an extension member from a
+    /// class-body one. Contrast `cachedTimeRanges` above, which has slot 45 and so must sit in the
+    /// body.
+    ///
+    ///   · `self + 0x38` is `playerView` — the fixed instance offset this file already pins at the
+    ///     `playbackCoordinator` note; the field global read off it is
+    ///     `KSAVPlayerView.player : __C.AVQueuePlayer` (0x1044e46b0). So the receiver chain is
+    ///     `playerView.player`, the same one line 194 establishes.
+    ///   · `currentItem` is sent, and the `cbz x0` on the retained result is the `?.` — the nil
+    ///     path falls to `mov w22,#0`, i.e. `false`.
+    ///   · `loadedTimeRanges` is sent and bridged with
+    ///     `Array._unconditionallyBridgeFromObjectiveC`, giving `[NSValue]`.
+    ///   · the loop's `cset w22, ne` at the head is what is RETURNED: exhausting the array leaves
+    ///     w22 = 0 and an early exit leaves it 1. That is `contains(where:)`, not a `for` loop
+    ///     with a flag — nothing else writes w22.
+    ///   · per element: `CMTimeRangeValue` (so `$0.timeRangeValue`), then
+    ///     `CMTime(seconds:preferredTimescale:)` with `mov w0, #0x1e` = **30**, then
+    ///     `_CMTimeRangeContainsTime`. The CMTime is built INSIDE the loop, not hoisted — the
+    ///     call sits between the loop head at 0x1019a9b48 and the back-branch at 0x1019a9be4.
+    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer.canQuickSeek(time:):0x1019a9a9c result=OWNER_MATCH-no-method-descriptor]
+    /// ⚑ ACCESS not independently proven: no private discriminator on the symbol, and a method
+    ///   has no `vpMV` equivalent. `public` matches the two members above it in this extension.
+    public func canQuickSeek(time: Double) -> Bool {
+        guard let loadedTimeRanges = playerView.player.currentItem?.loadedTimeRanges else {
+            return false
+        }
+        return loadedTimeRanges.contains {
+            CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: time, preferredTimescale: 30))
+        }
+    }
     @objc private func moviePlayDidEnd(notification _: Notification) {
         if !options.isLoopPlay {
             playbackState = .finished
