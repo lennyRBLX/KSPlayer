@@ -336,11 +336,37 @@ resolve to **0x10198eb18**, the deleted-method fold whose four instructions end 
 `_swift_deletedMethodError`. Their names are in the trie and their code is gone, so no amount of
 work recovers a body. These are s108 §5's "two rows with no recoverable body"; they are these.
 
-**In progress, not finished:** `showPromptMessage` @0x101b0cfb8 is partially read — it allocates a
-24-byte box and `swift_weakInit`s self into it (`[weak self]`), builds a 40-byte context holding
-that box plus the `String` parameter's two words, and pairs it with the function pointer
-0x101b15e5c, a Double loaded from 0x10347b040 and a second thunk at 0x100004aec — i.e. a delayed
-closure. It was left unfinished rather than guessed at.
+**`showPromptMessage` — the OUTER function is fully read; only its closure body remains.**
+`IOSVideoPlayerView.showPromptMessage(_ message: String)` @0x101b0cfb8, 152 instr. It does exactly
+one thing:
+
+    DispatchQueue.main.async { [weak self] in … }
+
+Every piece of that is named, not inferred: `swift_unknownObjectWeakInit` (__got 0x1041130e0) into
+a 24-byte box is the `[weak self]`; the 40-byte context holds that box at +0x10 and the `String`
+parameter's two words at +0x18/+0x20; `DispatchQueue.main` is __got 0x1041134d8 and the call is
+`DispatchQueue.async(group:qos:flags:execute:)` __got 0x1041134f0. The `DispatchQoS.unspecified`
+(0x104113398) and the empty `DispatchWorkItemFlags` built through `SetAlgebra.init(_:)`
+(0x104111bb8) over `__swiftEmptyArrayStorage` are the DEFAULT arguments materialised at the call
+site — they are not written in the source. The `_Block_copy`/`_Block_release` pair (0x10410bb38 /
+0x10410bb50) around a stack block whose `isa`, invoke pointer 0x100004aec and descriptor
+0x1041dd930 are assembled inline is just the `@convention(block)` bridge for `execute:`.
+
+**Where to resume.** The `execute:` pointer 0x101b15e5c is a 3-instruction reabstraction thunk —
+`ldp x0,x1,[x20,#0x10]` / `ldr x2,[x20,#0x20]` / `b 0x101b0d218` — so the real closure is
+**0x101b0d218, extent 0x101b0d218-0x101b0d630, 262 instr**, i.e. bigger than the function that
+installs it. Two things about it are already decoded:
+
+* it opens with a `@MainActor` assertion — `swift_task_isCurrentExecutor` then, on failure,
+  `swift_task_reportUnexpectedExecutor` with `w1 = 0x21` (count 33), `w2 = 1` (ASCII) and
+  `w3 = 0x4ed`. The literal at 0x103d3aad0 decodes to **`KSPlayer/IOSVideoPlayerView.swift`**, so
+  the closure sits at **line 1261** of Forward's own IOSVideoPlayerView.swift.
+* then `swift_beginAccess`(flags 0) + `swift_unknownObjectWeakLoadStrong` on the box at +0x10 with
+  a `cbz` — the `guard let self else { return }`.
+
+The remaining ~250 instructions are the UIKit work, and `IOSVideoPlayerView`'s field offsets are
+all readable (see the STATIC list above), so this is a straight read with no blocker in front of it.
+It was left unfinished rather than guessed at.
 
 ## 12. Not started, deliberately
 
