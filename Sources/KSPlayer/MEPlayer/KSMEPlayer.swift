@@ -456,6 +456,32 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     public var duration: TimeInterval { playerItem.duration }
 
+    /// cachedTimeRanges.getter @0x101a3d744, 90 instr. `public` from the property descriptor
+    /// $s8KSPlayer10KSMEPlayerC16cachedTimeRangesSayAA06CachedD5RangeVGvpMV @0x10356add0; no
+    /// `…vs` / `…vM`, so get-only. It occupies no vtable slot — `KSMEPlayer` is `final` — which is
+    /// why it sits in this extension rather than the class body, the opposite of the KSAVPlayer
+    /// twin at 0x1019a1244 (there it IS slot 45, because that class is not final).
+    ///
+    /// Source-identical to that twin; the extra indirection in the binary is `ioContext` and
+    /// `duration` being INLINED, both of which this file already declares as `playerItem.…`:
+    ///  · `self.playerItem` via offset global 0x1044ea140 (named), then a further field read, then
+    ///    `+0x20` — that chain is `playerItem.ioContext`, `cbz`-guarded at two levels.
+    ///  · `swift_dynamicCast` with `w4 = 6` (CONDITIONAL) from `AbstractAVIOContext` (metadata
+    ///    accessor 0x1019e4db4) to the `_p` existential mangled at 0x103566c50.
+    ///  · the `duration` read is against `playerItem`, not self — `ldr d8, [playerItem, <global>]`
+    ///    then `fcmp d8, #0.0` / `b.le`, ordered AFTER the cast, exactly as in the twin.
+    ///  · success calls witness slot **+0x40** with `d0 = duration`; PreLoadProtocol has 9
+    ///    requirements, so that is index 7 = `cachedTimeRanges(duration:)`.
+    ///  · both failure paths return `__swiftEmptyArrayStorage`, i.e. `[]`.
+    /// ⚑[tool=recover_field_offsets ref=KSMEPlayer.playerItem:0x1044ea140 result=playerItem]
+    /// ⚑[tool=conformance_walker ref=PreLoadProtocol:0x1039ede48 result=9-requirements]
+    public var cachedTimeRanges: [CachedTimeRange] {
+        guard let ioContext = ioContext as? PreLoadProtocol, duration > 0 else {
+            return []
+        }
+        return ioContext.cachedTimeRanges(duration: duration)
+    }
+
     public var fileSize: Int64 { playerItem.fileSize }
 
     public var dynamicInfo: DynamicInfo? {
