@@ -174,6 +174,35 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         displayLink?.isPaused = true
     }
 
+    /// @0x101a602dc, 103 instructions.
+    ///
+    ///   · `_objc_msgSendSuper2` opens the body ⇒ `super.layoutSubviews()`.
+    ///   · `subviews` is sent and bridged with `Array._unconditionallyBridgeFromObjectiveC`, then
+    ///     walked; per element `bounds` is sent to self and `setFrame:` to the element.
+    ///   · the tail reads `rotation` (offset global 0x1044ea8b0, its own `vpWvd`) with `ldrh` —
+    ///     16-bit, matching the `UInt16` declared above — under a (0, 0) beginAccess, and
+    ///     `cbz w8` branches to a path that loads a PRECOMPUTED constant pair instead of calling
+    ///     the C function. `CGAffineTransformMakeRotation` is not inlinable here, so that branch
+    ///     cannot be compiler-introduced on a runtime value: the zero test is in the source.
+    ///   · the non-zero arm is `ucvtf d0,w8` (UNSIGNED, matching UInt16) then `fmul` by the double
+    ///     at 0x10348c800 = 3.141592653589793 and `fdiv` by the immediate 0x4066800000000000 =
+    ///     180.0. Both constants read from the image, not recognised by shape.
+    /// ⚑[tool=recover_field_offsets ref=MetalPlayView.rotation:0x1044ea8b0 result=UInt16]
+    /// ⚑ The `#if canImport(UIKit)` is OURS, not the binary's. Forward-TF is the iOS build, so the
+    ///   image can only ever show this arm; `layoutSubviews` and `transform` are UIView members
+    ///   with no NSView counterpart, and this file aliases `UIView` to `NSView` on macOS. The
+    ///   guard is what lets the read body coexist with the macOS target, not a claim about a
+    ///   second implementation.
+    #if canImport(UIKit)
+    override public func layoutSubviews() {
+        super.layoutSubviews()
+        for subview in subviews {
+            subview.frame = bounds
+        }
+        transform = rotation == 0 ? .identity : CGAffineTransformMakeRotation(Double(rotation) * .pi / 180)
+    }
+    #endif
+
     /// @0x101a6095c, 93 instructions.
     ///
     /// Every field is named from its offset global by `recover_field_offsets --global`, never by
