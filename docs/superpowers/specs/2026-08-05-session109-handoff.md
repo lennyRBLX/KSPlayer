@@ -1253,3 +1253,30 @@ control flow, so it stays a recorded read.
 (offset global 0x104c634d8) gating the 81-instruction unnamed helper @0x1019d1d70 → `reCheckSubtitle()`.
 Naming 0x1019c7454 / 0x1019c7410 / 0x1019d1d70 unblocks BOTH rows at once, and all three are
 private members of the PiP pair — one focused unit, not three.
+
+
+### §24f — the PiP helpers: every naming route tried, and a RULE GAP worth resolving deliberately
+Four routes were run against 0x1019c7454 / 0x1019c7410 / 0x1019d1d70, not just the trie:
+1. **export trie** — all three absent.
+2. **`objc_trampoline_oracle --class KSPictureInPictureController`** — the class has exactly ONE
+   objc method-list entry (imp 0x1019c7588), none of the three. This is the route that found
+   `hidePrompt` earlier, so its negative here is meaningful.
+3. **`vtable_walk KSComplexPlayerLayer`** — 13 slots, impls 0x1019d019c / 0x1019d0f28 / 0x1019d1424
+   / 0x1019d181c / 0x1019d27a8 and eight nulls. None of the three.
+4. **`recover_swift_function_name.py`** — 0x1019c7410 and 0x1019d1d70 return `#function: None`.
+   0x1019c7454 returns **`pictureInPictureViewController`, confidence=high, labels=0**.
+
+**0x1019c7454 sits in a gap between two of this project's own rules, and is NOT being named on that
+basis.** [[recover-swift-function-name-false-anchors]] rule 2 grants trust only with
+`labels>=1` AND an in-body materialization AND a matching character count; rule 3 rejects
+`labels=0` AND *no* materialization. This case is neither: `labels=0`, but the materialization is
+present and exact — the body does `adrp 0x103d34000 / add #0x9e0` (= the string at 0x103d349e0)
+with `mov x0, #0x1e` = 30 = `len("pictureInPictureViewController")`, in the `#function` argument
+position of a witness dispatch at `[x1,#0x30]`. `labels=0` is also unsuspicious for a PROPERTY.
+So the evidence is causal rather than proximate, yet rule 2's conjunction is unmet. **Resolve that
+rule deliberately rather than in passing** — either tighten rule 3 to cover this case or relax
+rule 2's `labels>=1` when the materialization is exact.
+
+**It does not matter for the row.** `reCheckSubtitle` also needs 0x1019c7410, which returns no name
+by ANY route, so the row is blocked whichever way 0x1019c7454 is resolved. Naming 0x1019c7410 is
+the real unit.
