@@ -404,6 +404,21 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         bufferingProgress = 0
     }
 
+    /// ⚑[tool=llvm-objdump ref=KSMEPlayer.flushVideo():0x101a43b24 result=15-instr]
+    /// Loads the ivar-offset global `0x1044ea160`, which reads **0x30** statically and which the
+    /// trie names `direct field offset for KSPlayer.KSMEPlayer.videoOutput` — matching entry 4 of
+    /// the offset vector. `ldp x20,x19,[x8]` splits the existential into object and witness table
+    /// with no nil check, then `ldr x1,[x19,#0x8]` takes VideoOutput's word 1 (its inherited
+    /// FrameOutput table) and `ldr x8,[x1,#0x18]` takes that table's word 3 = requirement 2.
+    /// The requirement is DECODED, not counted: MetalPlayView's FrameOutput table 0x1041d8c80
+    /// resolves req0-req3 through thunks to `play()`, `pause()`, `flush()`, `invalidate()`, so
+    /// req2 is `flush()`.
+    /// ⚑[tool=export_trie_oracle ref=0x1044ea160 result=KSMEPlayer.videoOutput-offset-0x30]
+    /// ⚑[tool=decode_witness_table ref=MetalPlayView:FrameOutput@0x1041d8c80 result=req2-flush]
+    public func flushVideo() {
+        videoOutput.flush()
+    }
+
     public func play() {
         KSLog("play \(self)")
         playbackState = .playing
