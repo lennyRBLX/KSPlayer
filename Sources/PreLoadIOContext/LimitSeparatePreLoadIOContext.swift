@@ -50,6 +50,32 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     // 3  fakeUrlPos: synthetic url position used by the separate-download bookkeeping.
     //    Designated init zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
     private var fakeUrlPos: UInt64 = 0 // ⚑
+
+    /// urlPos override — slots 23-25, getter @0x100a4e368 / setter @0x101ba49f8 / modify
+    /// @0x101ba4a6c. The note further down this file defers this as "Name unrecoverable"; that is
+    /// STALE. `recover_swift_function_name` returning None is not the trie, and the trie names all
+    /// three outright as `LimitSeparatePreLoadIOContext.urlPos.getter/.setter/.modify : UInt64`.
+    /// A `didSet` override on an inherited stored property is exactly what emits that triple.
+    ///
+    /// The setter is read in full and splits cleanly into the INHERITED observer and the one line
+    /// this class adds:
+    ///   · `str x19,[x20,#0x50]` stores the new value FIRST (didSet, not willSet); +0x50 is the
+    ///     inherited `urlPos` and +0x48 the inherited `end`, as CacheIOContext.swift already pins.
+    ///   · `cmn x19,#1` then `csel …, hi` and a call to 0x101b86044 reproduce CacheIOContext's own
+    ///     `urlPos` didSet verbatim — `if urlPos != .max { end = max(end, urlPos); … }` — because
+    ///     Swift runs the superclass observer as well as this one, and the compiler inlined it.
+    ///     (⚑ that callee is named `updateSpeedSample(newPos:)` by the trie, not
+    ///     `updateDownloadSpeed(_:)` as CacheIOContext.swift:297 currently spells it — a separate
+    ///     rename, not needed here since this body never names it.)
+    ///   · what remains is the final unconditional `str x8, [x20, <fakeUrlPos>]`. On the `.max` arm
+    ///     x8 is set to -1 and on the other it is the reloaded `urlPos`; since `.max` IS -1, both
+    ///     arms store `urlPos`. So the added observer is a single mirror, with no branch.
+    /// ⚑[tool=export_trie_oracle ref=LimitSeparatePreLoadIOContext.urlPos.setter:0x101ba49f8 result=name-recovered]
+    override var urlPos: UInt64 {
+        didSet {
+            fakeUrlPos = urlPos
+        }
+    }
     // 4  moreDownload: the secondary download feeding the load-more path. The designated
     //    init copies its x1 parameter into this field with FUN_1001263e0, which
     //    disassembles as an EXISTENTIAL-container copy, not a class-ref retain:
