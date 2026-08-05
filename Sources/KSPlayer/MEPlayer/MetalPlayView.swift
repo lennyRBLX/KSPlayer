@@ -74,6 +74,18 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     // Binary type is the NARROWER `VideoOutputRenderSourceDelegate?`; OutputRenderSourceDelegate
     // refines it with the audio half, which this view never uses.
     public weak var renderSource: VideoOutputRenderSourceDelegate?
+    /// ⚑[tool=field_offset_vector ref=MetalPlayView.drawable result=index-7@0x48]
+    /// Placed at its field-record index (7, offset 0x48), between `renderSource` (6) and
+    /// `metalView` (8) — layout, not style.
+    ///
+    /// Stored, not computed: the getter @0x101a5ec80 is a `swift_beginAccess` on
+    /// `self + <offset global 0x1044ea8d0>` followed by an outlined indirect copy into the sret
+    /// (`bl 0x1001263e0`), with a matching setter and modify coroutine. `public` is proven by its
+    /// `vpMV`.
+    ///
+    /// ⚑ It has NO `vpfi`, so there is no declaration default — writing one would be fabrication.
+    ///   The value comes from `init(options:)`, and the assignment there is read in full below.
+    public var drawable: Drawable
     private let metalView = MetalView()
     // AVSampleBufferAudioRenderer AVSampleBufferRenderSynchronizer AVSampleBufferDisplayLayer
     private var displayView = AVSampleBufferDisplayView() {
@@ -97,6 +109,19 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
+        // ⚑[tool=export_trie_oracle ref=MetalPlayView.init(options:):0x101a5eda8 result=drawable-store@0x101a5f0ec]
+        // Read from the init, via the OFFSET GLOBAL — this class is `metadata_init=1`, so field
+        // accesses index by a register loaded from a per-field global and never use a literal
+        // offset. The chain at 0x101a5f098..0x101a5f0f0 is: load `self.<global 0x1044ea8a0>`
+        // (= metalView), send `layer` (selref 0x10440bf70), cast, then store into
+        // `self + <global 0x1044ea8d0>` (= drawable).
+        // ⚑ The cast is FORCED, not conditional: the helper is
+        //   `swift_dynamicCastObjCClassUnconditional` (__got 0x104112e20) and the class operand is
+        //   `OBJC_CLASS_$_CAMetalLayer` (__objc_classrefs 0x104410d20). A conditional `as?` would
+        //   use the nullable variant. `CAMetalLayer : Drawable` is witness 0x1041d9e70.
+        // ⚑[tool=bind_oracle ref=__got:0x104112e20 result=swift_dynamicCastObjCClassUnconditional]
+        // ⚑[tool=bind_oracle ref=__objc_classrefs:0x104410d20 result=CAMetalLayer]
+        drawable = metalView.layer as! CAMetalLayer
         super.init(frame: .zero)
         addSubview(displayView)
         addSubview(metalView)
