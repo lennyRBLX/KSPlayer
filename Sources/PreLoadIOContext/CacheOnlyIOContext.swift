@@ -30,9 +30,22 @@ public class CacheOnlyIOContext: AbstractAVIOContext {
     //   reconstruction/binding_refuted_s61.json
     var entryListProvider: (() -> [CacheFileEntry])? // type inferred — ⚑ (closure shape not visible in s15 thunk)
     // endProvider: supplies the logical end offset of the cached stream.
-    var endProvider: (() -> Int64)? // type inferred — ⚑ (closure)
+    /// ⚑ RETURN TYPE CORRECTED Int64 → UInt64, from two independent bodies rather than inference:
+    /// `fileSize()` @0x101b968c0 and `seek(offset:whence:)` @0x101b96820 each call this closure and
+    /// then guard its result with `tbnz …,#0x3f` whose branch target is **`brk #0x1`** — a TRAP.
+    /// A set bit-63 trapping is the `UInt64 → Int64` conversion check Swift emits for
+    /// `Int64(endProvider())`; an `Int64` closure would need no such guard to be used as an Int64.
+    /// ⚑ Do not confuse that with `tbnz …,#0x3f` whose target SETS −1 — that one is a genuine
+    ///   negative-value early return. Both shapes appear inside `seek`.
+    /// ⚑[tool=disassemble ref=CacheOnlyIOContext.seek:0x101b96820 result=UInt64→Int64-conversion-trap]
+    var endProvider: (() -> UInt64)? // ⚑ closure shape still inferred; RETURN type now read
     // eofProvider: reports whether the cached stream is at EOF.
-    var eofProvider: (() -> Bool)? // type inferred — ⚑ (closure)
+    /// ⚑ Both this and `endProvider` are invoked with `ldp` + `blr` and NO null test, in BOTH
+    /// `fileSize()` and `seek(offset:whence:)` — so neither is Optional in the binary. They are
+    /// left Optional here only because the real designated init (s15 @0x101b95c6c, which builds all
+    /// three closures) is still UNRESOLVED above; without it nothing assigns them and a
+    /// non-Optional spelling cannot compile. Fix the init first, then drop the `?` on all three.
+    var eofProvider: (() -> Bool)? // ⚑ non-Optional in the binary — see note
     // logicalPos: current logical read cursor across the segment set.
     //   l2_field_gate binary property descriptor resolves UInt64 (brief's `Int64`
     //   ⚑ guess corrected — matches the known CacheEntry.logicalPos UInt64 shape).
