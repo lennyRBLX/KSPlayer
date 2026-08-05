@@ -1125,6 +1125,21 @@ public extension KSOptions {
     //   over-annotation this reconstruction added. That is a claim about a DIFFERENT declaration
     //   and needs its own read, so the two statics wait rather than being forced through with an
     //   isolation workaround the binary does not show.
+    //
+    //   s109 tried both escapes and MEASURED them, so a later session need not repeat the probe:
+    //     · Deleting `@MainActor` from `SphereDisplayModel` builds 4/4 but changes NOTHING here —
+    //       the isolation is inherited from the `DisplayEnum` protocol (PlayerDefines.swift:176),
+    //       so that annotation is merely redundant and removing it does not unblock these two.
+    //     · Marking both `override required init()` `nonisolated` moves the error INTO the inits:
+    //       `KSOptions.sceneSize` "can not be referenced from a nonisolated context" and
+    //       `super.init()` is "main actor-isolated". Landing these two rows that way would take
+    //       three further isolation edits, on `DisplayEnum`, `sceneSize` and `SphereDisplayModel`,
+    //       none of them binary-derived — PlayerDefines.swift:179 already states outright that the
+    //       protocol's `@MainActor` is not. Two read values are not worth three invented
+    //       annotations, so the s106 judgment stands and these stay blocked.
+    //   Both are `vgZ`-only (no `vsZ` in the trie), so when they do land they are `let`, not `var`.
+    //   ⚑[tool=export_trie_oracle ref=KSOptions.displayEnumVR:0x104c632b0 result=vgZ-no-vsZ]
+    //   ⚑[tool=export_trie_oracle ref=KSOptions.displayEnumVRBox:0x104c632b8 result=vgZ-no-vsZ]
     nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
     /// ⚑ s107: NOW DECLARED. The blocker recorded above — "`DoviDisplayModel` does not exist in
     /// Sources at all; it needs standing up first" — is cleared: that class is stood up in
@@ -1138,6 +1153,54 @@ public extension KSOptions {
     /// `PlaneDisplayModel` (and unlike the two `SphereDisplayModel` subclasses) it does not trip
     /// the main-actor-isolated-default-value rule that still blocks `displayEnumVR`/`displayEnumVRBox`.
     nonisolated(unsafe) static var displayEnumDovi = DoviDisplayModel()
+    // ── s109, four more lazily-initialised statics ───────────────────────────────────────────
+    // All four share one addressor shape: `__swift_instantiateConcreteTypeFromMangledName` (or a
+    // direct metadata accessor) for the property's type, then the generic value-buffer pair
+    // @0x1000a538c / @0x1000a48f4 — allocateBuffer and projectBuffer, identified by the
+    // `tbz w8,#0x11` on the IsNonInline bit of the value-witness flags word at VWT+0x50 — and a
+    // store into the projected address. Types are read off the `vpZ` symbols, not chosen, and all
+    // four carry a `vpZMV` property descriptor, so all four are public and stay unmarked in this
+    // `public extension`. All four carry a `vsZ`, so all four are `var`.
+    //
+    // defaultFont is `nil`, and the encoding is read rather than assumed: the once-init
+    // @0x1019b93a8 ends by loading VWT+0x38 — `storeEnumTagSinglePayload` — off *URL's* witness
+    // table and calling it with whichCase=1 and numEmptyCases=1. For `Optional<URL>` case 1 is the
+    // first empty case, i.e. `.none`. Nothing else is stored.
+    // ⚑[tool=bind_oracle ref=__got:0x104109b18 result=Foundation.URL-metadata-accessor]
+    nonisolated(unsafe) static var defaultFont: URL? = nil
+    // recordDir @0x1019b598c: `objc_opt_self(NSFileManager)` → `defaultManager` →
+    // `URLsForDirectory:inDomains:` with w2=9 and w3=1. NSSearchPathDirectory is 1-based
+    // (NSApplicationDirectory = 1), so 9 is NSDocumentDirectory and 1 is NSUserDomainMask. The
+    // NSArray is bridged with `Array._unconditionallyBridgeFromObjectiveC<URL>`, then
+    // `ldr x8,[x22,#0x10]` reads the Swift array's count and `cbz` splits the body in two:
+    //   · count == 0 → `storeEnumTagSinglePayload(dest, 1, 1)` — the same `.none` encoding as above
+    //   · otherwise → `initializeWithCopy` of element 0 (the `x9 = x8+0x20 / bic` pair rounds the
+    //     32-byte array header up to the element alignment), then the string built inline as
+    //     `mov x0,#0x6572 / movk 0x6f63,lsl#16 / movk 0x6472,lsl#32` with x1 = 0xE6… (count 6) —
+    //     "record" — passed to `URL.appendingPathComponent`, then
+    //     `storeEnumTagSinglePayload(dest, 0, 1)` = `.some`.
+    // Nil exactly when the array is empty is `.first?`.
+    // ⚑[tool=decode_objc_selector ref=0x10440a408 result=URLsForDirectory-inDomains]
+    // ⚑[tool=bind_oracle ref=__got:0x104109a70 result=Foundation.URL.appendingPathComponent]
+    nonisolated(unsafe) static var recordDir: URL? = FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask)
+        .first?.appendingPathComponent("record")
+    // subtitleDynamicRange @0x1019bb404: after the buffer pair, the value comes from a single
+    // sret call to the stub @0x103455e90, whose __got slot is 0x104110650.
+    // ⚠️ `bind_oracle` answered "NO BIND at this address" for that slot until s109 — its row regex
+    //   anchored the symbol at end-of-line and so silently dropped every `(weak_import)` row, 377
+    //   of them. The chained-fixup word there decodes to bind ordinal 0x10d2, one past its
+    //   neighbour at 0x104110648, which is what proved the miss was the parser's and not the
+    //   image's. With the regex fixed the slot names itself.
+    // ⚑[tool=bind_oracle ref=__got:0x104110650 result=SwiftUI.Image.DynamicRange.high]
+    nonisolated(unsafe) static var subtitleDynamicRange: Image.DynamicRange = .high
+    // translationTarget @0x1019ba494: `Locale` metadata is fetched first and its VWT size drives a
+    // stack alloca; `Locale.current.getter` writes the temporary there (x8 = sret), then
+    // `Locale.language.getter` is called with x8 = the projected storage and swiftself = x20 = that
+    // temporary, and the temporary is destroyed through VWT+0x8. That is `Locale.current.language`.
+    // ⚑[tool=bind_oracle ref=__got:0x104109ed0 result=Foundation.Locale.current.getter]
+    // ⚑[tool=bind_oracle ref=__got:0x104109f00 result=Foundation.Locale.language.getter]
+    nonisolated(unsafe) static var translationTarget: Locale.Language = Locale.current.language
     /// ⚑ s106: `nil`, and the encoding is read rather than assumed.
     /// This static has NO `swift_once` — its addressor @0x1019ba7e4 is three instructions
     /// returning the storage address — so the value is simply the bytes sitting in `__data` at
