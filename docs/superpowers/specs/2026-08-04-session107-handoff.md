@@ -799,6 +799,31 @@ a thumbnail holds EITHER a decoded image or compressed JPEG bytes.
   come back. Land the struct — three fields, three inits, `image` as the computed fallback — in
   one go.
 
+## 2af. `Coordinator.isRecord` is a `@Published` pair whose real body is a 412-instruction `didSet`
+
+Sized at 32 instructions in the worklist, which is misleading: that 32 is the **modify
+coroutine's first half**, and it contains none of the member's behaviour.
+
+`KSVideoPlayer.Coordinator.isRecord.modify` @0x1019d954c splits the usual way:
+
+- **First half (32 instr)** — saves `self` into the frame, materialises two metadata records via
+  0x10345cdd8, calls the generic wrapper GET at 0x1034532ec into `frame+9`, copies it to `frame+8`,
+  and returns the resume address. Pure `@Published` plumbing; the sibling `isMuted`/`playbackVolume`
+  in the same class already use that wrapper, so the shape is house-standard.
+- **Resume half (52 instr) @0x1019d95cc** — re-reads the OLD value through the same getter, writes
+  the new one back via 0x1034532f8, then calls **0x1019d8d28 with `oldValue` in x0 and `self` in
+  x20**. That call is the `didSet`.
+
+⚑ **0x1019d8d28 is 412 instructions.** It opens with generic-metadata plumbing
+  (`__chkstk_darwin`, a type-metadata accessor, a mangled-name lookup at 0x103564860) before any
+  recognisable work. So the row is a large unit wearing a small number — budget for it accordingly
+  rather than picking it as a cheap one.
+
+⚑ What IS settled and need not be re-derived: the property is `@Published var isRecord: Bool` with
+  a `didSet` that takes `oldValue`, on a class whose two existing `@Published` properties are
+  declared exactly that way. The DEFAULT value is not in either coroutine half — it lives in the
+  class's field-init, and must be read there.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
