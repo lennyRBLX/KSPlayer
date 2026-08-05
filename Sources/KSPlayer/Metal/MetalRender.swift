@@ -13,6 +13,31 @@ import simd
 
 class MetalRender {
     public static let device = MTLCreateSystemDefaultDevice()!
+    /// ⚑[tool=disassemble ref=MetalRender.mtlTextureCache:addressor@0x101a82f14 once-init@0x101a83794 result=45-instr]
+    /// A `swift_once`-guarded static: the addressor checks the token at 0x1044eda8, runs the init
+    /// at 0x101a83794, and returns the storage 0x104c636e8. The init is one CoreVideo call whose
+    /// every operand is named:
+    ///   `x0 = [kCFAllocatorDefault]`  __got 0x104108c40
+    ///   `x1 = 0`, `x3 = 0`            the two attribute dictionaries, both nil
+    ///   `x2 = [0x104c636e0]`          which the trie names `static MetalRender.device : MTLDevice`
+    ///                                 — the property declared directly above
+    ///   `x4 = sp`                     the out-parameter, read back and stored to 0x104c636e8
+    ///   ⚑[tool=bind_oracle ref=__got:0x1041087b8 result=_CVMetalTextureCacheCreate]
+    /// The function's own result is discarded — nothing branches on it — so there is no `guard`
+    /// and no error path to write.
+    /// ⚑ `let`, not `var`, and that is read: the trie exports an `unsafeMutableAddressor` and a
+    /// getter for this static and NO setter. The remaining stores in the body are the
+    /// `___stack_chk_guard` load/compare pair (__got 0x10410bc10), not a second write.
+    /// Access read from its vpMV.
+    /// ⚑ `nonisolated(unsafe)` is a COMPILER requirement, not a binary reading: strict concurrency
+    /// rejects a static of the non-Sendable `CVMetalTextureCache?` without it. The annotation has
+    /// no runtime representation, so it cannot diverge from the image; it is the same device this
+    /// repo already uses on the KSOptions statics.
+    nonisolated(unsafe) public static let mtlTextureCache: CVMetalTextureCache? = {
+        var cache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        return cache
+    }()
     static let library: MTLLibrary = {
         var library: MTLLibrary!
         library = device.makeDefaultLibrary()
