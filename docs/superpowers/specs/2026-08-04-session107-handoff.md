@@ -853,9 +853,46 @@ that requirement cannot be added until `KSPlayerLayer` implements it — which i
 Best value left on the board: one substantial read closes two MEMBER_MISSING rows and completes a
 protocol that three sections of this handoff have been working around.
 
-### `KSPlayerLayer.changePlaybackTime(player:time:)` @0x1019cc2b8 (208 instr) — PARTIAL READ
+### `KSPlayerLayer.changePlaybackTime(player:time:)` @0x1019cc2b8 (208 instr) — ✅ FULLY READ, BLOCKED ON A CHAIN
 
-Started the §2ag unit; this is how far it got. Everything below is read, so do not re-derive it.
+**The body is complete.** It is written out below; it does not compile yet, and the reason is a
+third member, not anything unread.
+
+```swift
+open func changePlaybackTime(player: some MediaPlayerProtocol, time: TimeInterval) {
+    if player.isPlaying, state == .paused || state == .bufferFinished {
+        subtitleView.dynamicRange = options.dynamicRange
+        var screenSize = subtitleView.frame.size
+        if screenSize.width == 0 || screenSize.height == 0 {
+            screenSize = player.view.frame.size
+        }
+        let naturalSize = player.naturalSize
+        let playRatio = naturalSize.width == 0 || naturalSize.height == 0
+            ? 16.0 / 9.0
+            : naturalSize.width / naturalSize.height
+        subtitleModel.subtitle(currentTime: time, playRatio: playRatio, screenSize: screenSize)
+    }
+    delegate?.player(layer: self, currentTime: time, totalTime: player.duration)
+}
+```
+
+⛔ **THE CHAIN IS THREE DEEP, not two.** §2ag said this row plus the protocol requirement plus
+`KSAVPlayer.changePlaybackTime`. There is a fourth link, found by trying to compile it:
+
+> `SubtitleModel.subtitle` is in the **NOT_IN_TRIE** bucket. Source declares
+> `public func subtitle(currentTime: TimeInterval) async` — ONE argument, `async`. The binary's
+> member is `subtitle(currentTime:playRatio:screenSize:)` @0x101ab3fec, **211 instr**, synchronous,
+> three arguments. They are different members, and the call above needs the binary's.
+
+So the real order is: **(1)** reshape `SubtitleModel.subtitle` to the 3-argument form (a 211-instruction
+read), **(2)** land this body, **(3)** add `changePlaybackTime(player:time:)` to `MediaPlayerDelegate`
+between `changeBuffering` and `playBack`, **(4)** land `KSAVPlayer.changePlaybackTime` (already read,
+§2ag). Steps 2–4 are then free.
+
+⚑ I attempted 2+3 without 1 and the build failed at the call site with "extra arguments at
+  positions #2, #3". The edits were reverted; tree is clean and 4/4. Do step 1 first.
+
+**Every constant and dispatch in the body above, with its evidence:**
 
 **Signature/registers.** `x19` = self, `x22`/`x21` = the `player` existential (value, witness
 table), `v8` = `time`.
@@ -863,13 +900,24 @@ table), `v8` = `time`.
 **Structure, in order:**
 
 1. `ldr x8, [x21, #0x58]` / `blr` — a `MediaPlayerProtocol` witness returning `Bool`; `tbz w0, #0`
-   skips the whole subtitle block. Its KSMEPlayer witness is 0x1019e0e50, a thunk to **0x1019dfd50,
-   which is NOT in the trie** — naming that is the first open piece.
-2. A `@Published`-shaped read (`0x1034532ec` with a metadata pair) into `sp+0x58`, whose byte is
-   then compared against **two** bytes loaded from `0x1044e61e0` via `cmp` + `ccmp …, #0x4, ne` —
-   i.e. "equals either of two constants". Read those two bytes and the enum they belong to.
+   skips the whole subtitle block. ✅ **`isPlaying`**: its KSMEPlayer witness thunks to 0x1019dfd50,
+   whose whole body is `playbackState == 1`, and `MediaPlaybackState.playing` is case 1
+   (`0x1044ea1a8` is `KSMEPlayer.playbackState`, `vpWvd`-named).
+2. A `@Published`-shaped read into `sp+0x58`, compared against **two** bytes at `0x1044e61e0` via
+   `cmp` + `ccmp …, #0x4, ne`. ✅ Those bytes are **5** and **4**, and `KSPlayerState` case 5 is
+   `.paused`, case 4 is `.bufferFinished`. The `ccmp` form is what makes it `||` rather than two
+   independent tests.
 3. The subtitle block loads `subtitleView` (global 0x104c634e8), `options` (0x104c634e0) and
-   `subtitleModel` (0x104c63500) — all three `vpWvd`-named — and ends in
+   `subtitleModel` (0x104c63500) — all three `vpWvd`-named. ✅ It first does
+   `subtitleView.dynamicRange = options.dynamicRange` (a `w2 = 1` MODIFY access on 0x1044ef5b8,
+   which the trie names `direct field offset for MetalSubtitleView.dynamicRange`, fed from
+   KSOptions global 0x104c63388 = `dynamicRange`); then takes `subtitleView.frame.size`
+   (⚑[tool=decode_objc_selector ref=0x10440b5e8 result='frame']) and falls back to
+   `player.view.frame.size` when EITHER dimension is zero — two separate `fcmp … #0.0`, not one;
+   then computes `playRatio` from `naturalSize` (MediaPlayback witness +0x18,
+   ⚑[tool=export_trie_oracle ref=0x101a447b8 result=KSMEPlayer.naturalSize.getter]) as
+   `width / height`, with `fcmp`+`fccmp` selecting the literal at 0x1034e5b68 =
+   **1.7777777777777777** (16/9) when either dimension is zero. It ends in
    ⚑[tool=export_trie_oracle ref=0x101ab3fec result=SubtitleModel.subtitle(currentTime:playRatio:screenSize:)]
    with a `fdiv` guarded by `fccmp` supplying `playRatio`.
 4. **The tail is settled.** `0x1044e6138` is `KSPlayerLayer.delegate`; it is weak-loaded
