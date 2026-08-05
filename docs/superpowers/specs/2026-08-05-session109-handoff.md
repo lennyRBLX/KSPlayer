@@ -897,7 +897,37 @@ deciding question is unchanged — is `@MainActor` on `SphereDisplayModel` right
 about a different declaration, needing its own read. Do not re-walk the cheap-getter angle; the
 getters were never the problem.
 
-## 21. Not started, deliberately
+## 21. `MetalSubtitleView.mtkView` — fields all named now; blocked on an 809-instr producer
+
+Early in the session I set this row aside because MetalSubtitleView's fields were unnamed. With
+`name_global_by_value` (§12) that is no longer true — **all of them resolve**:
+
+    0x1044ef5a8 metalDrawable   0x1044ef5c0 subtitleImages   0x1044ef5c8 pendingTexts
+    0x1044ef5d0 cancellables    0x1044ef5d8 parts            0x1044ef5e0 playRatio
+
+`mtkView(_:drawableSizeWillChange:)` @0x101ac0d48 is a 4-instruction tail-call thunk: it packs the
+`CGSize` into (x0,x1), passes `w2 = 0`, and branches to a shared 63-instruction helper
+@0x101ac0a90. That helper is now read end to end:
+
+* `w2` selects the size source — `w2 == 1` calls `drawableSize` on self; `w2 == 0` uses the passed
+  pair. `mtkView` passes 0, so it uses its `size` argument. (The other caller passes 1.)
+* the divisor is `UITraitCollection.current.displayScale` — classref 0x104410730 = `UITraitCollection`,
+  selectors `currentTraitCollection` then `displayScale`.
+* it reads `parts` and `playRatio`, calls the producer below with
+  `(w0 = 1, x1 = parts, d0 = playRatio, d1 = width/scale, d2 = height/scale)`, stores the returned
+  PAIR into `subtitleImages` and `pendingTexts`, and finishes with `setNeedsDisplay`.
+
+**The blocker** is that producer: **0x101abc398, 809 instructions**, NOT_IN_TRIE and with no
+`#function`. It is not nothing, though — `recover_swift_function_name` recovers its **`#file`**
+literal as **`KSPlayer/SubtitlePart.swift`** (27 bytes @0x103d3a3f0), so it is a subtitle
+layout/render engine belonging to that file, not to MetalSubtitleView. It returns two arrays in
+(x0, x1).
+
+So this row needs that engine reconstructed (or at minimum named) first — and note the helper
+@0x101ac0a90 is itself an undeclared private member shared with a second caller, so landing
+`mtkView` alone still means declaring the helper.
+
+## 22. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
