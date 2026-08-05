@@ -619,7 +619,7 @@ open class SubtitleModel: ObservableObject {
         // BEFORE the executor hop; the 5 core funclets read these back as spilled async-frame slots.
         let generation = subtitleSearchGeneration        // x22+0x9d0  (4338@0x101ab4344)
         let sequence = subtitleSearchSequence            // x22+0x9b0  (4338@0x101ab4358)
-        let size = subtitleDisplaySize()                 // fit(playRatio, screenSize) — computed in 438c/4c54@0x469c
+        let size = playSize                 // fit(playRatio, screenSize) — computed in 438c/4c54@0x469c
         var newParts = [SubtitlePart]()                  // x22+0x980, initialised empty (438c@0x101ab43c0)
 
         // PRIMARY (438c → glue 4c04 → resume 4c54): firstSubtitleActor != nil (0x988) && !skipPrimary (char 0x92)
@@ -747,11 +747,18 @@ open class SubtitleModel: ObservableObject {
     // letterbox when playRatio ≤ height/width, else pillarbox). ⚑ gated in-binary by an `actor.info` Bool witness
     // (info wtable+0x50) whose identity is UNVERIFIED, so the size-fit region of 438c/4c54 is a known divergence
     // pending that decode; represented unconditionally here.
-    private func subtitleDisplaySize() -> CGSize {
-        let w = screenSize.width, h = screenSize.height, r = playRatio
-        guard r != 0, w != 0 else { return screenSize }
-        return r <= h / w ? CGSize(width: w, height: Double(Int(r * w)))
-                          : CGSize(width: Double(Int(h / r)), height: h)
+    /// ⚑[tool=export_trie_oracle ref=SubtitleModel.playSize.getter:0x101ab33fc result=41-instr]
+    /// ⚑ RENAMED from `private func playSize`, which has ZERO symbols in the trie —
+    /// an invented name. The binary carries `SubtitleModel.playSize : __C.CGSize` as a computed
+    /// property with a `vpMV` (public), and its getter is only 41 instructions because it
+    /// DELEGATES: it reads `screenSize` through the `@Published` enclosing-instance keypath
+    /// subscript (two `swift_getKeyPath` + `Published._enclosingInstance` getter), loads
+    /// `playRatio` from its own `vpWvd` (offset global 0x104c637e0), and tail-calls
+    /// `0x1019e7800` = `(extension in KSPlayer):__C.CGSize.within(ratio:)`.
+    /// ⚑[tool=export_trie_oracle ref=SubtitleModel.playRatio:0x104c637e0 result=vpWvd-named]
+    /// ⚑[tool=export_trie_oracle ref=CGSize.within(ratio:):0x1019e7800 result=85-instr]
+    public var playSize: CGSize {
+        screenSize.within(ratio: playRatio)
     }
 
     // The resume-tail predicate: the generation snapshot still matches AND (when the sequence moved) every part is

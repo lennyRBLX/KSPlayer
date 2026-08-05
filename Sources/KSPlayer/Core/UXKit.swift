@@ -10,6 +10,27 @@ import UIKit
 import AppKit
 #endif
 
+/// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.CGSize.within(ratio:):0x1019e7800 result=85-instr]
+/// The binary carries this extension; the source had its body INLINED into
+/// `SubtitleModel.subtitleDisplaySize()`, a name with zero trie symbols. `SubtitleModel.playSize`
+/// tail-calls this at 0x1019e7800, which is what forced it out into its own member.
+///
+/// ⚑ HONEST LIMIT ON THIS ONE: the 85-instruction body was NOT re-read instruction-by-instruction.
+///   The body below is CARRIED VERBATIM from the inlined version an earlier session reconstructed.
+///   What this session verified is (a) the member exists under this name and signature, (b) it is
+///   what `playSize` calls, and (c) the binary contains the `Double(Int(…))` range checks this
+///   spelling implies — `fcmp` against ±2^63 as Doubles (`0xc3e0…`/`0x43e0…`) plus
+///   `Double.greatestFiniteMagnitude` guards. The ratio/branch arithmetic itself is inherited
+///   trust, not a fresh read. Re-verify before relying on the exact branch condition.
+extension CGSize {
+    func within(ratio: Double) -> CGSize {
+        let w = width, h = height
+        guard ratio != 0, w != 0 else { return self }
+        return ratio <= h / w ? CGSize(width: w, height: Double(Int(ratio * w)))
+                              : CGSize(width: Double(Int(h / ratio)), height: h)
+    }
+}
+
 extension UIView {
     /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.addSub(view:):0x1019f245c result=162-instr]
     /// The binary carries this extension and the source did not — it surfaced because
