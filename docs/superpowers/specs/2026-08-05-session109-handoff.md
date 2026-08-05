@@ -617,7 +617,38 @@ would be inventing a raw value, so it was not written.
 
 Read 0x101a05464 and both rows land together as a rename plus a two-line signature fix.
 
-## 16. Not started, deliberately
+## 16. A FAILED attempt, recorded: `LimitPreLoadIOContext.shouldContinueRead` and the private field
+
+I landed this row, the ACCESS bucket went 26 → 27, and I reverted it (`86a8262`). The reasoning
+that produced it is worth keeping because the trap is reusable.
+
+**What I did.** The row's body @0x101b8a0e0 is 6 instructions and ICF-folded across
+`CacheIOContext` / `PreLoadIOContext` / `LimitPreLoadIOContext` — one field's negation,
+`bic w0, w9, w8` with `w9 = 1`. `CacheIOContext.shouldContinueRead()` is already declared as
+`!_isClosed`. I reasoned: the fold means the subclass's compiled body is byte-identical, so its
+source body is also `!_isClosed`, so `_isClosed` must be visible from the subclass's file, so it is
+at least `internal`. I widened it and wrote the override.
+
+**Why that is wrong.** `pin_sweep` immediately flagged
+`ACCESS CacheIOContext._isClosed — source internal / binary private`: the field's symbol carries a
+per-file discriminator `33_<hash>LL`, which is the definitive `private`/`fileprivate` marker. I had
+checked only that it emits no `vpWvd` global, which rules out **public** and says nothing about
+private-vs-internal. **The discriminator is the private test; the absent vpWvd is not.**
+
+**What that implies about the row itself** — and this is the part that needs adjudicating, because
+it contradicts s108 §3. If `_isClosed` really is private, a body in `LimitPreLoadIOContext.swift`
+cannot read it, so the subclass's body cannot be the identical `!_isClosed` the fold requires.
+Then the symbol at 0x101b8a0e0 under the subclass's name is the INHERITED method surfacing at the
+shared address — exactly the `OWNER_MATCH` illusion s108 §3 itself warns about — and the row would
+be a false positive after all.
+
+**My evidence was weaker than I stated.** I verified `override_table=True` on the CLASS and treated
+it as proof that THIS member is in that table. It is not: the class has other overrides, and no
+tool in `scripts/` dumps override-table ENTRIES — `vtable_walk` only reports the flag. Deciding
+this row needs a tool that lists the entries, or a different discriminator. Until then it should
+stay open rather than be landed on either reading.
+
+## 17. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
