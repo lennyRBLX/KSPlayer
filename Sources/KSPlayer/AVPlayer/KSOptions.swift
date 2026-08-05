@@ -1009,6 +1009,47 @@ public extension KSOptions {
     // both are public — unlike the five Color statics above, which carry none.
     nonisolated(unsafe) static var textPosition = TextPosition(leftMargin: 10, rightMargin: 10)
     nonisolated(unsafe) static var secondaryTextPosition = TextPosition(leftMargin: 10, rightMargin: 10)
+    // ── s106, three DisplayEnum statics ──────────────────────────────────────────────────────
+    // Types are read off the storage globals, not chosen:
+    //   displayEnumVR    : KSPlayer.VRDisplayModel      storage 0x104c632b0
+    //   displayEnumVRBox : KSPlayer.VRBoxDisplayModel   storage 0x104c632b8
+    //   displayEnumPlane : KSPlayer.PlaneDisplayModel   storage 0x104c632a0
+    // All three construct with NO arguments, and each once-init shows that directly.
+    //
+    // VR and VRBox share a tail @0x1019bc700: call the metadata accessor, `swift_allocObject`
+    // with the size the caller supplied (0x100 for VR, 0x140 for VRBox) and alignMask 0xf, then
+    // `blr` the init with only the new object in x0 — no further argument is set up.
+    //   ⚑[tool=export_trie_oracle ref=0x101a8d244 result=metadata-accessor-VRDisplayModel]
+    //   ⚑[tool=export_trie_oracle ref=0x101a8d264 result=metadata-accessor-VRBoxDisplayModel]
+    //
+    // Plane's init has a DIFFERENT shape and it is worth saying why it is still `()`: it calls
+    // the metadata accessor then `swift_initStaticObject` on a global at 0x1044e5198, i.e. the
+    // instance is allocated statically in the image rather than on the heap. That is a compiler
+    // decision about an object needing no runtime initialisation, not a different construction,
+    // so it spells the same in source.
+    //   ⚑[tool=bind_oracle ref=__got:0x104112fb8 result=_swift_initStaticObject]
+    //   ⚑[tool=export_trie_oracle ref=0x101a82024 result=metadata-accessor-PlaneDisplayModel]
+    //
+    // All three carry a vpMV, so all three are public and stay unmarked here.
+    //
+    // ⚑ Only `displayEnumPlane` is declared. `displayEnumVR` and `displayEnumVRBox` are READ —
+    //   types, sizes, no-arg construction, all above — but do not compile here:
+    //     error: main actor-isolated default value in a nonisolated(unsafe) context
+    //   `SphereDisplayModel` is `@MainActor` and both subclasses declare
+    //   `override required init()`, so their initialisers are main-actor isolated, while these
+    //   statics are not. PlaneDisplayModel is `@MainActor` too but has no explicit init and does
+    //   not trip it.
+    //   The binary does NOT resolve this for me either way: the shared once-init tail
+    //   @0x1019bc700 is nineteen instructions of metadata accessor / swift_allocObject / `blr`
+    //   init / store, with no actor hop, no MainActor.shared materialisation and no
+    //   swift_task_reportUnexpectedExecutor — which is evidence the initialisation is NOT
+    //   main-actor isolated, and therefore that the `@MainActor` on SphereDisplayModel may be an
+    //   over-annotation this reconstruction added. That is a claim about a DIFFERENT declaration
+    //   and needs its own read, so the two statics wait rather than being forced through with an
+    //   isolation workaround the binary does not show.
+    // ⚑ displayEnumDovi is NOT declared either: its storage types as `KSPlayer.DoviDisplayModel`,
+    //   and that class does not exist in Sources at all. It needs standing up first.
+    nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
