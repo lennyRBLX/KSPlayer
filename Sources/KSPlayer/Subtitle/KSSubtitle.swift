@@ -92,6 +92,66 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
     // the type-metadata accessor 0x101abf1e0 has 0 CODE construction xrefs (2 DATA self/stdlib); every caller
     // (SrtParse/VTTParse/AssParse parsers — Batch-1 audit-confirmed — and SubtitleDecode) builds SubtitlePart
     // INLINE via the memberwise init + SubtitleTextInfo(.right)/SubtitleImageInfo(.left), no init function.
+
+    // The three `change` overloads, all instance methods (`…tF`, no `Z`) that mutate self.
+    // Every offset below is READ, not positional: the two payload structs' field-offset vectors come
+    // straight out of their static metadata —
+    //   SubtitleTextInfo  @0x1041daee0 → text 0x00, position 0x08, displaySize 0x38, styleRole 0x49,
+    //                                    usesForcedPosition 0x4a
+    //   SubtitleImageInfo @0x1041daca0 → rect 0x00, source 0x20, displaySize 0x60, styleRole 0x70
+    // and the `Either` payload sits at SubtitlePart +0x10, so add 0x10 to reach the offsets the
+    // bodies use. That is what identifies +0x5a as `usesForcedPosition` (0x10+0x4a) and +0x80 as
+    // SubtitleImageInfo's `styleRole` (0x10+0x70). The render discriminator is +0x81 throughout,
+    // and `cmp #1` selects `.right` — the same tag this file's `text`/`isEmpty` already rely on.
+
+    /// change(textPosition:) @0x101abb3f0, 77 instr. Guarded on the `.right` tag; the `.left` arm is
+    /// the bare epilogue, so an image part is left untouched. Beyond writing the 40-byte
+    /// TextPosition into +0x18…+0x40 and clearing the Optional tag at +0x40 (0 = `.some`), it also
+    /// does `strb w22,[x20,#0x5a]` with `w22 = 1` — `usesForcedPosition` is set to true, and the old
+    /// value it read at the top is NOT restored. That store is why this overload differs from the
+    /// other two, which preserve that byte.
+    public mutating func change(textPosition: TextPosition) {
+        if case .right(var info) = render {
+            info.position = textPosition
+            info.usesForcedPosition = true
+            render = .right(info)
+        }
+    }
+
+    /// change(verticalAlign:) @0x101abb524, 103 instr. Also `.right`-only. It branches on the
+    /// `position` Optional tag at +0x40: tag 1 (`.none`) takes a `swift_once`-guarded read of the
+    /// static `KSOptions.textPosition` (offset global 0x104c631c0) as the base, tag 0 (`.some`) uses
+    /// the stored one — i.e. `?? KSOptions.textPosition`. Only the FIRST TextPosition word is
+    /// replaced from the parameter; the remaining four are carried through, which is `verticalAlign`
+    /// being the first of the five declared fields. The displaySize/styleRole/usesForcedPosition
+    /// region is saved at the top and restored verbatim at 0x101abb670-67c, so this overload does
+    /// NOT touch `usesForcedPosition`.
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.textPosition:0x104c631c0 result=textPosition]
+    public mutating func change(verticalAlign: VerticalAlignment) {
+        if case .right(var info) = render {
+            var position = info.position ?? KSOptions.textPosition
+            position.verticalAlign = verticalAlign
+            info.position = position
+            render = .right(info)
+        }
+    }
+
+    /// change(styleRole:) @0x101abb6c0, 117 instr — the only one of the three that handles BOTH
+    /// cases. The `.right` arm writes the parameter to +0x59 (SubtitleTextInfo.styleRole) and
+    /// restores +0x5a unchanged; the `b.ne` arm at 0x101abb7c8 is not an early return but the
+    /// `.left` path, which writes the same parameter to +0x80 (SubtitleImageInfo.styleRole) and
+    /// re-stamps the tag at +0x81. Both payload structs carry a `styleRole`, which is what makes the
+    /// two-arm form necessary here and impossible in the other two.
+    public mutating func change(styleRole: SubtitleTextRole) {
+        switch render {
+        case .left(var info):
+            info.styleRole = styleRole
+            render = .left(info)
+        case .right(var info):
+            info.styleRole = styleRole
+            render = .right(info)
+        }
+    }
 }
 
 public struct TextPosition {
