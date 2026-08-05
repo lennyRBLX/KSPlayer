@@ -1191,3 +1191,36 @@ It cannot be declared because `super.preloadCount()` needs `LimitPreLoadIOContex
 which is **591 instructions** @0x101ba1cdc and is itself a MEMBER_MISSING row. Declaring the base
 with a spine would mean writing a return value that has not been read, so the pair waits for the
 base to be done properly.
+
+
+### §24d — final: MEMBER_MISSING 76 (from 108). ACCESS still 26.
+
+Landed since §24c: `cacheList` on PreLoadIOContext AND LimitSeparatePreLoadIOContext, and the two
+`shouldContinueRead` overrides.
+
+**The `shouldContinueRead` row is the one an earlier session got wrong, and it is now right.**
+That session landed it by forcing `CacheIOContext._isClosed` from `private` to `internal`, which
+pushed ACCESS 26 → 27 and was reverted. The privacy is now PROVEN, not assumed: the trie carries
+the field's initializer as `_isClosed33_D69EFE1402863CA716A3171C7DB6DFB9LLSbvpfi`, and a per-file
+discriminator is exactly what `private` emits. Swift also denies a **subclass** access to a
+`private` superclass member *even in the same file*, so no placement choice rescues a body spelled
+`!_isClosed` in the subclass. That leaves exactly one spelling that compiles AND produces the
+observed code: `super.shouldContinueRead()`. The base is internal and non-open, so it devirtualises
+and inlines, giving a body byte-identical to the base's — which is *why* the linker folds all three
+symbols onto 0x101b8a0e0 in the first place. **ACCESS stayed 26.**
+
+Generalise this: when an ICF fold spans a base and its subclasses and the base's body touches a
+`private` field, the subclass rows are `super.<member>()` forwards, not copies. Do not reach for
+the field.
+
+### The next rows are CHAINS, not single reads — budget accordingly
+- `KSComplexPlayerLayer.readyToPlay(player:)` @0x1019d1cd0 is only 40 instructions and fully read:
+  `super.readyToPlay(player:)`, then `if options.canStartPictureInPictureAutomaticallyFromInline`
+  (offset global 0x104c634d8, trie-named) gating an **81-instruction helper @0x1019d1d70 that is
+  NOT in the trie**, then `reCheckSubtitle()` @0x1019d1eb4 — itself **130 instructions** and itself
+  a MEMBER_MISSING row. So this one 40-instruction row pulls in 211 instructions of dependencies.
+- `LimitCountPreLoadIOContext.preloadCount` @0x101ba2c5c is fully read (see §24c) but needs
+  `LimitPreLoadIOContext.preloadCount()` @0x101ba1cdc — **591 instructions**.
+- `Coordinator.isRecord` needs its `didSet` @0x1019d8d28 — **412 instructions**.
+Each of these is a session's worth of careful reading, not a sweep. The remaining count moves
+slowly from here and that is the shape of the work, not a stall.
