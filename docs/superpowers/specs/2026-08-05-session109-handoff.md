@@ -690,7 +690,41 @@ So this is a PLACEMENT divergence, and [[fileid-literals-decide-placement]] is t
 it. Do not widen `_isClosed` to land the row; either co-locate the two classes or leave the row
 open. §16's commit did exactly the wrong one of those and was reverted.
 
-## 18. Not started, deliberately
+## 18. `OutputStreamInfo.transcode` — the rename is proven, the CASCADE is not. Attempted, reverted.
+
+Another body already present under an inferred name, found by the same sweep as §15. The rename
+itself is not in doubt — **this file already carried the answer in its own marker** and the trie
+confirms it, method descriptor and all:
+
+    KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>,
+                                        block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?)
+                                        -> Swift.Int32
+
+Source declares `buildTranscodeContext(_ packet:completion:)` returning `Void`, self-labelled
+"name inferred (devirt slot13)". **Five** things differ: the name, the first label, the second
+label, the closure's shape, and the return type.
+
+The `Int32` value is READ, not assumed: the body has exactly ONE `ret` (0x101a1accc), no
+tail-branch leaves the function, and nine separate branches converge on the epilogue at
+0x101a1aca8 whose first instruction is `mov w0, #0x0`. **Every path returns 0.**
+
+**Why it was reverted.** The closure is `((UnsafeMutablePointer<AVPacket>) -> ())?` — an OPTIONAL
+closure over a NON-optional pointer. Source has the optionality on the other side, and so does the
+downstream `TranscodeProtocol.transcode(_:output:completion:)` this body forwards to
+(`(UnsafeMutablePointer<AVPacket>?) -> Void`), which is the same reconstruction error propagated.
+Landing the rename therefore requires either an adapter closure at the call site — which invents a
+nil-guard the binary does not have — or changing `TranscodeProtocol` and its three conformers
+(`Audio`/`BSF`/`Copy`TranscodeContext) on the strength of an inference.
+
+That inference is actually decent: this file's own note records that the compiler inserted only a
+reabstraction thunk (FUN_101a1f1a8) and passes the block through rather than constructing one, and
+a reabstraction thunk is what you get when the types match modulo abstraction — not when an
+Optional is being bridged. **But §16 was landed on reasoning of exactly that quality and was
+wrong**, so it was not landed here. The protocol requirement's own signature is not in the trie;
+recover it from the protocol descriptor and then the whole cluster — this row plus the three
+conformers — moves in one commit.
+
+## 19. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
