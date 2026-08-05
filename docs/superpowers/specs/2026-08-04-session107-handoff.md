@@ -554,14 +554,32 @@ extrapolation is refuted by the store width alone.
   `UInt16`; 0x8f8 and 0x918 take `strb` so both are `Bool`; 0x8c0 takes `str x28` and `options` is
   a class ref. Use it to reject a candidate before spending anything on confirming one.
 
-**Consequence — `MetalPlayView.enterBackground` (0x101a6095c, 93 instr) is BLOCKED**, and so are
-`enterForeground` and `layoutSubviews`. The body is legible — it sets the Bool at 0x8f8 to `true`,
-early-returns on the Bools at 0x928 and 0x8d8, then reads a pointer at 0x908 — but the class
-exports only **5** `vpWvd` symbols (exactly the 5 already recovered) and has **4** `Bool` fields
-(`isPaused`, `isBackground`, `renderUseDispatchSourceTimer`, `forcedFrameRetryScheduled`), so
-elimination-on-type is not decisive either. Naming them needs the §2u value-anchored store-run
-treatment, which for this class means finding a per-field anchor for each Bool. Same class of
-blocker as `KSComplexPlayerLayer.pause()`: the body is read, the NAMES are not available.
+### ⚠️ CORRECTION — the "BLOCKED" conclusion below was WRONG. See §2ab.
+
+I concluded here that `MetalPlayView.enterBackground` / `enterForeground` / `layoutSubviews` were
+blocked because the class exports only 5 `vpWvd` symbols and has 4 `Bool` fields, so neither the
+symbolic route nor elimination-on-type could name the globals. **Everything above this line about
+the positional route stays true** — the globals really are not index-ordered, and `metalView` at
+0x8a0 really does sit below `rotation` at 0x8b0. What was wrong was the leap from *"the routes I
+was using cannot name these"* to *"these are not nameable"*.
+
+`MetalPlayView` is **`metadata_init=0`** — it has a static field-offset vector (`InstanceSize 0xca`).
+I never checked, because the class uses offset GLOBALS in its bodies and I had read that as the
+runtime-initialized signature. It is not: a static class can still route field access through
+globals. The globals resolve immediately by VALUE (§2ab):
+
+```
+0x1044ea8f8 -> isBackground        0x1044ea8d8 -> isPaused
+0x1044ea928 -> renderUseDispatchSourceTimer   0x1044ea908 -> backgroundTimer
+0x1044ea8e8 -> fps
+```
+
+which makes the body plain: `isBackground = true`; return early if
+`renderUseDispatchSourceTimer` or `isPaused`; else take `backgroundTimer` and compute
+`1.0 / Double(fps)` as the tick interval. What remains is Dispatch-timer plumbing, not naming.
+
+⚑ The lesson to carry: **check `metadata_init` before declaring a naming route exhausted.** Using
+  offset globals in a body is NOT evidence of runtime-initialized metadata.
 
 ## 2aa. ⭐ TOOL FIX — `field_offset_vector.py` was silently refusing 73 of 1064 classes
 
@@ -607,6 +625,49 @@ displacement.
 ⚑ `play/scripts/` is gitignored, so this fix exists ONLY on this disk — same exposure as
   `recover_field_offsets.py` and `method_source_presence.py`. Recorded here because that is the
   only tracked place it can live.
+
+## 2ab. ⭐ NAME AN OFFSET GLOBAL BY ITS VALUE — the route that was missing all session
+
+A `...vpWvd` direct-field-offset global **holds the field's byte offset**. On a `metadata_init=0`
+class that word is already in the image, so the global can be named with **no accessor and no
+symbol at all**: read the word, look it up in the field-offset vector. Added to
+`recover_field_offsets.py` as `name_global_by_value(cls, glob, module)` and wired into
+`--class X --global G`, which now reports which route answered.
+
+This is what §2q's two routes were missing. `globals_from_trie` names only a global whose `vpWvd`
+is exported; the accessor scan names only one that some accessor touches. `IOSVideoPlayerView`
+exports **18** `vpWvd` symbols for **65** fields — which is why its three
+`UIImageSymbolConfiguration` globals needed the whole §2u store-run-plus-ICF derivation. The value
+read answers them outright.
+
+**It agrees with every hand-derivation this session**, which is the point of the golden:
+
+| global | value-read | how it was derived before |
+|---|---|---|
+| `0x1044f0f88` | `playButtonConfig` | §2u store run: 15.0 pinned its neighbour, `str xzr` pinned the Optional after it, ICF fold corroborated |
+| `0x1044f0f90` | `toolBarPlayButtonConfig` | same run |
+| `0x1044f0f58` | `topStatusLeadingConstraint` | the `xzr` anchor |
+| `0x1044f0e98` | `playPauseButton` | independently, from its `vpWvd` symbol |
+| `0x1044ea8a0` | `metalView` | the `layerClass = CAMetalLayer.self` anchor (commit `d0fc8f3`) |
+| `0x1044ea8b0` | `rotation` | `vpWvd` |
+
+Three goldens pin those hand-derived answers, plus two negative controls: a `metadata_init=1`
+class must **refuse** (its static words are 0, so without the guard every global would map onto
+whatever field sits at offset 0), and a value matching no field must yield `None` rather than the
+nearest field.
+
+**Reach: 27 of the 116 open rows** sit on classes this route can serve — `KSMEPlayer` 7,
+`IOSVideoPlayerView` 7, `MetalPlayView` 3, `MetalSubtitleView` 2, `DirectoryWatcher` 2, and five
+singletons.
+
+⚑ The other **82** rows are on `metadata_init=1` classes (`KSComplexPlayerLayer` 13, `KSOptions` 12,
+  `KSAVPlayer` 10, `CacheIOContext` 8, `LimitPreLoadIOContext` 7, `HLSCacheIOContext` 6,
+  `KSPlayerLayer` 5, `ReadCacheIOContext` 5 …). Their offset words are installed at runtime, so
+  this route cannot reach them and the §2u value-anchored store-run remains the tool of last
+  resort there. That split — 27 reachable / 82 runtime-init / 7 unmapped — is the real shape of
+  what is left, and it is measured, not estimated.
+
+⚑ Lives in `play/scripts/`, which is gitignored. Disk-only, like the `field_offset_vector` fix.
 
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
