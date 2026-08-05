@@ -173,7 +173,7 @@ public struct KSVideoPlayerView: View {
                 view.layoutSubtreeIfNeeded()
         }
         .onExitCommand {
-            playerCoordinator.playerLayer?.player.view?.exitFullScreenMode()
+            playerCoordinator.playerLayer?.player.view.exitFullScreenMode()
         }
         .onMoveCommand { direction in
             switch direction {

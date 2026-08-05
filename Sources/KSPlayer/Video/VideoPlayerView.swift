@@ -125,7 +125,7 @@ open class VideoPlayerView: PlayerView {
 
     override public var playerLayer: KSPlayerLayer? {
         didSet {
-            oldValue?.player.view?.removeFromSuperview()
+            oldValue?.player.view.removeFromSuperview()
             if let view = playerLayer?.player.view {
                 #if canImport(UIKit)
                 insertSubview(view, belowSubview: contentOverlayView)

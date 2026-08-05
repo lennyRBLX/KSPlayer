@@ -444,7 +444,7 @@ extension KSAVPlayer {
 extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     public var subtitleDataSource: (any SubtitleDataSource)? { nil }
     public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
-    public var view: UIView? { playerView }
+    public var view: UIView { playerView }
     public var currentPlaybackTime: TimeInterval {
         get {
             if let shouldSeekTo, shouldSeekTo > 0 {

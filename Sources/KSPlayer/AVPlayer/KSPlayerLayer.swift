@@ -166,7 +166,9 @@ open class KSPlayerLayer: NSObject {
             state = .initialized
             runOnMainThread { [weak self] in
                 guard let self else { return }
-                if let oldView = oldValue.view, let superview = oldView.superview, let view = player.view {
+                let oldView = oldValue.view
+                if let superview = oldView.superview {
+                    let view = player.view
                     #if canImport(UIKit)
                     superview.insertSubview(view, belowSubview: oldView)
                     #else
@@ -180,7 +182,7 @@ open class KSPlayerLayer: NSObject {
                         view.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
                     ])
                 }
-                oldValue.view?.removeFromSuperview()
+                oldValue.view.removeFromSuperview()
             }
             player.playbackRate = oldValue.playbackRate
             player.playbackVolume = oldValue.playbackVolume
@@ -510,7 +512,7 @@ open class KSPlayerLayer: NSObject {
         #if os(macOS)
         runOnMainThread { [weak self] in
             guard let self else { return }
-            if let window = player.view?.window {
+            if let window = player.view.window {
                 window.isMovableByWindowBackground = true
                 if options.automaticWindowResize {
                     let naturalSize = player.naturalSize
@@ -740,6 +742,27 @@ extension KSPlayerLayer {
     func seek(time: TimeInterval) {
         seek(time: time, autoPlay: options.isSeekedAutoPlay) { _ in
         }
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
+    /// Mangled `…0A5LayerC10makeUIViewSo0D0CyF` — returns `UIView`, non-optional.
+    ///
+    ///   · offset global 0x104c634f0 is `player`'s own `vpWvd`
+    ///     (`…0A5LayerC6playerAA19MediaPlayerProtocol_pvpWvd`), read by name. That type has no
+    ///     `Sg`, so `player` is a non-optional existential — matching the body, which does
+    ///     `ldp x20, x19, [x19]` for the (instance, witness-table) pair with NO null test.
+    ///   · `ldr x22,[x19,#0x28]` selects witness 4 and `blr` returns its result unchanged.
+    ///
+    /// ⚑ Witness 4 is NAMED, not counted — which matters, because MediaPlayerProtocol's indices
+    ///   are shifted by unrecovered requirements and an index argument would be worthless here.
+    ///   `KSMEPlayer : MediaPlayerProtocol` slot 4 is `KSPlayer.KSMEPlayer.view.getter : UIView`.
+    ///   That is also what forced the requirement's type correction above: the getter mangles
+    ///   `So6UIViewCvg` with no `Sg`, and property witnesses are invariant, so the requirement is
+    ///   `UIView`. Without that correction this body could only be spelled with a force-unwrap
+    ///   the binary does not contain.
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot4=view.getter:UIView]
+    public func makeUIView() -> UIView {
+        player.view
     }
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.reachEndOfStream(player:):0x1019ce750 result=32-instr]

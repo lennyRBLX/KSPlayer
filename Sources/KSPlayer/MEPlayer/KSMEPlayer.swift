@@ -341,7 +341,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     public var isExternalPlaybackActive: Bool { false }
 
-    public var view: UIView? { videoOutput }
+    public var view: UIView { videoOutput }
 
     public func replace(url: URL, options: KSOptions) {
         KSLog("replaceUrl \(self)")
@@ -476,10 +476,10 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     @MainActor
     public var contentMode: UIViewContentMode {
         get {
-            view?.contentMode ?? .center
+            view.contentMode
         }
         set {
-            view?.contentMode = newValue
+            view.contentMode = newValue
         }
     }
 

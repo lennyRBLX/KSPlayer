@@ -233,7 +233,7 @@ extension KSVideoPlayer: UIViewRepresentable {
             }
             #if os(macOS)
             show ? NSCursor.unhide() : NSCursor.setHiddenUntilMouseMoves(true)
-            if let window = playerLayer?.player.view?.window {
+            if let window = playerLayer?.player.view.window {
                 if !window.styleMask.contains(.fullScreen) {
                     window.standardWindowButton(.closeButton)?.superview?.superview?.isHidden = !show
                     //                    window.standardWindowButton(.zoomButton)?.isHidden = !show
@@ -275,7 +275,8 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
         } else {
             isMaskShow = true
             #if canImport(UIKit)
-            if state == .preparing, let view = layer.player.view {
+            if state == .preparing {
+                let view = layer.player.view
                 let swipeDown = UISwipeGestureRecognizer(target: self, action: #selector(swipeGestureAction(_:)))
                 swipeDown.direction = .down
                 view.addGestureRecognizer(swipeDown)

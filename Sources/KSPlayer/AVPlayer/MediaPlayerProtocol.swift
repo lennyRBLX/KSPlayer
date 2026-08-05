@@ -205,7 +205,16 @@ public struct Chapter {
 
 public protocol MediaPlayerProtocol: MediaPlayback {
     var delegate: MediaPlayerDelegate? { get set }
-    var view: UIView? { get }
+    /// ⚑ NON-OPTIONAL, corrected from `UIView?`. Witness slot 4 of
+    /// `KSMEPlayer : MediaPlayerProtocol` (wt 0x1041d7c68) is named directly in the trie as
+    /// `KSPlayer.KSMEPlayer.view.getter : __C.UIView` — mangled `…C4viewSo6UIViewCvg`, with NO
+    /// `Sg` suffix. Swift requires a property witness to match the requirement's type exactly
+    /// (property requirements are invariant), so the requirement is `UIView`, not `UIView?`.
+    /// This is read from a NAMED witness, not from a slot count — slot 4 also happens to be where
+    /// the source's own ordering puts `view`, and slot 5 independently resolves to
+    /// `KSMEPlayer.playableTime.getter`, the next member in that same order.
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot4=view.getter:UIView]
+    var view: UIView { get }
     var playableTime: TimeInterval { get }
     var isReadyToPlay: Bool { get }
     var playbackState: MediaPlaybackState { get }
