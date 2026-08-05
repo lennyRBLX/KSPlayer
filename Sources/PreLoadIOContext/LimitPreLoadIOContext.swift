@@ -201,6 +201,27 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //   this declaration was previously a new member rather than an override; once the base's was
     //   declared the compiler required the keyword, which is the inheritance the vtable showed all
     //   along — this class's slot overrides CacheIOContext's.
+    /// @0x101b8a0e0 — the SAME address as `CacheIOContext.shouldContinueRead`, ICF-folded across
+    /// all three classes in this hierarchy (each exports its own mangled name). `override_table.py
+    /// --impl` confirms this class overrides it.
+    ///
+    /// The returned value is read, and it is the base's: `ldrb` the inherited Bool field, then
+    /// `bic w0, #1, w8` — the negation of `_isClosed`.
+    /// ⚑ The SPELLING is constrained rather than chosen. `_isClosed` is PROVABLY private — the
+    ///   trie carries its initializer as `…_isClosed33_D69EFE1402863CA716A3171C7DB6DFB9LLSbvpfi`,
+    ///   and a per-file discriminator is what `private` emits — so this subclass cannot read it,
+    ///   in this file or any other (Swift denies a subclass access to a `private` superclass
+    ///   member even in the same file). A body spelled `!_isClosed` here is therefore impossible,
+    ///   and the earlier attempt to make it possible by widening that field to `internal` was
+    ///   reverted as a false ACCESS claim. `super.shouldContinueRead()` is the one spelling that
+    ///   compiles AND yields this code: the base is internal and non-open, so it devirtualises and
+    ///   inlines, leaving a body byte-identical to the base's — which is exactly what lets ICF
+    ///   fold the three.
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext._isClosed:vpfi result=private-33_D69EFE…LL]
+    override func shouldContinueRead() -> Bool {
+        super.shouldContinueRead()
+    }
+
     override public func canReadFromNetwork() -> Bool {
         true
     }
