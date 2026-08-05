@@ -147,7 +147,37 @@ concretely — the derivation is the unit, and it is per class, not per member.
 
 ---
 
-## 7. Not started, deliberately
+## 7. The KSPictureInPictureProtocol blocker is WIDER than the 13 KSComplexPlayerLayer rows
+
+s108 §6 records `KSComplexPlayerLayer` (13 rows) as blocked behind `KSPictureInPictureProtocol`,
+which the binary gives 10 requirements against source's 5. **`KSAVPlayer.configPIP` @0x1019ab4dc
+(62 instr) is behind the same gap**, and `KSMEPlayer.configPIP` @0x101a445c8 (64) is its twin by
+shape. Count that protocol as gating at least 15 rows, not 13.
+
+`configPIP` is otherwise READ, and is a one-liner once the requirement exists:
+
+* a `swift_once` guard on 0x1044e5178, then a read access on the static
+  `0x104c632c0` = `static KSPlayer.KSOptions.pictureInPictureType :
+  KSPictureInPictureProtocol.Type` — already declared at `KSOptions.swift:1133`. `ldp x21, x22`
+  splits it into (concrete metatype, witness table).
+* `objc_msgSend(self+0x38, 'layer')` → `objc_retainAutoreleasedReturnValue` →
+  `objc_opt_self(AVPlayerLayer)` → `swift_dynamicCastObjCClassUnconditional`. So the argument is
+  `<the view at self+0x38>.layer as! AVPlayerLayer`.
+  `0x104410bc0` = `__objc_classrefs AVFoundation _OBJC_CLASS_$_AVPlayerLayer`;
+  selref 0x10440bf70 = `'layer'`.
+* `ldr x8,[x22,#0x18]; blr x8` with the metatype as swiftself and the cast layer in x0 — i.e. a
+  STATIC requirement at witness slot +0x18 taking an `AVPlayerLayer`. Source's five requirements
+  (`isPictureInPictureActive`, `start(layer:)`, `didStart(layer:)`, `stop(restoreUserInterface:)`,
+  `static play(layer:)`) contain no such member, so this is one of the five the binary has and
+  source lacks.
+* `csel x21, xzr, x22, eq` then `stp x20, x21` into the `pipController` field
+  (offset global 0x104c63060, named) under a modify access — so the requirement returns an
+  OPTIONAL conformer: a null object stores a nil existential rather than (obj, witness).
+
+Deriving that one requirement's name and signature unblocks two rows immediately and is a
+prerequisite for the KSComplexPlayerLayer 13 regardless.
+
+## 8. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
