@@ -183,39 +183,45 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     ///     The registers fix the direction: swiftself is the incoming `to:` view and the argument
     ///     is the field, so the field is added INTO `view`.
     ///
-    /// ⚑ The receiver is `displayView`, established by CROSS-REFERENCE rather than offset
-    ///   arithmetic. Its offset global 0x1044ea8a0 has no `vpWvd`; scanning `__text` for that
-    ///   global finds 8 sites, and `flush()` @0x101a60504 — directly above — loads the same global
-    ///   into the same `isHidden` send, which is its `if displayView.isHidden`. Same global, same
-    ///   selector, already-verified body ⇒ same field.
+    /// ⚑ The receiver is `metalView`, and the anchor is BINARY-INTERNAL. Its offset global
+    ///   0x1044ea8a0 has no `vpWvd`, so the name cannot be read directly. `init(options:)`
+    ///   @0x101a5f098 loads this same global, sends `layer` (selref 0x10440bf70) and casts the
+    ///   result to `CAMetalLayer` — the conformance witness 0x1041d9e70 is
+    ///   `$sSo12CAMetalLayerC8KSPlayer8DrawableACWP`. Only `MetalView` has
+    ///   `layerClass = CAMetalLayer.self` (line 321); `AVSampleBufferDisplayView` declares
+    ///   `AVSampleBufferDisplayLayer` (line 395). So 0x1044ea8a0 is `metalView`.
+    /// ⚑ An EARLIER version of this comment named it `displayView`, cross-referenced from
+    ///   `flush()`'s SOURCE. That was wrong: `flush()` is itself mis-reconstructed against the
+    ///   binary (its else-branch reads `drawable` @0x8d0, which no `displayLayer` access explains),
+    ///   so anchoring on it anchored on an unverified body. Anchor on binary facts — a witness
+    ///   table, a `vpWvd`, a decoded selector — never on reconstructed source.
     /// ⚑ Do NOT extrapolate from the neighbouring `vpWvd` globals (0x1044ea8b0 rotation · 8b8
     ///   pixelBuffer · 8c0 options · 8c8 renderSource · 8d0 drawable): they are contiguous at
-    ///   stride 8 and invite reading 0x8a0 as two fields before `rotation`, but this class has 17
-    ///   fields and only 5 such globals, and that arithmetic yields `formatDescription` — a
-    ///   CMFormatDescription, which cannot answer `isHidden`.
+    ///   stride 8, but extending that run backward gives 0x8a0 → `formatDescription`, which cannot
+    ///   answer `isHidden`. The global array is not index-ordered across this class.
     public func didStartPIP(to view: UIView) {
-        if !displayView.isHidden {
-            view.addSub(view: displayView)
+        if !metalView.isHidden {
+            view.addSub(view: metalView)
         }
     }
 
     /// ⚑[tool=export_trie_oracle ref=MetalPlayView.didStopPIP():0x101a5e2d8 result=20-instr]
     /// Shares `didStartPIP`'s guard exactly — the same `isHidden` send on the same global
-    /// 0x1044ea8a0 (`displayView`, see above), with `tbz w0,#0` branching to the work when the
+    /// 0x1044ea8a0 (`metalView`, see above), with `tbz w0,#0` branching to the work when the
     /// bit is CLEAR, i.e. when it is not hidden.
     ///
     /// The direction of the re-parent is the mirror of `didStartPIP` and is read from the
     /// registers, not assumed: here `bl 0x1019f245c` leaves swiftself as **self** and passes
-    /// `displayView` as the argument, so the view comes BACK into this one.
+    /// `metalView` as the argument, so the view comes BACK into this one.
     ///   · `bl 0x10345ece0` → selref 0x10440a900 = **`bounds`**, sent to `self`.
     ///   · the tail `b 0x103469bc0` → selref 0x10440d4b8 = **`setFrame:`**, sent to `displayView`
-    ///     with that rect still live in the FP registers — i.e. `displayView.frame = bounds`.
+    ///     with that rect still live in the FP registers — i.e. `metalView.frame = bounds`.
     /// ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
     /// ⚑[tool=decode_objc_selector ref=0x10440d4b8 result='setFrame:']
     public func didStopPIP() {
-        if !displayView.isHidden {
-            addSub(view: displayView)
-            displayView.frame = bounds
+        if !metalView.isHidden {
+            addSub(view: metalView)
+            metalView.frame = bounds
         }
     }
 
