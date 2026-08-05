@@ -920,4 +920,42 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
     {
         KSLog(error)
     }
+
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.set(urls:):0x1019d181c result=29-instr]
+    /// A NEW method, not an override: the superclass's nearest member is `set(urls:options:)`
+    /// (this file, above), a different selector. vtable_walk puts this at the class's OWN slot 11,
+    /// and it is one of only five KSComplexPlayerLayer symbols carrying a `…Tq` method descriptor
+    /// — the same five that occupy the class's five non-null vtable slots. So `Tq` here tracks
+    /// "new overridable slot", NOT access; access is taken from the sibling `set(urls:options:)`.
+    ///
+    /// Every callee in the body was resolved through the chained-fixup bind table, none assumed:
+    ///   · 0x10345cb74 → __got 0x104112d88 → `swift_beginAccess`, flags `w2=0x21` = Modify|Tracking
+    ///   · 0x10345cb80 → __got 0x104112d90 → `swift_bridgeObjectRelease`  (the OLD array)
+    ///   · 0x10345cb98 → __got 0x104112da0 → `swift_bridgeObjectRetain`   (the NEW array)
+    ///   · 0x10345cce8 → __got 0x104112e40 → `swift_endAccess`
+    ///   · the stored word is __got 0x104112d00 → `_swiftEmptyArrayStorage` — the empty-array
+    ///     literal's storage, which is what makes the first statement `= []` rather than a
+    ///     `removeAll(keepingCapacity:)` (that form would leave the buffer in place).
+    /// The single field global 0x104c63528 is `KSComplexPlayerLayer.urls`'s own `vpWvd`, recovered
+    /// by name rather than inferred from the access site.
+    ///
+    /// The trailing `bl 0x1019c7a8c` is NOT_IN_TRIE, and it is identified STRUCTURALLY rather than
+    /// by name: it takes the destination in the swiftself register (`add x20, x20, x21` makes x20
+    /// `&self.urls`) and the source array in x0, then does `dst.count + src.count` with a `b.vs`
+    /// overflow trap, `swift_isUniquelyReferenced_nonNull_native` (__got 0x104113000) for the COW
+    /// check, a capacity compare against `[x19,#0x18] >> 1`, and `swift_arrayInitWithCopy`
+    /// (__got 0x104112d70). That is `Array.append(contentsOf:)`. Its element type is pinned by the
+    /// `Foundation.URL` metadata accessor it calls (__got 0x104109b18 → `$s10Foundation3URLVMa`),
+    /// so the specialization is `Array<URL>`, matching this property.
+    ///
+    /// ⚑ SPELLING AMBIGUITY, recorded rather than hidden: `+=` and `append(contentsOf:)` are the
+    ///   same call on Array, so those two spellings are indistinguishable here. The reset-then-
+    ///   append shape itself is NOT ambiguous — a plain `self.urls = urls` emits no count
+    ///   arithmetic, no overflow trap and no uniqueness check, and this body has all three.
+    ///   Both statements sit inside ONE beginAccess/endAccess pair; that is the optimizer merging
+    ///   two adjacent modify accesses to the same property, not evidence of a single statement.
+    public func set(urls: [URL]) {
+        self.urls = []
+        self.urls.append(contentsOf: urls)
+    }
 }
