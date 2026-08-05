@@ -299,6 +299,47 @@ public extension MediaPlayerProtocol {
         duration == 0 ? 0 : currentPlaybackTime / duration
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.audioFormat.getter:0x1019e0354 result=103-instr]
+    /// An EXTENSION member, not a protocol requirement: the symbol mangles `…PAAE11audioFormat…`
+    /// (`PAAE` = extension-of-protocol), so it occupies no witness slot. It carries a `vpMV`, so
+    /// **public is proven**, not inherited from the enclosing `public extension`.
+    ///
+    /// Placement is fixed by the body's own literal, not by the neighbours: the isolation-check
+    /// diagnostic passes the 34-character StaticString 'KSPlayer/MediaPlayerProtocol.swift' with
+    /// line 295, which is inside this very extension.
+    /// ⚑[tool=decode_string_literal ref=0x103d34c50 result='KSPlayer/MediaPlayerProtocol.swift']
+    ///
+    /// Read end to end:
+    ///   · `ldr x8,[0x104108730]` → __got bind `AVMediaTypeAudio`, dereferenced and passed to the
+    ///     witness at `[x2,#0x158]`, whose result is an array — that is `tracks(mediaType: .audio)`.
+    ///     ⚑[tool=bind_oracle ref=__got:0x104108730 result=AVMediaTypeAudio]
+    ///   · the loop walks that array by index (`x22`, stride 0x10, bound `[x19,#0x10]`) and calls
+    ///     the element witness at `[x26,#0x58]`, testing the result with `tbnz w20,#0` — a BIT
+    ///     test, so the requirement returns Bool. `b.hs` past the count traps at `brk #0x1`.
+    ///   · falling out of the loop releases the array and returns nil (`x0=0`,`x1=0`).
+    ///   · on a hit it compares the element's type against class metadata 0x1044e91c8 and, when
+    ///     equal and non-nil, loads 16 bytes at `+0x18` and returns them as the String.
+    ///
+    /// The two names in that last step are READ, never guessed:
+    ///   · 0x1044e91c8 is `FFmpegAssetTrack`'s metadata (trie).
+    ///   · `+0x18` is `codecName` — field index 1 in that class's own field-offset vector
+    ///     (@0x1044e9218), not an offset inferred from this access site.
+    /// ⚑[tool=field_offset_vector ref=FFmpegAssetTrack:0x1039ef114 result=codecName@0x18]
+    ///
+    /// `isEnabled` is identified STRUCTURALLY, not by counting slots. MediaPlayerTrack's
+    /// requirement kinds are `B GGGGGGGGGG SM GGGG` — exactly ONE `{get set}` triple in the whole
+    /// protocol, at 10/11/12 — and `[x26,#0x58]` is its getter. Of the source's settable members
+    /// only `isEnabled` is Bool, and the `tbnz` proves the return is a bit, which excludes the
+    /// Float one. ⚑[tool=protocol_signature ref=MediaPlayerTrack:0x1039ed8b4 result=one-get-set-triple]
+    ///
+    /// ⚑ The type test is an EXACT metadata compare (`cmp x0, x8`), not a subclass-tolerant check,
+    ///   even though `FFmpegAssetTrack` is not declared `final`. That is the whole-module form of
+    ///   `as?` when no subclass exists in the module; it is recorded here because it would also be
+    ///   consistent with `type(of:) ==`, and those two are not distinguishable from this body.
+    var audioFormat: String? {
+        (tracks(mediaType: .audio).first { $0.isEnabled } as? FFmpegAssetTrack)?.codecName
+    }
+
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.updateProgress(to:):0x1019e076c result=23-instr]
     /// `fmul d0, d8, d0` multiplies the incoming CGFloat by req0 (`duration`), then tail-calls
     /// word 12 = req11 = `seek(time:completion:)`. The completion is passed as function pointer
