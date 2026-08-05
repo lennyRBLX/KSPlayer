@@ -98,6 +98,36 @@ public class URLContextDownload: AbstractAVIOContext {
         return ffurl_seek2(context, 0, AVSEEK_SIZE)
     }
 
+    /// @0x101b91078, 30 instructions. `override_table.py --impl` answers YES at index 0.
+    ///
+    ///   · the nil-`context` arm returns the immediate 0xdfb9b0bb, which as an Int32 is
+    ///     −0x20464F45 = −MKTAG('E','O','F',' ') — `AVERROR_EOF`. The constant is decoded, not
+    ///     recognised: 0x45/0x4F/0x46/0x20 are 'E','O','F',' ' in MKTAG's byte order.
+    ///   · `ldrb w8,[x20,#0x21]` reads a one-byte field two bytes past `context` (+0x18, 8 bytes
+    ///     wide, so +0x20 and +0x21 are the two Bools this class declares in order — `keepAlive`
+    ///     then `isReadComplete`), and `cmp w8,#1` selects between two FFmpeg calls that take the
+    ///     same (context, buffer, size).
+    ///   · WHICH is which is derived structurally, not from the field's name reading nicely.
+    ///     Both are inlined `retry_transfer_wrapper` bodies and neither calls the other, so the
+    ///     discriminator is the wrapper's `size_min` argument: 0x1030c0994 opens with an extra
+    ///     `cmp w2,#0x1 / b.lt` — the guard the compiler needs when `size_min` is the runtime
+    ///     `size` and the loop may not run — while 0x1030bf914 has none, because its `size_min` is
+    ///     the constant 1. That makes 0x1030c0994 `ffurl_read_complete` (url.h:193, size_min=size)
+    ///     and 0x1030bf914 `ffurl_read2` (url.h:171, size_min=1). The `w8 == 1` arm takes the
+    ///     complete form, which is what the field name then agrees with.
+    /// ⚑[tool=override_table ref=URLContextDownload.read(buffer:size:):0x101b91078 result=YES-index-0]
+    /// ⚑[tool=export_trie_oracle ref=AbstractAVIOContext.read(buffer:size:):0x100137314 result=UnsafeMutablePointer]
+    override public func read(buffer: UnsafeMutablePointer<UInt8>?, size: Int32) -> Int32 {
+        guard let context else {
+            // AVERROR_EOF. The macro is not imported into Swift, so the value is written as the
+            // negated tag it decodes to rather than as the raw 0xdfb9b0bb the binary stores.
+            return -0x2046_4F45
+        }
+        return isReadComplete
+            ? ffurl_read_complete(context, buffer, size)
+            : ffurl_read2(context, buffer, size)
+    }
+
     /// @0x101b910f0, 24 instructions. `override_table.py --impl` answers YES at index 1.
     /// Identical to `fileSize()` above except that the two immediates are replaced by the
     /// parameters: `x1 = x21` is `offset` and `x2 = x19` is `whence`, both moved out of x0/x1 in

@@ -645,7 +645,15 @@ open class AbstractAVIOContext {
     //   7 fileSize @0x10047dae8 = `mov x0,#-1; ret`
     //   9 urlContext / 10 addSub @0x10002d9d4 (the `nil` pair already noted below)
     // Any other ordering would put a non-matching body on one half of a shared pair.
-    open func read(buffer _: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
+    // ⚑ s109 TYPE CORRECTION: `buffer` is `UnsafeMutablePointer`, not `UnsafePointer`. The trie
+    //   carries `…read(buffer: Swift.UnsafeMutablePointer<Swift.UInt8>?, size: Swift.Int32)` at
+    //   0x100137314, which is exactly this vtable's slot 4 impl, and the `UnsafePointer` spelling
+    //   is ABSENT from the trie. `write` below keeps `UnsafePointer` — its own trie entry uses it.
+    //   The two share impl 0x100137314 only because both bodies are `{ size }` and ICF folds
+    //   byte-identical code; the shared impl says NOTHING about the signatures, which is why each
+    //   was probed separately.
+    // ⚑[tool=export_trie_oracle ref=AbstractAVIOContext.read(buffer:size:):0x100137314 result=UnsafeMutablePointer-not-UnsafePointer]
+    open func read(buffer _: UnsafeMutablePointer<UInt8>?, size: Int32) -> Int32 {
         size
     }
 
@@ -741,7 +749,7 @@ open class AbstractAVIOContext {
 public protocol DownloadProtocol {
     var readLimit: Int32 { get set }
     var bufferSize: Int32 { get }
-    func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32
+    func read(buffer: UnsafeMutablePointer<UInt8>?, size: Int32) -> Int32
     func seek(offset: Int64, whence: Int32) -> Int64
     func fileSize() -> Int64
     func close()

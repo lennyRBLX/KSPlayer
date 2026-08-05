@@ -271,7 +271,9 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         nil
     }
 
-    public override func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32 {
+    // ⚑ s109: `buffer` retyped to `UnsafeMutablePointer` with the base — see the correction on
+    //   `AbstractAVIOContext.read`, where the trie's own entry for slot 4's impl settles it.
+    public override func read(buffer: UnsafeMutablePointer<UInt8>?, size: Int32) -> Int32 {
         super.read(buffer: buffer, size: size)
     }
 
