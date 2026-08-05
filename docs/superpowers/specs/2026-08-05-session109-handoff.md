@@ -232,7 +232,38 @@ That second half needs either a reading of Forward's own AudioBaseOutput or an e
 the human. It is one contained obligation, not a 33-site refactor — which is the opposite of what
 the call-site count suggests, and the reason to measure by compiling rather than by grepping.
 
-## 9. Not started, deliberately
+## 9. `KSOptions.makeDecode(packet:)` — a RELOCATION, and the last blocker is an init arity
+
+`KSOptions.makeDecode(packet: KSPlayer.Packet) -> KSPlayer.DecodeProtocol` @0x1019b604c is only
+52 instructions and all of it is read:
+
+* `ldr x22,[x19,#0x40]` then `cbz → brk #1` — a force unwrap. +0x40 is `Packet.assetTrack`, and
+  that is not positional guesswork: `Packet` is `metadata_init=0`, so `field_offset_vector Packet`
+  gives real static offsets (duration 0x10, timestamp 0x18, position 0x20, size 0x28, corePacket
+  0x30, isFlush 0x38, **assetTrack 0x40**, InstanceSize 0x48).
+* a virtual call on self at `[x8,#0x5f0]`. KSOptions `VTableOffset = 94 words (0x2f0)`, so the slot
+  is `(0x5f0-0x2f0)/8` = **96** = 0x1019b5fe0 =
+  `KSOptions.process<A: MediaPlayerTrack>(assetTrack: A)` — already declared. The generic call
+  passes the FFmpegAssetTrack metadata (0x101a21c14) and the
+  `FFmpegAssetTrack : MediaPlayerTrack` conformance (0x10356a680) as x1/x2.
+* then a tail call into the 362-instruction helper @0x1019b611c (NOT_IN_TRIE) with the indirect
+  return, whose result is returned unchanged. That helper is the decoder selection, and all three
+  arms are NAMED: `SubtitleDecode.init(assetTrack:options:)` @0x101a6914c (note `options:
+  KSOptions?`, optional), `FFmpegDecode.init(assetTrack:options:)` @0x101a21d60, and the
+  `VideoToolboxDecode` metadata accessor @0x101a6f3dc.
+
+**This is a relocation, not a new member.** Source has
+`SyncPlayerItemTrack.makeDecode(assetTrack: FFmpegAssetTrack)` (MEPlayerItemTrack.swift:330) with
+exactly that three-way `autoreleasepool` body. Forward moved it onto `KSOptions`, changed the
+parameter to the `Packet`, derives `assetTrack` from it, and added the `process(assetTrack:)` call.
+
+**Blocker.** The VideoToolboxDecode arm cannot be written: `pin_sweep` already reports
+`VideoToolboxDecode.init` as NOT_IN_TRIE with `source (options, session)` against
+`binary (assetTrack, options, asynchronous)`. So this row waits on that init's arity change — the
+same class of evolution as §5, and one more instance of the pattern that every remaining row is
+gated by a signature change, a chain, a field derivation, or an unnameable symbol.
+
+## 10. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
