@@ -161,6 +161,30 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.didStartPIP(to:):0x101a6305c result=18-instr]
+    ///   · `bl 0x103463f40` is an ObjC send whose selref 0x10440bd98 decodes to **`isHidden`**;
+    ///     `tbnz w0,#0` skips the call when it is true, hence the negation.
+    ///     ⚑[tool=decode_objc_selector ref=0x10440bd98 result='isHidden']
+    ///   · `bl 0x1019f245c` is `UIView.addSub(view:)` (UXKit.swift, reconstructed alongside this).
+    ///     The registers fix the direction: swiftself is the incoming `to:` view and the argument
+    ///     is the field, so the field is added INTO `view`.
+    ///
+    /// ⚑ The receiver is `displayView`, established by CROSS-REFERENCE rather than offset
+    ///   arithmetic. Its offset global 0x1044ea8a0 has no `vpWvd`; scanning `__text` for that
+    ///   global finds 8 sites, and `flush()` @0x101a60504 — directly above — loads the same global
+    ///   into the same `isHidden` send, which is its `if displayView.isHidden`. Same global, same
+    ///   selector, already-verified body ⇒ same field.
+    /// ⚑ Do NOT extrapolate from the neighbouring `vpWvd` globals (0x1044ea8b0 rotation · 8b8
+    ///   pixelBuffer · 8c0 options · 8c8 renderSource · 8d0 drawable): they are contiguous at
+    ///   stride 8 and invite reading 0x8a0 as two fields before `rotation`, but this class has 17
+    ///   fields and only 5 such globals, and that arithmetic yields `formatDescription` — a
+    ///   CMFormatDescription, which cannot answer `isHidden`.
+    public func didStartPIP(to view: UIView) {
+        if !displayView.isHidden {
+            view.addSub(view: displayView)
+        }
+    }
+
     public func invalidate() {
         displayLink?.invalidate()
     }
