@@ -27,7 +27,7 @@ python3 scripts/pin_sweep.py --every
 | TYPE_DIVERGENCE | 4 |
 | gate | PASS 44 · ANOMALY 6 · FAIL 4 |
 | build | 4/4 (`DEVELOPER_DIR=… scripts/validate_build.sh`) |
-| KSPlayer HEAD | `5266090` on `forward`, tree clean |
+| KSPlayer HEAD | tip of `forward` = the s110 handoff commit, tree clean (hash not pinned — committing this file moves it) |
 | FFmpegKit HEAD | `12f0899` on `forward-recon-shim` |
 
 The 4 gate FAILs are **pre-existing** — each traces to a verdict file predating s109. They were
