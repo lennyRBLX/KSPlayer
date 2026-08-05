@@ -238,6 +238,56 @@ open class IOSVideoPlayerView: VideoPlayerView {
         #endif
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.pause():0x101b10a54 result=91-instr]
+    /// Sets the "play.fill" glyph on BOTH play buttons after pausing. Every element is read:
+    ///
+    /// · `super.pause()` — the body opens with a virtual load of metadata word `+0x78`, which the
+    ///   class metadata at 0x1044234e8 resolves to `VideoPlayerView.playerLayer.getter`, then an
+    ///   `x0 == nil` skip and a virtual call at `+0x2c0`. With `KSPlayerLayer`'s `VTableOffset = 27
+    ///   words`, `+0x2c0` is slot 61 = `KSPlayerLayer.pause()` — i.e. `playerLayer?.pause()`, which
+    ///   is verbatim `PlayerView.pause()` inlined.
+    ///   ⚑ `super.pause()` and a re-spelled `playerLayer?.pause()` compile to IDENTICAL code, so the
+    ///     body alone cannot separate them. The SIBLING settles it: `IOSVideoPlayerView.play()`
+    ///     (0x101b108b8) inlines BOTH of `PlayerView.play()`'s statements — the `playerLayer?.play()`
+    ///     dispatch AND `toolBar.playButton.isSelected = true` (`setSelected:` with `w2=1` at
+    ///     0x101b10940). A re-spelling would not carry the superclass's second statement, so these
+    ///     overrides call `super`. That is a reading, not a preference.
+    ///   ⚑[tool=export_trie_oracle ref=0x101b2b75c result=VideoPlayerView.playerLayer.getter]
+    ///   ⚑[tool=vtable_walk ref=KSPlayerLayer:slot61 result=KSPlayer.KSPlayerLayer.pause()]
+    ///
+    /// · `"play.fill"` — one small string, built ONCE into x22 and reused by both calls:
+    ///   `mov`+3×`movk` give the bytes `play.fil`, with x1 carrying the 9th byte `l` under count
+    ///   byte 0xE9 (= 0xE0|9). Bridged via `String._bridgeToObjectiveC`, then sent to classref
+    ///   0x104410600 = `UIImage` as `systemImageNamed:withConfiguration:`.
+    ///   ⚑[tool=decode_objc_selector ref=0x10440e530 result='systemImageNamed:withConfiguration:']
+    ///   ⚑[tool=decode_objc_selector ref=0x10440d540 result='setImage:forState:']
+    ///   `forState:` is passed `x3 = 0` = `.normal`.
+    ///
+    /// · The two buttons are `vpWvd`-named: global 0x1044f0e98 = `playPauseButton`, 0x1044f0e68 =
+    ///   `toolBarPlayButton`.
+    ///
+    /// ⚑ The two CONFIG globals (0x1044f0f88, 0x1044f0f90) have NO `vpWvd` symbol — the class
+    ///   exports exactly 18 of them and none is a config — so neither the symbolic route nor
+    ///   offset arithmetic (these globals are not index-ordered) can name them. They are named from
+    ///   the initializer at 0x101b131d4, which stores three configs in one run:
+    ///     0xf98 ← pointSize 32 · 0xf88 ← pointSize 32 · 0xf90 ← pointSize 15 (all weight `w2 = 7`),
+    ///   immediately followed by `str xzr` to 0xf58. Field records 49/50/51/52 are
+    ///   `jumpButtonConfig`, `playButtonConfig`, `toolBarPlayButtonConfig`,
+    ///   `topStatusLeadingConstraint` — so the run is four consecutive fields in record order, and
+    ///   TWO of them are pinned independently of that order: 0xf90 by the 15.0 constant (only
+    ///   `toolBarPlayButtonConfig`'s `vpfi` at 0x10199b3fc uses 15.0) and 0xf58 by `xzr` (only the
+    ///   index-52 Optional can be nil). Those anchors fix the sequence, giving **0xf88 =
+    ///   `playButtonConfig`**.
+    ///   ⚑ Corroborated a third time by ICF: `playButtonConfig`'s `vpfi` (0x10199ef50) is a bare
+    ///     `b` to `jumpButtonConfig`'s body (0x10199b3cc). Two initializers fold only when
+    ///     textually identical — and lines 141-142 declare both as
+    ///     `(pointSize: 32, weight: .bold)`, which is also why 0xf98 and 0xf88 both receive 32.
+    override open func pause() {
+        super.pause()
+        playPauseButton.setImage(UIImage(systemName: "play.fill", withConfiguration: playButtonConfig), for: .normal)
+        toolBarPlayButton.setImage(UIImage(systemName: "play.fill", withConfiguration: toolBarPlayButtonConfig), for: .normal)
+    }
+
     override open func onButtonPressed(type: PlayerButtonType, button: UIButton) {
         if type == .back, viewController is PlayerFullScreenViewController {
             updateUI(isFullScreen: false)
