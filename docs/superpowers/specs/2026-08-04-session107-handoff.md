@@ -824,6 +824,58 @@ coroutine's first half**, and it contains none of the member's behaviour.
   declared exactly that way. The DEFAULT value is not in either coroutine half — it lives in the
   class's field-init, and must be read there.
 
+## 2ag. ⭐ A THREE-PART UNIT worth doing next: `changePlaybackTime` closes two rows and a protocol
+
+`KSAVPlayer.changePlaybackTime(time:)` @0x1019a4d08 (44 instr) is **read in full** and is one
+statement:
+
+```swift
+public func changePlaybackTime(time: TimeInterval) {
+    delegate?.changePlaybackTime(player: self, time: time)
+}
+```
+
+Every part is read: `0x104c63068` is `KSAVPlayer.delegate` (from its `vpWvd`), the load is
+`swift_unknownObjectWeakLoadStrong` with a `cbz` — matching `public weak var delegate` at
+KSAVPlayer.swift:115 — and the dispatch is `MediaPlayerDelegate` witness **+0x20**, i.e. req3,
+which §2ad's full 8-slot map already names `changePlaybackTime(player:time:)`.
+
+⚑ **It cannot be committed alone.** The call needs the requirement on `MediaPlayerDelegate`, and
+that requirement cannot be added until `KSPlayerLayer` implements it — which is itself an open row
+(0x1019cc2b8, **208 instr**, no unnamed callees). The three land together:
+
+1. `KSPlayerLayer.changePlaybackTime(player:time:)` — the 208-instruction read, the only real work.
+2. `func changePlaybackTime(player: some MediaPlayerProtocol, time: TimeInterval)` inserted into
+   `MediaPlayerDelegate` **between `changeBuffering` and `playBack`** — position read, not
+   appended (§2ad).
+3. This one-liner.
+
+Best value left on the board: one substantial read closes two MEMBER_MISSING rows and completes a
+protocol that three sections of this handoff have been working around.
+
+## 2ah. THE WORKLIST'S SIZE COLUMN UNDERSTATES — rank by TRANSITIVE cost
+
+Ranking open rows by body size picked three misleading targets in a row this session:
+`FFThumbnail.jpegData` (11 instr → a whole-struct reshape), `LimitSeparatePreLoadIOContext.urlPos`
+(24 → an async entry thunk), `Coordinator.isRecord` (32 → a 412-instruction `didSet`).
+
+Better ranking: add the sizes of every `bl` target that is (a) inside the Swift band
+0x100004000–0x103400000 and (b) **not named in the trie** — a named callee is its own unit, an
+unnamed one is your cost. Two levels deep is enough. That immediately reorders the tail:
+
+| total | own | row |
+|---|---|---|
+| 25 | 18 | `URLContextDownload.fileSize` |
+| 28 | 21 | `HLSCacheIOContext.fileSize` |
+| 44 | 44 | `KSAVPlayer.changePlaybackTime` |
+| 53 | 53 | `KSAVPlayer.updatePlaybackBuffer` |
+| 56 | 36 | `KSAVPlayer.createPlayerItem` |
+| 59 | 33 | `KSOptions.defaultFont` / `recordDir` |
+
+⚑ It still cannot see across a COROUTINE SPLIT: `isRecord`'s `didSet` is reached by a `bl` from the
+  *resume* half, which is a separate function, so it scores 32. Treat any `.modify` row as
+  unsized until both halves are walked.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
