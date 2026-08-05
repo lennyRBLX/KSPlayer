@@ -1224,3 +1224,32 @@ the field.
 - `Coordinator.isRecord` needs its `didSet` @0x1019d8d28 — **412 instructions**.
 Each of these is a session's worth of careful reading, not a sweep. The remaining count moves
 slowly from here and that is the shape of the work, not a stall.
+
+
+### §24e — `KSComplexPlayerLayer.reCheckSubtitle` @0x1019d1eb4: read, NOT declarable
+130 instructions, decoded end to end. Recorded here so the read is not repeated.
+
+    guard let pip = player.pipController, pip.isPictureInPictureActive else { return }
+    // witness 0xf8 = pipController.getter; [wt+0x8] = KSPictureInPictureProtocol req0
+    // = isPictureInPictureActive (both slots already pinned by pipStop/pause/isPictureInPictureActive)
+
+    // re-reads player.pipController, then branches:
+    //   HIT  : x23 = <0x1019c7454>(pipInstance, witness); if x23 != nil,
+    //          `objc view` (selref 0x10440e918) on it — FORCE-unwrapped, the `cbz -> brk #1`
+    //          at 0x1019d20b8 is the nil trap — then KSPlayerLayer.addSubtitle(to:) @0x1019cf5d8
+    //   MISS : witness 0x28 of MediaPlayerProtocol = `view.getter` (named in this file's
+    //          DownloadProtocol/PreLoadProtocol work), then the same addSubtitle(to:)
+    // then re-reads player.pipController a THIRD time and, if non-nil, builds a stack closure
+    // context — `KSComplexPlayerLayerMa` metadata into [sp+0x20], self into [sp+0x8] — and calls
+    // <0x1019c7410>(ctx, pipInstance, witness).
+
+**Blocker: two load-bearing helpers are NOT in the trie** — 0x1019c7454 (the thing whose `view` is
+taken) and 0x1019c7410 (the closure-taking call). Both sit in KSPictureInPictureController's
+address range and are private. Writing the body would leave two ⚑ holes in the middle of its
+control flow, so it stays a recorded read.
+
+**This is what gates `readyToPlay` @0x1019d1cd0**, which is otherwise complete:
+`super.readyToPlay(player:)` → `if options.canStartPictureInPictureAutomaticallyFromInline`
+(offset global 0x104c634d8) gating the 81-instruction unnamed helper @0x1019d1d70 → `reCheckSubtitle()`.
+Naming 0x1019c7454 / 0x1019c7410 / 0x1019d1d70 unblocks BOTH rows at once, and all three are
+private members of the PiP pair — one focused unit, not three.
