@@ -922,6 +922,32 @@ public extension KSOptions {
     nonisolated(unsafe) static var interactiveSize = CGSize(width: 25, height: 25)
     nonisolated(unsafe) static var thumbSize = CGSize(width: 15, height: 15)
     nonisolated(unsafe) static var textFontName = "SF Pro"
+    // ── s106, four UIColor statics read through their swift_once initialisers ─────────────────
+    // Each is a `swift_once`-guarded static whose addressor names an init function; that init is
+    // twelve instructions of `ldr x0, [classref]` / msgSend / retainAutoreleasedReturnValue /
+    // `str x0, [storage]`, so the value is one ObjC class-property call and nothing else. The
+    // classref is 0x1044104f0 = `_OBJC_CLASS_$_UIColor` in every case; only the selector differs,
+    // and each selector was decoded individually rather than assumed from the group:
+    //   textColor           init 0x1019b9d00  sel stub 0x10346ef20  'whiteColor'
+    //   textBackgroundColor init 0x1019ba0dc  sel stub 0x10345f2c0  'clearColor'
+    //   textShadowColor     init 0x1019ba2c8  sel stub 0x10345eb40  'blackColor'
+    //   textStrokeColor     init 0x1019b9e14  sel stub 0x10345eb40  'blackColor'
+    // The shadow and stroke pair genuinely share one stub — that is the linker folding two
+    // identical selector references, not one value standing in for the other.
+    // Types are read, not chosen: each storage global's own symbol demangles to
+    // `static KSPlayer.KSOptions.<name> : __C.UIColor`.
+    // ⚑[tool=bind_oracle ref=__objc_classrefs:0x1044104f0 result=_OBJC_CLASS_$_UIColor]
+    // ⚑[tool=decode_objc_selector ref=0x10346ef20 result=whiteColor]
+    // ⚑[tool=decode_objc_selector ref=0x10345f2c0 result=clearColor]
+    // ⚑[tool=decode_objc_selector ref=0x10345eb40 result=blackColor]
+    // ⚠️ The other fourteen once-statics in this class (bufferColor, progressColor, thumbColor,
+    // trackColor, doviMatrix, the displayEnum* group, …) have DIFFERENT init shapes — 6 to 18
+    // instructions with no ObjC classref — and are deliberately not written here. Those are the
+    // ones an earlier session got wrong (`trackColor = 0.5`); each needs its own read.
+    nonisolated(unsafe) static var textColor: UIColor = .white
+    nonisolated(unsafe) static var textBackgroundColor: UIColor = .clear
+    nonisolated(unsafe) static var textShadowColor: UIColor = .black
+    nonisolated(unsafe) static var textStrokeColor: UIColor = .black
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
