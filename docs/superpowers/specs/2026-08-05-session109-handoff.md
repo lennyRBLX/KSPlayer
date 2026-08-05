@@ -1382,3 +1382,23 @@ FFmpeg open path earlier in the init — how the `FFmpegAssetTrack` x26 is produ
 initialisation of `preTime`/`startTime`/`endTime` (no stores to 0x88/0x90/0x98 through x19 were
 found, so they are either written through another base or left at their declaration defaults —
 determine which, do not assume).
+
+
+### §24k — the `FFmpegSubtitle` init's SHAPE, named as far as the trie goes
+Continuing §24j. The in-module calls resolve as:
+  · 0x101a3a694 `IOInterruptContext` metadata accessor, then `swift_allocObject` and two
+    unnamed helpers (0x101a391bc, 0x101a392a0) — the interrupt-context build.
+  · 0x101a3a6b4 `FormatContext` metadata accessor, then `swift_allocObject`, then 0x101a350bc =
+    **`FormatContext.init(formatCtx: UnsafeMutablePointer<AVFormatContext>, fileSize: Int64,
+    interrupt: IOInterruptContext, ioContext: AbstractAVIOContext?, fontsDir: URL?)`** — this is
+    the `x25` that lands in `formatContext`. A reusable signature well beyond this row.
+  · 0x1019aba90 → `x26`, the `FFmpegAssetTrack` that feeds both `subtitleStreamIndex` (its +0x10)
+    and `SubtitleDecode.init(assetTrack:options:)`. NOT in the trie.
+  · 0x101aa0308, called twice — NOT in the trie.
+Everything else in the body is `10345xxxx` stub territory: the stripped-FFmpeg
+`avformat_open_input`-class calls plus String/Array runtime.
+
+**Four unnamed helpers remain** (0x1019aba90, 0x101a391bc, 0x101a392a0, 0x101aa0308) and the FFmpeg
+open path is stripped. So the init is *shaped* but not yet writable. Run the §24f route set against
+those four — trie, `objc_trampoline_oracle`, `vtable_walk`, `recover_swift_function_name` — before
+assuming any is unnameable; that set has produced a name once already this session.
