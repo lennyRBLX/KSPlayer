@@ -574,6 +574,39 @@ extension KSAVPlayer {
         }
     }
 
+    /// @0x1019ab4dc, 62 instructions. Trie: `KSAVPlayer.configPIP() -> ()`; no `Tq`, so it is not
+    /// an overridable requirement.
+    ///
+    ///   · the `cmn x8,#1` on the token at 0x1044e5178 is the ordinary `swift_once` guard for a
+    ///     lazily-initialised static, and the storage it returns, 0x104c632c0, demangles to
+    ///     `static KSOptions.pictureInPictureType : KSPictureInPictureProtocol.Type`. It is read
+    ///     under `swift_beginAccess` with flags (0, 0) and taken as the two-word
+    ///     (metatype, witness-table) pair.
+    ///   · `ldr x0,[x19,#0x38]` is `playerView` at the fixed instance offset this file already
+    ///     documents for slot 64; the selector sent to it, selref 0x10440bf70, is `layer`, and the
+    ///     result goes through `swift_dynamicCastObjCClassUnconditional` against the `AVPlayerLayer`
+    ///     classref. That pair is exactly what `KSAVPlayerView.playerLayer` — `layer as! AVPlayerLayer`
+    ///     — inlines to, so the receiver is spelled through this class's own `playerLayer`.
+    ///   · `ldr x8,[x22,#0x18]` is witness 2 of KSPictureInPictureProtocol. This file's requirement
+    ///     table maps req2 to 0x1019c779c, whose stub 0x103463520 carries selref 0x10440bb10 =
+    ///     `initWithPlayerLayer:`.
+    ///   · the `cmp x0,#0` / `csel x21, xzr, x22, eq` that follows rebuilds a NIL existential when
+    ///     the instance came back null — i.e. the requirement is FAILABLE. That is what the
+    ///     requirement's declaration was missing: KSPictureInPictureController.swift previously
+    ///     recorded this init as undeclarable, predicting a `required`-initializer error, but the
+    ///     compiler actually rejects it for failability ("non-failable initializer requirement
+    ///     cannot be satisfied by a failable initializer"). Declared as `init?(playerLayer:)` it
+    ///     builds 4/4 — and the binary's own null test is independent evidence for the `?`.
+    ///   · the store is a `swift_beginAccess` with flags (1, 0) — an untracked MODIFY — on
+    ///     offset global 0x104c63060, `pipController`, followed by `stp` of the new pair and a
+    ///     release of the old.
+    /// ⚑[tool=decode_objc_selector ref=0x10440bf70 result=layer]
+    /// ⚑[tool=bind_oracle ref=__got:0x104112e20 result=_swift_dynamicCastObjCClassUnconditional]
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.pictureInPictureType:0x104c632c0 result=KSPictureInPictureProtocol.Type]
+    public func configPIP() {
+        pipController = KSOptions.pictureInPictureType.init(playerLayer: playerLayer)
+    }
+
     private func observer(playerItem: AVPlayerItem?) {
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)

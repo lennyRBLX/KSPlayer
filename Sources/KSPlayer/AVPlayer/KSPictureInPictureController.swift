@@ -102,17 +102,25 @@ public class KSPictureInPictureController: AVPictureInPictureController {
 //                (verdict OWNER_MATCH), never by picking one name out of the fold.
 // ⚑[tool=conformance_walker ref=KSPlayer.KSPictureInPictureProtocol:0x1039ecde0 result=8-of-10-named]
 //
-// NEITHER INIT REQUIREMENT IS DECLARED, and req4 is not either. The compiler settles the init
-// question rather than my judgement: declaring `init(contentSource:)` on the protocol fails with
-// "initializer requirement 'init(contentSource:)' can only be satisfied by a 'required' initializer
-// in non-final class 'KSPictureInPictureController'", and adding `required` would put an
-// initializer in the source that the binary does not show. req4 (`invalidatePlaybackState`) is
-// iOS 15 / tvOS 15 while this protocol is tvOS 14, and every call site already carries its own
-// #available guard. Declared requirements are therefore 5 of 10; the other five are pinned above
-// rather than guessed into existence.
+// req2 IS NOW DECLARED (s109). The note here used to say neither init requirement could be, on the
+// strength of the error `init(contentSource:)` produces — "can only be satisfied by a 'required'
+// initializer in non-final class" — and generalised that to req2 without trying it. req2 gives a
+// DIFFERENT error: "non-failable initializer requirement 'init(playerLayer:)' cannot be satisfied
+// by a failable initializer ('init?')", because AVPictureInPictureController's inherited
+// `init(playerLayer:)` is failable. Spelled `init?(playerLayer:)` it declares and builds 4/4.
+// The `?` is not the compiler's word against the binary's: `KSAVPlayer.configPIP` @0x1019ab4dc
+// calls this very witness and then runs `cmp x0,#0` / `csel x21, xzr, x22, eq`, rebuilding a nil
+// existential when the instance comes back null — a failable init read straight off the call site.
+//
+// req3 STILL IS NOT, and req4 is not either. `init(contentSource:)` does hit the `required`
+// error above, and adding `required` would put an initializer in the source that the binary does
+// not show. req4 (`invalidatePlaybackState`) is iOS 15 / tvOS 15 while this protocol is tvOS 14,
+// and every call site already carries its own #available guard. Declared requirements are
+// therefore 6 of 10; the other four are pinned above rather than guessed into existence.
 @available(tvOS 14.0, *)
 @MainActor
 public protocol KSPictureInPictureProtocol: AnyObject {
+    init?(playerLayer: AVPlayerLayer)
     var isPictureInPictureActive: Bool { get }
     func start(layer: KSComplexPlayerLayer)
     func didStart(layer: KSComplexPlayerLayer)
