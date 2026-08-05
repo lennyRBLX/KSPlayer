@@ -185,6 +185,26 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.didStopPIP():0x101a5e2d8 result=20-instr]
+    /// Shares `didStartPIP`'s guard exactly — the same `isHidden` send on the same global
+    /// 0x1044ea8a0 (`displayView`, see above), with `tbz w0,#0` branching to the work when the
+    /// bit is CLEAR, i.e. when it is not hidden.
+    ///
+    /// The direction of the re-parent is the mirror of `didStartPIP` and is read from the
+    /// registers, not assumed: here `bl 0x1019f245c` leaves swiftself as **self** and passes
+    /// `displayView` as the argument, so the view comes BACK into this one.
+    ///   · `bl 0x10345ece0` → selref 0x10440a900 = **`bounds`**, sent to `self`.
+    ///   · the tail `b 0x103469bc0` → selref 0x10440d4b8 = **`setFrame:`**, sent to `displayView`
+    ///     with that rect still live in the FP registers — i.e. `displayView.frame = bounds`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
+    /// ⚑[tool=decode_objc_selector ref=0x10440d4b8 result='setFrame:']
+    public func didStopPIP() {
+        if !displayView.isHidden {
+            addSub(view: displayView)
+            displayView.frame = bounds
+        }
+    }
+
     public func invalidate() {
         displayLink?.invalidate()
     }
