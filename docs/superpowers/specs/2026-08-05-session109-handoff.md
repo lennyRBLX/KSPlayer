@@ -1036,3 +1036,27 @@ the empty-collection singleton, an immediate like 0x3ff0000000000000 ⇒ 1.0 —
 parameter it feeds. Never by position.** That is how `KSComplexPlayerLayer.pause`'s
 `isPictureInPictureStoped` and `MetalSubtitleView.playRatio` were pinned, and why the three
 MetalSubtitleView arrays are still open: nothing distinguishes three same-typed empty arrays.
+
+### Next-up rows, already scouted (start here rather than re-triaging)
+- **`KSVideoPlayer.Coordinator.isRecord`** — an `@Published public var Bool` on a class whose
+  siblings `isMuted` / `isScaleAspectFill` are already declared in exactly that form, so the
+  declaration is a one-liner. What blocks it is the `didSet`: it emits NO `vw` symbol (neither does
+  `isMuted`, which demonstrably has one — `@Published` observers inline into the setter), and the
+  setter @0x1019d9488 tail-calls it at **0x1019d8d28 with the old value in x0**. That body is **412
+  instructions** — recording start/stop — so it is its own unit. Do not declare the property with a
+  missing or invented `didSet`.
+- **`MetalPlayView.enterBackground`** @0x101a6095c (93 instr) — needs four MetalPlayView offset
+  globals named (0x1044ea8f8 Bool, 0x1044ea928, 0x1044ea8d8, 0x1044ea908); apply the
+  identify-by-stored-value rule above, not ordering.
+- **`CacheIOContext.clearOtherCache`** @0x101b8d948 (175 instr, 25 calls, none in-module) and
+  **`KSOptions.wantedSubtitle`** @0x1019bb974 (175 instr, 11 calls) are the two largest rows whose
+  callees are ALL stubs — i.e. big but not devirtualised, the same profile that made `clearCache`
+  tractable.
+
+### How the tractable rows were found
+`member_missing_triage.py --json`, then for each body disassemble its extent and count `bl` targets
+below 0x103451708 (the stub/thunk island floor). Rows with **zero in-module callees** are the ones
+that read end-to-end without chasing devirtualised helpers; that ranking picked out `clearCache`,
+the four KSOptions statics, both `configPIP`s and `syncPlaybackPosition`. Beware: the triage's
+instruction count is the THUNK's, not the body's — five rows that looked like 1-4 instructions were
+thunks branching to 107-, 181- and 227-instruction bodies.
