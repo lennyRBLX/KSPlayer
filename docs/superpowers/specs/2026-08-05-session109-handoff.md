@@ -553,7 +553,34 @@ Land `hidePrompt` first; `showPromptMessage` is then a paste of the block above.
 but `objc_trampoline_oracle --class <X>` lists it with its selector, line and imp. Reach for that
 whenever a `#selector(...)` or `performSelector:` names something the trie denies.
 
-## 14. Not started, deliberately
+## 14. `updateVideMetaLabel` — decoded down to its keys, blocked on a 582-instruction prerequisite
+
+`IOSVideoPlayerView.updateVideMetaLabel()` @0x101b11704, 233 instr. Its shape and every literal
+are read; what stops it is a second undeclared private method, and this one is not small.
+
+It touches exactly four fields, named by value rather than position —
+`name_global_by_value("IOSVideoPlayerView", …)`:
+
+    0x1044f0fa8 → codecLabel      0x1044f0fb0 → resolutionLabel
+    0x1044f0fb8 → fpsLabel        0x1044f0fc0 → bitrateLabel
+
+and the four dictionary keys decode from the small-string immediates as
+**"Codec Format"**, **"Resolution"**, **"Frame Rate"**, **"Bitrate"** — one per label, in that
+pairing order. The body is four repetitions of the same shape: look the key up, and on the
+found path `setText:`, on the not-found path `setAlpha:` with `movi.2d v0,#0` (alpha 0). The only
+other calls are `String._bridgeToObjectiveC` and the bridge-object retain/release family.
+
+**The blocker.** The dictionary comes from
+`IOSVideoPlayerView.(getVideoMeta in _99D4461AEE15ECA71DEBF361B80F60DD)() -> [Swift.String : Swift.String]`
+@0x101b11aa8 — private, hence the discriminator, hence absent from source. Unlike `hidePrompt`
+(80 instr, landed this session) it is **582 instructions**, extent 0x101b11aa8-0x101b123c0. That is
+its own unit and a large one; `updateVideMetaLabel` is a short paste once it exists.
+
+⚑ Note the asymmetry worth checking when someone picks this up: the not-found path sets `alpha = 0`
+but nothing in this body sets alpha back to 1, so either `getVideoMeta` always populates all four
+keys or the reset lives elsewhere. Read it; do not assume.
+
+## 15. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
