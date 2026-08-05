@@ -224,11 +224,34 @@ extension CapacityProtocol {
     }
 }
 
+// ⚑ s106 RESTRUCTURED. This struct is not in the classmap, so `l2_field_gate` has never gated it
+// and the divergences below survived. The layout is read from the nine getters, each of which is
+// two instructions touching exactly one offset — no inference, and the offsets are contiguous and
+// consistent with the types:
+//
+//     0x00  maxLoadedTime  Swift.Double  0x1000ef030    0x28  isEndOfFile  Bool  0x10012e894
+//     0x08  minLoadedTime  Swift.Double  0x1000ef038    0x29  isPlayable   Bool  0x10012e8b4
+//     0x10  progress       Swift.UInt8   0x1002f89b0    0x2a  isFirst      Bool  0x10071d6f4
+//     0x18  packetCount    Swift.UInt    0x1002f7a1c    0x2b  isSeek       Bool  0x1019e1bd4
+//     0x20  frameCount     Swift.UInt    0x1001f5868
+//
+// Three changes from what this file declared: the single `loadedTime` is really TWO fields;
+// `progress` is `UInt8`, not `TimeInterval`; and both counts are `UInt`, not `Int`.
+//
+// WHICH of the two is max and which is min is read, not taken from the names. `KSOptions.playable`
+// @0x1019b82a4 runs two reduction loops over the capacity array, both stride 8 from offset 0x28,
+// both seeded from element 0:
+//   loop @0x1019b8650  `fcmp d0, d1` / `fcsel d9, d1, d9, mi` — takes the new element when it is
+//                      GREATER, so d9 is the MAX
+//   loop @0x1019b8674  `fcmp d1, d0` / `fcsel d8, d1, d8, mi` — takes it when SMALLER, so d8 is
+//                      the MIN
+// ⚑[tool=llvm-objdump ref=KSOptions.playable:0x1019b8650-0x1019b868c result=d9-max-d8-min]
 public struct LoadingState {
-    public let loadedTime: TimeInterval
-    public let progress: TimeInterval
-    public let packetCount: Int
-    public let frameCount: Int
+    public let maxLoadedTime: TimeInterval
+    public let minLoadedTime: TimeInterval
+    public let progress: UInt8
+    public let packetCount: UInt
+    public let frameCount: UInt
     public let isEndOfFile: Bool
     public let isPlayable: Bool
     public let isFirst: Bool

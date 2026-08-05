@@ -393,8 +393,23 @@ open class KSOptions {
         let packetCount = capacitys.map(\.packetCount).min() ?? 0
         let frameCount = capacitys.map(\.frameCount).min() ?? 0
         let isEndOfFile = capacitys.allSatisfy(\.isEndOfFile)
-        let loadedTime = capacitys.map(\.loadedTime).min() ?? 0
-        let progress = preferredForwardBufferDuration == 0 ? 100 : loadedTime * 100.0 / preferredForwardBufferDuration
+        // ⚑ s106: TWO reductions, not one. This body runs both over the same array — the max loop
+        //   @0x1019b8650 and the min loop @0x1019b8674 — because LoadingState carries both.
+        let maxLoadedTime = capacitys.map(\.loadedTime).max() ?? 0
+        let minLoadedTime = capacitys.map(\.loadedTime).min() ?? 0
+        // ⚑ s106: progress derives from the MAX and is a UInt8. Read at 0x1019b86dc-0x1019b874c:
+        //   `fcmp d0, #0.0` on preferredForwardBufferDuration, and on the zero path `mov w20, #0x64`
+        //   = 100; otherwise `fmul d10, d9, 100.0` — d9 being the MAX — then `fdiv` by the duration.
+        //   The source previously derived it from its single `.min()`, so Forward changed both the
+        //   field and which one feeds this.
+        // ⚑ The Double→UInt8 conversion @0x1019ec77c CLAMPS rather than traps: negative → 0,
+        //   NaN → 0, >= 255 → 255, else `fcvtzs`. Plain `UInt8(_:)` traps instead, so the exact
+        //   source spelling of that clamp is NOT established; `UInt8(clamping:)` on the truncated
+        //   value is the closest expressible form and is what is written.
+        //   ⚑[tool=llvm-objdump ref=Double-to-UInt8:0x1019ec77c result=clamping-0-255-NaN-0]
+        let progress: UInt8 = preferredForwardBufferDuration == 0
+            ? 100
+            : UInt8(clamping: Int(maxLoadedTime * 100.0 / preferredForwardBufferDuration))
         let isPlayable = capacitys.allSatisfy { capacity in
             if capacity.isEndOfFile && capacity.packetCount == 0 {
                 return true
@@ -420,9 +435,10 @@ open class KSOptions {
             }
             return capacity.loadedTime >= self.preferredForwardBufferDuration
         }
-        return LoadingState(loadedTime: loadedTime, progress: progress, packetCount: packetCount,
-                            frameCount: frameCount, isEndOfFile: isEndOfFile, isPlayable: isPlayable,
-                            isFirst: isFirst, isSeek: isSeek)
+        return LoadingState(maxLoadedTime: maxLoadedTime, minLoadedTime: minLoadedTime,
+                            progress: progress, packetCount: UInt(packetCount),
+                            frameCount: UInt(frameCount), isEndOfFile: isEndOfFile,
+                            isPlayable: isPlayable, isFirst: isFirst, isSeek: isSeek)
     }
 
     open func adaptable(state: VideoAdaptationState?) -> (Int64, Int64)? {

@@ -259,7 +259,12 @@ extension KSMEPlayer: MEPlayerDelegate {
         if loadingState.isEndOfFile {
             playableTime = duration
         } else {
-            playableTime = currentPlaybackTime + loadingState.loadedTime
+            // ⚑ s106: READ, not chosen. This method is @0x101a41814; `mov x22, x0` makes x22 the
+            //   LoadingState parameter, `ldrb w21,[x22,#0x28]` is the `isEndOfFile` test above
+            //   (offset 0x28, matching the recovered layout), and @0x101a418b4 `ldr d1, [x22]` /
+            //   `fadd d8, d0, d1` reads offset 0 — which is `maxLoadedTime`.
+            //   ⚑[tool=llvm-objdump ref=KSMEPlayer.sourceDidChange(loadingState:):0x101a418b4 result=offset-0-maxLoadedTime]
+            playableTime = currentPlaybackTime + loadingState.maxLoadedTime
         }
         if loadState == .playable {
             if !loadingState.isEndOfFile, loadingState.frameCount == 0, loadingState.packetCount == 0, options.preferredForwardBufferDuration != 0 {
@@ -281,13 +286,17 @@ extension KSMEPlayer: MEPlayerDelegate {
             if loadingState.isPlayable {
                 loadState = .playable
             } else {
-                if loadingState.progress.isInfinite {
-                    progress = 100
-                } else if loadingState.progress.isNaN {
-                    progress = 0
-                } else {
-                    progress = min(100, Int(loadingState.progress))
-                }
+                // ⚑ s106: the `isInfinite` / `isNaN` branches are REMOVED, and their absence is
+                //   read rather than deduced from the retype alone. `progress` is now UInt8, and
+                //   this body reads it exactly once, as a byte:
+                //     0x101a41db0  ldrb w8, [x22, #0x10]     — loadingState.progress
+                //     0x101a41db4  cmp  w8, #0x64            — against 100
+                //     0x101a41dbc  csel w23, w8, w9, lo      — min(progress, 100)
+                //   Three instructions, no float compare, no NaN test. The guarding those two
+                //   branches did now happens inside KSOptions.playable's Double→UInt8 conversion,
+                //   which clamps NaN to 0 and out-of-range to 255.
+                //   ⚑[tool=llvm-objdump ref=KSMEPlayer.sourceDidChange(loadingState:):0x101a41db0-0x101a41dbc result=min-progress-100]
+                progress = min(100, Int(loadingState.progress))
             }
             if playbackState == .playing {
                 runOnMainThread { [weak self] in

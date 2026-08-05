@@ -495,10 +495,20 @@ extension MEPlayerItem: CodecCapacityDelegate {
         if loadingState.isPlayable {
             isFirst = false
             isSeek = false
-            if loadingState.loadedTime > options.maxBufferDuration {
+            // ⚑ s106: `loadedTime` split into maxLoadedTime/minLoadedTime, so these two reads had
+            //   to pick one — and unlike the other consumers, this choice is NOT readable.
+            //   MEPlayerItem's CodecCapacityDelegate witness table @0x1041d84c0 has BOTH
+            //   requirements pointing at the stub 0x10345cc70, whose __got slot 0x104112df0 binds
+            //   `_swift_deletedMethodError`. So `codecDidChangeCapacity` is declared in Forward
+            //   with its code DELETED — there is no body here to read either way.
+            //   `maxLoadedTime` is used for consistency with the two consumers that ARE readable
+            //   (progress in KSOptions.playable, and KSMEPlayer.sourceDidChange), and the choice
+            //   is pinned rather than presented as derived.
+            //   ⚑[tool=bind_oracle ref=MEPlayerItem:CodecCapacityDelegate@0x1041d84c0 result=swift_deletedMethodError]
+            if loadingState.maxLoadedTime > options.maxBufferDuration {
                 adaptableVideo(loadingState: loadingState)
                 pause()
-            } else if loadingState.loadedTime < options.maxBufferDuration / 2 {
+            } else if loadingState.maxLoadedTime < options.maxBufferDuration / 2 {
                 resume()
             }
         } else {
