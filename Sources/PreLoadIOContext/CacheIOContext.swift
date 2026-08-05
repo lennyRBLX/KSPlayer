@@ -465,6 +465,35 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   fileSize) are not cleanly readable Foundation/Swift in the binary (devirt /
     //   FFmpeg-adjacent) → inherited from AbstractAVIOContext, NOT reconstructed. — P2
 
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryIndexContain(logicalPos:):0x101b8f36c result=111-instr]
+    /// The index-returning twin of `firstEntryContain` below. The search is the SAME — inclusive
+    /// `hi = count - 1`, `hi = mid - 1`, the identical half-open test against
+    /// `CacheFileEntry.position` (global 0x104c63948) and `position + size` with `size` loaded as
+    /// `ldr w27` (global 0x104c63950) — and it was re-read rather than assumed from the sibling.
+    ///
+    /// What differs is ONLY the returned value, and both arms are read from the `Int?` tagging:
+    ///   · hit  @0x101b8f4b4 → `mov w1, #0`, falling into `mov x0, x21`. `x21` is the MID index,
+    ///     not the entry pointer, which is what makes the return `Int?`.
+    ///   · miss @0x101b8f4e0 → `mov x21, #0` / `mov w1, #1`; the `1` in the second register is
+    ///     `Optional.none` for a payload that cannot spare a bit pattern.
+    /// So the nil case is a TAG here, not a sentinel index — returning `-1` or `0` would be wrong.
+    public func firstEntryIndexContain(logicalPos: UInt64) -> Int? {
+        var lo = 0
+        var hi = entryList.count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let entry = entryList[mid]
+            if logicalPos < entry.position {
+                hi = mid - 1
+            } else if logicalPos < entry.position + UInt64(entry.size) {
+                return mid
+            } else {
+                lo = mid + 1
+            }
+        }
+        return nil
+    }
+
     /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryContain(logicalPos:):0x101b89d60 result=136-instr]
     /// The sibling of `firstEntryAfter` below, but NOT the same loop — the differences are read,
     /// not carried over:
