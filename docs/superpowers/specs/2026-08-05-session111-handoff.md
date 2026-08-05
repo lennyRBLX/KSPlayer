@@ -106,6 +106,47 @@ NOT a mapping.
 
 ---
 
+## 4a. `MetalPlayView.enterBackground` — now unblocked; the init WAS locatable
+
+`locate_class_init --class MetalPlayView` answers "0 construction sites found", which reads like a
+dead end and is not. The inits are in the trie by ADDRESS — go through `address_multimap` and
+filter for `cfC`/`cfc`:
+
+    0x101a5ed78  MetalPlayView.__allocating_init(options:)
+    0x101a5eda8  MetalPlayView.init(options:)          <- designated, 436 instr
+
+Inside it, at **0x101a5f144**:
+
+    0x101a5f138  ldrb w8, [x28, x19]      ; a Bool read out of `options` (x28)
+    0x101a5f140  ldr  x9, [0x1044ea928]   ; = renderUseDispatchSourceTimer's offset global
+    0x101a5f144  strb w8, [x25, x9]       ; self.renderUseDispatchSourceTimer = that Bool
+
+So the last blocking field IS assigned from `options`. ⚠️ REMAINING STEP: resolve x19's own global
+(the `adrp` feeding 0x101a5f120) to name the KSOptions field. `KSOptions.renderUseDispatchSourceTimer`
+exists at KSOptions.swift:210 with a matching type, but that is a same-name inference — CONFIRM the
+global before writing it.
+
+The other three fields are fully read and need no init:
+  · `isPaused: Bool = true`   — vpfi 0x10002c740 `mov w0,#1`; the init re-emits it at 0x101a5eea4
+  · `isBackground: Bool = false` — vpfi 0x10002dab0 `mov w0,#0`; re-emitted at 0x101a5ef34
+  · `backgroundTimer` — vpfi 0x10199ae4c, 90 instr: `DispatchSource.makeTimerSource` with
+    `DispatchQueue.main` and a `TimerFlags` built from an EMPTY sequence. Whether the source spells
+    `flags: []` explicitly or relies on the default is NOT decidable from the inlined call.
+    Field-record type is `So24OS_dispatch_source_timer_p`, i.e. `DispatchSourceTimer`, a `let`.
+
+Binary field ORDER (l2_field_gate surface), from `fieldrec --class MetalPlayView`:
+`isPaused, formatDescription, fps, rotation, pixelBuffer, options, renderSource, drawable,
+metalView, dovi, isBackground, displayView, displayLink, backgroundTimer,
+renderUseDispatchSourceTimer, flickerDetector, forcedFrameRetryScheduled` — note source currently
+opens with `isDovi` where the binary has `isPaused`, a PRE-EXISTING divergence not to be conflated
+with this standup.
+
+`enterBackground` @0x101a6095c itself is fully read: sets `isBackground = true`, returns early if
+`renderUseDispatchSourceTimer` or `isPaused`, else
+`backgroundTimer.schedule(deadline: .now(), repeating: 1/Double(fps), leeway: <injected tag>)`.
+
+---
+
 ## 5. Rows still genuinely ready (structural helpers only)
 
 `CacheIOContext.copyPreloadCache` 413 · `LimitPreLoadIOContext.preloadCount` 591 ·
