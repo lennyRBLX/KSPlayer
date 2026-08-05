@@ -212,9 +212,14 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //   this declaration and its own comment.
     //   ⚑[tool=export_trie_oracle ref=LimitPreLoadIOContext.clearPlaybackPosition:0x101b9d4dc result=clearPlaybackPosition-not-resetPlaybackPosition]
     func clearPlaybackPosition() {
-        // binary s21: _swift_beginAccess(&playbackBytePosition); store payload 0 + tag 1.
-        //   Brief default is nil; the binary writes .some(0). Match the binary store here:
-        playbackBytePosition = 0
+        // ⚠️ s109 CORRECTION: this line was `playbackBytePosition = 0`, on the comment's claim that
+        //   "the binary writes .some(0)". It writes NIL. For `UInt64?` the payload has no spare
+        //   bits, so the Optional carries a separate tag byte, and tag 1 is `.none` — this file's
+        //   own field note already says so: "init nil per brief (binary s37/s21 store payload 0 +
+        //   tag byte 1)". The same payload-0-plus-tag-1 pair therefore cannot mean `.some(0)` here
+        //   and `nil` at the initializer. `syncPlaybackPosition` below writes the identical pair on
+        //   its guard path, which is what surfaced the contradiction.
+        playbackBytePosition = nil
         playbackBytePositionIsExact = false      // binary: byte = 0
         _lastSyncedTime = -1.0                    // binary const 0xbff0000000000000
         // UNRESOLVED → P8 (IO-completion) (s21 tail @101b9d4dc): the binary then locks PreLoadIOContext's
@@ -222,6 +227,68 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         //   nils _playbackSnapshot (*p=0; p[1]=0; tag byte=1), and unlocks. Those are
         //   INHERITED PreLoadIOContext fields owned by 1C.7 (not in this class's
         //   reconstruction scope) → preserved as a faithful note, NOT re-set here.
+    }
+
+    /// @0x101b9cf78, 96 instructions. Trie:
+    /// `syncPlaybackPosition(time: Swift.Double, position: Swift.UInt64?) -> ()`. `override` is
+    /// proven, not inferred from the base declaring the same name — `override_table.py --impl
+    /// 0x101b9cf78` answers YES at index 0.
+    ///
+    /// THE GUARD. The first fourteen instructions are a bit-pattern predicate on `time`, not an
+    /// `fcmp`, and each test was decoded rather than pattern-matched:
+    ///   · `and x9, x8, #0x7fff…` is |bits|; `sub x10, x9, #1` / `cmp` against 0xfffffffffffff
+    ///     with `cset lo` is "nonzero and subnormal".
+    ///   · `add x11, x9, #0xfff0000000000000` (i.e. −0x0010000000000000) / `lsr #53` /
+    ///     `cmp #0x3ff` / `cset lo` is "normal": it reduces to biased-exponent < 0x7ff, and the
+    ///     subtraction underflows for zero and subnormals, so those fail it too.
+    ///   · `cmp x8, #0` gates BOTH of those results through `csel …, ge`, so they only contribute
+    ///     when the sign bit is set.
+    ///   · `cmp x9, #0x7ff0000000000000` then two `csinc`s force 1 for infinity (`ne`) and for NaN
+    ///     (`le`, since the masked value exceeds the infinity pattern only for NaN).
+    /// The disjunction is `!isFinite || (negative && nonzero-finite)`, and `-0.0` falls through
+    /// every arm — which is exactly `!(time.isFinite && time >= 0)`. Cross-checked by compiling
+    /// `t.isFinite && t >= 0` with `swiftc -O` for arm64-ios: same primitives (the 0xfffffffffffff
+    /// subnormal test, the −0x0010000000000000 / lsr 53 / cmp 0x3ff exponent test, the
+    /// 0x7ff0000000000000 test, the sign gate), selected as `ccmn`/`ccmp` chains because the probe
+    /// returns a Bool where this body branches.
+    /// Then `and w8, w1, #0xff` / `cmp #1` takes the same arm when the Optional's tag byte is 1,
+    /// i.e. `position` is nil — hence the third guard clause.
+    ///
+    /// THE TWO ARMS. Both open a MODIFY `swift_beginAccess` (flags 1, 0) on `playbackBytePosition`
+    /// (offset global 0x104c639a0, trie-pinned) and write payload + tag byte; the guard arm writes
+    /// payload 0 / tag 1 = nil, the success arm the unwrapped value / tag 0.
+    /// The two private fields are identified by the VALUE stored, never by global order — the trap
+    /// this reconstruction hit twice:
+    ///   · 0x1044f4a78 takes a one-byte `strb` (1 on success, 0 on the guard arm) and
+    ///     `playbackBytePositionIsExact` is this class's only `Bool` past `canPreload`.
+    ///   · 0x1044f4a80 takes the immediate 0xbff0000000000000 = **−1.0** on the guard arm, which is
+    ///     precisely `_lastSyncedTime`'s declared init value, and `time` on the success arm.
+    /// ⚑ UNRESOLVED tail, preserved rather than written — the same boundary `clearPlaybackPosition`
+    ///   above keeps: the binary then loads offset global 0x1044f6228, sends `lock`, writes offset
+    ///   global 0x1044f6230 as {Double, UInt64, tag} — `(time, position)` on success, 0/0/tag 1 on
+    ///   the guard arm — and sends `unlock`. Those are PreLoadIOContext's inherited
+    ///   `_playbackSnapshotLock` and `_playbackSnapshot`, whose tuple-optional layout matches that
+    ///   store exactly. Both are declared `private` in another file, so writing this tail would
+    ///   mean widening their access with no binary evidence for the wider level — the exact move
+    ///   that had to be reverted for `CacheIOContext._isClosed` earlier this session. It stays a
+    ///   note until those fields' access is derived.
+    /// ⚑[tool=override_table ref=LimitPreLoadIOContext.syncPlaybackPosition:0x101b9cf78 result=YES-index-0]
+    /// ⚑[tool=export_trie_oracle ref=LimitPreLoadIOContext.playbackBytePosition:0x104c639a0 result=vpWvd-UInt64-optional]
+    override public func syncPlaybackPosition(time: Double, position: UInt64?) {
+        guard time.isFinite, time >= 0, let position else {
+            playbackBytePosition = nil
+            playbackBytePositionIsExact = false
+            _lastSyncedTime = -1.0
+            // UNRESOLVED → 1C.7: lock 0x1044f6228 (_playbackSnapshotLock), nil 0x1044f6230
+            //   (_playbackSnapshot: stores 0, 0, tag byte 1), unlock. Inherited + private.
+            return
+        }
+        playbackBytePosition = position
+        playbackBytePositionIsExact = true
+        _lastSyncedTime = time
+        // UNRESOLVED → 1C.7: lock 0x1044f6228 (_playbackSnapshotLock), store 0x1044f6230
+        //   (_playbackSnapshot = (time: time, position: position), tag byte 0), unlock.
+        //   Inherited + private.
     }
 
     // UNRESOLVED → later phase (do NOT reconstruct — their calls are stripped FFmpeg the
