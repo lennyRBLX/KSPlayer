@@ -287,6 +287,45 @@ open class KSAVPlayer {
         self.options = options
         // ⚑ UNRESOLVED → KSAVPlayer M2: currentItem observation (was `itemObservation` KVO → observer(playerItem:)) via observerCancellables
     }
+
+    // ── s106: KSAVPlayer members read from their own bodies ────────────────────────
+    // These are the class's OWN members, not MediaPlayerProtocol requirements (none of
+    // `ioContext`, `startRecord`, `stopRecord` or `nominalFrameRate(track:)` appears in that
+    // protocol), so they are declared in the class body where they take a vtable slot rather
+    // than in an extension where they would take none.
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.ioContext.getter:0x10002d9d4 result=mov-x0-0/ret]
+    /// The whole body is `mov x0, #0x0` / `ret` — it returns nil unconditionally.
+    /// The address is the image's 605-symbol ICF fold, so it carries nothing unique to this
+    /// property; the two instructions are still genuinely this getter's code. The
+    /// MetalRender.swift:26 note that also cites 0x10002d9d4 is another symbol at the same
+    /// folded address, NOT a second name for this one.
+    /// ⚑[tool=export_trie_oracle ref=0x10002d9d4 result=ICF-FOLD-605-symbols]
+    public var ioContext: AbstractAVIOContext? {
+        nil
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.startRecord(url:):0x10000e52c result=single-ret]
+    /// The body IS 0x10000e52c, whose only instruction is `ret`. Empty, not unimplemented —
+    /// this is the empty-body fold, distinct from the deleted-method stub at 0x10198eb18 which
+    /// would have carried `bl swift_deletedMethodError` / `brk`.
+    public func startRecord(url _: URL) {}
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.stopRecord():0x10000e52c result=single-ret]
+    /// Same empty-body fold as `startRecord` above.
+    public func stopRecord() {}
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.nominalFrameRate(track:):0x1019a5128 result=12-instr]
+    /// `bl swift_getObjectType` on the incoming track to get its Self metadata, then
+    /// `ldr x8,[x19,#0x20]` — word 4 of the track's MediaPlayerTrack witness table, i.e.
+    /// requirement 3 — and calls it with self in x20, metadata in x0 and the table in x1.
+    /// Requirement 3 is DECODED, not counted: FFmpegAssetTrack's table at 0x1041d78b8 gives
+    /// req3 = 0x101a1f5bc, which the trie names `FFmpegAssetTrack.nominalFrameRate.getter`.
+    /// ⚑[tool=bind_oracle ref=__got:0x104112f08 result=_swift_getObjectType]
+    /// ⚑[tool=decode_witness_table ref=FFmpegAssetTrack:MediaPlayerTrack@0x1041d78b8 result=req3-nominalFrameRate]
+    public func nominalFrameRate(track: some MediaPlayerTrack) -> Float {
+        track.nominalFrameRate
+    }
 }
 
 extension KSAVPlayer {
@@ -627,7 +666,12 @@ extension KSAVPlayer: @preconcurrency ConstantSubtitleDataSource {
     // conformers (_swift_getObjectType + _swift_conformsToProtocol per element). Return element PROVEN `[any SubtitleInfo]`,
     // NOT rippled to [URLSubtitleInfo] (P55/P60, opposite of the Search/URL siblings): each element is stored as a 2-word
     // class-existential {object@+0x20, witnessTable@+0x28} at stride 0x10 (FUN_1019ab830) — boxing PRESENT ⇒ existential.
-    public func searchSubtitle() async throws -> [any SubtitleInfo] {
+    // ⚑ s106 RENAME searchSubtitle() -> infos(). The §4 address enumeration found this body was
+    //   already reconstructed under the wrong name: the pin above resolves 0x1019ab818 and the
+    //   trie demangles it `KSPlayer.KSAVPlayer.infos() async throws -> [KSPlayer.SubtitleInfo]`.
+    //   Parameters, async/throws and return type all match, so only the name was wrong. The
+    //   requirement in ConstantSubtitleDataSource is renamed with it.
+    public func infos() async throws -> [any SubtitleInfo] {
         subtitleTracks.compactMap { $0 as? (any SubtitleInfo) }
     }
 }

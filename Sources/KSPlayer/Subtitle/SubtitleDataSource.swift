@@ -126,7 +126,18 @@ public protocol CacheSubtitleDataSource: URLSubtitleDataSource {
 public protocol ConstantSubtitleDataSource: SubtitleDataSource {
     // ⚑ 1 async method (§1 CORRECTED — method-bearing, NOT a marker; conformer KSAVPlayer, witness 0x1019aba18).
     //   return element → Task 6 witness-verify (sibling URLSubtitleDataSource PINNED [URLSubtitleInfo] s19; UNPROVEN here, P55/P23)
-    func searchSubtitle() async throws -> [any SubtitleInfo]
+    // ⚑ s106 RENAME searchSubtitle() -> infos(). The requirement was spelled `searchSubtitle()`
+    //   here, but the binary names BOTH implementations `infos()`:
+    //     KSPlayer.KSAVPlayer.infos() async throws -> [KSPlayer.SubtitleInfo]   @0x1019ab818
+    //     KSPlayer.KSMEPlayer.infos() async throws -> [KSPlayer.SubtitleInfo]
+    //   A witness must carry its requirement's name, so the REQUIREMENT is `infos()` too.
+    //   Signature is otherwise identical — zero parameters, async throws, same existential array
+    //   return — so this is a pure rename, not a signature change. The PARAMETERISED
+    //   `searchSubtitle` overloads on SearchSubtitleDataSource and URLSubtitleDataSource are
+    //   different requirements and keep their names; their own markers above confirm them from
+    //   the trie.
+    //   ⚑[tool=export_trie_oracle ref=KSAVPlayer.infos:0x1019ab818 result=infos()-not-searchSubtitle()]
+    func infos() async throws -> [any SubtitleInfo]
 }
 
 public extension KSOptions {
