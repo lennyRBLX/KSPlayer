@@ -1074,6 +1074,45 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         KSOptions.pictureInPictureType.play(layer: self)
     }
 
+    /// The trie address 0x1019d27a4 is a ONE-instruction thunk (`b 0x1019d5d38`); the body is the
+    /// 181 instructions there. ⚑[tool=function_extents ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=181-instr]
+    ///
+    /// Twelve statements, all of one shape and every piece of each one decoded:
+    ///   · classref 0x104410a18 is `MPRemoteCommandCenter`; the receiver comes from
+    ///     `_objc_opt_self` on it and then a `sharedCommandCenter` send, i.e. `.shared()`.
+    ///   · the twelve command selectors, IN THIS ORDER, are the twelve sends between them:
+    ///     play, pause, togglePlayPause, stop, nextTrack, previousTrack, changeRepeatMode,
+    ///     changePlaybackRate, skipForward, skipBackward, changePlaybackPosition,
+    ///     enableLanguageOption.
+    ///   · every `removeTarget:` passes `x2 = #0x0`. The argument is **nil**, not `self` — the
+    ///     swiftself register is never read anywhere in the body, so this method does not touch
+    ///     its own instance at all.
+    ///
+    /// ⚑ `.shared()` is re-sent for EVERY command rather than hoisted into a local, and that is
+    ///   read rather than styled: a `let center = …` would emit one `sharedCommandCenter` send,
+    ///   and the body emits twelve, one before each command getter.
+    /// ⚑[tool=bind_oracle ref=0x104410a18 result=_OBJC_CLASS_$_MPRemoteCommandCenter]
+    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=NO]
+    /// ⚑ ACCESS not independently proven: the trie name carries no private discriminator, so it is
+    ///   not `private`, and nothing distinguishes `internal` from `public` for a METHOD — the
+    ///   `vpMV` proof applies only to properties and `vtable_impl_oracle` proves access only on a
+    ///   `final` type or an actor, which this class is not. `internal` is the narrower of the two
+    ///   remaining spellings and is what a helper with no external call site needs.
+    func removeRemoteControllEvent() {
+        MPRemoteCommandCenter.shared().playCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().togglePlayPauseCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().stopCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().nextTrackCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().previousTrackCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().changeRepeatModeCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().changePlaybackRateCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().skipForwardCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().enableLanguageOptionCommand.removeTarget(nil)
+    }
+
     /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]
     /// The row's own body is `mov x0, x1` / `b 0x1019d6430` — it DROPS the controller argument and
     /// tail-calls an 85-instruction handler. That handler is one KSLog call, and every piece of it
