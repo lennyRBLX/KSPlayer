@@ -1309,3 +1309,23 @@ That is a type-standup unit of its own, and the 168-byte allocation is the size 
 
 Recording this because it changes the shape of the remaining queue: the blockers are not uniformly
 "the body is huge". At least one small body is gated on standing up an undeclared ACTOR.
+
+
+### §24h — the `FFmpegSubtitle` standup, sized by reading it
+Following §24g through: the init at 0x101a9f27c IS readable (absence from the trie blocks its NAME,
+not its body), and its name is derived the same way `KSPictureInPictureController.init(contentSource:)`
+was — it is the call taking the freshly `swift_allocObject`ed instance as swiftself.
+
+It is **409 instructions** (0x101a9f27c–0x101a9f8e0), and it opens with
+`__swift_instantiateConcreteTypeFromMangledName` + a dynamic-size alloca, i.e. the FFmpeg
+format-open path. So the standup is: an `actor` declaration, 8 fields (`$defaultActor`,
+`formatContext`, `decode`, `subtitleStreamIndex`, `preTime`, `startTime`, `endTime`, `parts`), a
+`KSSubtitleProtocol` conformance, and a 409-instruction throwing `init(url:)` whose calls are
+stripped-FFmpeg — P2 territory.
+
+`decode`'s field record is `b'\x01\x01\x01\xdc\xff'`, a symbolic ref that still needs resolving
+before that field can be typed; do NOT guess it from the name.
+
+That is a real unit with a known size, not an unknown. Landing `FFmpegSubtitleParse.parse`
+(46 instructions, body already read as `try FFmpegSubtitle(url: url)`) is its payoff, and the
+168-byte `swift_allocObject` is the layout check to match when the standup is done.
