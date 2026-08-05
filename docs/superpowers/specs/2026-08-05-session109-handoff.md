@@ -296,7 +296,53 @@ commit — a small string's discriminator is `0xA0|n` when it holds any non-ASCI
 `0xE0|n` when it is all-ASCII; device identifiers are ASCII, but any Chinese UI string in the
 same function is not.
 
-## 11. Not started, deliberately
+## 11. THE REFRAMING: "0 offset-globals" does NOT mean blocked — check for STATIC metadata first
+
+This is the most useful thing the session produced, and it invalidates part of §6's reasoning.
+
+I twice treated `recover_field_offsets --class X` returning **0 offset-globals** as evidence that a
+class needed expensive per-class derivation. That is wrong. That tool answers the
+`metadata_init=1` question — "which runtime offset globals can I name from accessors". A class or
+value type with **static** metadata has no offset globals *because its offsets are immediates*, and
+they can be read directly:
+
+    python3 scripts/field_offset_vector.py <Type> --module <Module>     # classes with static metadata
+    # and for a struct/enum, straight out of its static metadata symbol:
+    #   $s…VN  → word0 kind, word1 descriptor, then a UInt32 field-offset vector at +16
+
+That second route is what unblocked `SubtitlePart.change` (3 bodies in one row): reading
+`SubtitleTextInfo` @0x1041daee0 and `SubtitleImageInfo` @0x1041daca0 gave exact offsets, which is
+how +0x5a was proven to be `usesForcedPosition` and +0x80 `SubtitleImageInfo.styleRole` rather than
+counted off.
+
+**Classified so far** (`field_offset_vector <cls> --module KSPlayer` over the queue's owners):
+
+* **STATIC — offsets readable now:** `Anime4KPipeline` (0xe0), `AssImageParse` (0x10),
+  `DirectoryWatcher` (0x78), `DoviDisplayModel` (0x58), `FFmpegSubtitleParse` (0x10),
+  **`IOSVideoPlayerView` (0x330 — all 38+ fields named, `originalSuperView` 0xf0 …
+  `displayTitleLabel` 0x238)**.
+* **RUNTIME — genuinely need anchor recovery:** `AssIncrementImageRenderer`, `DynamicInfo`,
+  and `MetalPlayView` (§6 stands for those).
+* The PreLoadIOContext-module owners need `--module PreLoadIOContext`; the sweep timed out before
+  reaching them, so that classification is unfinished, not negative.
+
+So `DirectoryWatcher.watchModify`/`watchNew` (379/434) and `IOSVideoPlayerView.showPromptMessage`
+(152) / `updateVideMetaLabel` (233) are **large, not blocked**. Re-read §4–§9 with that in mind:
+the genuinely-gated set is smaller than this document first implied.
+
+**Two rows really are unrecoverable, and now confirmed by address.**
+`IOSVideoPlayerView.toggleBottomSlimProgress()` and `IOSVideoPlayerView.updateTitle(_:)` both
+resolve to **0x10198eb18**, the deleted-method fold whose four instructions end in a `brk` through
+`_swift_deletedMethodError`. Their names are in the trie and their code is gone, so no amount of
+work recovers a body. These are s108 §5's "two rows with no recoverable body"; they are these.
+
+**In progress, not finished:** `showPromptMessage` @0x101b0cfb8 is partially read — it allocates a
+24-byte box and `swift_weakInit`s self into it (`[weak self]`), builds a 40-byte context holding
+that box plus the `String` parameter's two words, and pairs it with the function pointer
+0x101b15e5c, a Double loaded from 0x10347b040 and a second thunk at 0x100004aec — i.e. a delayed
+closure. It was left unfinished rather than guessed at.
+
+## 12. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
