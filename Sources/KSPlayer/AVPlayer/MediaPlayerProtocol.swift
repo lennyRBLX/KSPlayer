@@ -368,8 +368,34 @@ public extension MediaPlayerProtocol {
     /// ⚑ There is NO branch on the dynamicRange result, and that is not a missing nil check: entry
     ///   4 is the (0,0) word pair, which IS `String?.none`. The optional chain is folded into the
     ///   table, so `?.description` returning nil for a nil range is the table lookup itself.
+    ///
+    /// ⚑ SPELLING CORRECTED once `dynamicRange` below was read. This body's whole prologue — the
+    ///   `AVMediaTypeVideo` search, the `[x26,#0x58]`/`tbnz` enabled test, the call to 0x1019de560
+    ///   — is byte-for-byte the sibling `dynamicRange` getter below, followed by the description
+    ///   table. So the source is the sibling call, not a re-spelled chain; writing the chain out
+    ///   longhand would compile to the same code but is not what is there. The two are
+    ///   indistinguishable from THIS body alone, which is why it took reading `dynamicRange` to
+    ///   settle it.
     var videoFormat: String? {
-        tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange?.description
+        dynamicRange?.description
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.dynamicRange.getter:0x1019e01dc result=94-instr]
+    /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot. Same track search
+    /// as `videoFormat` above: __got 0x104108740 (`AVMediaTypeVideo`) into the witness at
+    /// `[x2,#0x158]`, then the loop picks the first track whose `[x26,#0x58]` getter is true.
+    ///
+    /// The two exits are read, and they are what pin the return type's representation:
+    ///   · loop exhausted → release the array and `mov w0, #0x4`. `DynamicRange` has four cases
+    ///     (tags 0…3), so case index **4 is `Optional.none`** — this arm returns nil.
+    ///   · a hit → release the array and tail-call 0x1019de560, the track's own `dynamicRange`
+    ///     (trie: `…MediaPlayerTrackPAAE12dynamicRange…`), returning its value unchanged.
+    ///
+    /// ⚑ That `mov w0,#4` independently confirms the five-entry table decoded for `videoFormat`
+    ///   above, whose index 4 held the `(0,0)` word pair: two unrelated bodies agree that 4 is the
+    ///   nil inhabitant of `DynamicRange?`.
+    var dynamicRange: DynamicRange? {
+        tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange
     }
 
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.updateProgress(to:):0x1019e076c result=23-instr]
