@@ -1571,3 +1571,24 @@ String. That divergence no longer needs discovery, only the retype.
 
 `parse` itself stays blocked on two unnamed helpers (0x1019c46e0, 0x101aa0390) AND on that retype —
 but it is now the best-understood of the remaining rows.
+
+
+### §24r — the AssIncrementImageRenderer retype, sized; and a LIMITATION in helper_fingerprint
+Chasing §24q's payoff to its end. The binary init `AssIncrementImageRenderer.init(content: String)`
+@0x101a92b90 is **103 instructions, 7 calls, no named in-module callees**. The source declares
+`init(renderer: AssImageRenderer)` and marks it "⚑ init shape inferred", so the divergence is
+source-side inference against a binary fact — but retyping it means WRITING those 103 instructions,
+because `renderer` is a non-optional stored property the init must assign and the binary's parameter
+is a String, not that renderer. So the retype is a body read, not a signature edit.
+
+⚠️ **Limitation now documented IN the tool** (`helper_fingerprint.py`): its `__got` section pairs
+every tracked `adrp` page with every `ldr [reg,#off]` offset, so it OVER-REPORTS — a page from one
+site can combine with an offset from another and resolve to a real-looking symbol. On this init it
+suggested UIKit font APIs; that is a CANDIDATE, not a fact, and must be confirmed at the
+instruction. The metadata-accessor and `allocObject` sections do NOT share the flaw: they read a
+single `bl` target or an adjacent immediate pair. Comment added at the code so the next user cannot
+miss it.
+
+Chain to land `AssImageParse.parse`, in order: (1) read this 103-instruction init and retype
+`AssIncrementImageRenderer.init(content:)`; (2) name 0x1019c46e0 and 0x101aa0390; (3) `parse` then
+transcribes directly from §24q.
