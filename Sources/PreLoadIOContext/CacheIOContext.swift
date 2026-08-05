@@ -464,4 +464,48 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // UNRESOLVED → P8 (IO-completion): the remaining AbstractAVIOContext overrides (write/seek/close/
     //   fileSize) are not cleanly readable Foundation/Swift in the binary (devirt /
     //   FFmpeg-adjacent) → inherited from AbstractAVIOContext, NOT reconstructed. — P2
+
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.cacheExists(md5:in:):0x101b8e858 result=1-instr-thunk]
+    /// ⚑ THE TRIE ADDRESS IS A THUNK, not an empty body — `0x101b8e858` is a single
+    /// `b 0x101b95250`, and the real body is the 115 instructions there. Both this method and
+    /// `preloadCacheExists` below resolve to that ONE address: they are ICF-folded, i.e. byte-identical,
+    /// which is why they are written with identical bodies here. The difference between them is
+    /// supplied entirely by the caller's `in:` argument.
+    ///
+    /// Every step of the 115-instruction body is read, and every callee named from the bind table
+    /// or the selector table:
+    ///   · `NSTemporaryDirectory()` → bridged with `String._unconditionallyBridgeFromObjectiveC`
+    ///   · `URL(fileURLWithPath:)`  ⚑[tool=bind_oracle ref=0x103452308 result=Foundation.URL.init(fileURLWithPath:)]
+    ///   · `.appendingPathComponent(_:)` TWICE, and the ORDER is read from the registers, not
+    ///     assumed: at entry `md5` is (x0,x1) and `in` is (x2,x3); the first append is passed
+    ///     x25/x20 (the `in` pair) and the second the pair reloaded from `[x29,#-0x70]` (`md5`).
+    ///     So it is temp-dir → `in` → `md5`.
+    ///   · `.path` then `_bridgeToObjectiveC`, and two ObjC sends decoded from their selrefs:
+    ///     `defaultManager` and `fileExistsAtPath:isDirectory:`.
+    ///     ⚑[tool=decode_objc_selector ref=0x10440b498 result='fileExistsAtPath:isDirectory:']
+    ///
+    /// ⚑ The return is `exists && isDirectory`, not `exists`. `sturb wzr,[x29,#-0x59]` zeroes the
+    ///   out-parameter first, the send writes it, and `and w0, w20, w8` combines the call's result
+    ///   with that byte. Dropping the conjunct would invert the answer for a plain file.
+    public static func cacheExists(md5: String, in directory: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(directory)
+            .appendingPathComponent(md5)
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        return exists && isDirectory.boolValue
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.preloadCacheExists(md5:in:):0x101b8e858 result=ICF-folded-with-cacheExists]
+    /// Same address, same 115-instruction body as `cacheExists` above — ICF folds only
+    /// byte-identical functions, so this is not an inference from similar names. See that comment
+    /// for the full read; nothing here is derived from this symbol alone beyond its own signature.
+    public static func preloadCacheExists(md5: String, in directory: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(directory)
+            .appendingPathComponent(md5)
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        return exists && isDirectory.boolValue
+    }
 }
