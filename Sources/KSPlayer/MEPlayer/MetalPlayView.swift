@@ -55,6 +55,20 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
+    /// ⚑[tool=field_offset_vector ref=MetalPlayView.rotation result=index-3@0x1c]
+    /// Placed HERE, not appended: the binary's field-offset vector puts `rotation` at index 3
+    /// (offset 0x1c), between `fps` (2) and `pixelBuffer` (4), and stored-property order is part
+    /// of the layout rather than a style choice.
+    ///
+    /// It is a plain STORED property, not computed — its getter @0x101a5e8b4 is a
+    /// `swift_beginAccess` on `self + <offset global 0x1044ea8b0>` followed by a bare `ldrh w0`,
+    /// with a matching setter and modify coroutine. A computed property would show work here.
+    ///
+    /// `public` is PROVEN by its `vpMV` (property descriptor @0x10356b4e0), not inferred from the
+    /// enclosing class. The default is READ from its own `vpfi` @0x10002dab0 — `mov w0, #0` /
+    /// `ret` — so `= 0` is transcribed, not assumed to be the zero default.
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.rotation:0x10356b4e0 result=vpMV-public]
+    public var rotation: UInt16 = 0
     public private(set) var pixelBuffer: PixelBufferProtocol?
     public var options: KSOptions
     // Binary type is the NARROWER `VideoOutputRenderSourceDelegate?`; OutputRenderSourceDelegate
