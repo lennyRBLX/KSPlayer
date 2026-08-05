@@ -783,11 +783,33 @@ formatted Double and two carry unit suffixes.
 So **`"Resolution"` = `formatDescription.naturalSize.string`** — the chain is named end to end.
 The two NOT_IN_TRIE locals are the remaining unknowns on the value side.
 
-**What is NOT read, and must not be guessed:** which key pairs with which value. Six keys, six
-value expressions, and the body interleaves them — pairing them requires walking the dictionary
-inserts in order, not matching them up by plausibility. That is the whole remaining cost of this
-unit, and it is the step where a rushed read would invent exactly the kind of value this drive
-exists to avoid.
+**The pairing is now largely determined — by ORDER in the body, not by plausibility.** Each literal
+is located by its small-string constants, so the sequence is read rather than inferred. Note
+`0x6f43` is shared by "**Co**dec Format" and "**Co**lor Depth"; they are separated by the second
+`movk` (`0x6564` "de" vs `0x6f6c` "lo"), which is why a naive prefix match finds three sites for
+two keys.
+
+Materialisation order through the body (line numbers are into the 582-instruction dump):
+
+    L151 Codec Format · L263 Codec Format · L275 Title · L287 Resolution · L325 Title
+    L332 Frame Rate · L360 "%.2f" · L367 "FPS" · L373 Bitrate · L402 "Kbps"
+    L408 Color Depth · L453 Frame Rate · L482 "%.2f" · L489 "FPS" · L495 Bitrate · L525 "Kbps"
+
+Each key is followed by its own value pieces, which pins four of the six:
+
+* **Codec Format** = `mediaSubType.description` — `CMFormatDescriptionRef.mediaSubType.getter`
+  feeding `_CMFormatDescriptionFourCCConvertible.description.getter`.
+* **Resolution** = `formatDescription.naturalSize.string` (both getters named).
+* **Frame Rate** = `String(format: "%.2f", …)` then `String.append` of `" FPS"`.
+* **Bitrate**  = `String(format: "%.2f", …)` then `String.append` of `" Kbps"`.
+
+Frame Rate and Bitrate appear TWICE (L332/L373 and L453/L495), on either side of the Color Depth
+block — so there is a branch, and both arms emit those two keys.
+
+**What still must be read, not guessed:** the operands feeding the two `%.2f` calls, and the value
+expressions for **Title** and **Color Depth** (Title's key is materialised twice, at L275 and L325,
+which is itself unexplained). Those are register traces through the branch, and they are the last
+step of this unit.
 
 ## 20. Not started, deliberately
 
