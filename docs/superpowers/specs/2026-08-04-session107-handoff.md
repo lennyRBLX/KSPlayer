@@ -820,6 +820,32 @@ curiosity, not a systemic drain — the remaining 124 rows do have bodies.
 
 ## 2s. ⭐ THE SINGLE HIGHEST-LEVERAGE UNBLOCK: expose libavformat's `ffurl_*` in FFmpegKit's shim
 
+> ### s107: there is a SECOND, independent blocker — the gate cannot be satisfied either.
+>
+> The shim problem below is real, but fixing it alone is not enough. `recon_gate` BLOCKS any diff
+> naming an FFmpeg symbol without an `ffmpeg_name_oracle … result=CONFIRMED` marker, and for these
+> the oracle answers:
+>
+> ```
+> ffurl_seek / ffurl_read / ffurl_read_complete → "status": "UNKNOWN_SYM",
+>   "note": "candidate not an av_/ff_ symbol defined in the indexed libs"
+> ```
+>
+> They are FFmpeg **internal** symbols — not exported by the built libraries, so they are absent
+> from the fingerprint index the oracle matches against. That is not a misuse of the tool the way
+> the `--addr` vs `--candidate` mix-up in §2y was; confirm mode is being used correctly and the
+> answer is that the symbol is unknowable to it.
+>
+> So landing these four rows needs BOTH: the shim exposing the declarations (to compile) AND
+> either an index that covers FFmpeg-internal symbols or an explicit user-gated deferral (to
+> commit). Worth knowing before starting — the shim edit alone will not get a commit through.
+>
+> ⚑ The bodies themselves are read and cheap. `URLContextDownload.seek` @0x101b910f0 (24 instr) is
+>   `swift_beginAccess` on +0x18, `cbz` → `-1`, else the call with (ctx, offset, whence).
+>   `read` @0x101b91078 (30 instr) is the same guard, then a `ldrb w8,[x20,#0x21]` / `cmp #1`
+>   selecting between the two read entry points, and its nil path returns the literal
+>   `0xdfb9b0bb` = **AVERROR_EOF** (−541478725, the same value `KSPlayerError.eof` carries).
+
 This is one decision, it is the human's to make (it edits an external dependency), and it unblocks
 a whole cluster. **Do this before grinding more rows.**
 
