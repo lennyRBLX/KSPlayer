@@ -945,6 +945,35 @@ Remaining unnamed on this page — 0xe38/0xe50/0xe60/0xe78/0xe80/0xe88/0xed0/0xe
 walk to fields 4,5,6,10,11,13,23 plus one extra at entry 19; not needed for
 `subtitle(currentTime:playRatio:screenSize:)`, so not asserted here.
 
+### With those six named, `subtitle(currentTime:playRatio:screenSize:)` reads cleanly — STRUCTURE DONE
+
+@0x101ab3fec, 211 instr. Arguments: `d0` = currentTime, `d1` = playRatio, `d2`/`d3` = screenSize.
+It opens with an `isFinite` guard on `currentTime` (mask the sign bit, compare `0x7fefffffffffffff`,
+`b.gt` to the exit). Then, in order:
+
+```
+playRatio = playRatio                                   // str d9 through global 0x104c637e0
+if _screenSize != screenSize { _screenSize = screenSize }  // fcmp + fccmp on the @Published pair
+let t1 = firstSubtitleActor.map      { currentTime - $0.<+0x78 call> - subtitleDelay }   // else nil
+let t2 = secondarySubtitleActor.map  { currentTime - $0.<+0x78 call> - subtitleDelay }   // else nil
+subtitleSearchSequence += 1                              // add #1 through 0x1044eeea8
+latestPrimarySubtitleQueryTime   = t1                    // 0x1044eeeb0, value + tag byte
+latestSecondarySubtitleQueryTime = t2                    // 0x1044eeeb8, value + tag byte
+Task { … }                                               // see below
+```
+
+⚑ The nil arms are read, not inferred: when an actor is nil the code sets its tag register to **1**
+  and zeroes the Double (`movi.2d v13, #0`), and those same registers are what the two stores write
+  as `str d…` + `strb w…, [x, #8]` — the `Double?` payload/tag pair the six-global derivation
+  above already pinned.
+
+⛔ **Remaining: the trailing `Task`.** The body ends with `swift_allocObject(0x80, align 7)` filling
+  a 128-byte context — `firstSubtitleActor`, t1 and its tag, `screenSize`, `playRatio`, the bumped
+  sequence, `secondarySubtitleActor`, t2 and its tag, `self`, and the generation read from
+  0x1044eeea0 — then calls 0x101a03fd4 with `x3` = the metadata at 0x10356d330 and `x4` = that
+  context. Naming the closure's own function and reading its body is what is left before this can
+  be declared; the capture list above is the complete argument inventory for it.
+
 **Step 0 sizing, for the record.** `SubtitleModel.init(url:options:)` @0x101ab34a0 is **340 instr**,
 and the class exports **22 `vpfi`** symbols for its 24 field records — i.e. 22 of 24 fields carry a
 declaration default whose value the init writes. That is an unusually rich anchor set (compare
