@@ -13,10 +13,9 @@ STOP and report. Confirm each value by deriving it — do not quote the table ba
 if any disagrees.
 
 Expected: MEMBER_MISSING 76 · ACCESS 26 · NOT_IN_TRIE 23 · AMBIGUOUS_OVERLOAD 10 ·
-TYPE_DIVERGENCE 4; gate PASS 44 / ANOMALY 6 / FAIL 4; build 4/4. KSPlayer must be on `forward`
-with a CLEAN tree, its HEAD being the s110 handoff commit (`git log --oneline -1` should name
-`docs(recon): s110 handoff`) — the exact hash is deliberately not pinned here, since committing
-this file moves it.
+TYPE_DIVERGENCE 4; gate PASS 44 / ANOMALY 6 / FAIL 4; build 4/4. KSPlayer must be on branch `forward`
+with a CLEAN tree, its recent log showing the s110 docs commits. No hash is pinned — writing
+these files moves HEAD, so any hash here would be stale on arrival.
 
 Three verifications matter more than the counts:
 
