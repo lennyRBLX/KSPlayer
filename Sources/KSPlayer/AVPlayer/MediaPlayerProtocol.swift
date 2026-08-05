@@ -246,6 +246,110 @@ public extension MediaPlayerProtocol {
     var nominalFrameRate: Float {
         tracks(mediaType: .video).first { $0.isEnabled }?.nominalFrameRate ?? 0
     }
+
+    // ── s106: protocol-extension defaults, each read from its own body ─────────────
+    // These are NOT "signature only". Every one is a real default implementation in
+    // `(extension in KSPlayer):KSPlayer.MediaPlayerProtocol.*`, 528 instructions in total.
+    //
+    // The forwarding targets below were DECODED from the witness tables, never counted off
+    // declaration order. A protocol-extension body receives the conformance witness table in
+    // x1; word 1 of MediaPlayerProtocol's table is its inherited MediaPlayback table (that
+    // table's own address, 0x1041d40e8, is literally req0), and within a table requirement i
+    // sits at byte offset 8*(i+1). Names come from KSAVPlayer's conformance, whose
+    // implementations ARE in the trie:
+    //   MediaPlayback req0  0x1019a106c  duration.getter
+    //   MediaPlayback req4  0x1019a47e4  currentPlaybackTime.getter
+    //   MediaPlayback req11 0x1019ab808  seek(time:completion:)
+    //   MediaPlayback req14 0x1019aa34c  stop()            (the note at line 23 above agrees)
+    //   MediaPlayerProtocol req42 0x1019aad54  tracks(mediaType:)
+    //   MediaPlayerProtocol req43 0x1019aaf58  select(track:)
+    // ⚑[tool=decode_witness_table ref=KSAVPlayer:MediaPlayback@0x1041d40e8 result=15-requirements]
+    // ⚑[tool=decode_witness_table ref=KSAVPlayer:MediaPlayerProtocol@0x1041d3f78 result=45-requirements]
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.frameRate.getter:0x1019dffb4 result=1-instr]
+    /// A single `b 0x1019dfe30`, and the trie names that target
+    /// `MediaPlayerProtocol.nominalFrameRate.getter` — the extension member declared above.
+    var frameRate: Float {
+        nominalFrameRate
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.totalTime.getter:0x1019e06e4 result=3-instr]
+    /// `ldr x1,[x1,#0x8]` takes the inherited MediaPlayback table, `ldr x2,[x1,#0x8]` takes its
+    /// word 1 = req0 = `duration`, then tail-calls it.
+    var totalTime: TimeInterval {
+        duration
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.currentTime.getter:0x1019e06f0 result=3-instr]
+    /// Same shape at `#0x28` = word 5 = req4 = `currentPlaybackTime`.
+    var currentTime: TimeInterval {
+        currentPlaybackTime
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.remainingTime.getter:0x1019e06fc result=21-instr]
+    /// Calls req0 into d8, then req4, then `fsub d0, d8, d0`.
+    var remainingTime: TimeInterval {
+        duration - currentPlaybackTime
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.progress.getter:0x1019e0684 result=24-instr]
+    /// Calls req0 into d8; `movi.2d v0,#0` then `fcmp d8,#0.0` / `b.eq` returns 0 when the
+    /// duration is zero; otherwise calls req4 and `fdiv d0, d0, d8`.
+    var progress: CGFloat {
+        duration == 0 ? 0 : currentPlaybackTime / duration
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.updateProgress(to:):0x1019e076c result=23-instr]
+    /// `fmul d0, d8, d0` multiplies the incoming CGFloat by req0 (`duration`), then tail-calls
+    /// word 12 = req11 = `seek(time:completion:)`. The completion is passed as function pointer
+    /// 0x10000e52c with a null context — 0x10000e52c is the canonical ICF-folded empty body, so
+    /// the closure is empty.
+    func updateProgress(to progress: CGFloat) {
+        seek(time: progress * duration) { _ in }
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.shutdown():0x1019de8e4 result=3-instr]
+    /// Forwards to `#0x78` = word 15 = req14, which KSAVPlayer implements at 0x1019aa34c =
+    /// `stop()`.
+    func shutdown() {
+        stop()
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.audioTracks.getter:0x1019e01c0 result=7-instr]
+    /// Loads `__got 0x104108730`, which binds `_AVMediaTypeAudio`, and tail-calls `#0x158` =
+    /// word 43 = req42 = `tracks(mediaType:)`.
+    /// ⚑[tool=bind_oracle ref=__got:0x104108730 result=_AVMediaTypeAudio]
+    var audioTracks: [MediaPlayerTrack] {
+        tracks(mediaType: .audio)
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.set(audioTrack:):0x1019e0750 result=7-instr]
+    /// Pure argument shuffle into a tail-call of `#0x160` = word 44 = req43 = `select(track:)`.
+    func set(audioTrack: some MediaPlayerTrack) {
+        select(track: audioTrack)
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.checkShouldResume():0x10000e52c result=empty-ICF-fold]
+    /// The body IS 0x10000e52c, the canonical ICF-folded empty extension default — so the
+    /// default implementation is empty. This is the fold's documented meaning, not an
+    /// unresolved address.
+    func checkShouldResume() {}
+
+    /// ⚑ s106: the remaining FOUR defaults on this protocol are read but NOT yet transcribed —
+    /// `dynamicRange` @0x1019e01dc (94), `videoFormat` @0x1019e04f0 (101),
+    /// `audioFormat` @0x1019e0354 (103) and `subtitlesTracks` @0x1019dffb8 (130). They are left
+    /// out rather than guessed; each is a real body needing its own read.
+    /// ⚑[tool=member_missing_triage ref=MediaPlayerProtocol:4-of-15 result=deferred]
+
+    /// ⚑[tool=decode_string_literal ref=MediaPlayerProtocol.typeName.getter:0x1019dfd34 result='NSStringFromClass(Self.self)']
+    /// ⚠️ Transcribed as read, not as intended. The body materialises one 28-character literal
+    /// and returns it — `mov x0,#0x1c` / `movk x0,#0xd000,lsl #48` is the count-and-flags word
+    /// and x1 the biased pointer; there is no call to NSStringFromClass anywhere in the 7
+    /// instructions. Forward ships the EXPRESSION as a string. The decoder confirms the bias
+    /// (a wrong-bias read would yield 'ayerProtocol.swift…', the neighbouring #fileID literal).
+    var typeName: String {
+        "NSStringFromClass(Self.self)"
+    }
 }
 
 @MainActor
