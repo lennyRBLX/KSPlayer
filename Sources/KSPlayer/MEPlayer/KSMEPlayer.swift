@@ -631,7 +631,15 @@ public extension KSMEPlayer {
         playerItem.startRecord(url: url, mediaType: nil)
     }
 
-    func stoptRecord() {
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.stopRecord():0x101a44520 result=42-instr]
+    /// ⚑ RENAMED from `stoptRecord` — a typo that never existed in the binary. The trie carries
+    /// `KSPlayer.KSMEPlayer.stopRecord() -> ()` and has ZERO hits for `stoptRecord`, so the old
+    /// spelling was invented. One occurrence in the whole source, so the rename is self-contained.
+    ///
+    /// The forwarding body is confirmed by the binary rather than assumed: @0x101a44520 loads
+    /// `playerItem` (its own `vpWvd`, offset global 0x1044ea140) and then inlines
+    /// `MEPlayerItem.stopRecord()` — see that method, whose commit-1 stub this same read resolved.
+    func stopRecord() {
         playerItem.stopRecord()
     }
 }

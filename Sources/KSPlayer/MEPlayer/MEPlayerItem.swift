@@ -549,9 +549,31 @@ extension MEPlayerItem: MediaPlayback {
         //   and cancels `ioTask`. Deferred to the shutdown migration commit.
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.stopRecord():0x101a44520 result=42-instr-inlines-this]
+    /// RESOLVES the commit-1 stub that stood here ("base wrote the trailer on the removed
+    /// `outputFormatCtx`. Forward routes recording through `remuxer` (field 8). Deferred to the
+    /// remuxer migration commit."). The remuxer migration is what this is.
+    ///
+    /// This body is not in the trie — it is INLINED into `KSMEPlayer.stopRecord()` @0x101a44520,
+    /// which is where it was read. That body: load `playerItem` (its own `vpWvd`, offset global
+    /// 0x1044ea140), then the field at global 0x1044ea260 on it — `cbz` to skip when nil — then
+    /// two calls, then `str xzr` back into the same field.
+    ///
+    /// Both calls are trie-named, not inferred:
+    ///   0x101a1b8d4 = `OutputStreamInfo.writeTrailer()` · 0x101a1bb5c = `OutputStreamInfo.stop()`
+    /// and each is dispatched on `[x21,#0x18]`, which this file already records as
+    /// `Remuxer.outputStreamInfo` (see the startRecord notes above). The `str xzr` is `= nil`.
+    /// ⚑[tool=export_trie_oracle ref=OutputStreamInfo.writeTrailer():0x101a1b8d4 result=trie-named]
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.playerItem:0x1044ea140 result=vpWvd-named]
+    ///
+    /// ⚑ Corroborated by `startRecord(url:mediaType:)` above, which opens with this exact
+    ///   writeTrailer/stop/nil triple — reconstructed in an earlier session from its own body.
     func stopRecord() {
-        // ⚑ UNRESOLVED (commit-1 stub): base wrote the trailer on the removed `outputFormatCtx`. Forward routes
-        //   recording through `remuxer` (field 8). Deferred to the remuxer migration commit.
+        if let remuxer {
+            remuxer.outputStreamInfo.writeTrailer()
+            remuxer.outputStreamInfo.stop()
+        }
+        remuxer = nil
     }
 
     public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
