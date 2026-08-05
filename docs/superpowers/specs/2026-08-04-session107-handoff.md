@@ -974,6 +974,15 @@ Task { … }                                               // see below
   context. Naming the closure's own function and reading its body is what is left before this can
   be declared; the capture list above is the complete argument inventory for it.
 
+  ⚑ **The closure function is NOT in the context, and not in the trie.** The 128-byte block holds
+    only captures — `+0x10`/`+0x18` are zeroed, `+0x20` onward are the values listed above — with
+    no function pointer anywhere in it. `SubtitleModel` exports no closure symbol either (searched
+    for `U_` / `yYa` forms). And 0x101a03fd4 is itself a **shared 163-instruction generic helper**
+    that begins by instantiating a type from the mangled name at 0x103566c60 and sizing it from its
+    value witness — i.e. it dispatches through the context's TYPE, not through a passed function.
+    So recovering the `Task { … }` body means going through the async-runtime layer rather than
+    following a call. Budget that as its own unit; it is not a continuation of this read.
+
 **Step 0 sizing, for the record.** `SubtitleModel.init(url:options:)` @0x101ab34a0 is **340 instr**,
 and the class exports **22 `vpfi`** symbols for its 24 field records — i.e. 22 of 24 fields carry a
 declaration default whose value the init writes. That is an unusually rich anchor set (compare
