@@ -396,7 +396,55 @@ from this paragraph: which `IOSVideoPlayerView` field holds the prompt view, eve
 constant, the animation duration, and the `afterDelay:` value plus the selector it performs. Those
 are immediates and offsets in the body — all readable, none of them guessed here.
 
-## 12. Not started, deliberately
+## 12. THE BIG ONE: a runtime offset global's STATIC VALUE names the field. §6 is broken open.
+
+§6 says MetalPlayView's five private offset globals cannot be named without anchor recovery, and
+records the positional mapping as refuted. **The refutation stands but the conclusion was wrong** —
+there is a third route, and it is cheap and deterministic.
+
+An offset global for a `metadata_init=1` class is patched at runtime, but it is **not empty in the
+image**. It carries the compile-time offset as its static initialiser, and that value is enough to
+name it, because Swift lays stored properties out in declaration order with strictly increasing
+offsets. So: read the global's stored word, sort the class's globals by value, and zip against the
+field-record order from `fieldrec`.
+
+Read a global's static value with the same helper `fieldrec` already uses:
+
+    import fieldrec; struct.unpack_from('<Q', img, fieldrec.va2off(<global_va>))[0]
+
+**Validated twice, on independently-known answers, before being used.**
+
+*IOSVideoPlayerView* — 0x1044f0ea8 stores 0x260, and the static field-offset vector puts `title`
+(idx 41) at 0x260. `recover_field_offsets` independently names that same global `title` off its
+accessor. Two routes, one answer. That is what let me name **0x1044f1000 → 0x2a0 → `promptLabel`**,
+the field `showPromptMessage`'s closure tears down and rebuilds — a field with no accessor, no
+`vpWvd`, and no trie entry.
+
+*MetalPlayView* — the five globals `recover_field_offsets` already names carry
+rotation 0x1c / pixelBuffer 0x20 / options 0x30 / renderSource 0x38 / drawable 0x48, which pins the
+value↔index zip. It then predicts the five globals §6 called unnameable, and every prediction is
+confirmed by the LOAD WIDTH at its use site in `enterBackground` — a discrimination the mapping
+could not have faked:
+
+    0x1044ea8f8 = 0x82 → isBackground (10)                   `strb` 1  — and the method is enterBackground
+    0x1044ea928 = 0xa8 → renderUseDispatchSourceTimer (14)   `ldrb`
+    0x1044ea8d8 = 0x08 → isPaused (0)                        `ldrb`
+    0x1044ea908 = 0xa0 → backgroundTimer (13)                `ldr x` (object)
+    0x1044ea8e8 = 0x18 → fps (2)                             `ldr s0` + `fcvt d0,s0` — a 32-bit FLOAT
+
+Three Bools load as bytes, the Float loads as a single-precision register, the timer loads as a
+word. The dense-index mapping §6 refuted got `0x1044ea8f8` wrong; this one gets it right and says
+`isBackground`, in a method named `enterBackground`.
+
+**Status and caution.** The value→field step is *read*; the ascending-order↔declaration-order step
+is an *inference*, justified by Swift's layout rule and corroborated five ways here and twice on
+IOSVideoPlayerView. Before leaning on it across the ~74 rows §6 assigned to "per-class field
+derivation", it should be a **tool with a golden** anchored on the known answers above
+(MEMORY rule 11), not a hand method. But the blocker itself is gone: MetalPlayView's
+`enterBackground` / `enterForeground` / `layoutSubviews` are now field-complete, and so is the rest
+of that class of row.
+
+## 13. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
