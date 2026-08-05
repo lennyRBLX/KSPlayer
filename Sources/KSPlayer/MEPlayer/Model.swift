@@ -127,6 +127,27 @@ public extension KSOptions {
     nonisolated(unsafe) static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
     nonisolated(unsafe) static var yadifMode = 1
     nonisolated(unsafe) static var deInterlaceAddIdet = false
+    /// ⚑[tool=llvm-objdump ref=KSOptions.colorSpace2020HLG.getter:0x1019c1058 result=4-instr]
+    /// The whole body loads `__got 0x104109060`, dereferences it and tail-calls the
+    /// CGColorSpace creator — no branch, no availability check.
+    /// ⚑[tool=bind_oracle ref=__got:0x104109060 result=_kCGColorSpaceITUR_2100_HLG]
+    /// ⚑[tool=bind_oracle ref=__got:0x104108d50 result=_CGColorSpaceCreateWithName]
+    /// ⚠️ The NAME says 2020 and the constant is 2100. Transcribed as read — that mismatch is
+    /// Forward's, and `colorSpace(ycbcrMatrix:transferFunction:)` below picks `itur_2100_HLG`
+    /// for the 2020 matrix too, so it is consistent rather than a decode error.
+    /// Written WITHOUT the `#available` guard the neighbouring code uses: these four
+    /// instructions contain no version check, so the guard would be source the binary refutes.
+    static var colorSpace2020HLG: CGColorSpace? {
+        CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSOptions.colorSpace2020PQ.getter:0x1019c1048 result=4-instr]
+    /// Identical shape to `colorSpace2020HLG`, through the adjacent got slot.
+    /// ⚑[tool=bind_oracle ref=__got:0x104109068 result=_kCGColorSpaceITUR_2100_PQ]
+    static var colorSpace2020PQ: CGColorSpace? {
+        CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+    }
+
     static func colorSpace(ycbcrMatrix: CFString?, transferFunction: CFString?) -> CGColorSpace? {
         switch ycbcrMatrix {
         case kCVImageBufferYCbCrMatrix_ITU_R_709_2:
