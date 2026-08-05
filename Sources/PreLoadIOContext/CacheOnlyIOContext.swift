@@ -68,7 +68,86 @@ public class CacheOnlyIOContext: AbstractAVIOContext {
         super.init(bufferSize: bufferSize)
     }
 
-    // UNRESOLVED: read(buffer:size:) / write(buffer:size:) / seek(offset:whence:)
-    //   overrides are devirtualized in the binary (no readable body) — inherited
-    //   from AbstractAVIOContext, NOT reconstructed. — P2
+    // ⚠️ s107 CORRECTION. The note here said seek(offset:whence:) was "devirtualized in the
+    //   binary (no readable body)". That is REFUTED: it has a 40-instruction body at
+    //   0x101b96820, and fileSize() has a 19-instruction one at 0x101b968c0. Both are
+    //   reconstructed below. Only read(buffer:size:) (0x101b95e68, 622 instr) and
+    //   write(buffer:size:) remain unreconstructed here.
+    //   ⚑ They were unreachable until s107 because `field_offset_vector.py` REFUSED this whole
+    //     module: it built the literal `$s16PreLoadIOContext18CacheOnlyIOContextCN`, while the
+    //     binary exports the substitution-compressed `$s16PreLoadIOContext09CacheOnlyC0CN`, and
+    //     answered "no exported metadata symbol ... refusing to infer offsets" — which reads as
+    //     "this class has no field-offset vector". With that fixed the vector reads cleanly
+    //     (FieldOffsetVectorOffset=23 words, InstanceSize 0x70) and every offset below is READ.
+
+    /// ⚑[tool=export_trie_oracle ref=PreLoadIOContext.CacheOnlyIOContext.entryList.getter:0x101b95e48 result=8-instr]
+    /// The whole body is `ldp x8, x20, [x20, #0x18]` / `blr x8` — load the closure pair
+    /// {function, context} from +0x18 and call it. `field_offset_vector` puts
+    /// `entryListProvider` at +0x18, so this is a plain forward with no null test.
+    /// ⚑ The `ldp` loads BOTH words and calls through them with NO `cbz`, which is the same
+    ///   evidence already recorded above for `endProvider`/`eofProvider`: the binary treats these
+    ///   as non-Optional. They stay `?` here only because the declarations already do.
+    /// ⚑ NOT an override, and the binary says so rather than the compiler: the getter carries its
+    ///   own method descriptor (`...9entryListSayAA0D9FileEntryCGvgTq`), i.e. a NEW overridable
+    ///   vtable slot. `AbstractAVIOContext` declares no `entryList` — the same-named property on
+    ///   `CacheIOContext` is a sibling, not a superclass member. `public` from the property
+    ///   descriptor `...vpMV`.
+    public var entryList: [CacheFileEntry] {
+        entryListProvider!()
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=PreLoadIOContext.CacheOnlyIOContext.fileSize():0x101b968c0 result=19-instr]
+    /// Reads `endProvider` (+0x28) then `eofProvider` (+0x38), in that order, and BOTH are called
+    /// before either result is used.
+    ///   · `tbz w0, #0` on the eof result branches to `mov x19, #-1` — so a non-EOF stream
+    ///     reports -1, matching the base class's default.
+    ///   · `tbnz x19, #0x3f` → `brk` is the `UInt64` → `Int64` conversion trap, NOT a sign test
+    ///     on a signed value. It is the same guard that fixed `endProvider`'s return type as
+    ///     `UInt64` (see its note above): an `Int64` closure would need no such check.
+    override public func fileSize() -> Int64 {
+        let end = endProvider!()
+        guard eofProvider!() else {
+            return -1
+        }
+        return Int64(end)
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=PreLoadIOContext.CacheOnlyIOContext.seek(offset:whence:):0x101b96820 result=40-instr]
+    /// ⚑ BOTH providers are called EAGERLY, before the `whence` dispatch, so they run even on the
+    ///   `.set` path that uses neither result. That is not something the optimizer could have
+    ///   hoisted — these are closure calls — so the source really does call them first, and the
+    ///   `let`s below preserve it.
+    /// The dispatch is `cbz w22` (0 = SEEK_SET) / `cmp #2` (SEEK_END) / `cmp #1` (SEEK_CUR), with
+    /// every other value falling into the shared `mov x19, #-1`.
+    ///   · SEEK_CUR adds `logicalPos` (+0x48); SEEK_END adds the `endProvider` result, but only
+    ///     after `tbz w0, #0` confirms EOF — otherwise -1.
+    ///   · Each add is `adds` + `b.vs`/`b.vc` to a `brk`: checked arithmetic, not wrapping.
+    ///   · The final `tbnz x19, #0x3f` rejects a negative target with -1 BEFORE the store, which
+    ///     is why writing back into the `UInt64` `logicalPos` needs no further guard.
+    override public func seek(offset: Int64, whence: Int32) -> Int64 {
+        let end = endProvider!()
+        let isEOF = eofProvider!()
+        let target: Int64
+        switch whence {
+        case SEEK_SET:
+            target = offset
+        case SEEK_CUR:
+            target = Int64(logicalPos) + offset
+        case SEEK_END:
+            guard isEOF else {
+                return -1
+            }
+            target = Int64(end) + offset
+        default:
+            return -1
+        }
+        guard target >= 0 else {
+            return -1
+        }
+        logicalPos = UInt64(target)
+        return target
+    }
+
+    // UNRESOLVED: read(buffer:size:) / write(buffer:size:) — read is 622 instructions
+    //   @0x101b95e68 and is its own unit; write has no distinct body. — P2
 }
