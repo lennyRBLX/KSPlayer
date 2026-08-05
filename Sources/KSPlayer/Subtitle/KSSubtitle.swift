@@ -359,9 +359,9 @@ open class SubtitleModel: ObservableObject {
                     let source = selectedSubtitleInfo?.subtitleLanguage
                     let target = Locale.current.language
                     guard source != target else { return }
-                    updateTranslationSessionConfiguration(.init(source: source, target: target))
+                    translationSessionConf = .init(source: source, target: target)
                 } else {
-                    updateTranslationSessionConfiguration(nil)
+                    translationSessionConf = nil
                 }
             }
             #endif
@@ -447,14 +447,14 @@ open class SubtitleModel: ObservableObject {
                     let source = info.subtitleLanguage
                     let target = Locale.current.language
                     if source != target {
-                        updateTranslationSessionConfiguration(.init(source: source, target: target))
+                        translationSessionConf = .init(source: source, target: target)
                     }
                 }
                 #endif
             } else {
                 #if canImport(Translation) && !os(tvOS) && !os(watchOS)
                 if #available(iOS 18, macOS 15, *) {
-                    updateTranslationSessionConfiguration(nil)   // FUN_101ab2540 nil path
+                    translationSessionConf = nil   // FUN_101ab2540 nil path
                 }
                 #endif
                 firstSubtitleActor = nil
@@ -570,11 +570,33 @@ open class SubtitleModel: ObservableObject {
     // `_translationSession` (self+0x38) when the new config is nil/empty (forcing a rebuild). The binary reads NO
     // prior value: the clear fires on a value-witness `==` of the new config against an empty one, NOT new-vs-old.
     // ⚑ exact `==` spelling M2-verify (reconstructed to the proven behavior: clear-when-nil).
+    /// ⚑[tool=export_trie_oracle ref=SubtitleModel.translationSessionConf.getter:0x101aafec0 result=56-instr]
+    /// The binary carries this as a COMPUTED PROPERTY — getter @0x101aafec0, setter @0x101aaffa0,
+    /// modify, and a `vpMV` — not as a named method. This reconstruction previously spelled the
+    /// setter as `private func updateTranslationSessionConfiguration(_:)`, which has no symbol in
+    /// the trie; its four call sites are property assignments in the original and are rewritten
+    /// as such.
+    ///
+    /// Getter, read: `swift_beginAccess` on `self+0x18` (`_translationSessionConf`), an outlined
+    /// copy of the `Any?` to a stack slot, `cbz` on the type word for the nil arm, then a
+    /// `TranslationSession.Configuration` metadata fetch and a dynamic cast with **flags 6**
+    /// (conditional + take) — i.e. `as?`, not `as!`. That matches this file's own line 358, which
+    /// already spells the same cast.
+    ///
+    /// Setter: unchanged behaviour, and the prior note stands — the binary reads NO prior value;
+    /// the `_translationSession` clear fires on the NEW config being nil, not on new-vs-old.
+    /// `public` is PROVEN by the `vpMV` above, not chosen — pin_sweep's ACCESS check flags an
+    /// internal spelling here immediately.
     @available(iOS 18, macOS 15, *)
-    private func updateTranslationSessionConfiguration(_ configuration: TranslationSession.Configuration?) {
-        _translationSessionConf = configuration
-        if configuration == nil {
-            _translationSession = nil
+    public var translationSessionConf: TranslationSession.Configuration? {
+        get {
+            _translationSessionConf as? TranslationSession.Configuration
+        }
+        set {
+            _translationSessionConf = newValue
+            if newValue == nil {
+                _translationSession = nil
+            }
         }
     }
     #endif
