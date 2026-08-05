@@ -489,7 +489,71 @@ derivation", it should be a **tool with a golden** anchored on the known answers
 `enterBackground` / `enterForeground` / `layoutSubviews` are now field-complete, and so is the rest
 of that class of row.
 
-## 13. Not started, deliberately
+## 13. `showPromptMessage` is READ IN FULL. It is blocked on `hidePrompt`, a one-member chain.
+
+Every constant, offset and selector below is read. The body is:
+
+    func showPromptMessage(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            promptLabel.removeFromSuperview()
+            promptLabel.text = message
+            addSubview(promptLabel)
+            promptLabel.translatesAutoresizingMaskIntoConstraints = false
+            bringSubviewToFront(promptLabel)
+            NSLayoutConstraint.activate([
+                promptLabel.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 50),
+                promptLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+                promptLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.8),
+                promptLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            ])
+            promptLabel.alpha = 0
+            UIView.animate(withDuration: 0.3) {
+                promptLabel.transform = .identity
+                promptLabel.alpha = 1
+            }
+            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hidePrompt), object: nil)
+            perform(#selector(hidePrompt), with: nil, afterDelay: 5)
+        }
+    }
+
+Provenance for each non-obvious piece:
+
+* the field is `promptLabel` — `name_global_by_value("IOSVideoPlayerView", 0x1044f1000)` → `promptLabel`,
+  and the field record gives `So7UILabelC`, a NON-optional `UILabel` already declared at
+  IOSVideoPlayerView.swift:129. No optional-chaining anywhere, consistent with that.
+* constants are inline immediates: `0x4049000000000000` = **50.0**, `0x4042000000000000` = **36.0**,
+  `[0x10347fea8]` = **0.8**, `0x3fd3333333333333` = **0.3**, `movi.2d v0,#0` = alpha **0**,
+  `fmov d0,#1.0` = alpha **1**, `fmov d0,#5.0` = **afterDelay 5**.
+* `NSLayoutConstraint` is `__objc_classrefs` 0x104410670; `UIView` 0x1044105e8; `NSObject` 0x104410758.
+* the four constraints come from selectors `constraintEqualToAnchor:constant:`,
+  `constraintEqualToAnchor:`, `constraintLessThanOrEqualToAnchor:multiplier:` and
+  `constraintGreaterThanOrEqualToConstant:` in that store order (+0x20/+0x28/+0x30/+0x38 of a
+  64-byte 4-element array bridged by `Array._bridgeToObjectiveC`).
+* the animation block @0x101b0d630 sets `setTransform:` with an identity matrix — the stack image is
+  `(1,0),(0,1),(0,0)` — then `setAlpha: 1.0`. Its own `@MainActor` assertion carries line **1278**.
+* the outer closure's assertion carries line **1261**, both against
+  `KSPlayer/IOSVideoPlayerView.swift` (literal @0x103d3aad0, 33 bytes).
+* ⚑ nothing sets a non-identity transform before the animation, so the `.identity` is a RESET —
+  consistent with `hidePrompt` leaving a transform behind.
+
+**The blocker, and it is small.** `#selector(hidePrompt)` needs `hidePrompt` to exist, and it is
+not in source. It is not a MEMBER_MISSING row either, because it is a private `@objc` method whose
+Swift symbol is unexported — `$s8KSPlayer18IOSVideoPlayerViewC10hidePromptyyF` is NOT IN TRIE, and
+`pin_sweep` works off the trie. **`objc_trampoline_oracle --class IOSVideoPlayerView` finds it
+anyway**: selector `hidePrompt`, line 1289, imp 0x101b0d9c8 — a 4-instruction `@objc` shim that
+passes the file/line context and branches to the shared MainActor-asserting trampoline
+0x101b0b460. The real body is **0x101b0d70c, extent 0x101b0d70c-0x101b0d84c, 80 instr**: it builds
+TWO blocks and calls a `UIView.animate(withDuration:animations:completion:)` variant, so it is its
+own small unit (body + 2 closures).
+
+Land `hidePrompt` first; `showPromptMessage` is then a paste of the block above.
+
+**Reusable lesson:** a private `@objc` method is invisible to `pin_sweep` and to the export trie,
+but `objc_trampoline_oracle --class <X>` lists it with its selector, line and imp. Reach for that
+whenever a `#selector(...)` or `performSelector:` names something the trie denies.
+
+## 14. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
