@@ -742,6 +742,37 @@ extension KSPlayerLayer {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.reachEndOfStream(player:):0x1019ce750 result=32-instr]
+    /// The generic `player` parameter is UNUSED — the body never touches the generic triple, only
+    /// `self` and the delegate — so it is spelled `_`.
+    ///
+    ///   · offset global 0x1044e6138 is `delegate`'s own `vpWvd`
+    ///     (`…0A5LayerC8delegateAA0aB8Delegate_pSgvpWvd`), read by name, not inferred.
+    ///   · `bl 0x10345d180` → __got 0x1041130e8 → `swift_unknownObjectWeakLoadStrong`, and the
+    ///     `cbz x0` on its result is the `?.` — this is the weak delegate load, which is why the
+    ///     whole call is skipped when the delegate has been released.
+    ///     ⚑[tool=bind_oracle ref=__got:0x1041130e8 result=swift_unknownObjectWeakLoadStrong]
+    ///   · `ldr x19,[x19,#0x8]` takes the existential's witness table, then `ldr x8,[x19,#0x30]`
+    ///     selects the witness and `blr` passes `self` with the loaded delegate as swiftself.
+    ///
+    /// ⚑ THE WITNESS INDEX IS SAFE HERE, and it is worth saying why, because the same move is NOT
+    ///   safe on MediaPlayerProtocol. `decode_witness_table` reads witness *i* at `wt + 8 + 8i`, so
+    ///   `#0x30` is index 5. KSPlayerLayerDelegate's requirement kinds are `FFFFFFFFFFF` — ELEVEN
+    ///   requirements, every one a Method, no properties to expand into accessor triples and no
+    ///   BaseProtocol slot — and the source declares exactly eleven methods. The counts and kinds
+    ///   agree exactly, so index 5 is unambiguously the sixth, `playerDidEOF(layer:)`, which is
+    ///   also what an end-of-stream notification should call.
+    ///   ⚑[tool=protocol_signature ref=KSPlayerLayerDelegate:0x1039ecebc result=11-methods-exact-match]
+    ///
+    /// ⚑ NOT a MediaPlayerDelegate conformance method, despite the shape: that protocol does not
+    ///   declare it. It carries its own `…Tq` method descriptor, i.e. a new overridable slot on
+    ///   this class. (Separately, MediaPlayerDelegate's descriptor reports EIGHT requirements
+    ///   against the source's five — three unrecovered methods — but nothing shows this is one of
+    ///   them, so it was not added there.)
+    public func reachEndOfStream(player _: some MediaPlayerProtocol) {
+        delegate?.playerDidEOF(layer: self)
+    }
+
     public func registerRemoteControllEvent() {
         let remoteCommand = MPRemoteCommandCenter.shared()
         remoteCommand.playCommand.addTarget { [weak self] _ in
