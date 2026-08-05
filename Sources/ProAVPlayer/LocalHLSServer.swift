@@ -176,7 +176,22 @@ class LocalHLSServer {
     /// recreate the listener immediately. `recreateListener` is the shared [weak self] rebuild closure
     /// (FUN_101b70bb0): it stands up a fresh NWListener bound to the same port (try? — the throw is
     /// swallowed), cancels the old one, and re-arms startListen() 0.01s later (FUN_101b70330).
-    private func openKeepAliveConnection() {   // ⚑ semantic placeholder name (UNRESOLVED)
+    // ⚑ s106 RENAME `openKeepAliveConnection()` → `ping()`, and the name was never UNRESOLVED.
+    //   The note above reasoned about the nearby string "probeListener(block:)", correctly ruled it
+    //   out on ABI grounds, and concluded no name was recoverable — while the pin on the line
+    //   directly above it already carried the answer:
+    //     ⚑[tool=resolve_fun_pins ref=FUN_101b70b64:0x101b70b64 result=RESOLVES_UNIQUELY]
+    //       = ProAVPlayer.LocalHLSServer.ping() -> ()
+    //   A trie name is READ. The absence of a `#function` literal only means
+    //   `recover_swift_function_name` has nothing to work with; it says nothing about the trie.
+    //   Arity 0 and Void return already matched, so this is a rename, not a signature change, and
+    //   there are no call sites.
+    // ⚑ `private` DROPPED, also read: a private member carries a per-file discriminator in its
+    //   mangled name, and this one demangles clean as `LocalHLSServer.ping() -> ()` with none. That
+    //   rules out private. It does not prove public, so the declaration is left unmarked
+    //   (internal) rather than promoted.
+    //   ⚑[tool=export_trie_oracle ref=LocalHLSServer.ping:0x101b70b64 result=no-discriminator-not-private]
+    func ping() {
         // Shared listener-rebuild — a [weak self] CLOSURE (binary FUN_101b70bb0 weak-loads self inside;
         // NOT a method — corrects the earlier "private recreateListener() method" plan). try? swallows the
         // NWListener throw (disasm: mov x21,#0; bl _init; cbz x21 @0x101b70cac → skip on error), then cancel
