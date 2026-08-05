@@ -11,6 +11,9 @@ import DisplayCriteria
 #endif
 import Metal
 import OSLog
+// ⚑ s106: required by the five `SwiftUI.Color` statics below. The import is implied by types read
+// from the binary — each of those storage globals demangles to `… : SwiftUI.Color` — not chosen.
+import SwiftUI
 
 #if canImport(UIKit)
 import UIKit
@@ -948,6 +951,46 @@ public extension KSOptions {
     nonisolated(unsafe) static var textBackgroundColor: UIColor = .clear
     nonisolated(unsafe) static var textShadowColor: UIColor = .black
     nonisolated(unsafe) static var textStrokeColor: UIColor = .black
+    // ── s106, five SwiftUI.Color statics — and the correction of a known bad read ─────────────
+    // ⚠️ `trackColor` was recorded by an earlier session as `0.5`. It is not. Its once-init is
+    // six instructions: load a Color base from a __got, load the storage address, `fmov d0, #0.5`,
+    // and tail-call a shared helper. The 0.5 is the OPACITY ARGUMENT, never the value — reading
+    // the immediate as the result is exactly how that error happened.
+    //
+    // The shared tail @0x101ad658c makes it unambiguous: it `blr`s the base-Color getter passed in
+    // x1, moves the saved d0 into v0, calls `__got 0x104110580` and stores the result. That got
+    // binds `_$s7SwiftUI5ColorV7opacityyACSdF` = `SwiftUI.Color.opacity(Swift.Double) -> Color`.
+    //   ⚑[tool=bind_oracle ref=__got:0x104110580 result=SwiftUI.Color.opacity(Double)]
+    //
+    // Bases, each read from its own got rather than assumed from the group:
+    //   ⚑[tool=bind_oracle ref=__got:0x104110558 result=SwiftUI.Color.white]
+    //   ⚑[tool=bind_oracle ref=__got:0x104110550 result=SwiftUI.Color.green]
+    //   ⚑[tool=bind_oracle ref=__got:0x104110508 result=SwiftUI.Color.red]
+    // Opacities, read as doubles out of the image, not inferred:
+    //   0x10347fe88 = 0.9   (bufferColor, focusProgressColor)
+    //   0x10347fea8 = 0.8   (progressColor)
+    //   trackColor's 0.5 is an inline `fmov d0, #0.5`
+    //
+    // `thumbColor` is the odd one and is NOT given an opacity: its init calls stub 0x103455d70
+    // directly and stores the result, and that stub loads the same got 0x104110558 as
+    // `Color.white`. One call, no second argument, no shared tail.
+    //
+    // Types are read: each storage global demangles to `static KSPlayer.KSOptions.<name> :
+    // SwiftUI.Color`.
+    // ACCESS is read, and it differs from the four UIColor statics above. This extension is
+    // `public extension KSOptions`, so an unmarked member would be public — but none of these five
+    // carries a `vpMV`/`vpZMV` property descriptor, which is public-exclusive, and none carries a
+    // private discriminator either. That is `internal`, and it is written explicitly so the
+    // extension's default does not silently make them public. `textColor` above DOES carry a
+    // vpMV, which is why it is left unmarked. pin_sweep's ACCESS bucket caught this the moment
+    // the five became parser-visible.
+    // ⚑[tool=export_trie_oracle ref=KSOptions.bufferColor:access result=internal-no-vpMV]
+    // ⚑[tool=export_trie_oracle ref=KSOptions.textColor:access result=public-vpMV-present]
+    internal nonisolated(unsafe) static var bufferColor: Color = .white.opacity(0.9)
+    internal nonisolated(unsafe) static var focusProgressColor: Color = .red.opacity(0.9)
+    internal nonisolated(unsafe) static var progressColor: Color = .green.opacity(0.8)
+    internal nonisolated(unsafe) static var thumbColor: Color = .white
+    internal nonisolated(unsafe) static var trackColor: Color = .white.opacity(0.5)
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
