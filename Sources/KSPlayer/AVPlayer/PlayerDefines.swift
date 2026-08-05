@@ -714,16 +714,36 @@ open class AbstractAVIOContext {
 //   declared minimally. `any DownloadProtocol` is a 40-byte non-class-constrained existential
 //   regardless of requirement count, so CacheIOContext.download's field layout is faithful as-is.
 // ⚑[tool=conformance_walker ref=DownloadProtocol:0x1039edd38 result=8 reqs (2 vars + 4 methods), sole conformer=AbstractAVIOContext (witness table 0x1041d5330 validated), all 8 witnesses #function-unrecoverable → reqs deferred]
-// ⚑ s109: `close()` IS DECLARED, and it is the FIRST of the eight deferred requirements to be
-// named. Witness table 0x1041d5330 req7 (offset 0x40) is a thunk that dereferences the boxed
-// existential and dispatches `[metadata + 0xa0]`; `vtable_walk AbstractAVIOContext
-// --metadata-offset 0xa0` resolves that to slot 8, whose impl is 0x10000e52c — this image's
-// canonical ICF-folded EMPTY body. `AbstractAVIOContext.close()` is the one member of that class
-// declared with an empty body, so the slot and the requirement agree.
-// It is declared now because ReadCacheIOContext.close() calls it through this protocol.
-// ⚑[tool=vtable_walk ref=AbstractAVIOContext:metadata+0xa0 result=slot8-impl-0x10000e52c-empty]
-// ⚑[tool=decode_witness_table ref=AbstractAVIOContext:DownloadProtocol:0x1041d5330 result=req7-dispatches-slot8]
+// ⚑ s109: ALL EIGHT REQUIREMENTS ARE NOW NAMED, and the "deferred residue" note is discharged.
+// Witness table 0x1041d5330 has 8 entries and each was resolved by reading its thunk, never by
+// counting or by matching names:
+//   req0 @0x8  read of `[self+0x10]` as a 32-bit word under a (0,0) READ beginAccess
+//   req1 @0x10 store of a 32-bit word to `[self+0x10]` under a (1,0) MODIFY beginAccess
+//   req2 @0x18 the same slot under flags 0x21 (Modify|Tracking) with a coroutine continuation
+//        -> so +0x10 is a get/set/modify property. fieldrec gives this class exactly two fields,
+//           `readLimit` (flags=2, i.e. var) at +0x10 and `bufferSize` (flags=0, i.e. let) at +0x14.
+//   req3 @0x20 `ldr w0,[x8,#0x14]` with NO beginAccess at all — the missing exclusivity check is
+//        itself the evidence: a `let` needs none. That is `bufferSize`, get-only.
+//   req4 @0x28 dispatches metadata+0x80 -> vtable slot 4, impl 0x100137314
+//   req5 @0x30 dispatches metadata+0x90 -> vtable slot 6, impl 0x10000e52c
+//   req6 @0x38 dispatches metadata+0x98 -> vtable slot 7, impl 0x10047dae8
+//   req7 @0x40 dispatches metadata+0xa0 -> vtable slot 8, impl 0x10000e52c
+// The 11-slot vtable runs Getter/Setter/Modify (readLimit), Init, then the seven open methods in
+// this file's declaration order: read, write, seek, fileSize, close, nextAVOptions, addSub. So
+// slots 4/6/7/8 are read / seek / fileSize / close. Two impls corroborate that mapping rather than
+// merely fitting it: slots 6 and 8 share 0x10000e52c because `seek` returns its own `offset`
+// argument — already in x0, so a bare `ret` — and `close` is empty, and ICF folds only
+// byte-identical bodies; slot 7 is 0x10047dae8 on its own because `fileSize` returns −1.
+// NOTE what is NOT a requirement: `write` (slot 5), `nextAVOptions` (9) and `addSub` (10). The
+// protocol is 8 requirements, not "the class's methods".
+// ⚑[tool=decode_witness_table ref=AbstractAVIOContext:DownloadProtocol:0x1041d5330 result=8-requirements]
+// ⚑[tool=vtable_walk ref=AbstractAVIOContext:0x1039edc0c result=11-slots-mapped]
 public protocol DownloadProtocol {
+    var readLimit: Int32 { get set }
+    var bufferSize: Int32 { get }
+    func read(buffer: UnsafePointer<UInt8>?, size: Int32) -> Int32
+    func seek(offset: Int64, whence: Int32) -> Int64
+    func fileSize() -> Int64
     func close()
 }
 
