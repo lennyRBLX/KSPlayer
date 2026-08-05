@@ -489,6 +489,43 @@ not in the trie; the only evidence is one conformer's forwarding selectors.
   `26KSPictureInPictureProtocol` and `28KSPictureInPictureController`. Using the controller's 28
   for the protocol returns nothing, which reads exactly like "the symbol does not exist".
 
+## 2y. ⚠️ `ffmpeg_name_oracle --addr` ALONE IS ADVISORY — `--candidate` is the confirm mode
+
+I nearly took a **deferral** over this, which would have been wrong twice over.
+
+`--addr <a>` is SUGGEST mode. For `av_strerror` @0x10323bc74 it returns
+`"advisory": true` with **three** colliding candidates, because it matches on the
+`(instr, size)` fingerprint alone. I read that as "the oracle cannot confirm this symbol",
+concluded the commit gate was unsatisfiable, and started down the `--deferral` route.
+
+`--addr <a> --candidate <name>` is the CONFIRM mode, and it answers immediately:
+
+```
+"forward": [278, 1112],  "lib": [278, 1112, "avutil", "error.o"],
+"discriminator": {"status": "MATCH", "n_instr": 278},  "status": "CONFIRMED"
+```
+
+⚑ **The deferral would also have been an abuse of the hatch.** `commit_unit.sh`'s comment is
+  explicit that `--deferral` survives only for a **user-gated** case *where no faithful spelling
+  exists at all*. A spelling that exists but which I have not yet proven is not that — it is just
+  unfinished work. Read the tool's other mode before reaching for the escape.
+
+⚑ **The gate cannot tell a REJECTED name from an asserted one.** After `av_strerror` passed, the
+  gate blocked again on `ff_snow_pred_block` and `ff_vp9_inter_recon_16bpp` — the two candidates I
+  had named in a comment *only to say they were ruled out*. Any FFmpeg symbol in a diff is read as
+  a claim needing its own CONFIRMED marker. Describe rejected candidates, do not spell them; the
+  alternative is a false CONFIRMED, which is exactly what the gate exists to stop.
+
+⚑ Content corroboration is worth recording even when the fingerprint confirms: the callee loads a
+  table at 0x103958168 holding FFmpeg's `error_entries[]` strings ("Bitstream filter not found",
+  "Demuxer not found", "Not yet implemented in FFmpeg, patches welcome", "Unknown error
+  occurred"). Block-pixel routines touch no strings at all, and those entries map **1:1, in
+  order**, onto `KSPlayerError`'s 33 `static let` constants — an independent check on both.
+
+⚑ `KSPlayerError`'s symbols are ALSO invisible to a substring search: in module `KSPlayer` the type
+  mangles to `0A5Error`, so `"KSPlayerError"` matches **zero** of its 60+ symbols. Third instance
+  of §2h this session (after `CacheIOContext` and `KSPictureInPictureProtocol`).
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
