@@ -83,23 +83,25 @@ public actor DirectoryWatcher {
         source = nil                              // *(self+0x70) = 0; release old
     }
 
-    // MARK: slot 5 @0x101a04e78 — startWatching (self path) (379 instr) · name inferred
+    // MARK: slot 5 @0x101a04e78 — watchModify(fileURL:completion:) (379 instr) · name RECOVERED (s109)
 
-    /// Watches `url`'s own path. SPINE reconstructed faithfully; handler closure
-    /// internals are UNRESOLVED (see below).
+    /// Watches `fileURL`'s own path.
     ///
-    /// Signature recovered from the decompile param types: `param_1` = `URL`,
-    /// `param_2` = the event-handler callback (captured into the source's event
-    /// closure), `param_3` = `DispatchQoS` (used for the source's global queue).
-    /// Labels are inferred (no symbol).
-    func startWatching(url: URL, handler: @escaping @Sendable () -> Void, qos: DispatchQoS) {
+    /// ⚑ s109 RENAME + RE-SIGNATURE. This was `startWatching(url:handler:qos:)`, self-declared
+    /// "name inferred" with labels "inferred (no symbol)". The trie names 0x101a04e78
+    /// `KSPlayer.DirectoryWatcher.watchModify(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ())`
+    /// — so the name, both labels, the completion's `Bool` parameter, and the ARITY were all wrong.
+    /// The old third parameter `qos: DispatchQoS` did not exist: the note above admitted it came
+    /// from decompiler `param_3`, but the demangled signature takes two parameters and the
+    /// `DispatchQoS` in the body is the argument to `DispatchQueue.global(qos:)`, not an input.
+    func watchModify(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
         // Tear down any existing source first (identical to stop()'s body —
         // binary inlines it at the top: cancel live source, then *(self+0x70)=0).
         source?.cancel()
         source = nil
 
-        // open(url.path.utf8CString, O_EVTONLY)  — 0x8000 == O_EVTONLY.
-        let fd = url.path.withCString { open($0, O_EVTONLY) }
+        // open(fileURL.path.utf8CString, O_EVTONLY)  — 0x8000 == O_EVTONLY.
+        let fd = fileURL.path.withCString { open($0, O_EVTONLY) }
         guard fd >= 0, source == nil else { return }     // (-1 < fd) && *(self+0x70)==0
 
         // queue = DispatchQueue.global(qos: .default)  (binary: global(QoSClass.default))
@@ -110,14 +112,17 @@ public actor DirectoryWatcher {
             fileDescriptor: fd, eventMask: [.write, .delete], queue: queue
         )
 
-        // setEventHandler { ... }  — binary builds a closure capturing weak self
-        // (_swift_weakInit(..., self)), `url`, `handler` (param_2), `qos` (param_3)
-        // and fd, then __Block_copy + _setEventHandler.
-        // UNRESOLVED slot 5 event-handler body @0x101a06254/0x100004aec —
-        // closure internals not faithfully recoverable; observable effect is the
-        // captured `handler` being invoked on each fs event.
+        // setEventHandler — the block @0x101a06254 is an 18-instruction partial-apply forwarder
+        // (it recomputes the URL's size/alignment off the value witness to locate the captures)
+        // onto the real body @0x101a05464. That body is READ: NSFileManager `defaultManager`,
+        // `URL.path.getter`, `String._bridgeToObjectiveC`, then `fileExistsAtPath:` — and its BOOL
+        // result is passed straight to the completion (`mov x0, <result>` then `blr` the callback).
+        // ⚑ UNRESOLVED: after the completion call the body builds a weak-self box and a 40-byte
+        //   context and creates a Task through the shared specialization 0x101a03fd4
+        //   (async function pointer 0x1035697f0). That trailing task is not reconstructed.
+        // ⚑[tool=bind_oracle ref=_OBJC_CLASS_$_NSFileManager:0x104410520 result=Foundation]
         source.setEventHandler {
-            handler()   // stub: invoke the captured callback (faithful observable effect)
+            completion(FileManager.default.fileExists(atPath: fileURL.path))
         }
         // setCancelHandler { ... }  — second closure (capturing handler/qos/fd),
         // __Block_copy + _setCancelHandler. Cancel handlers for an fs source
@@ -132,23 +137,27 @@ public actor DirectoryWatcher {
         self.source = source                       // *(self+0x70) = source; release old
     }
 
-    // MARK: slot 6 @0x101a0578c — startWatching (parent dir) (434 instr) · name inferred
+    // MARK: slot 6 @0x101a0578c — watchNew(fileURL:completion:) (434 instr) · name RECOVERED (s109)
 
     /// Watches the CONTAINER of `url` (its parent directory) — used to detect a
     /// not-yet-existing file appearing. Distinct vtable slot → a SECOND method.
-    /// Same spine as `startWatching(url:handler:qos:)` but it derives the path
+    /// Same spine as `watchModify(fileURL:completion:)` but it derives the path
     /// via `url.deletingLastPathComponent().path` (keeping `lastPathComponent`)
     /// and the eventMask is `[.write]` ONLY (the decompile calls `_get_write`
     /// but NOT `_get_delete`, unlike slot 5).
-    func startWatchingParent(url: URL, handler: @escaping @Sendable () -> Void, qos: DispatchQoS) {
+    /// ⚑ s109 RENAME + RE-SIGNATURE, same as slot 5. The trie names 0x101a0578c
+    /// `KSPlayer.DirectoryWatcher.watchNew(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ())`.
+    /// Name, labels, completion type and arity were all inferred and all wrong; there is no
+    /// `qos:` parameter.
+    func watchNew(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
         // Tear down any existing source first (inlined cancel + clear).
         source?.cancel()
         source = nil
 
         // lastPathComponent is captured (binary: get_lastPathComponent → SVar32,
         // retained across the call); the watched path is the parent directory.
-        _ = url.lastPathComponent
-        let parent = url.deletingLastPathComponent()       // URL.deletingLastPathComponent()
+        let lastPathComponent = fileURL.lastPathComponent
+        let parent = fileURL.deletingLastPathComponent()   // URL.deletingLastPathComponent()
 
         // open(parent.path.utf8CString, O_EVTONLY)
         let fd = parent.path.withCString { open($0, O_EVTONLY) }
@@ -160,14 +169,18 @@ public actor DirectoryWatcher {
             fileDescriptor: fd, eventMask: [.write], queue: queue
         )
 
-        // setEventHandler { ... } — closure captures weak self, parent URL,
-        // lastPathComponent (SVar32), handler (param_2), qos (param_3), fd.
-        // UNRESOLVED slot 6 event-handler body @0x101a06364/0x100004aec —
-        // closure internals not faithfully recoverable; the captured
-        // lastPathComponent is presumably matched against fs events before the
-        // handler fires, but that logic is not cleanly recoverable.
+        // setEventHandler — block @0x101a06364 forwards to the real body @0x101a05e54, which IS
+        // read and differs from slot 5's in exactly one way that matters. It rebuilds the watched
+        // file's path with `URL.appendingPathComponent` from the captured `lastPathComponent`,
+        // runs the same NSFileManager `defaultManager` / `fileExistsAtPath:` check, and then
+        // `cbz w20` — on NOT-exists it skips the callback entirely; only the exists path reaches
+        // `mov w0, #1` and the `blr`. So this one fires ONLY when the file appears, and always
+        // with `true`, where slot 5 passes the check's result through.
+        // ⚑[tool=bind_oracle ref=Foundation.URL.appendingPathComponent:0x104109a70 result=appendingPathComponent]
         source.setEventHandler {
-            handler()   // stub: invoke the captured callback (faithful observable effect)
+            if FileManager.default.fileExists(atPath: parent.appendingPathComponent(lastPathComponent).path) {
+                completion(true)
+            }
         }
         // setCancelHandler { ... } — second closure (handler/qos/fd).
         // UNRESOLVED slot 6 cancel-handler body @0x101a063ec —
