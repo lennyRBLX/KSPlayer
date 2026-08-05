@@ -238,6 +238,29 @@ open class IOSVideoPlayerView: VideoPlayerView {
         #endif
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.tapGestureAction(_:):0x101b10bc0 result=22-instr]
+    /// The whole body is one toggle, and every part of that is read:
+    ///   · The dispatch is a MODIFY COROUTINE, not a getter/setter pair — `x0 = sp` hands the
+    ///     callee a frame, the call returns a continuation in x0 and a pointer to the value in x1,
+    ///     and the second `blr x8` with `w1 = 0` resumes it.
+    ///   · Metadata word +0x318 of 0x1044234e8 is
+    ///     ⚑[tool=export_trie_oracle ref=0x101b02a70 result=IOSVideoPlayerView.isMaskShow.modify]
+    ///   · `ldrb w9` / `bic w9, #1, w9` / `strb w9` is `1 & ~w9`, which for a `Bool` is exactly
+    ///     `toggle()`.
+    ///
+    /// ⚑ THIS LOOKS REDUNDANT AND IS NOT AN ARTIFACT. `VideoPlayerView.tapGestureAction` already
+    ///   has the identical body, and the two symbols ICF-fold onto this one address — which is
+    ///   precisely what makes the §2o inheritance screen call it an artifact. That screen is
+    ///   wrong here: it reads "the same member name appears under two classes at one address" as
+    ///   "declared on the ancestor and inherited", and an ICF fold of two IDENTICAL bodies
+    ///   produces the same signature. The distinguishing fact is that an inherited member emits
+    ///   NO symbol under the subclass at all, and this one has its own —
+    ///   `export_trie_oracle --addr 0x101b10bc0 --owner IOSVideoPlayerView` returns OWNER_MATCH.
+    ///   So the override is real; only its body happens to equal the superclass's.
+    override open func tapGestureAction(_: UITapGestureRecognizer) {
+        isMaskShow.toggle()
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.play():0x101b108b8 result=103-instr]
     /// The exact mirror of `pause()` below, and read the same way. Differences worth stating:
     ///

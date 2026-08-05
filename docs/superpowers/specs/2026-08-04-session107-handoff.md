@@ -1428,6 +1428,27 @@ if it is, the row is an inheritance artifact and the correct action is to leave 
 
 ## 2o. The inheritance-artifact screen — RUN, VALIDATED, and it finds exactly TWO rows
 
+> ### ⚠️ s107: THE SCREEN AS WRITTEN HAS A FALSE POSITIVE. Add the symbol test below.
+>
+> Re-run over the 115 open MEMBER_MISSING rows it flagged exactly one:
+> `IOSVideoPlayerView.tapGestureAction`, sharing 0x101b10bc0 with
+> `VideoPlayerView.tapGestureAction`. That flag is **wrong**. Both symbols exist because the two
+> bodies are byte-identical (`isMaskShow.toggle()`, dispatched through the same virtual
+> `isMaskShow.modify` slot, so the code does not depend on the static class) and **ICF folded
+> them onto one address**. The screen's premise — "the same member under more than one class at
+> one address means it is declared on an ancestor and inherited" — cannot tell that apart from a
+> fold of two real declarations.
+>
+> **The distinguishing test is symbol existence, not address sharing.** An INHERITED member emits
+> no symbol under the subclass at all; a folded override still has its own. Confirm with
+> `export_trie_oracle.py --addr <a> --owner <SubClass>`, which answers `OWNER_MATCH` when the
+> subclass genuinely owns a symbol there — it does for this row, so the override is real and is
+> now declared.
+>
+> Net effect on the queue: **zero** of the 115 open rows are inheritance artifacts. The screen
+> still earns its keep for the case it was validated on (`shouldContinueRead`), but it must be
+> paired with the owner check before a row is retired.
+
 Do not re-derive this, and do NOT assume it generalises — the measurement says it barely does.
 
 **Screen:** for each queue row, take its address and ask which class names the trie exports there.
