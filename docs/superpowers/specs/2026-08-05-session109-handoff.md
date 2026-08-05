@@ -1153,3 +1153,41 @@ The cheap rows are gone. What is left is dominated by:
   are measured and recorded in this file.
 - **one field-identity gap** — `MetalSubtitleView`'s three same-typed array fields.
 Reaching 0 runs through those, not around them.
+
+
+### §24c — final state: MEMBER_MISSING 78. Two more rows, and the read/write pointer correction.
+
+Landed since §24b: `ReadCacheIOContext.close`, `URLContextDownload.read`, plus all eight
+`DownloadProtocol` requirements named.
+
+**A signature correction worth generalising.** `AbstractAVIOContext.read`'s `buffer` was declared
+`UnsafePointer<UInt8>?`; the trie carries only the `UnsafeMutablePointer` spelling, at 0x100137314 —
+which is this vtable's slot 4 impl. `write` legitimately keeps `UnsafePointer`, because its own trie
+entry uses it. **The two share impl 0x100137314**, since both bodies are `{ size }` and ICF folds
+byte-identical code. So an ICF fold says nothing about signatures; probe each member's mangling
+separately even when they demonstrably share one body. Blast radius was measured (one other
+override, `CacheIOContext.read`), not estimated.
+
+**Two more FFmpeg names, both derived structurally rather than by address.** `ffurl_read2` vs
+`ffurl_read_complete` are both inlined `retry_transfer_wrapper` bodies and neither calls the other,
+so nothing about the call graph separates them. The discriminator is the wrapper's `size_min`:
+0x1030c0994 opens with an extra `cmp w2,#1 / b.lt` — the guard the compiler needs when `size_min`
+is the runtime `size` — and 0x1030bf914 has none because its `size_min` is the constant 1. Hence
+0x1030c0994 = `ffurl_read_complete`, 0x1030bf914 = `ffurl_read2`. The field name `isReadComplete`
+agrees only afterwards; it was not the evidence.
+The shim now carries four prototypes: `ffurl_seek2`, `ffurl_closep`, `ffurl_read2`,
+`ffurl_read_complete`. **Still uncommitted** — see the §24 warning.
+
+### The next row is gated by its own base
+`LimitCountPreLoadIOContext.preloadCount()` @0x101ba2c5c is fully read and would be a six-line
+declaration:
+    let count = super.preloadCount()
+    if count != 0, moreCount < maxMoreCount { moreCount += 1; return count }
+    moreCount = 0
+    return 0
+(`csinc w9, wzr, w9, hs` then `csel w0, w0, wzr, lo` off one `cmp`; the two UInt16 fields are told
+apart by MUTABILITY — 0x1044f4ac0 is the one `strh` writes, and only `moreCount` is `var`.)
+It cannot be declared because `super.preloadCount()` needs `LimitPreLoadIOContext.preloadCount()`,
+which is **591 instructions** @0x101ba1cdc and is itself a MEMBER_MISSING row. Declaring the base
+with a spine would mean writing a return value that has not been read, so the pair waits for the
+base to be done properly.
