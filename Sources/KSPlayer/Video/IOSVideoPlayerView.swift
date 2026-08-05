@@ -571,6 +571,69 @@ extension IOSVideoPlayerView {
         #endif
     }
 
+    // showPromptMessage @0x101b0cfb8 (152 instr) and hidePrompt @0x101b0d70c (80 instr).
+    // Both live in an EXTENSION, and that is read rather than chosen: neither carries a `…FTq`
+    // method descriptor, and a method with no method descriptor has no vtable slot.
+    //
+    // The whole of showPromptMessage is one `DispatchQueue.main.async`. Its default arguments are
+    // visible and are NOT source text: `DispatchQoS.unspecified` and an empty
+    // `DispatchWorkItemFlags` built through `SetAlgebra.init(_:)` over `__swiftEmptyArrayStorage`
+    // are materialised at the call site of `async(group:qos:flags:execute:)`, and the
+    // `_Block_copy`/`_Block_release` pair is just the `@convention(block)` bridge for `execute:`.
+    // `[weak self]` is `swift_unknownObjectWeakInit` into a 24-byte box; the reload plus `cbz` in
+    // the closure is the `guard let self`.
+    //
+    // `promptLabel` is not positional: `name_global_by_value(IOSVideoPlayerView, 0x1044f1000)`
+    // names the offset global, and the field record `So7UILabelC` says non-optional `UILabel` —
+    // which is why nothing here optional-chains. Every number is an inline immediate:
+    // 0x4049000000000000 = 50, 0x4042000000000000 = 36, [0x10347fea8] = 0.8, 0.3 twice,
+    // alpha 0 then 1, and `fmov d0,#5.0` for the delay.
+    //
+    // ⚑ The `.identity` assignments are RESETS with no matching non-identity write anywhere in
+    //   either method — showPromptMessage's animation and hidePrompt's completion both stamp the
+    //   same identity matrix `(1,0),(0,1),(0,0)`. Transcribed as read; no scale was invented to
+    //   explain them.
+    // ⚑[tool=objc_trampoline_oracle ref=IOSVideoPlayerView.hidePrompt:0x101b0d9c8 result=selector-line-1289]
+    // ⚑[tool=recover_field_offsets ref=IOSVideoPlayerView.promptLabel:0x1044f1000 result=promptLabel]
+    func showPromptMessage(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            promptLabel.removeFromSuperview()
+            promptLabel.text = message
+            addSubview(promptLabel)
+            promptLabel.translatesAutoresizingMaskIntoConstraints = false
+            bringSubviewToFront(promptLabel)
+            NSLayoutConstraint.activate([
+                promptLabel.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 50),
+                promptLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+                promptLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.8),
+                promptLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            ])
+            promptLabel.alpha = 0
+            UIView.animate(withDuration: 0.3) {
+                self.promptLabel.transform = .identity
+                self.promptLabel.alpha = 1
+            }
+            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hidePrompt), object: nil)
+            perform(#selector(hidePrompt), with: nil, afterDelay: 5)
+        }
+    }
+
+    // hidePrompt is reached only through `performSelector:`, so its Swift symbol is unexported and
+    // `pin_sweep` cannot see it — `…C10hidePromptyyF` is NOT IN TRIE. The ObjC method list still
+    // carries it, which is how it was found. Its two blocks are separate bodies: the animations
+    // block @0x101b0d84c (line 1290) sets alpha 0, and the completion block @0x101b0d8fc
+    // (line 1292) stamps the identity transform. The completion takes the `Bool` UIKit passes.
+    @objc private func hidePrompt() {
+        UIView.animate(withDuration: 0.3) {
+            self.promptLabel.alpha = 0
+        } completion: { _ in
+            self.promptLabel.transform = .identity
+        }
+    }
+
     @objc private func orientationChanged(notification _: Notification) {
         guard isHorizonal() else {
             return
