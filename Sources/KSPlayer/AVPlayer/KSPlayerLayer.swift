@@ -996,6 +996,42 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
     // `(enterBackgroundTask in _B3181C2628785004269C41BC3433122F) : Swift.Task<(), Swift.Never>?`
     private var enterBackgroundTask: Task<(), Never>?
 
+    /// @0x1019d1bc0, 68 instructions. `override` is not inferred from the superclass having a
+    /// `pause()` — `override_table.py --class KSComplexPlayerLayer --impl 0x1019d1bc0` answers
+    /// YES at index 4, i.e. this address is an Impl in the class's own override table.
+    ///
+    ///   · `strb wzr` through offset global 0x104c63520 is the first statement. That global is NOT
+    ///     `urls`, which is trie-pinned at 0x104c63528 — the three globals are not in field-record
+    ///     order, so position proves nothing here. The BYTE store does: of this class's three
+    ///     fields only `isPictureInPictureStoped` is a Bool, and `wzr` makes it `false`.
+    ///   · `player` (offset global 0x104c634f0) is read under a (0, 0) beginAccess and dispatched
+    ///     at witness offset 0x128. KSMEPlayer's MediaPlayerProtocol table (0x1041d7c68) holds a
+    ///     thunk there whose whole body is `b 0x101a4390c` = `KSMEPlayer.pause()`, so the slot is
+    ///     `pause()`.
+    ///   · the MediaPlayer classref 0x104410a10 is `MPNowPlayingInfoCenter`; selref 0x10440b040 is
+    ///     `defaultCenter` and selref 0x10440d8c8 is `setPlaybackState:` with the immediate 2,
+    ///     which is `MPNowPlayingPlaybackState.paused`.
+    ///   · `player` is re-read and dispatched at 0xf8 — `pipController.getter`, the same slot
+    ///     `pipStop` and `isPictureInPictureActive` use — and the `cbz` on its first word is the
+    ///     `?.`. The final dispatch is at offset 0x28 of THAT result's table, i.e. req4 of
+    ///     KSPictureInPictureProtocol = `invalidatePlaybackState`.
+    /// ⚑ req4 is a REAL requirement of the binary protocol but is pinned rather than declared, for
+    ///   the availability reason recorded in KSPictureInPictureController.swift. The concrete
+    ///   downcast below is OURS, not the binary's — the binary dispatches through the witness
+    ///   table. It is the spelling `KSMEPlayer.play()` already uses for this same requirement, so
+    ///   the two call sites stay consistent rather than each inventing a workaround.
+    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.pause:0x1019d1bc0 result=YES-index-4]
+    /// ⚑[tool=decode_objc_selector ref=0x10440d8c8 result=setPlaybackState:]
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot0x128=pause]
+    override public func pause() {
+        isPictureInPictureStoped = false
+        player.pause()
+        MPNowPlayingInfoCenter.default().playbackState = .paused
+        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
+            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+        }
+    }
+
     /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]
     /// The row's own body is `mov x0, x1` / `b 0x1019d6430` — it DROPS the controller argument and
     /// tail-calls an 85-instruction handler. That handler is one KSLog call, and every piece of it
