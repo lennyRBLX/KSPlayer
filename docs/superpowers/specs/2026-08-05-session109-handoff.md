@@ -756,7 +756,40 @@ already simplifies that site to a bare forward, so landing the rename means eith
 simplification while changing the signature — which needs an adapter whose shape is not read — or
 reconstructing the 593-instruction closure as its own unit. The second is the honest route.
 
-## 19. Not started, deliberately
+## 19. `getVideoMeta` — the keys and the value sources are read; the pairing is not
+
+`IOSVideoPlayerView.(getVideoMeta in _99D4461AEE15ECA71DEBF361B80F60DD)() -> [String : String]`
+@0x101b11aa8, extent 0x101b11aa8-0x101b123c0, **582 instr**. Private, hence the discriminator,
+hence absent from source and from the MEMBER_MISSING queue — but it is the sole blocker on
+`updateVideMetaLabel` (§14).
+
+**Keys — read from the small-string immediates**, six of them:
+
+    "Codec Format"   "Resolution"   "Frame Rate"   "Bitrate"   "Color Depth"   "Title"
+
+Note §14 showed `updateVideMetaLabel` consuming only the first four; `Color Depth` and `Title` are
+built here and read elsewhere (or not at all — do not assume).
+
+**Value-side literals**, also read: `"%.2f"`, `"FPS"`, `"Kbps"` — so at least one value is a
+formatted Double and two carry unit suffixes.
+
+**Callees** — 32 calls, only 6 non-stub, which is what makes this tractable despite its size:
+
+    0x1019e76c4  (extension in KSPlayer):__C.CGSize.string.getter : Swift.String
+    0x101a0aeac  (extension in KSPlayer):__C.CMFormatDescriptionRef.naturalSize.getter : __C.CGSize
+    0x10199fc68  NOT IN TRIE          0x1019c2f60  NOT IN TRIE
+    0x100006158  witness-table accessor (glue)   0x10002d984  mangled-name type instantiation (glue)
+
+So **`"Resolution"` = `formatDescription.naturalSize.string`** — the chain is named end to end.
+The two NOT_IN_TRIE locals are the remaining unknowns on the value side.
+
+**What is NOT read, and must not be guessed:** which key pairs with which value. Six keys, six
+value expressions, and the body interleaves them — pairing them requires walking the dictionary
+inserts in order, not matching them up by plausibility. That is the whole remaining cost of this
+unit, and it is the step where a rushed read would invent exactly the kind of value this drive
+exists to avoid.
+
+## 20. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
