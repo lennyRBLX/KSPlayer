@@ -403,6 +403,34 @@ extension KSAVPlayer {
         // ⚑ UNRESOLVED → KSAVPlayer M2: playableTime / bufferingProgress(UInt8) / loadState buffering computation.
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSAVPlayer.updatePlaybackBuffer():0x1019a5054 result=53-instr]
+    /// `guard let` is the `cbz` after `objc_retainAutoreleasedReturnValue`; the receiver chain is
+    /// `playerView.player` — `+0x38` is `playerView` (the fixed instance offset this file already
+    /// records at :188) and 0x1044e46b0 is `direct field offset for KSAVPlayerView.player`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440af28 result='currentItem']
+    /// ⚑[tool=decode_objc_selector ref=0x10440be68 result='isPlaybackLikelyToKeepUp']
+    /// ⚑[tool=decode_objc_selector ref=0x10440be60 result='isPlaybackBufferFull']
+    /// `tbnz` on the first and `cbnz` on the second both jump to `mov w21, #2`; the fall-through
+    /// stores 1. `MediaLoadState` is `idle`/`loading`/`playable`, so 2 is `.playable` and 1 is
+    /// `.loading`. The trailing vtable call is `loadState`'s own `didSet`, not a statement here.
+    ///
+    /// ⚑ `isPlaybackBufferEmpty` (0x10440be58) IS called, into x21, and its result provably does
+    ///   NOT reach the outcome: the two `csel`s that consume it select between `#1` and `#1` and
+    ///   between `sp+8` and `sp+8` — identical operands on both arms. So the branch value is
+    ///   `.loading` either way. Whatever source expression consumed that flag was collapsed by the
+    ///   optimizer and is NOT recoverable from this body; declaring a use for it would be
+    ///   invention, and dropping the call is the only spelling the binary supports.
+    ///
+    /// ⚑ NOT `private`, unlike the siblings around it: the trie carries
+    ///   `…20updatePlaybackBufferyyFTq`, a method descriptor, i.e. a real vtable slot — and a
+    ///   `private` method takes none. The mangled name also carries no `33_…LL` discriminator.
+    func updatePlaybackBuffer() {
+        guard let item = playerView.player.currentItem else {
+            return
+        }
+        loadState = item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull ? .playable : .loading
+    }
+
     private func playOrPause() {
         if playbackState == .playing {
             if loadState == .playable {
