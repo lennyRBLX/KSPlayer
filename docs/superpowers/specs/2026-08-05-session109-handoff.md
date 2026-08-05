@@ -1402,3 +1402,28 @@ Everything else in the body is `10345xxxx` stub territory: the stripped-FFmpeg
 open path is stripped. So the init is *shaped* but not yet writable. Run the §24f route set against
 those four — trie, `objc_trampoline_oracle`, `vtable_walk`, `recover_swift_function_name` — before
 assuming any is unnameable; that set has produced a name once already this session.
+
+
+### §24l — the §24f rule gap is RESOLVED, with three cases from this session
+§24f flagged that `recover_swift_function_name`'s trust rule gated on `labels>=1`, and that
+0x1019c7454 (`pictureInPictureViewController`) fell outside it despite causal evidence. Running the
+same route against the §24k helpers settled it, because two of them are false anchors:
+
+| addr | recovered | early in-body materialization? | verdict |
+|---|---|---|---|
+| 0x1019c7454 | `pictureInPictureViewController` | YES — string load at instr ~5 with `mov x0,#0x1e` = 30 = the name's length, in the `#function` slot | GENUINE |
+| 0x101a392a0 | `cues_parsing_deferred` | NO; body is 902 instructions | FALSE — an **FFmpeg AVOption key** |
+| 0x1019aba90 | `FFmpegAssetTrack` | NO `adrp` in the first 0x60 bytes | FALSE — a **TYPE** name |
+
+All three are `confidence=high, labels=0`. So `labels` separates nothing here: it would have rejected
+the true hit and caught neither false one. **The discriminator is the early in-body materialization
+with a matching loaded length.** `labels=0` is expected for a PROPERTY, which is what 0x1019c7454 is.
+The memory [[recover-swift-function-name-false-anchors]] is updated accordingly, with two new smells
+recorded: a recovered name that is a TYPE in the image, or that has FFmpeg/AVOption shape
+(lowercase_with_underscores), means the tool latched onto a data string.
+
+Consequence: **0x1019c7454 may now be named** under the corrected rule. `reCheckSubtitle` is still
+blocked, because its other helper 0x1019c7410 returns no name by any route — but that is now ONE
+unknown, not two. Same for the FFmpegSubtitle init: 0x1019aba90 and 0x101a392a0 are confirmed
+UNNAMED (their hits are false), leaving 0x1019aba90 / 0x101a391bc / 0x101a392a0 / 0x101aa0308 all
+genuinely unnamed rather than untested.
