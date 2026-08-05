@@ -436,21 +436,44 @@ player.pipController?.<req4>()                        // KSPictureInPictureProto
 declares **5**, and not even in the binary's order. Walking `KSPictureInPictureController`'s witness
 table @0x1041d45a0, slot by slot:
 
-| slot | wt off | body | name |
-|------|--------|------|------|
-| req0 | 0x08 | 0x1019c7680 | not in trie |
-| req1 | 0x10 | 0x1019c7698 | not in trie (1-instr thunk → 0x1019c769c) |
-| req2 | 0x18 | 0x1019c779c | not in trie |
-| req3 | 0x20 | 0x1019c74e4 | **`__allocating_init(contentSource: AVPictureInPictureControllerContentSource)`** |
-| req4 | 0x28 | 0x1019c77d8 | not in trie — 2 instrs, tail-calls selector **`invalidatePlaybackState`** |
-| req5 | 0x30 | 0x1019c77e0 | not in trie |
-| req6 | 0x38 | 0x1019c75cc | `start(layer:)` |
-| req7 | 0x40 | 0x1019c75d4 | `didStart(layer:)` |
-| req8 | 0x48 | 0x1019c7648 | `stop(restoreUserInterface:)` |
-| req9 | 0x50 | 0x10000e52c | the ICF-folded EMPTY body (bare `ret`) |
+**The table is VALIDATED before it is used.** `wt[0]` → conformance descriptor 0x1035676b0, whose
+`.protocol` field resolves to **0x1039ecde0** — the same descriptor the count came from. So these
+ten slots really are this protocol's ten requirements, in order.
 
-So the source's `start`/`didStart`/`stop` are req6/7/8 — the protocol's first six requirements
-include an **`init(contentSource:)`** the source does not declare at all.
+**Kinds come from the descriptor, not from guessing at bodies.** The `ProtocolRequirement` array
+sits at `descriptor + 24 + 12*NumRequirementsInSignature` = 0x1039ece04, 8 bytes per entry
+(`Flags:u32`, `DefaultImplementation:rel32`); kind is the low nibble of Flags, `0x10` is
+`IsInstance`. That is what separates a getter from a method from an init — the witness body cannot.
+
+| slot | wt off | kind (from flags) | witness | name |
+|------|--------|-------------------|---------|------|
+| req0 | 0x08 | Getter, instance | 0x1019c7680 → sel `isPictureInPictureActive` | **`var isPictureInPictureActive: Bool { get }`** ✓ in source |
+| req1 | 0x10 | Method, instance | 0x1019c7698 → 0x1019c769c | ⛔ unnamed; large body doing generic-metadata work |
+| req2 | 0x18 | **Init** | 0x1019c779c → sel `initWithPlayerLayer:` | **`init(playerLayer:)`** — MISSING from source |
+| req3 | 0x20 | **Init** | 0x1019c74e4 | **`init(contentSource: AVPictureInPictureControllerContentSource)`** — MISSING from source |
+| req4 | 0x28 | Method, instance | 0x1019c77d8 → sel `invalidatePlaybackState` | ⛔ unnamed (see below) |
+| req5 | 0x30 | Method, instance | 0x1019c77e0 → sel `valueForKey:` | ⛔ unnamed; takes a String, returns indirectly |
+| req6 | 0x38 | Method, instance | 0x1019c75cc | `start(layer:)` ✓ in source |
+| req7 | 0x40 | Method, instance | 0x1019c75d4 | `didStart(layer:)` ✓ in source |
+| req8 | 0x48 | Method, instance | 0x1019c7648 | `stop(restoreUserInterface:)` ✓ in source |
+| req9 | 0x50 | Method, **STATIC** | 0x10000e52c | **`static func play(layer:)`** ✓ in source |
+
+Three things fall out that no amount of body-reading would have given:
+
+1. **req9 is the ONLY static requirement**, and `static func play(layer:)` is the source's only
+   static one. That is a decisive, unique match — and its witness is the ICF-folded empty body at
+   0x10000e52c, so `KSPictureInPictureController.play(layer:)` is genuinely `{}`.
+2. **req2 and req3 are `Init` requirements.** The source protocol has no initializer requirement at
+   all. req3's witness is trie-named `__allocating_init(contentSource:)`, and a witness must match
+   its requirement's full name, so the requirement label is read, not inferred; req2's selector
+   `initWithPlayerLayer:` maps mechanically to `init(playerLayer:)`.
+3. **The five missing requirements are CONTIGUOUS at positions 1–5.** The source's five sit at
+   0, 6, 7, 8, 9. So the repair is an insertion between `isPictureInPictureActive` and
+   `start(layer:)`, not a reshuffle — which also means the source's relative order was never wrong,
+   only incomplete.
+
+Still unnamed: req1, req4, req5. A protocol emits no per-requirement symbol, so their labels are
+not in the trie; the only evidence is one conformer's forwarding selectors.
 
 ⚑ **Why `pause()` was NOT written.** Its last statement needs req4's NAME, and Swift emits **no**
   per-requirement symbol for a protocol — only `Mp` and `TL`, both present and neither carrying
