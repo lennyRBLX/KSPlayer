@@ -1032,6 +1032,48 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         }
     }
 
+    /// @0x1019d1a8c, 77 instructions. The `pause()` MIRROR, and the two corroborate each other at
+    /// every shared address — but the shapes are NOT symmetric and the asymmetry is read, not
+    /// assumed: `play()` calls `super.play()` where `pause()` calls `player.pause()` through the
+    /// witness, and `play()` writes no field where `pause()` clears `isPictureInPictureStoped`.
+    ///
+    ///   · `bl 0x1019cc5f8` is a DIRECT call to `KSPlayer.KSPlayerLayer.play() -> ()`, named in the
+    ///     trie. A direct (non-virtual) call to the superclass's own implementation of the method
+    ///     this address overrides is `super.play()`. `override` is not inferred from that: it is
+    ///     ⚑[tool=override_table ref=KSComplexPlayerLayer.play:0x1019d1a8c result=YES-index-3].
+    ///   · classref 0x104410a10 is `MPNowPlayingInfoCenter`; the sends are `defaultCenter` then
+    ///     `setPlaybackState:` with the immediate **1**. `pause()` reads 2 = `.paused` at the same
+    ///     pair of selrefs, so 1 = `.playing` — the pairing is what makes both readings evidence
+    ///     rather than one lookup. (`MPNowPlayingPlaybackState` is an imported NS_ENUM, so what
+    ///     crosses `objc_msgSend` is the rawValue, not a Swift case index.)
+    ///   · `player` (offset global 0x104c634f0, its own `vpWvd`) is read under a (0, 0)
+    ///     beginAccess and dispatched at witness offset **0xf8** — `pipController.getter`, the same
+    ///     slot `pause`, `pipStop` and `isPictureInPictureActive` use — and the `cbz x20` on the
+    ///     first word of the returned two-word optional existential is the `?.`.
+    ///   · the dispatch on THAT result is at offset **0x28** of its table = req4 of
+    ///     KSPictureInPictureProtocol = `invalidatePlaybackState`, identical to `pause()`.
+    ///   · the tail is offset **0x50** of `static KSOptions.pictureInPictureType`'s table (global
+    ///     0x104c632c0, read under its own `swift_once` at token 0x1044e5178 with initialiser
+    ///     0x1019bc7a8). 0x50 = 8*10, and word 0 of a witness table is the conformance descriptor,
+    ///     so that is **req9** — `static play(layer: KSComplexPlayerLayer)`. The call passes
+    ///     `x0 = self` with the METATYPE in x20 (swiftself), which is the static-method shape, and
+    ///     the result is discarded because req9's witness is the bare-`ret` ICF fold, i.e. empty.
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req9@0x50=static-play]
+    /// ⚑[tool=bind_oracle ref=0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
+    /// ⚑ The `#available` guard and the concrete `as?` downcast are OURS, carried over verbatim
+    ///   from `pause()` above: the binary dispatches through the witness table and emits no
+    ///   version check. req4 is iOS 15 while the protocol is tvOS 14, so every call site needs the
+    ///   guard to compile. Keeping the two spellings identical is deliberate — see the note on
+    ///   `pause()` for why this file does not let each call site invent its own workaround.
+    override public func play() {
+        super.play()
+        MPNowPlayingInfoCenter.default().playbackState = .playing
+        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
+            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+        }
+        KSOptions.pictureInPictureType.play(layer: self)
+    }
+
     /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]
     /// The row's own body is `mov x0, x1` / `b 0x1019d6430` — it DROPS the controller argument and
     /// tail-calls an 85-instruction handler. That handler is one KSLog call, and every piece of it
