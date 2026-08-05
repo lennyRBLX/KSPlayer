@@ -15,13 +15,18 @@ import AppKit
 /// `SubtitleModel.subtitleDisplaySize()`, a name with zero trie symbols. `SubtitleModel.playSize`
 /// tail-calls this at 0x1019e7800, which is what forced it out into its own member.
 ///
-/// ⚑ HONEST LIMIT ON THIS ONE: the 85-instruction body was NOT re-read instruction-by-instruction.
-///   The body below is CARRIED VERBATIM from the inlined version an earlier session reconstructed.
-///   What this session verified is (a) the member exists under this name and signature, (b) it is
-///   what `playSize` calls, and (c) the binary contains the `Double(Int(…))` range checks this
-///   spelling implies — `fcmp` against ±2^63 as Doubles (`0xc3e0…`/`0x43e0…`) plus
-///   `Double.greatestFiniteMagnitude` guards. The ratio/branch arithmetic itself is inherited
-///   trust, not a fresh read. Re-verify before relying on the exact branch condition.
+/// The body was carried over from that inlined version, then VERIFIED against the binary rather
+/// than trusted — the branch condition specifically, since that is what a carried body most easily
+/// gets backwards:
+///   · `fdiv d3, d1, d2` / `fcmp d3, d0` / `b.pl` selects the first arm when `d1/d2 >= ratio`,
+///     i.e. `ratio <= d1/d2` — the `ratio <= h / w` below.
+///   · `fmul d3, d0, d2` is `ratio * d2` — the `ratio * w` below.
+///   Both fix the register roles as **d1 = height, d2 = width** (with `ratio` in d0), and the two
+///   readings agree on d2 = width independently, which is what makes the orientation a reading
+///   rather than a coin flip. Reading d1 as width instead inverts the comparison to `w / h` and
+///   silently swaps the fit axis.
+///   · the `Double(Int(…))` conversions are corroborated by `fcvtzs` plus range checks against
+///     ±2^63 as Doubles (`0xc3e0…`/`0x43e0…`) and `Double.greatestFiniteMagnitude` guards.
 extension CGSize {
     func within(ratio: Double) -> CGSize {
         let w = width, h = height
