@@ -6,6 +6,10 @@
 //
 
 import AVFoundation
+// ⚑ s109: required by `process(url:interrupt:)` / `resolveIO(for:interrupt:)` below, whose
+// `AVIOInterruptCB` parameter is read from the binary. PlayerDefines.swift in this same module
+// already imports FFmpegKit for that very type. It must sit OUTSIDE the tvOS/xrOS conditional.
+import FFmpegKit
 #if os(tvOS) || os(xrOS)
 import DisplayCriteria
 #endif
@@ -98,7 +102,10 @@ open class KSOptions {
     public var seekFlags: Int32 = Int32(1)
     //  record stream
     public var outputURL: URL?
-    public var outputMediaType: AVMediaType?
+    // ⚑ s109: qualified because this file now imports FFmpegKit (for `AVIOInterruptCB`, below),
+    // which introduces a second `AVMediaType`. The AVFoundation one is what this property has
+    // always meant — the qualification changes nothing but the lookup.
+    public var outputMediaType: AVFoundation.AVMediaType?
     public internal(set) var formatName: String = ""
     public var formatContextOptions: [String: Any] = [String: Any]()
     public var outputFormatContextOptions: [String: Any] = [String: Any]()
@@ -861,8 +868,43 @@ open class KSOptions {
 //        }
     }
 
-    open func process(url _: URL) -> AbstractAVIOContext? {
+    /// ⚑ s109 RE-SIGNATURE: the `interrupt:` parameter was missing. Address→name is useless here —
+    /// the body 0x10002d9d4 is the image's 605-symbol ICF fold — but name→address stays unique, and
+    /// a demangled sweep of the whole trie resolves this member to
+    /// `KSOptions.process(url: Foundation.URL, interrupt: __C.AVIOInterruptCB) -> AbstractAVIOContext?`
+    /// at that address, with its method descriptor at 0x1039ec7c8.
+    /// (A hand-built mangle for the one-parameter spelling returns NOT IN TRIE, which is the
+    /// backreference-compression false negative the reading rules warn about — not evidence.)
+    ///
+    /// The body is unchanged: the fold is `mov x0, #0x0` / `ret`, i.e. `nil`. This is the
+    /// overridable hook `resolveIO(for:interrupt:)` calls, which is where the second parameter goes.
+    open func process(url _: URL, interrupt _: AVIOInterruptCB) -> AbstractAVIOContext? {
         nil
+    }
+
+    /// resolveIO @0x1019b5dc0, 63 instr. `public` from the method descriptor at 0x1039ec7c0.
+    ///
+    /// The dispatch is arithmetic: the call is at metadata `+0x5b8` and KSOptions' VTableOffset is
+    /// 94 words (0x2f0), so the slot is (0x5b8-0x2f0)/8 = **89** — a Method whose Impl is the
+    /// nil-returning fold above, i.e. `process(url:interrupt:)`.
+    ///
+    /// `cbz` on its result splits the two arms, and the arms are told apart by the tag written
+    /// through the outlined enum-store 0x10345d048: **w2 = 0 on the nil arm, w2 = 1 on the other**.
+    /// `Either` is `case left(Left), right(Right)`, so 0 is `.left` and 1 is `.right` — the same
+    /// tag convention this reconstruction already relies on for `SubtitlePart.render`.
+    ///
+    /// The non-nil arm also STORES the result: offset global 0x104c63328 is
+    /// `KSOptions.ioContext : AbstractAVIOContext?` (named by its vpWvd), written under a MODIFY
+    /// access (`swift_beginAccess` flags 1) with the old value released after the new one is
+    /// retained. The nil arm copies the `url` parameter into the indirect return through the
+    /// value witness instead.
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.ioContext:0x104c63328 result=ioContext]
+    public func resolveIO(for url: URL, interrupt: AVIOInterruptCB) -> Either<URL, AbstractAVIOContext> {
+        guard let ioContext = process(url: url, interrupt: interrupt) else {
+            return .left(url)
+        }
+        self.ioContext = ioContext
+        return .right(ioContext)
     }
 }
 
