@@ -904,6 +904,23 @@ What is left is the §2u treatment — anchor the class's initializer store run 
 same technique that named `IOSVideoPlayerView`'s configs, and it is the only route left here.
 Until it lands, the whole four-step chain is stalled behind six field names.
 
+**Step 0, sized and assessed.** `SubtitleModel.init(url:options:)` @0x101ab34a0 is **340 instr**,
+and the class exports **22 `vpfi`** symbols for its 24 field records — i.e. 22 of 24 fields carry a
+declaration default whose value the init writes. That is an unusually rich anchor set (compare
+`IOSVideoPlayerView`, where §2u had to lean on a single 15.0 and one `str xzr`), so the store run
+should pin the six comfortably. Budget the 340 instructions; the payoff is six names → four
+members.
+
+⚑ Do NOT chase the offset globals themselves — §2ai proves nothing in `__text` ever writes them.
+  Read the init's stores into FIELDS and match the values to the `vpfi` defaults.
+
+⚑ One measurement that saved a wrong turn: `SubtitleModel`'s offset globals live on **two** pages —
+  8 named ones at 0x104c637xx and these six at 0x1044eeexx. The split is not a signal that the six
+  belong to another class: `x19` is set once from swiftself at 0x101ab4018 and never reassigned, so
+  every one of those reads is `self.<field>`. The file mapping is also sound — the neighbouring
+  named global 0x1044ef5b8 reads `0x30`, a plausible `MetalSubtitleView.dynamicRange` offset — so
+  the six really do read `0x0`.
+
 ⚑ I attempted 2+3 without 1 and the build failed at the call site with "extra arguments at
   positions #2, #3". The edits were reverted; tree is clean and 4/4. Do step 1 first.
 
