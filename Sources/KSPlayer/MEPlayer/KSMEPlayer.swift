@@ -134,6 +134,32 @@ public final class KSMEPlayer: NSObject {
     // ⚑[tool=export_trie_oracle ref=KSMEPlayer.shouldResumePlayback result=no property descriptor ⇒ the GETTER is not public; private(set) is preserved because the binary speaks to the getter only]
     private(set) var shouldResumePlayback: Bool = false // ⚑ M2: binary sets this (NEW field, absent from recon)
 
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.checkShouldResume():0x101a43f40 result=50-instr]
+    /// Three of the four names come from tools; the fourth is elimination:
+    ///   · `options` +0x47 = `isDLNARunning`, +0x46 = `enterForgeResumePlay` — both from
+    ///     `recover_field_offsets` (KSOptions is `metadata_init=1`, so its static offset vector is
+    ///     unreadable and `field_offset_vector` refuses it).
+    ///     ⚑[tool=recover_field_offsets ref=KSOptions result=enterForgeResumePlay@0x46,isDLNARunning@0x47]
+    ///   · global 0x1044ea1a8 = `playbackState` (`vpWvd`-named), compared `cmp #1` /
+    ///     `cset eq` — MediaPlaybackState case **1** is `.playing` (idle=0).
+    ///   · the field WRITTEN, global 0x1044ea1c0, has NO `vpWvd` and is NOT_IN_TRIE. It is
+    ///     `shouldResumePlayback` by elimination on TYPE and COUNT: this class has five `Bool`
+    ///     fields and exactly four carry a `vpWvd` (0x138, 0x148, 0x190, 0x198), leaving this one.
+    ///     Its `strb` also confirms a 1-byte store. Scanning `__text` for 0x1044ea1c0 finds only
+    ///     three sites — both inits and this method — so no type-revealing use site exists and
+    ///     elimination is the available route.
+    ///
+    /// ⚑ THE FIRST STORE IS DEAD, and that is transcribed rather than tidied away: the `b.ne` on
+    ///   `isDLNARunning` and its fall-through BOTH reach the second store to the same global, so
+    ///   the `false` is immediately overwritten. Collapsing it would be a cleaner body than the
+    ///   binary has; the redundancy most likely marks an early exit the optimiser removed.
+    func checkShouldResume() {
+        if options.isDLNARunning {
+            shouldResumePlayback = false
+        }
+        shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
+    }
+
     public required init(url: URL, options: KSOptions) {
         KSOptions.setAudioSession()
         audioOutput = KSOptions.audioPlayerType.init()
