@@ -941,6 +941,26 @@ public extension KSOptions {
     nonisolated(unsafe) static var interactiveSize = CGSize(width: 25, height: 25)
     nonisolated(unsafe) static var thumbSize = CGSize(width: 15, height: 15)
     nonisolated(unsafe) static var textFontName = "SF Pro"
+
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.textFont(name:size:):0x1019ba74c result=35-instr]
+    /// Trie signature: `static textFont(name: Swift.String, size: CoreGraphics.CGFloat) -> __C.UIFont`.
+    /// ⚑ There are TWO `textFont` overloads in the trie — this one and `textFont(width: Double)`
+    ///   @0x1019ba6f8. They are distinguished by argument registers, not by size: this body takes
+    ///   its String through `String._bridgeToObjectiveC` (0x103457438) and its CGFloat in `v0`.
+    ///
+    /// Every piece decoded, none assumed:
+    ///   · classref 0x104410618 = `OBJC_CLASS_$_UIFont` (via `objc_opt_self`).
+    ///   · selref 0x10440b5b8 = **`fontWithName:size:`** — the failable `UIFont(name:size:)`.
+    ///   · `cbz x21` on the retained result is the failure test, and the fallback sends
+    ///     selref 0x10440e4f8 = **`systemFontOfSize:`** to the same class with the same `v0`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440b5b8 result='fontWithName:size:']
+    /// ⚑[tool=decode_objc_selector ref=0x10440e4f8 result='systemFontOfSize:']
+    ///
+    /// ⚑ The fallback is reached only on nil, so it is `??` rather than a branch on the name —
+    ///   a name-validity check would test the String before the send, and none is emitted.
+    static func textFont(name: String, size: CGFloat) -> UIFont {
+        UIFont(name: name, size: size) ?? UIFont.systemFont(ofSize: size)
+    }
     // ── s106, four UIColor statics read through their swift_once initialisers ─────────────────
     // Each is a `swift_once`-guarded static whose addressor names an init function; that init is
     // twelve instructions of `ldr x0, [classref]` / msgSend / retainAutoreleasedReturnValue /
