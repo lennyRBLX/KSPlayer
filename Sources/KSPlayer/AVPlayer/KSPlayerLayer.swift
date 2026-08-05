@@ -766,6 +766,31 @@ extension KSPlayerLayer {
         player.pipController?.stop(restoreUserInterface: restoreUserInterface)
     }
 
+    /// @0x1019d007c, 47 instructions. Trie: `KSPlayerLayer.isPictureInPictureActive.getter
+    /// : Swift.Bool`. It carries a `vpMV`, so it is public; there is no `vs` setter, so it is
+    /// get-only, and no `Tq`, so it is not an overridable requirement.
+    ///
+    /// The body is `pipStop`'s shape with the tail swapped, and it reuses that member's two
+    /// already-named witness slots rather than counting new ones:
+    ///   · offset global 0x104c634f0 is `player`'s own `vpWvd`; `swift_beginAccess` is called with
+    ///     flags (0, 0) — a READ — and `ldp x21, x19, [x19]` takes the (instance, witness-table)
+    ///     pair with no null test, so `player` is the non-optional existential here too.
+    ///   · `ldr x23,[x19,#0xf8]` is witness 30 of MediaPlayerProtocol =
+    ///     `pipController.getter : (any KSPictureInPictureProtocol)?`, and the `cbz x20` on its
+    ///     first returned word is the `?.`.
+    ///   · the second dispatch reloads the witness table from THAT result, so `ldr x8,[x19,#0x8]`
+    ///     is witness 0 of KSPictureInPictureProtocol, not of MediaPlayerProtocol. That table
+    ///     (0x1041d45a0) puts req0 at 0x1019c7680, whose whole body is one `objc_msgSend` whose
+    ///     selref 0x10440be40 decodes to `isPictureInPictureActive` — the same-named requirement,
+    ///     confirmed by selector rather than assumed from the name matching.
+    ///   · the `cbz` arm sets `w19 = 0` and both arms fall into `and w0, w19, #0x1`, which is the
+    ///     `?? false`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440be40 result=isPictureInPictureActive]
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req0=0x1019c7680]
+    public var isPictureInPictureActive: Bool {
+        player.pipController?.isPictureInPictureActive ?? false
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
     /// Mangled `…0A5LayerC10makeUIViewSo0D0CyF` — returns `UIView`, non-optional.
     ///
