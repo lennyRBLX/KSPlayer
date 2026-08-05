@@ -35,6 +35,39 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
         "Subtile Group start=\(start) end=\(end) text=\(String(describing: render))"
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.SubtitlePart.text.getter:0x101abaf20 result=18-instr]
+    /// Both this and `isEmpty` open with the SAME two reads, and neither is a guess:
+    ///   `ldrb w8, [x20, #0x81]` / `cmp w8, #1` — the `render` enum's discriminator, and
+    ///   `ldr x19, [x20, #0x10]` — its payload.
+    /// `Either` is `case left(Left), right(Right)`, so tag 1 is `.right`, and
+    /// `SubtitleTextInfo.text` is that struct's FIRST field — which is why the payload word at
+    /// +0x10 IS the `NSAttributedString`, with no addend. The `b.ne` arm returns 0, i.e. nil.
+    /// The pair of calls around the read (0x1019e75f0 / 0x1019e762c) are the outlined
+    /// copy/destroy for the payload; `SubtitleImageInfo` is what makes the frame 0xb0 bytes.
+    public var text: NSAttributedString? {
+        if case let .right(info) = render {
+            return info.text
+        }
+        return nil
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.SubtitlePart.isEmpty.getter:0x101abacac result=38-instr]
+    /// Same discriminator test, then `objc_msgSend(text, "string")` and a `String` emptiness test:
+    /// ⚑[tool=decode_objc_selector ref=0x10440e300 result='string']
+    /// the trailing `and x8, x21, #0xffffffffffff` / `ubfx x9, x22, #56, #4` /
+    /// `tst x22, #1<<61` / `csel` is the standard count extraction that reads the LARGE
+    /// representation's count from the first word and the SMALL one's from the top nibble of the
+    /// second — i.e. `String.isEmpty`, not a pointer-null test. The `.left` arm returns `false`,
+    /// which is the `?? false` below rather than a `true` default.
+    ///
+    /// ⚑ The binary inlines the discriminator test here rather than calling `text`'s getter, but
+    ///   that does NOT decide the spelling: `text?.string.isEmpty ?? false` and a repeated
+    ///   `if case .right` compile to the same code once `text` is inlined. Written in terms of
+    ///   `text` because that member is right here; the alternative is indistinguishable.
+    public var isEmpty: Bool {
+        text?.string.isEmpty ?? false
+    }
+
     // ⚑[tool=export_trie_oracle ref=$s8KSPlayer12SubtitlePartV__6renderACSd_SdAA6EitherOyAA0B9ImageInfoVAA0b4TextG0VGtcfC result=start/end are UNLABELLED (`__6render`), RECOVERED]
     public init(_ start: Double, _ end: Double, render: Either<SubtitleImageInfo, SubtitleTextInfo>) {
         self.start = start
