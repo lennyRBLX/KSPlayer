@@ -110,6 +110,26 @@ public class URLContextDownload: AbstractAVIOContext {
         return ffurl_seek2(context, offset, whence)
     }
 
+    /// @0x101b91198, 22 instructions. `override_table.py --impl` answers YES at index 3.
+    ///
+    /// Two exclusivity accesses on the SAME field, and their flags are what fix the shape:
+    ///   · first a READ (flags 0, 0) on self+0x18 whose loaded value only feeds `cbz` — nothing
+    ///     else consumes it — so it is a plain nil test and an early return.
+    ///   · then a second access with flags 0x21 (Modify|Tracking, the pair this reconstruction's
+    ///     KSOptions notes already decode) followed by `swift_endAccess`. Under it the call
+    ///     receives `x0 = x20 + 0x18` — the ADDRESS of `context`, not its value.
+    /// A callee taking `URLContext **` under a tracked modify is `ffurl_closep` (url.h:234), the
+    /// form that nils the caller's pointer, NOT `ffurl_close` (url.h:235) which takes one star and
+    /// would have been handed the loaded value instead. The prototype is restated in FFmpegKit's
+    /// avformat_shim.h alongside ffurl_seek2, after the URLContext typedef it needs.
+    /// ⚑[tool=override_table ref=URLContextDownload.close():0x101b91198 result=YES-index-3]
+    override public func close() {
+        guard context != nil else {
+            return
+        }
+        ffurl_closep(&context)
+    }
+
     // ⚠️ s109 CORRECTION: this note used to include `seek(offset:whence:)` in the
     //   "devirtualized in the binary (no readable body)" list. That was wrong — the trie names
     //   `URLContextDownload.seek(offset:whence:)` at 0x101b910f0 and its 24-instruction body is
