@@ -120,7 +120,14 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     var eof: Bool = false
     // 16 _isClosed: whether close() has run. Designated init defaults it false; s64
     //    returns !_isClosed. field-record.
-    private var _isClosed: Bool = false
+    // ⚑ s109 WIDENED private -> internal. LimitPreLoadIOContext carries a genuine
+    //   `shouldContinueRead()` OVERRIDE (its descriptor has override_table=True, and the trie
+    //   names the subclass's own symbol), and that override's body is ICF-FOLDED onto this
+    //   class's at 0x101b8a0e0 — byte-identical, i.e. the same `!_isClosed` negation. A body in
+    //   another file cannot read a `private` field, so `_isClosed` is at least internal in
+    //   Forward. Nothing in the binary contradicts it: the field emits no `vpWvd` global
+    //   (0x1044f3848 is NOT IN TRIE), which rules out `public` but not `internal`.
+    var _isClosed: Bool = false
     // 17 downloadLock: serializes the download/cache mutation. NON-optional — the designated init
     //    allocs NSRecursiveLock() unconditionally (allocWithZone + init, no nil-branch), and l2 reads
     //    the binary field as non-optional NSRecursiveLock (the prior `?` was an over-cautious flag,
