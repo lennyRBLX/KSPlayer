@@ -318,6 +318,50 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         return count
     }
 
+    /// @0x101b9ad90 (extent 0x101b9ad90–0x101b9b1bc, 267 instr) — trie signature
+    /// `static PreLoadIOContext.HLSCacheIOContext.clearCache(for: Swift.String) -> ()`.
+    /// No `Tq` method descriptor, so it is a `static` (non-overridable) member, not `class`.
+    ///
+    /// Tractable because all 28 calls are Foundation/libc stubs — no KSPlayer helper, nothing
+    /// devirtualized. Read straight through:
+    ///   · 0x101b9ae70–0x101b9ae94 builds the directory: `NSTemporaryDirectory` →
+    ///     `URL.init(fileURLWithPath:)` → `appendingPathComponent` with the immediate-formed
+    ///     small string `mov x0,#0x6976 / movk 0x6564 / movk 0x436f / movk 0x6361`,
+    ///     `x1 = 0x…6568/0x73` tagged `0xeb00` (count 11) = "videoCaches".
+    ///   · 0x101b9aec8–0x101b9af28 lists it: `defaultManager`, `URL.path.getter`, then the
+    ///     selector `contentsOfDirectoryAtPath:error:` with its error slot at [x29,#-0x70];
+    ///     `cbz x20 → 0x101b9b078` is the failure arm, which runs
+    ///     `_convertNSErrorToError` → `swift_willThrow` → `swift_errorRelease` and falls into
+    ///     the epilogue without rethrowing — the signature is non-throwing, so that is `try?`
+    ///     plus an early return. The success arm bridges via
+    ///     `Array._unconditionallyBridgeFromObjectiveC` to `[String]`.
+    ///   · 0x101b9af34–0x101b9af5c builds the prefix: `w8 = 0x6c68 / movk 0x5f73` = "hls_"
+    ///     with `x9 = 0xE4…` (count 4) stored as a String at [x29,#-0x70], whose address goes
+    ///     into x20 (swiftself for the `inout` receiver); the first `String.append` takes the
+    ///     `for:` parameter in (x0,x1) — reloaded from [x29,#-0x88]/x28 — and the second takes
+    ///     `w0 = 0x5f`, `x1 = 0xE1…` (count 1) = "_". So the prefix is "hls_" + md5 + "_".
+    ///   · 0x101b9af98–0x101b9b030 is the loop: per element `hasPrefix` with self=(x20,x21)
+    ///     the name and arg=(x25,x24) the prefix; `tbz w0,#0` skips a non-match; a match runs
+    ///     `defaultManager`, `appendingPathComponent(name)`, `URL._bridgeToObjectiveC` and the
+    ///     selector `removeItemAtURL:error:`, whose failure arm at 0x101b9b034 converts and
+    ///     releases the error then branches back to 0x101b9af8c — the next iteration. Errors
+    ///     are swallowed per-item, so that too is `try?`.
+    /// ⚑[tool=export_trie_oracle ref=HLSCacheIOContext.clearCache:0x101b9ad90 result=static-no-Tq]
+    /// ⚑[tool=decode_string_literal ref=HLSCacheIOContext.clearCache:0x101b9ae70 result=videoCaches/hls_/underscore]
+    /// ⚑[tool=decode_objc_selector ref=HLSCacheIOContext.clearCache:0x101b9aec8 result=contentsOfDirectoryAtPath-error/removeItemAtURL-error]
+    public static func clearCache(for md5: String) {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("videoCaches")
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            return
+        }
+        var prefix = "hls_"
+        prefix.append(md5)
+        prefix.append("_")
+        for name in names where name.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        }
+    }
+
     // UNRESOLVED → later phase (do NOT reconstruct — declared nowhere beyond these
     //   markers; their bodies are deep/devirt and/or call stripped FFmpeg + DirectoryWatcher
     //   (1C.3) the P2 oracle names — fabrication risk):
