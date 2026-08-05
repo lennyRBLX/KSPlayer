@@ -991,6 +991,24 @@ public extension KSOptions {
     internal nonisolated(unsafe) static var progressColor: Color = .green.opacity(0.8)
     internal nonisolated(unsafe) static var thumbColor: Color = .white
     internal nonisolated(unsafe) static var trackColor: Color = .white.opacity(0.5)
+    // ── s106, the two TextPosition statics ───────────────────────────────────────────────────
+    // Both share one once-init tail @0x1019baf74, which writes five slots of the storage:
+    //   +0x00  SwiftUI.VerticalAlignment.bottom      (stub 0x103454804 -> __got 0x10410ec98)
+    //   +0x08  SwiftUI.HorizontalAlignment.center    (stub 0x103454990 -> __got 0x10410eee8)
+    //   +0x10  10.0 and +0x18 10.0, written together as `fmov.2d v0, #10.0` / `str q0`
+    //   +0x20  10.0, written as the immediate 0x4024000000000000
+    // Against TextPosition's own declaration defaults (verticalAlign .bottom, horizontalAlign
+    // .center, leftMargin 0, rightMargin 0, verticalMargin 10) only leftMargin and rightMargin
+    // differ, so the memberwise call carries exactly those two. Writing `TextPosition()` would
+    // give 0/0/10 and contradict the three 10.0 stores.
+    // The tail calls each alignment getter TWICE and discards the second pair; that is
+    // transcribed as one call each because the discarded results reach no slot.
+    // ⚑[tool=bind_oracle ref=__got:0x10410ec98 result=SwiftUI.VerticalAlignment.bottom]
+    // ⚑[tool=bind_oracle ref=__got:0x10410eee8 result=SwiftUI.HorizontalAlignment.center]
+    // Both storage globals demangle to `… : KSPlayer.TextPosition`, and both carry a vpMV, so
+    // both are public — unlike the five Color statics above, which carry none.
+    nonisolated(unsafe) static var textPosition = TextPosition(leftMargin: 10, rightMargin: 10)
+    nonisolated(unsafe) static var secondaryTextPosition = TextPosition(leftMargin: 10, rightMargin: 10)
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
