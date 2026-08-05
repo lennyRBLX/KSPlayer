@@ -238,6 +238,39 @@ open class IOSVideoPlayerView: VideoPlayerView {
         #endif
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.doubleTapGestureAction():0x101b10d18 result=84-instr]
+    /// A genuine behavioural override — `VideoPlayerView.doubleTapGestureAction()` sends
+    /// `primaryActionTriggered` and shows the mask, which is nothing like this body.
+    ///
+    /// Every field here is named by READING the offset global's VALUE against the owning class's
+    /// field-offset vector, and the three globals come from three DIFFERENT classes in the chain:
+    ///   0x1044f1840 = `VideoPlayerView.doubleTapGesture`
+    ///   0x1044e74e8 = `PlayerView.playerLayer`
+    ///   0x104c634f0 = `KSPlayerLayer.player`
+    /// ⚑[tool=decode_objc_selector ref=0x10440c078 result='locationInView:']
+    /// ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
+    /// ⚑[tool=bind_oracle ref=__got:0x104108fe0 result=_CGRectGetWidth]
+    ///
+    /// · `currentPlaybackTime` is reached through the BASE protocol's table, not the main one:
+    ///   `wt+0x8` is `MediaPlayback`'s witness table and its `+0x28` slot thunks to
+    ///   ⚑[tool=export_trie_oracle ref=0x101a41fe4 result=KSMEPlayer.currentPlaybackTime.getter]
+    /// · The seek is `KSPlayerLayer` vtable slot 65 (metadata word +0x2e0),
+    ///   ⚑[tool=vtable_walk ref=KSPlayerLayer:slot65 result=seek(time:autoPlay:completion:)]
+    ///   called with `w0 = 1` (autoPlay) and `x1 = x2 = 0` (nil completion).
+    /// · `fcsel ..., mi` against `width * 0.5` picks **-10.0** on the left half and **+10.0** on
+    ///   the right; both constants are `fmov` immediates, not loads.
+    ///
+    /// ⚑ `playerLayer` is loaded and nil-checked TWICE, which is why this is written as two
+    ///   `playerLayer?` accesses rather than one `if let`: the getter call between them is opaque
+    ///   to the optimizer, so a single binding would have produced one load.
+    override open func doubleTapGestureAction() {
+        let point = doubleTapGesture.location(in: self)
+        if let currentPlaybackTime = playerLayer?.player.currentPlaybackTime {
+            let delta = point.x < bounds.width * 0.5 ? -10.0 : 10.0
+            playerLayer?.seek(time: currentPlaybackTime + delta, autoPlay: true, completion: nil)
+        }
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.tapGestureAction(_:):0x101b10bc0 result=22-instr]
     /// The whole body is one toggle, and every part of that is read:
     ///   · The dispatch is a MODIFY COROUTINE, not a getter/setter pair — `x0 = sp` hands the
