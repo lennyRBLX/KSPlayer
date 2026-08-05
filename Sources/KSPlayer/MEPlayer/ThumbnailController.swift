@@ -12,9 +12,64 @@ import Libavformat
 #if canImport(UIKit)
 import UIKit
 #endif
+/// ⚑ s107 RESHAPE. This struct had two stored properties and an implicit init. The binary's
+/// field descriptor @0x103cbd268 declares **three**, in this order and all `let`:
+/// `jpegData`, `_image`, `time`. `image` is not stored at all — it is COMPUTED.
+///
+/// The layout is read from the accessors, and the pieces corroborate each other:
+///   · `jpegData.getter` @0x101a6c318 (11 instr) copies words 0–1 and returns them, doing no
+///     work — a stored property, not something derived from an image.
+///   · `image.getter` @0x101a6c344 opens `cbz x2` and returns x2 unchanged when non-nil, so
+///     word 2 is a stored OPTIONAL image; only on nil does it consult `jpegData`.
+///   · `time.getter` is **0x10000e52c**, the image's canonical ICF-folded empty body — the
+///     identity getter of a `Double` that arrives and leaves in d0.
+///
+/// ⚑ The nil encoding is cross-checked, not assumed. `init(image:time:)` @0x101a6c308 sets the
+///   `jpegData` slot to `(0, 0xF000000000000000)`, and `image.getter`'s fallback tests
+///   `lsr x8, x20, #60` / `cmp #0xe` / `b.ls` — i.e. "top nibble > 0xe". The constant the init
+///   writes is exactly the value that test rejects, so the two independently agree that this is
+///   `Data?.none`.
 public struct FFThumbnail: Sendable {
-    public let image: UIImage
+    public let jpegData: Data?
+    /// ⚑ Named `_image` by the field record; it has no getter symbol and no property descriptor,
+    ///   unlike its three siblings, which is what makes it private rather than a taste call.
+    private let _image: UIImage?
     public let time: TimeInterval
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.FFThumbnail.image.getter:0x101a6c344 result=54-instr]
+    /// The stored image when present, else decoded from `jpegData`:
+    /// ⚑[tool=decode_objc_selector ref=0x10440b958 result='initWithData:']
+    /// ⚑[tool=decode_objc_selector ref=0x10440b838 result='init']
+    /// Both nil paths — no data, and `initWithData:` returning nil (`cbnz x22`) — fall to the
+    /// bare `UIImage()`, which is why this cannot be spelled with a single `??`.
+    public var image: UIImage {
+        if let _image {
+            return _image
+        }
+        guard let jpegData, let decoded = UIImage(data: jpegData) else {
+            return UIImage()
+        }
+        return decoded
+    }
+
+    /// ⚑ @0x101a6c308, four instructions: `mov x2, x0` (the argument becomes `_image`), then the
+    ///   `jpegData` slot is set to the `Data?` nil pair. `time` is never touched — it arrives in
+    ///   d0 and is returned in d0.
+    public init(image: UIImage, time: TimeInterval) {
+        jpegData = nil
+        _image = image
+        self.time = time
+    }
+
+    /// ⚑ @0x101a6c300, TWO instructions: `mov x2, #0` and `ret`. Only `_image` is written; the
+    ///   incoming `jpegData` and `time` already sit in the registers the result is returned in.
+    ///   ⚑ The parameter is `Data`, NOT `Data?` — the mangled name is `…8jpegData4timeAC10Foundation0D0V_Sdt…`
+    ///     with no `Sg` on the first argument, even though the stored property is optional.
+    public init(jpegData: Data, time: TimeInterval) {
+        self.jpegData = jpegData
+        _image = nil
+        self.time = time
+    }
 }
 
 public protocol ThumbnailControllerDelegate: AnyObject {
