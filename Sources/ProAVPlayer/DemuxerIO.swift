@@ -253,10 +253,22 @@ public actor DemuxerIO {
     /// Weak delegate setter: stores the witness (delegate+8) then tail-calls `_swift_unknownObjectWeakAssign`
     /// for the object — i.e. `self.delegate = <existential>`. Kind=Method (NOT a synthesized Setter — delegate
     /// skips an accessor triple, later·49); dispatched via vtable only (3 DATA xrefs, no code caller).
-    /// ⚑ NAME INFERRED — no #function (recover_swift_function_name @0x101b7fed8 = None; vtable-only dispatch
-    ///   ⇒ no caller-recovery path). ⚑ param optionality inferred `DemuxerIODelegate?` (existential-ness
-    ///   ABI-confirmed: prologue x0=object / x1=witness dynamic; only nil-vs-non-nil not binary-recoverable).
-    public func setDelegate(_ delegate: DemuxerIODelegate?) {
+    /// ⚑ s106 RENAME `setDelegate(_:)` → `update(delegate:)`. The name was never inferred-and-unknown:
+    ///   the pin two lines above already resolved this address to
+    ///   `ProAVPlayer.DemuxerIO.update(delegate: ProAVPlayer.DemuxerIODelegate?)`, and the declaration
+    ///   below it used a different one. The old "NAME INFERRED — no #function" note was true about
+    ///   `recover_swift_function_name` and irrelevant: the export trie names this address directly, and
+    ///   a trie name is read, not inferred.
+    ///   BOTH parts differ and both are taken from the trie: the base name (`setDelegate` → `update`)
+    ///   and the argument label (`_` → `delegate:`). The parameter type, arity and Void return already
+    ///   matched, so this is a rename and not a signature change.
+    ///   ⚑[tool=export_trie_oracle ref=DemuxerIO.update(delegate:):0x101b7fed8 result=update-not-setDelegate]
+    ///   Body unchanged and independently corroborated: field 10 `delegate` carries the mangle tail
+    ///   `_pSgXw` — existential, optional, WEAK — and the tail call is
+    ///   ⚑[tool=bind_oracle ref=__got:0x1041130c0 result=_swift_unknownObjectWeakAssign], which is the
+    ///   weak store this line compiles to.
+    ///   ⚑ param optionality still inferred (existential-ness is ABI-confirmed; nil-vs-non-nil is not).
+    public func update(delegate: DemuxerIODelegate?) {
         self.delegate = delegate
     }
 
