@@ -305,6 +305,37 @@ open class KSAVPlayer {
         nil
     }
 
+    /// cachedTimeRanges.getter @0x1019a1244, 76 instr, vtable slot 45 — so it belongs in the class
+    /// body, not an extension. `public` is proven by the property descriptor
+    /// $s8KSPlayer10KSAVPlayerC16cachedTimeRangesSayAA06CachedD5RangeVGvpMV @0x103566da0; there is
+    /// no `…vs` and no `…vM`, so it is get-only.
+    ///
+    /// ⚑ Distinct from `PreLoadProtocol.cachedTimeRanges(duration:)` despite the shared name —
+    /// different type, different arity. This getter CALLS that method.
+    ///
+    /// Every step is read:
+    ///  · a vtable call at metadata `+0x458`; KSAVPlayer's VTableOffset is 38 words (0x130), so the
+    ///    slot is (0x458-0x130)/8 = 101, whose Impl 0x10002d9d4 is `ioContext`'s own getter — the
+    ///    same address this file already cites two declarations above. `cbz` on the result is the
+    ///    optional test.
+    ///  · `swift_dynamicCast` with `w4 = 6` (CONDITIONAL) from `AbstractAVIOContext` (metadata
+    ///    accessor 0x1019e4db4) to the existential whose mangle at 0x103566c50 ends `_p`; `tbz` on
+    ///    failure falls to the empty return.
+    ///  · `duration` (offset global 0x104c63070, named) under a read access, then
+    ///    `fcmp d8, #0.0` / `b.le` — the `> 0` test, ordered AFTER the cast.
+    ///  · success calls witness slot **+0x40** with `d0 = duration`. PreLoadProtocol has 9
+    ///    requirements, so +0x40 is requirement index 7 — which PreLoadProtocol.swift numbers
+    ///    explicitly as `cachedTimeRanges(duration:)`, a Method, matching the descriptor's kind.
+    ///  · both failure paths return `__swiftEmptyArrayStorage` (__got 0x104112d00), i.e. `[]`.
+    /// ⚑[tool=conformance_walker ref=PreLoadProtocol:0x1039ede48 result=9-requirements]
+    /// ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
+    public var cachedTimeRanges: [CachedTimeRange] {
+        guard let ioContext = ioContext as? PreLoadProtocol, duration > 0 else {
+            return []
+        }
+        return ioContext.cachedTimeRanges(duration: duration)
+    }
+
     /// ⚑[tool=llvm-objdump ref=KSAVPlayer.startRecord(url:):0x10000e52c result=single-ret]
     /// The body IS 0x10000e52c, whose only instruction is `ret`. Empty, not unimplemented —
     /// this is the empty-body fold, distinct from the deleted-method stub at 0x10198eb18 which
