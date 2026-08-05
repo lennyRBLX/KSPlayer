@@ -209,13 +209,28 @@ not `@Sendable`:
 
     func runOnMainThread(_ block: @escaping @MainActor () -> Void)
 
-Changing it is a cross-file unit with measured blast radius: **~33 call sites** across
-KSPlayerLayer, KSOptions, AudioBaseOutput, MEPlayerItem and others (`grep -rn runOnMainThread
-Sources/` → 34 hits including the definition). I did not widen this unit to do it; the edit was
-reverted and the tree left green at `0bef333`.
+**I made the signature change and measured what it actually costs. The grep count is a red
+herring: 33 call sites exist, and exactly ONE breaks.** Every other caller already compiles
+against a `@MainActor` block. The single failure is `AudioBaseOutput.swift:178`:
 
-Land the helper signature first, then this member is a paste. The same change plausibly unblocks
-other deferred-work rows that end in a `@MainActor`-isolated delegate call.
+    runOnMainThread { [weak self] in
+        self?.prepare(audioFormat: render.audioFormat)
+    }
+
+which now sends a non-Sendable `self` (`AudioBaseOutput` is a plain `public class`) and a
+non-Sendable `render` into a MainActor-isolated closure — two `#SendingRisksDataRace` errors.
+**`@preconcurrency` does not downgrade them**; I re-added it and re-built to check, and the errors
+are unchanged, so keeping that attribute is not a way out.
+
+Hoisting `render.audioFormat` into a local would remove one of the two, but `self` remains, and
+clearing it means giving `AudioBaseOutput` a Sendable conformance — a claim about Forward's
+concurrency model that this binary does not make. I did not invent it. Both edits were reverted
+and the tree is green at `cf8cd09`, build 4/4.
+
+So the unit is: **the helper signature plus a decision about `AudioBaseOutput`'s Sendability.**
+That second half needs either a reading of Forward's own AudioBaseOutput or an explicit call from
+the human. It is one contained obligation, not a 33-site refactor — which is the opposite of what
+the call-site count suggests, and the reason to measure by compiling rather than by grepping.
 
 ## 9. Not started, deliberately
 
