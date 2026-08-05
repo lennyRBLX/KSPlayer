@@ -105,6 +105,23 @@ public final class MEPlayerItem: @unchecked Sendable {
     /// byte-sized enum, `state` (index 37, a symref to the nested `MEPlayerItem.State`), whose own
     /// trie entry confirms it is private with a per-file discriminator — which is why no vpWvd.
     /// Case 0 of that enum is `.idle`, already documented at its declaration in Model.swift.
+    /// ⚑[tool=disassemble ref=MEPlayerItem.ioContext.getter:0x101a480b0 result=13-instr]
+    /// Loads the ivar at offset-global 0x1044ea218; if it is nil the getter returns nil, otherwise
+    /// it returns `[that + 0x20]` retained. Two independent readings name both halves:
+    ///   · the ivar is `formatContext` — MEPlayerItem's only `FormatContext?` field (record 6),
+    ///     and the getter's return type `AbstractAVIOContext?` only makes sense through it;
+    ///   · `+0x20` is `FormatContext.ioContext`, which FormatContext.swift:55 already declares as
+    ///     `public let ioContext: AbstractAVIOContext?  // +0x20`, with the surrounding layout
+    ///     (`+0x10=interrupt, +0x18=formatCtx, +0x20=ioContext`) recorded at :70 from an earlier
+    ///     session's read of that class's init. So the constant immediate is corroborated by a
+    ///     reading this session did not produce.
+    /// The nil-check on the ivar is the `?.` — there is no force-unwrap and no default.
+    /// Access read from its vpMV; `formatContext` is fileprivate, which is why this lives in this
+    /// file rather than an extension elsewhere.
+    public var ioContext: AbstractAVIOContext? {
+        formatContext?.ioContext
+    }
+
     public var isIdle: Bool {
         state == .idle
     }
