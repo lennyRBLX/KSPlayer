@@ -570,6 +570,57 @@ open class KSOptions {
         nil
     }
 
+    /// @0x1019bb974, 175 instructions. The signature is the trie's, not inferred:
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.wantedSubtitle(tracks:):0x1019bb974 result=OWNER_MATCH]
+    /// This is the method MEPlayerItem.swift:464 identified at the call site and left unbuilt.
+    ///
+    ///   · the first statement reads `autoSelectEmbedSubtitle` through its own offset global
+    ///     0x104c63378 under a (0, 0) beginAccess and `cmp w8,#1 / b.ne` straight to the nil
+    ///     return — the guard, not a branch inside the loop.
+    ///   · the loop walks the array at stride 0x10 from element 0 (`ldp x20,x26,[x23,#-0x8]` with
+    ///     x23 starting at base+0x28), i.e. the two-word (instance, witness-table) existential.
+    ///   · per element it dispatches witness **+0x28**. This file's own pinned ordering for the
+    ///     URLSubtitleInfo:SubtitleInfo table is +0x10..+0x38 = subtitleID / name / delay /
+    ///     languageCode / subtitleLanguage / isEnabled, so +0x28 is `languageCode`, and the
+    ///     `cbz x1` on the second word of its result is the `String?` nil test (a nil
+    ///     Optional<String> is (0,0) where a valid "" is (0, 0xE0…)).
+    ///   · both sides are then `Locale.current.localizedString(forLanguageCode:)`
+    ///     (`_$s10Foundation6LocaleV15localizedString15forLanguageCodeSSSgSS_tF`), the right-hand
+    ///     one fed by `Locale.current.languageCode`. Both Locale temporaries are stack-allocated
+    ///     from the VWT size and destroyed per iteration — the right-hand side is recomputed
+    ///     INSIDE the loop, so it is not hoisted in the source either.
+    ///   · the compare is `_stringCompareWithSmolCheck(_:_:expecting:)` with `w4 = 0` (.equal),
+    ///     preceded by the two-word identity fast path. Crucially the nil/nil case at 0x1019bbb88
+    ///     branches to the MATCH exit, so the comparison is on the OPTIONALS — which is what makes
+    ///     the spelling `.flatMap`, not an `if let`.
+    ///   · the loop-exhausted path (0x1019bbb9c) reloads element 0 and retains it, so a non-empty
+    ///     no-match returns the first track. There is no `brk` anywhere in the extent, so that is
+    ///     `.first` and not a subscript — the same rule `wantedVideo` above is spelled by.
+    ///   · the tail is `_object_getClass` compared against `type metadata for FFmpegAssetTrack`
+    ///     (0x1044e91c8), then `ldr x8,[x20,#0xb8]` / `ldr w8,[x8,#0x4]` / `sub w8,w8,#0x17000` /
+    ///     `cmp w8,#0x7`. That is `isDVBTeletext` INLINED — byte-for-byte the body documented on
+    ///     `FFmpegAssetTrack.isDVBTeletext` @0x101a1f2f0 — so it is spelled by its own name rather
+    ///     than re-derived here. 0xb8 is `codecpar` by the field-offset vector, not by position.
+    /// ⚑[tool=field_offset_vector ref=FFmpegAssetTrack.codecpar result=index-14@0xb8]
+    /// ⚑[tool=decode_witness_table ref=URLSubtitleInfo:SubtitleInfo result=witness+0x28=languageCode]
+    ///
+    /// ⚑ ACCESS not independently proven. The trie name carries no private discriminator so it is
+    ///   not `private`, and the call site MEPlayerItem.swift:464 records is a vtable dispatch at
+    ///   md+0x768, which proves a class-body declaration with a slot but not which of `internal` /
+    ///   `public` / `open` it is. `open` matches its two siblings above, which take a track array
+    ///   and return an optional track; that is consistency, not evidence.
+    open func wantedSubtitle(tracks: [any SubtitleInfo]) -> (any SubtitleInfo)? {
+        guard autoSelectEmbedSubtitle else { return nil }
+        let track = tracks.first { track in
+            track.languageCode.flatMap { Locale.current.localizedString(forLanguageCode: $0) }
+                == Locale.current.languageCode.flatMap { Locale.current.localizedString(forLanguageCode: $0) }
+        } ?? tracks.first
+        if let track = track as? FFmpegAssetTrack, track.isDVBTeletext {
+            return nil
+        }
+        return track
+    }
+
     // Forward 1.3.17 takes a 4th argument and branches on IT, not on `isLive`:
     //   cmp w1,#0x2 · mov w8,#4 · mov w9,#8 · csel w0,w9,w8,gt · ret
     // w1 is `reorderSize` (fps/naturalSize consume FP registers, `isLive` takes w0, self is x20);
