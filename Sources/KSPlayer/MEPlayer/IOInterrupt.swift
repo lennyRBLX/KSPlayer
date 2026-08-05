@@ -29,6 +29,20 @@ public final class IOInterruptContext {
     // access modifier is added to satisfy the compiler (no semantic change).
     fileprivate let token: IOInterruptToken // @ +0x28
 
+    /// ⚑[tool=disassemble ref=IOInterruptContext.interrupt.getter:0x101a34c08 result=24-instr]
+    /// A short-circuit OR, read directly off the branch structure:
+    ///   `ldrb w8,[x20,#0x10]` / `tbz w8,#0` — if `flag` is set, `mov w0,#1` and return;
+    ///   `ldr x8,[x20,#0x18]` / `cbz x8` — if the closure's function word is null, `mov w0,#0`;
+    ///   otherwise `ldr x20,[x20,#0x20]` for its context and `blr x8`, returning its result.
+    /// The three offsets are the ones this class already annotates above — flag @+0x10 and the
+    /// two-word closure @+0x18/+0x20 — so no offset had to be recovered for this member.
+    /// The null test on the function word IS the `?.`; there is no force-unwrap, and the `mov
+    /// w0,#0` arm is the `?? false`.
+    /// Access read from its vpMV.
+    public var interrupt: Bool {
+        flag || (block?() ?? false)
+    }
+
     /// Designated init — reconstructed from FUN_101a391bc (vtable slot 0).
     /// Allocating thunk @0x101a33658 calls this then balances ARC on the closure.
     init(_ block: (@Sendable () -> Bool)?) {
