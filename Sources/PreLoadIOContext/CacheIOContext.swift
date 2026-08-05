@@ -465,6 +465,42 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   fileSize) are not cleanly readable Foundation/Swift in the binary (devirt /
     //   FFmpeg-adjacent) → inherited from AbstractAVIOContext, NOT reconstructed. — P2
 
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryEqual(logicalPos:):0x101b8cf34 result=112-instr]
+    /// ⚠️ THE NAME MISLEADS, and the binary is unambiguous about it: this does NOT compare
+    /// `entry.position` to `logicalPos`. Both fields are loaded — `position` (global 0x104c63948)
+    /// into x22 and `size` (global 0x104c63950) as the 32-bit `ldr w28` — and the comparison is
+    /// `adds x8, x22, x28` then `cmp x8, x19`, i.e. **`position + size == logicalPos`**. It finds
+    /// the entry that ENDS exactly at `logicalPos`, which is the adjacency test a cache uses to
+    /// append onto a segment, not an equality test on segment starts.
+    ///
+    /// Same inclusive binary search as its siblings (`hi = count - 1`, `mid = (lo + hi) / 2` with
+    /// the round-toward-zero correction, `hi = mid - 1`), re-read rather than carried over. The
+    /// three-way branch is read off consecutive condition codes on ONE compare:
+    ///   · `b.eq`  → hit  @0x101b8d080: `mov w1, #0` then `mov x0, x21` — x21 is the MID INDEX.
+    ///   · `b.hs`  → end > logicalPos (equality already consumed) → `sub x24, x21, #0x1`.
+    ///   · fallthrough → end < logicalPos → `add x25, x21, #0x1`.
+    ///   · miss @0x101b8d0ac: `mov x21, #0` / `mov w1, #1` — the `Int?` nil TAG, not a sentinel.
+    ///
+    /// ⚑ The `b.hs`/`b.lo` pair is UNSIGNED throughout, matching `UInt64`; a signed `b.gt` here
+    ///   would mis-order any offset past 2^63.
+    public func firstEntryEqual(logicalPos: UInt64) -> Int? {
+        var lo = 0
+        var hi = entryList.count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let entry = entryList[mid]
+            let end = entry.position + UInt64(entry.size)
+            if end == logicalPos {
+                return mid
+            } else if end > logicalPos {
+                hi = mid - 1
+            } else {
+                lo = mid + 1
+            }
+        }
+        return nil
+    }
+
     /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryIndexContain(logicalPos:):0x101b8f36c result=111-instr]
     /// The index-returning twin of `firstEntryContain` below. The search is the SAME — inclusive
     /// `hi = count - 1`, `hi = mid - 1`, the identical half-open test against
