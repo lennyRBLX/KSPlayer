@@ -34,6 +34,11 @@
 import Foundation
 import Metal
 import QuartzCore
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 
 public class Anime4KPipeline: VideoPipeline {
     // Field order, let/var and byte offsets are the binary's, not a preference.
@@ -109,6 +114,45 @@ public class Anime4KPipeline: VideoPipeline {
     // store to invalidate it.
     public func cachedUpscaleSupportStatus() -> Bool? {
         cachedUpscaleSupport
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.Anime4KPipeline.isUpscaleSupported(pixelBuffer:):0x101a7a364 result=152-instr]
+    /// Read in full. Every field offset is resolved by `field_offset_vector` (this class's vector is
+    /// static and fully decoded), so `+0x28`/`+0x30`/`+0x18`/`+0x90`/`+0xa0` are read, not matched
+    /// by position; every witness slot is resolved by position in `PixelBufferProtocol`'s declared
+    /// requirement order — `wt+0x8` = `width`, `wt+0x10` = `height`, `wt+0x38` = `aspectRatio`
+    /// (slot 6, the first requirement returning a CGSize, which is why it comes back in d0/d1).
+    ///
+    /// · The first guard reads the Optional's TAG, not its value: `ldrb w8, [x22, #0x30]` with
+    ///   `cmp w8, #1` skipping the check. `+0x28` is `maxUpscaleInputHeight`'s payload and `+0x30`
+    ///   its tag, so tag 1 is `nil`. The comparison is `b.ge` on `(maxUpscaleInputHeight, height)`,
+    ///   i.e. fall through only when the height fits.
+    /// · `anime4Ks.isEmpty` is the array count feeding straight into the return: `cbz x0` jumps to
+    ///   the epilogue with x0 STILL holding the count, so the zero count IS the returned `false`.
+    /// · `*2` carries a real overflow trap (`cmn x0, #1<<62` / `b.mi` → `brk`), so it is a checked
+    ///   multiply, not a shift.
+    ///
+    /// ⚑ The last two `min` pairs look like three-way selects but are not: `x26` is already
+    ///   `min(width * 2, 3840)`, so the `Int(fitted.width) > 3840` arm and the `min` arm agree.
+    ///   The compiler emitted both sides of the comparison; the source is one `min`.
+    func isUpscaleSupported(pixelBuffer: any PixelBufferProtocol) -> Bool {
+        if let maxUpscaleInputHeight, pixelBuffer.height > maxUpscaleInputHeight {
+            return false
+        }
+        if anime4Ks.isEmpty {
+            return false
+        }
+        let maxWidth = min(pixelBuffer.width * 2, 3840)
+        let maxHeight = min(pixelBuffer.height * 2, 2160)
+        let screen = anime4KScreenPixelSize()
+        let target = overrideTargetResolution ?? CGSize(width: Double(screen.width), height: Double(screen.height))
+        let fitted = anime4KAspectFit(target: target, pixelBuffer: pixelBuffer)
+        let targetWidth = max(1, min(maxWidth, Int(fitted.width)))
+        if pixelBuffer.width < targetWidth {
+            return true
+        }
+        let targetHeight = max(1, min(maxHeight, Int(fitted.height)))
+        return pixelBuffer.height < targetHeight
     }
 
     // ⚑ 0x101a78abc is a 1-instruction thunk `b 0x101a7c288`; the body is the 23 instructions
@@ -192,5 +236,70 @@ public class Anime4KPipeline: VideoPipeline {
             supported: supported,
             preset: preset
         )
+    }
+}
+
+/// ⚑[tool=recover_swift_function_name ref=0x101a7c2e4 result=NOT_IN_TRIE-no-#function-literal]
+/// A FREE function, not a method: the body at 0x101a7c2e4 (74 instr, read in full) never touches
+/// a self register and takes no arguments. It is `private`, so it has no export-trie symbol and
+/// `recover_swift_function_name` finds no `#function` literal — **the NAME above is therefore
+/// invented, and only the name is.** Everything else is read:
+///   · classref 0x1044108c8 = `UIScreen`
+///     ⚑[tool=bind_oracle ref=__objc_classrefs:0x1044108c8 result=_OBJC_CLASS_$_UIScreen]
+///   · three sends, decoded from their selrefs, in this order:
+///     ⚑[tool=decode_objc_selector ref=0x10440c0f0 result='mainScreen']
+///     ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
+///     ⚑[tool=decode_objc_selector ref=0x10440cca0 result='scale']
+///     `bounds` returns a CGRect, so its size lands in d2/d3 — which is exactly the pair the
+///     multiply consumes; `mainScreen` is sent twice because the two reads are not CSE'd.
+///   · `frinta` is round-half-away-from-zero = Swift's `.rounded()`, NOT `floor`/`trunc`; the
+///     `fmaxnm _, #1.0` after it is the `max(1, …)`. `fcvtzs` plus the ±2^63 guards
+///     (`0xc3e0…`/`0x43e0…`) and the `0x7fef…` finite check are the `Int(_:)` conversion traps.
+/// ⚑ THE `#else` BRANCH IS NOT IN THIS IMAGE. Forward-TF is an iOS binary, so only the UIKit arm
+///   has bytes to read; the AppKit arm is the mechanical counterpart (`NSScreen.frame` +
+///   `backingScaleFactor` are the direct analogues of `bounds` + `scale`) and is written to keep
+///   the macOS target building, NOT because it was recovered. Whether Forward's source guarded
+///   this at all is undecidable from an iOS-only image. Re-derive it if a macOS build ever lands.
+private func anime4KScreenPixelSize() -> (width: Int, height: Int) {
+    #if canImport(UIKit)
+    let bounds = UIScreen.main.bounds
+    let scale = UIScreen.main.scale
+    #else
+    let bounds = NSScreen.main?.frame ?? .zero
+    let scale = NSScreen.main?.backingScaleFactor ?? 1
+    #endif
+    return (Int(max((bounds.width * scale).rounded(), 1)), Int(max((bounds.height * scale).rounded(), 1)))
+}
+
+/// ⚑[tool=recover_swift_function_name ref=0x101a7c40c result=NOT_IN_TRIE-no-#function-literal]
+/// Also a FREE private function (68 instr @0x101a7c40c, read in full) — it takes only the
+/// existential and the target size, never a self register. **The NAME is invented; the body is
+/// read.** It aspect-fits `target` to the buffer's DISPLAY ratio:
+///   · `wt+0x38` is `aspectRatio` (CGSize), so it returns in d0/d1, and each component is
+///     independently replaced by 1.0 when non-positive — two `fcsel` pairs that compute the same
+///     predicate, which is the compiler emitting both sides of one comparison.
+///   · ratio = (sar.width * Double(width)) / (sar.height * Double(height)).
+///   · A non-finite ratio returns `target` UNCHANGED — the `0x7fef…` compare branches straight to
+///     the epilogue with v8/v9 still holding the inputs. That early-out is the reason the guard
+///     below is a `guard`, not an `if` around the whole computation.
+/// ⚑ The `ratio >= 1` split is in the BINARY, and both arms compute the same result — fit by the
+///   long edge, fall back to the other. It is kept because collapsing it would not reproduce the
+///   two branch targets at 0x101a7c500 and 0x101a7c4e4.
+private func anime4KAspectFit(target: CGSize, pixelBuffer: any PixelBufferProtocol) -> CGSize {
+    let aspect = pixelBuffer.aspectRatio
+    let sarWidth = aspect.width > 0 ? aspect.width : 1
+    let sarHeight = aspect.height > 0 ? aspect.height : 1
+    let ratio = (sarWidth * Double(pixelBuffer.width)) / (sarHeight * Double(pixelBuffer.height))
+    guard ratio.isFinite else {
+        return target
+    }
+    let width = max(target.width, 1)
+    let height = max(target.height, 1)
+    if ratio >= 1 {
+        let fitted = width / ratio
+        return fitted <= height ? CGSize(width: width, height: fitted) : CGSize(width: height * ratio, height: height)
+    } else {
+        let fitted = height * ratio
+        return fitted <= width ? CGSize(width: fitted, height: height) : CGSize(width: width, height: width / ratio)
     }
 }
