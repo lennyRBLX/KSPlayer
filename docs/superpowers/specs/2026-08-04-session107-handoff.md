@@ -349,6 +349,27 @@ route was simply unavailable for 0x1044f0f88 / 0x1044f0f90. Offset arithmetic wa
   call sites even though init plainly initializes all three. Absence of a call site is not absence
   of the initializer; fingerprint its CONSTANTS in the caller instead.
 
+## 2v. `0xA0|count` IS A SMALL STRING — the `0xE0` rule is ASCII-only
+
+`READING_THE_BINARY.md` said the small-string discriminator is `0xE0 | count`. That is the
+**all-ASCII** form only; a small string containing any non-ASCII byte uses `0xA0 | count`.
+
+`Anime4KPreset.displayName`'s `.disabled` arm is the case in point: its second word is
+`0xA600000000000000`, which reads as "not a small string" under the `0xE0` rule and would have been
+left undecoded, while the first word `0x0000ad97e9b385e5` is simply the UTF-8 run
+`e5 85 b3 e9 97 ad` = 关闭. When the top byte is `0xA0|n`, decode the two words as `n` raw UTF-8
+bytes, low word first.
+
+⚑ That arm was reached by a jump-table byte pointing at a **bare `ret`** rather than at a switch
+  arm, so what it returned was the x0/x1 pair built at the TOP of the function. A table entry that
+  lands on a `ret` is a real case, not a default — do not skip it.
+
+⚑ **This is mirrored here on purpose.** `play/docs/` is gitignored, exactly like `play/scripts/`,
+  so the edit to `READING_THE_BINARY.md` exists ONLY on this disk. Only
+  `KSPlayer/docs/superpowers/specs/` is tracked. Any durable correction to a routed-context doc has
+  to be copied into a spec or it does not survive the machine. This joins
+  `recover_field_offsets.py` and `method_source_presence.py` on the disk-only list.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
