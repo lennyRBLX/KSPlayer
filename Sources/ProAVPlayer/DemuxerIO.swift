@@ -192,7 +192,14 @@ public actor DemuxerIO {
     /// ⚑ DEFERRED (UNRESOLVED, honest-deferral P36): the `Task { }` closure bodies (async read/seek loops →
     ///   slot28 `FUN_101b7ff0c` / slot30 `FUN_101b813fc` + taskspawn `FUN_101b7f678`/`101b76bbc`); the `ioAction`
     ///   vtbl +0x120 call (devirt OutputStreamInfo/DemuxerIOAction method); KSLog forms (class-wide).
-    public func process(_ event: Event) {
+    // ⚑ s106 RENAME `process(_:)` → `send(_:)`. This file already recorded the address twice —
+    //   line 90 counts call sites "inside `process(_:)` @0x101b7e9d0" and line 97 calls slot26
+    //   `process(_:)` — while the trie demangles that same address
+    //   `ProAVPlayer.DemuxerIO.send(ProAVPlayer.DemuxerIO.Event) -> ()`. Same single unlabelled
+    //   Event parameter and Void return, so a rename and not a signature change. No call sites:
+    //   the other `process(` hits in the tree are KSOptions' unrelated overloads.
+    //   ⚑[tool=export_trie_oracle ref=DemuxerIO.send:0x101b7e9d0 result=send-not-process]
+    public func send(_ event: Event) {
         switch event {
         case .startReading:                                              // control x23==0
             guard state == .ready || state == .seeking else { return }   // state & 0xfd == 0
@@ -230,7 +237,7 @@ public actor DemuxerIO {
                 seekTime = to
                 state = .seeking
                 seekingCompletionHandler = completion
-                process(.startReading)                                   // recursive [FUN_101b7e9d0(0,0,0,2)]  ⚑[tool=resolve_fun_pins ref=FUN_101b7e9d0:0x101b7e9d0 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.send(ProAVPlayer.DemuxerIO.Event) -> ()
+                send(.startReading)                                      // recursive [FUN_101b7e9d0(0,0,0,2)]  ⚑[tool=resolve_fun_pins ref=FUN_101b7e9d0:0x101b7e9d0 result=RESOLVES_UNIQUELY] = ProAVPlayer.DemuxerIO.send(ProAVPlayer.DemuxerIO.Event) -> ()
             case .failed:
                 seekTime = to
                 seekingCompletionHandler = completion

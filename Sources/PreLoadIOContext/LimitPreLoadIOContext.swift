@@ -200,7 +200,13 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         true
     }
 
-    func resetPlaybackPosition() { // name inferred (devirt)
+    // ⚑ s106 RENAME `resetPlaybackPosition()` → `clearPlaybackPosition()`. The old name carried
+    //   its own disclaimer, "name inferred (devirt)", and the inference was never needed: the
+    //   export trie names 0x101b9d4dc directly. Arity 0, Void return and the body all match, so
+    //   this is a rename, not a signature change. No call sites — the tree-wide grep returns only
+    //   this declaration and its own comment.
+    //   ⚑[tool=export_trie_oracle ref=LimitPreLoadIOContext.clearPlaybackPosition:0x101b9d4dc result=clearPlaybackPosition-not-resetPlaybackPosition]
+    func clearPlaybackPosition() {
         // binary s21: _swift_beginAccess(&playbackBytePosition); store payload 0 + tag 1.
         //   Brief default is nil; the binary writes .some(0). Match the binary store here:
         playbackBytePosition = 0
