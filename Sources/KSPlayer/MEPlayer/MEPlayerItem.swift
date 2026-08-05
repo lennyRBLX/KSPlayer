@@ -97,6 +97,35 @@ public final class MEPlayerItem: @unchecked Sendable {
     private var lastPacketMediaType: AVFoundation.AVMediaType = .video // 41 init AVMediaTypeVideo (AVFoundation constant; codebase disambiguates from FFmpeg AVMediaType)
     public weak var delegate: MEPlayerDelegate?                    // 42
 
+    /// ⚑[tool=disassemble ref=MEPlayerItem.isIdle.getter:0x101a4a8b8 result=6-instr]
+    /// `ldr x8,[0x1044ea208]` / `ldrb w8,[x20,x8]` / `cmp w8,#0` / `cset w0,eq`.
+    /// The offset global 0x1044ea208 is unnamed in the trie — only public-ish fields emit a
+    /// `vpWvd` — but it is named the other way round: it is the ONLY global that both this getter
+    /// and `isReusable` below touch, and the field records give MEPlayerItem exactly one
+    /// byte-sized enum, `state` (index 37, a symref to the nested `MEPlayerItem.State`), whose own
+    /// trie entry confirms it is private with a per-file discriminator — which is why no vpWvd.
+    /// Case 0 of that enum is `.idle`, already documented at its declaration in Model.swift.
+    public var isIdle: Bool {
+        state == .idle
+    }
+
+    /// ⚑[tool=disassemble ref=MEPlayerItem.isReusable.getter:0x101a4b404 result=19-instr]
+    /// Same `state` load, then a five-way set-membership test in the shape the compiler uses for a
+    /// multi-case `switch`: four constants compared at once via `cmeq.4h` against the vector at
+    /// 0x1044ea360, plus the fifth as a scalar at +0x4. Those five bytes read `01 02 03 04 05`.
+    /// Against `MEPlayerItem.State` that is opening/ready/reading/seeking/paused — every state
+    /// between `.idle` and the terminal group, which is what makes the name coherent.
+    /// ⚑ The five happen to be contiguous, so a range test would compile to the same answer; the
+    /// binary emits an explicit five-way membership, so the switch form is written.
+    public var isReusable: Bool {
+        switch state {
+        case .opening, .ready, .reading, .seeking, .paused:
+            return true
+        default:
+            return false
+        }
+    }
+
     public var currentPlaybackTime: TimeInterval {
         state == .seeking ? seekTime : mainClock().time.seconds // ⚑ UNRESOLVED: base subtracted removed `startTime`
     }
