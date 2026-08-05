@@ -592,6 +592,53 @@ public extension MediaPlayerTrack {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerTrack.videoRange.getter:0x1019e0d20 result=53-instr]
+    /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot.
+    ///
+    /// It opens by calling the sibling `dynamicRange` (0x1019de560) and testing
+    /// `and w8, w0, #0xff` / `cmp w8, #4`: case index 4 is `Optional.none`, so that is the nil
+    /// guard. ⚑ This is the THIRD independent body to pin 4 as the nil inhabitant of
+    /// `DynamicRange?` — the other two are `MediaPlayerProtocol.dynamicRange`'s `mov w0,#4` exit
+    /// and the five-entry string table in `videoFormat`.
+    ///
+    /// The Dolby-Vision early-out is identified by STRUCT LAYOUT, not by witness index. The call
+    /// through `[x22,#0x80]` returns a two-register value, and the bytes it tests land exactly on
+    /// `DOVIDecoderConfigurationRecord`'s declared fields (this file, above):
+    ///   · `ubfx w9, w0, #16, #8` → byte 2 = `dv_profile`, compared against 8 and 10.
+    ///   · `lsr  x8, x0, #56`     → byte 7 = `dv_bl_signal_compatibility_id`, compared against 4
+    ///     on BOTH profile branches (`b.eq` then `cmp x8,#4`, and a `ccmp x8,#4,#0,eq`).
+    ///   · `and w8, w1, #0xff00` / `cmp w8, #0x100` → the optional tag in the second register;
+    ///     equal means nil, which skips straight to the switch.
+    /// That nine-`UInt8` layout is what makes the callee `dovi` — a nine-byte struct in two
+    /// registers with the tag in x1 — rather than any other trailing requirement.
+    ///
+    /// The switch is read off the `csel` pair, not guessed: `ands w8, w21, #0xff` sets `eq` only
+    /// for case 0, selecting 'SDR' (count 3) over 'PQ' (count 2); then `cmp w8, #2` selects 'HLG'
+    /// (count 3) over that result. So .sdr→SDR, .hlg→HLG, and both .hdr10 and .dolbyVision→PQ.
+    /// The three literals are small-string immediates: 0x474c48='HLG', 0x5150='PQ', 0x524453='SDR'.
+    ///
+    /// ⚑ The dovi condition's SPELLING is ambiguous — two `if`s, a `||`, or a comma-separated
+    ///   `if let` all lower to this compare-and-branch pair. Only the predicate is established:
+    ///   (profile == 8 || profile == 10) && compatibility_id == 4.
+    var videoRange: String? {
+        guard let dynamicRange else {
+            return nil
+        }
+        if let dovi, dovi.dv_profile == 8 || dovi.dv_profile == 10,
+           dovi.dv_bl_signal_compatibility_id == 4
+        {
+            return "HLG"
+        }
+        switch dynamicRange {
+        case .sdr:
+            return "SDR"
+        case .hlg:
+            return "HLG"
+        default:
+            return "PQ"
+        }
+    }
+
     var codecType: FourCharCode {
         mediaSubType.rawValue
     }
