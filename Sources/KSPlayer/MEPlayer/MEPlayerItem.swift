@@ -122,6 +122,37 @@ public final class MEPlayerItem: @unchecked Sendable {
         formatContext?.ioContext
     }
 
+    /// ⚑[tool=disassemble ref=MEPlayerItem.playbackRate:0x101a4affc/0x101a480e4 result=getter-18-setter-29]
+    /// getter: reads the ivar at offset-global 0x1044ea228, then `ldr d0,[x19,#0x10]` and
+    ///   `fcvt s0, d0` — a Double member converted to Float.
+    /// setter: `fcvt d8, s0` once, then writes `[x19,#0x10]` under a MODIFY access twice — first
+    ///   through offset-global 0x1044ea220, then through 0x1044ea228. It updates BOTH clocks.
+    ///
+    /// `+0x10` is `KSClock.rate`: that struct's layout is already recorded at KSOptions.swift:1421
+    /// as lastMediaTime (+0) · position (+0x8) · rate (+0x10, `Sd`) · time, with rate's own default
+    /// read from its vpfi. So the Double at +0x10 is `rate` and nothing else.
+    ///
+    /// WHICH clock is which is read, not taken from the global ordering: `setVideo(time:position:)`
+    /// touches 0x1044ea228 and no other clock global, and its source body sets `videoClock`. That
+    /// fixes 0x228 = videoClock, leaving 0x220 = audioClock — consistent with their adjacent field
+    /// records (12, 13) and their declaration order above.
+    /// ⚠️ The reversed query labels 0x1044ea228 "playbackRate" and that label is WRONG — this
+    /// getter reads another field's offset and then +0x10 inside it, so the single-global rule
+    /// mis-attributes. The name came from `setVideo`, not from that map.
+    ///
+    /// No `_modify` is written: Swift synthesises the modify coroutine for a computed property
+    /// with a getter and setter, which is what the third body @0x101a4b044 is.
+    /// Access read from its vpMV; `KSClock.rate` is `internal(set)`, settable from this module.
+    public var playbackRate: Float {
+        get {
+            Float(videoClock.rate)
+        }
+        set {
+            audioClock.rate = Double(newValue)
+            videoClock.rate = Double(newValue)
+        }
+    }
+
     public var isIdle: Bool {
         state == .idle
     }
