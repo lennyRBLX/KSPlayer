@@ -1280,3 +1280,32 @@ rule 2's `labels>=1` when the materialization is exact.
 **It does not matter for the row.** `reCheckSubtitle` also needs 0x1019c7410, which returns no name
 by ANY route, so the row is blocked whichever way 0x1019c7454 is resolved. Naming 0x1019c7410 is
 the real unit.
+
+
+### §24g — `FFmpegSubtitleParse.parse` @0x101a9eff4: 46 instructions, and still blocked. Evidenced.
+Opened specifically to test whether the "remaining rows are large" summary was a generalisation
+from the rows already probed. It was not — this one is small and still blocked, for a different
+reason than the others, which is worth recording.
+
+Trie: `parse(url: Foundation.URL, scanner: __C.NSScanner) throws -> KSSubtitleProtocol`.
+The body is short and fully decoded:
+  · `initializeWithCopy` the `url` parameter (passed indirectly in x0) into a stack slot;
+  · `swift_allocObject(168, 15)`;
+  · call 0x101a9f27c with that url and the new object as swiftself, then `cbnz x21` on the
+    SWIFTERROR register — so that call is the throwing init;
+  · on success build the returned existential: the instance at +0, and at +0x18/+0x20 the
+    metadata from 0x101a9f0ac and the witness table 0x1041da3a8.
+  · **`scanner` is never touched** — x1 is dead through the whole body, so it spells `scanner _:`.
+Both anchors resolve cleanly: 0x101a9f0ac is `type metadata accessor for KSPlayer.FFmpegSubtitle`
+and 0x1041da3a8 is `protocol witness table for KSPlayer.FFmpegSubtitle : KSSubtitleProtocol`.
+So the body is `try FFmpegSubtitle(url: url)`.
+
+**Blocker: `FFmpegSubtitle` does not exist in Sources at all, and it is an ACTOR.** fieldrec gives
+8 fields led by `$defaultActor` (flags=6): `formatContext`, `decode`, `subtitleStreamIndex`,
+`preTime`, `startTime`, `endTime`, `parts`. Standing it up means an actor declaration, an
+FFmpeg `AVFormatContext` field, a decode handle, a `KSSubtitleProtocol` conformance AND a throwing
+`init(url:)` whose body @0x101a9f27c is **not in the trie** — i.e. its contents would be invented.
+That is a type-standup unit of its own, and the 168-byte allocation is the size to match against.
+
+Recording this because it changes the shape of the remaining queue: the blockers are not uniformly
+"the body is huge". At least one small body is gated on standing up an undeclared ACTOR.
