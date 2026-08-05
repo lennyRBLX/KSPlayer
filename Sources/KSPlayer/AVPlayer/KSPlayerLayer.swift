@@ -883,12 +883,41 @@ extension KSPlayerLayer {
 // bodies are a separate unit; writing them from the member list alone would be invention.
 // ⚑[tool=export_trie_oracle ref=KSPlayer.KSComplexPlayerLayer:0x1039ed208 result=44-symbols-shape-only]
 //
-// Placement in this file follows the superclass, NOT a #fileID literal — no body of this class has
-// been decompiled far enough to surface one.
+// ⚑ s106: placement is now CONFIRMED BY A #fileID, no longer merely inherited from the superclass.
+// The note this replaces said "no body of this class has been decompiled far enough to surface
+// one" — the PIP-error callback below is that body: its KSLog passes the literal
+// 'KSPlayer/KSPlayerLayer.swift' (count 28), which is this file.
+// ⚑[tool=decode_string_literal ref=KSComplexPlayerLayer.pictureInPictureController:0x1019d6430 result='KSPlayer/KSPlayerLayer.swift']
 public class KSComplexPlayerLayer: KSPlayerLayer {
     public var urls: [URL] = []
     public var isPictureInPictureStoped: Bool = false
     // private, and the trie prints the module-hash discriminator on all three accessors:
     // `(enterBackgroundTask in _B3181C2628785004269C41BC3433122F) : Swift.Task<(), Swift.Never>?`
     private var enterBackgroundTask: Task<(), Never>?
+
+    /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]
+    /// The row's own body is `mov x0, x1` / `b 0x1019d6430` — it DROPS the controller argument and
+    /// tail-calls an 85-instruction handler. That handler is one KSLog call, and every piece of it
+    /// is read:
+    ///   · `ldrb w8,[0x1044e5173]` / `cmp w8,#2` / `b.lo` — the level gate. 2 is the CASE INDEX for
+    ///     `.error`, the encoding this file's own KSLog notes already establish.
+    ///   · `w6 = 0x398 = 920` — the line number, and `#file` is the 28-character
+    ///     'KSPlayer/KSPlayerLayer.swift'. `#function` is the 69-character string at 0x103d34b80,
+    ///     exactly the length of this member's own name.
+    ///   · the error goes through `_convertErrorToNSError` (__got 0x104109940) and an NSError
+    ///     class-metadata fetch (0x1019d5bd8) into the existential buffer.
+    /// ⚑ There is NO message literal, and that absence is evidenced rather than assumed. The KSLog
+    ///   commentary at KSOptions.swift:1370 describes this exact sequence for the `Error` overload,
+    ///   and notes that a `.localizedDescription` message would instead carry a String through the
+    ///   statically-known CustomStringConvertible witness and leave an accessor call — this body
+    ///   has neither. So the spelling is the bare `KSLog(error)`, whose @inlinable body expands to
+    ///   `KSLog(level: .error, error() as NSError, …)` — which is what the disassembly shows.
+    /// ⚑ ACCESS not independently proven: the trie name carries no discriminator, so it is not
+    ///   private, and `public` matches the sibling delegate callbacks on the superclass and the
+    ///   ObjC visibility an @objc delegate method needs. It is not otherwise established.
+    public func pictureInPictureController(_: AVPictureInPictureController,
+                                           failedToStartPictureInPictureWithError error: Error)
+    {
+        KSLog(error)
+    }
 }
