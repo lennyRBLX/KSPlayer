@@ -1540,3 +1540,34 @@ helper from the queue entirely, whereas a naming hunt on it can never succeed.
 `FFmpegAssetTrack` metadata — the track factory), 0x101a391bc (57 instr; `swift_allocObject(0x20, 7)`
 — and NOT `IOInterruptContext`, whose InstanceSize is 0x30, so the 32-byte type is still to be
 identified), 0x101a392a0 (902 instr).
+
+
+### §24q — classes I never opened, and a TYPE_DIVERGENCE row that just gained its binary signature
+I had ranked the queue by size but only ever opened rows from ~15 owners. Sweeping the owners I had
+NOT touched found genuinely untried small rows. Two results:
+
+**`KSAVPlayer.createPlayerItem` @0x1019a3ccc is `async throws`.** Its 36 instructions are only the
+async PROLOGUE — the `orr x29, x29, #0x1000000000000000` async-context marker, frame-slot stores,
+and a tail `b` into the continuation. The work lives in resume points. **Async rows are their own
+category**: the triage's instruction count is the prologue's, not the body's — the same trap as
+[[triage-instr-count-is-the-thunk]], one level up. Do not size an async row from its entry.
+
+**`AssImageParse.parse(url:scanner:) throws -> KSSubtitleProtocol` @0x101a8f5a8** (73 instr, plain)
+reads almost completely:
+    · `objc` msgSend 0x10346d4e0 on `scanner` → a String, bridged;
+    · an inline small string `" --> "` (5 chars, `mov x8,#0x2d20 / movk 0x3e2d,lsl#16 / movk 0x20,lsl#32`
+      with the `0xE5` count tag) compared against it via 0x1034589d4 with `$sSSN` (String metadata);
+    · TRUE arm calls 0x101aa0390 on the scanner; FALSE arm re-reads `scanner`'s string;
+    · then `swift_allocObject` sized from the metadata's own +0x30/+0x34 and
+      **0x101a92b90 = `AssIncrementImageRenderer.init(content: Swift.String)`**, returned as the
+      existential with witness table 0x1041da2a0
+      (`AssIncrementImageRenderer : KSSubtitleProtocol`).
+
+**That init signature is the payoff.** `pin_sweep` carries a TYPE_DIVERGENCE row reading
+"AssIncrementImageRenderer.init — LABELS differ: renderer->content | TYPES ALSO differ
+(AssImageRenderer vs String)". The binary signature is now pinned exactly:
+`init(content: Swift.String)`, at 0x101a92b90, corroborated by this call site passing a bridged
+String. That divergence no longer needs discovery, only the retype.
+
+`parse` itself stays blocked on two unnamed helpers (0x1019c46e0, 0x101aa0390) AND on that retype —
+but it is now the best-understood of the remaining rows.
