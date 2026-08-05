@@ -409,6 +409,63 @@ declared (VideoToolboxDecode.swift:52). Its residual work is small and bounded: 
 :148, :153. That is a faithfulness defect sitting in LANDED source — worth a session, but it is
 adjudication debt, not a MEMBER_MISSING row.
 
+## 2x. ⭐ `KSPictureInPictureProtocol` IS HALF MISSING — 10 requirements in the binary, 5 in source
+
+This is the **single highest-leverage open item** found this session. It blocks the largest
+remaining MEMBER_MISSING cluster (`KSComplexPlayerLayer`, 13 rows) at its first member.
+
+`KSComplexPlayerLayer.pause()` @0x1019d1bc0 (68 instr) is read end to end and is three statements:
+
+```
+isPictureInPictureStoped = false                      // strb wzr, [self, <global 0x104c63520>]
+player.pause()                                        // MediaPlayerProtocol witness wt+0x128
+MPNowPlayingInfoCenter.default().playbackState = .paused   // state 2
+player.pipController?.<req4>()                        // KSPictureInPictureProtocol witness wt+0x28
+```
+
+- `isPictureInPictureStoped` is DECISIVE by elimination: the class has exactly **3** fields
+  (`urls`, `isPictureInPictureStoped`, `enterBackgroundTask`) and only one is a `Bool`.
+- `player` is `KSPlayerLayer`'s field 5, the class's only 2-word `_p` existential.
+- ⚑[tool=bind_oracle ref=__objc_classrefs:0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
+  ⚑[tool=decode_objc_selector ref=0x10440b040 result='defaultCenter']
+  ⚑[tool=decode_objc_selector ref=0x10440d8c8 result='setPlaybackState:']
+  `w2 = 2` is `MPNowPlayingPlaybackState.paused`.
+- ⚑[tool=export_trie_oracle ref=0x101a3d3d0 result=KSMEPlayer.pipController.getter:KSPictureInPictureProtocol?]
+
+**The blocker.** The protocol descriptor @0x1039ecde0 declares `NumRequirements = 10`. The source
+declares **5**, and not even in the binary's order. Walking `KSPictureInPictureController`'s witness
+table @0x1041d45a0, slot by slot:
+
+| slot | wt off | body | name |
+|------|--------|------|------|
+| req0 | 0x08 | 0x1019c7680 | not in trie |
+| req1 | 0x10 | 0x1019c7698 | not in trie (1-instr thunk → 0x1019c769c) |
+| req2 | 0x18 | 0x1019c779c | not in trie |
+| req3 | 0x20 | 0x1019c74e4 | **`__allocating_init(contentSource: AVPictureInPictureControllerContentSource)`** |
+| req4 | 0x28 | 0x1019c77d8 | not in trie — 2 instrs, tail-calls selector **`invalidatePlaybackState`** |
+| req5 | 0x30 | 0x1019c77e0 | not in trie |
+| req6 | 0x38 | 0x1019c75cc | `start(layer:)` |
+| req7 | 0x40 | 0x1019c75d4 | `didStart(layer:)` |
+| req8 | 0x48 | 0x1019c7648 | `stop(restoreUserInterface:)` |
+| req9 | 0x50 | 0x10000e52c | the ICF-folded EMPTY body (bare `ret`) |
+
+So the source's `start`/`didStart`/`stop` are req6/7/8 — the protocol's first six requirements
+include an **`init(contentSource:)`** the source does not declare at all.
+
+⚑ **Why `pause()` was NOT written.** Its last statement needs req4's NAME, and Swift emits **no**
+  per-requirement symbol for a protocol — only `Mp` and `TL`, both present and neither carrying
+  requirement names. The only evidence for req4 is that this one conformer's witness forwards to
+  `invalidatePlaybackState`. Bolting a guessed requirement onto a public protocol would propagate
+  the guess into every conformer, so the protocol is its own unit and should be re-derived whole,
+  the way s98 did `PixelBufferProtocol`'s missing four.
+
+⚑ Finding the protocol's own symbols needs the **compressed** spelling. `KSPictureInPictureProtocol`
+  inside `KSPictureInPictureController`'s conformance mangles to `AA0bcD8ProtocolAA`, so a substring
+  search for `PictureInPictureProtocol` misses the `WP` and `Mc` entirely — §2h again. Where the
+  name IS spelled out, the length prefix is the identifier's own character count:
+  `26KSPictureInPictureProtocol` and `28KSPictureInPictureController`. Using the controller's 28
+  for the protocol returns nothing, which reads exactly like "the symbol does not exist".
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
