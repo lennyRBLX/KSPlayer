@@ -1022,6 +1022,34 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         player.contentMode = .scaleAspectFit
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStopPictureInPicture:0x1019d2b98 result=1-instr-thunk]
+    /// ⚑ The trie address is a THUNK (`b 0x1019d61b8`); the real body is the 77 instructions there.
+    ///
+    ///   · `player` and witness **26** are the same pair `WillStart` above uses — that slot is
+    ///     `contentMode`'s setter, named by following KSMEPlayer's forwarding thunk to a
+    ///     `setContentMode:` send. Here the value is NOT a literal case: it is read from
+    ///     `self.options` (its own `vpWvd`, offset global 0x104c634e0) at `+0x68`.
+    ///   · `+0x68` is `KSOptions.contentMode`, recovered by `recover_field_offsets` — KSOptions is
+    ///     `metadata_init=1`, so `field_offset_vector` refuses it and the static vector reads 0x0.
+    ///     ⚑[tool=recover_field_offsets ref=KSOptions result=contentMode@0x68]
+    ///   So this RESTORES the player's content mode from options, where WillStart forced
+    ///   `.scaleAspectFit`. The pairing is what makes both readings mutually corroborating.
+    ///
+    /// ⚑ The trailing call is `Swift.print(_:separator:terminator:)` (__got 0x104112a40) — the
+    ///   `w1=0x20` / `w3=0x0a` operands are the one-character `" "` and `"\n"` defaults, which is
+    ///   how the overload is identified. Its argument is a LARGE string: the pointer is stored
+    ///   biased by `-0x20` with the high bit set, so the characters begin at 0x103d34bd0, and the
+    ///   count word is `0x32` (50) tagged `0xD000…`. Decoded, those 50 bytes are exactly this
+    ///   method's own name.
+    ///   ⚑[tool=decode_string_literal ref=0x103d34bd0 result='pictureInPictureControllerWillStopPictureInPicture']
+    /// ⚑ Written as a plain literal, not `#function`: `#function` would render
+    ///   `pictureInPictureControllerWillStopPictureInPicture(_:)` including the argument label,
+    ///   which is 4 characters longer than the 50 the count word states.
+    public func pictureInPictureControllerWillStopPictureInPicture(_: AVPictureInPictureController) {
+        player.contentMode = options.contentMode
+        print("pictureInPictureControllerWillStopPictureInPicture")
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.set(urls:):0x1019d181c result=29-instr]
     /// A NEW method, not an override: the superclass's nearest member is `set(urls:options:)`
     /// (this file, above), a different selector. vtable_walk puts this at the class's OWN slot 11,
