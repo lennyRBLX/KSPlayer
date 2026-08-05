@@ -32,6 +32,12 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         displayView.displayLayer
     }
 
+    /// Field-record index 0 — it opens the class, ahead of `formatDescription`.
+    /// Default READ from its own `vpfi` @0x10002c740, which is `mov w0,#1` / `ret` ⇒ `true`, and
+    /// the designated init re-emits the same store at 0x101a5eea4. Not assumed to be the Bool zero
+    /// default. `private` per the trie's discriminator on its accessors.
+    /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.isPaused:0x10002c740 result=true]
+    private var isPaused: Bool = true
     private var isDovi: Bool = false
     private var formatDescription: CMFormatDescription? {
         didSet {
@@ -87,6 +93,11 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     ///   The value comes from `init(options:)`, and the assignment there is read in full below.
     public var drawable: Drawable
     private let metalView = MetalView()
+    /// Field-record index 10, between `dovi` (9) and `displayView` (11). Default READ from its
+    /// `vpfi` @0x10002dab0 (`mov w0,#0` / `ret`), which it shares with `forcedFrameRetryScheduled`
+    /// and `rotation`; the init re-emits the store at 0x101a5ef34.
+    /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.isBackground:0x10002dab0 result=false]
+    private var isBackground: Bool = false
     // AVSampleBufferAudioRenderer AVSampleBufferRenderSynchronizer AVSampleBufferDisplayLayer
     private var displayView = AVSampleBufferDisplayView() {
         didSet {
@@ -101,6 +112,24 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     // reconstructed precisely to abstract UIKit's CADisplayLink and the macOS CVDisplayLink shim
     // behind one interface, and CADisplayLink already conforms — this field never migrated.
     private var displayLink: DisplayLinkProtocol?
+    /// Field-record index 13, a `let` (flags 0). Type is the record's own
+    /// `So24OS_dispatch_source_timer_p`, i.e. `DispatchSourceTimer`. The initializer is READ from
+    /// its 90-instruction `vpfi` @0x10199ae4c: a `TimerFlags` built by `SetAlgebra.init(_:)` over
+    /// an EMPTY sequence (`__swiftEmptyArrayStorage`), then `makeTimerSource(flags:queue:)` with
+    /// `DispatchQueue.main`.
+    /// ⚑ Whether the source spells `flags: []` explicitly or relies on the API default is NOT
+    ///   decidable — the default argument is inlined into the vpfi either way. The commented-out
+    ///   `timer` line above this class's `displayLink` note carries the same spelling.
+    /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.backgroundTimer:0x10199ae4c result=makeTimerSource-main-queue]
+    private let backgroundTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+    /// Field-record index 14, a `let` (flags 0) with NO `vpfi` — so it has no declaration default
+    /// and its value comes from the init. `locate_class_init` answers "0 construction sites", which
+    /// is not a dead end: the designated `init(options:)` is at 0x101a5eda8 via the trie, and at
+    /// 0x101a5f144 it does `ldrb w8,[options, <KSOptions global 0x104c63400>]` /
+    /// `strb w8,[self, <global 0x1044ea928>]`. Both globals are named by their `vpWvd`, so the
+    /// source field is READ, not matched by name.
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.renderUseDispatchSourceTimer:0x104c63400 result=vpWvd-named-Bool]
+    private let renderUseDispatchSourceTimer: Bool
 //    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
     // displayLayerDelegate is a source-only construct — zero-hit across the whole demangled trie,
     // and MetalPlayView's field descriptor does not list it. Its REMOVAL is derived and ready. The
@@ -109,6 +138,10 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
+        // @0x101a5f144: `ldrb w8,[options, <KSOptions global 0x104c63400>]` then
+        // `strb w8,[self, <global 0x1044ea928>]`. Both globals are named by their `vpWvd`, so both
+        // sides of this assignment are read rather than matched by name.
+        renderUseDispatchSourceTimer = options.renderUseDispatchSourceTimer
         // ⚑[tool=export_trie_oracle ref=MetalPlayView.init(options:):0x101a5eda8 result=drawable-store@0x101a5f0ec]
         // Read from the init, via the OFFSET GLOBAL — this class is `metadata_init=1`, so field
         // accesses index by a register loaded from a per-field global and never use a literal
@@ -139,6 +172,35 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
 
     public func pause() {
         displayLink?.isPaused = true
+    }
+
+    /// @0x101a6095c, 93 instructions.
+    ///
+    /// Every field is named from its offset global by `recover_field_offsets --global`, never by
+    /// position — this class is `metadata_init=1` and the globals are NOT in field-record order.
+    ///   · 0x1044ea8f8 `isBackground`, `strb` of `#1` ⇒ `true`, unconditional and first.
+    ///   · 0x1044ea928 `renderUseDispatchSourceTimer` and 0x1044ea8d8 `isPaused`, each `ldrb` then
+    ///     `tbnz w8,#0` to the SAME exit — two independent early returns, not one `||` on a pair
+    ///     the compiler fused, because each has its own load and its own branch.
+    ///   · 0x1044ea908 `backgroundTimer`; 0x1044ea8e8 `fps`, loaded with `ldr s0` (32-bit ⇒ its
+    ///     `Float`) then `fcvt d0,s0` and `fdiv d8, 1.0, d0` ⇒ `1 / Double(fps)`.
+    ///   · the `leeway` temporary is zeroed (`str xzr`) and then given a tag through the enum
+    ///     VWT's `destructiveInjectEnumTag` (offset 0x68) read from __got
+    ///     `_$s8Dispatch0A12TimeIntervalO11nanosecondsyACSicACmFWC` — so payload 0, case
+    ///     `.nanoseconds` ⇒ `.nanoseconds(0)`.
+    ///   · both stack temporaries are sized from their VWTs via `__chkstk_darwin` and destroyed
+    ///     after the call; that is ABI, not source.
+    /// ⚑[tool=recover_field_offsets ref=MetalPlayView:0x1044ea908 result=backgroundTimer]
+    /// ⚑[tool=bind_oracle ref=0x104113310 result=DispatchTimeInterval.nanoseconds-case-tag]
+    public func enterBackground() {
+        isBackground = true
+        if renderUseDispatchSourceTimer {
+            return
+        }
+        if isPaused {
+            return
+        }
+        backgroundTimer.schedule(deadline: .now(), repeating: 1 / Double(fps), leeway: .nanoseconds(0))
     }
 
     @available(*, unavailable)
