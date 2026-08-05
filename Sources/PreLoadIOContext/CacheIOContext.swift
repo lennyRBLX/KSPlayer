@@ -465,6 +465,44 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   fileSize) are not cleanly readable Foundation/Swift in the binary (devirt /
     //   FFmpeg-adjacent) → inherited from AbstractAVIOContext, NOT reconstructed. — P2
 
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryAfter(logicalPos:):0x101b89f80 result=88-instr]
+    /// A LOWER-BOUND BINARY SEARCH, not a linear scan — read off the arithmetic, which is what
+    /// distinguishes it: `adds x8, x27, x21` sums the bounds under an overflow trap (`b.vs` →
+    /// `brk #0x1`), then `add x9, x8, x8, lsr #63` / `asr x23, x9, #1` is the round-toward-zero
+    /// correction Swift emits for `Int` division — i.e. `(lo + hi) / 2`, not a shift.
+    ///
+    ///   · the searched array is `entryList`, accessed at the literal offset `+0x88` this file
+    ///     already documents for it (line 95), under a `swift_beginAccess` read.
+    ///   · `ldr x21, [x8, #0x10]` after masking the tag bits is the array COUNT, and `cmp x21, #1`
+    ///     / `b.lt` is the empty-list exit that returns nil.
+    ///   · the compared field is NAMED, not guessed: the element load is `ldr x8, [x26, #0x948]`
+    ///     → global 0x104c63948, whose own `vpWvd` is
+    ///     `PreLoadIOContext.CacheFileEntry.position : Swift.UInt64`.
+    ///     ⚑[tool=export_trie_oracle ref=CacheFileEntry.position:0x104c63948 result=vpWvd-named]
+    ///   · `cmp x19, x8` / `b.lo` is UNSIGNED, matching `logicalPos`'s `UInt64`. On the taken side
+    ///     the candidate is retained into the result register and `hi = mid`; on the other
+    ///     `lo = mid + 1`. That is lower-bound: it keeps narrowing after a hit rather than
+    ///     returning immediately, so the answer is the FIRST entry past `logicalPos`.
+    ///
+    /// ⚑ The result register is seeded to 0 and returned unchanged when the loop never takes the
+    ///   `b.lo` branch, which is the `nil` return — there is no separate not-found path.
+    public func firstEntryAfter(logicalPos: UInt64) -> CacheFileEntry? {
+        var lo = 0
+        var hi = entryList.count
+        var result: CacheFileEntry?
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            let entry = entryList[mid]
+            if logicalPos < entry.position {
+                result = entry
+                hi = mid
+            } else {
+                lo = mid + 1
+            }
+        }
+        return result
+    }
+
     /// ⚑[tool=export_trie_oracle ref=CacheIOContext.cacheExists(md5:in:):0x101b8e858 result=1-instr-thunk]
     /// ⚑ THE TRIE ADDRESS IS A THUNK, not an empty body — `0x101b8e858` is a single
     /// `b 0x101b95250`, and the real body is the 115 instructions there. Both this method and
