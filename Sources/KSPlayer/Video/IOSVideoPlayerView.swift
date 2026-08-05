@@ -238,6 +238,32 @@ open class IOSVideoPlayerView: VideoPlayerView {
         #endif
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.play():0x101b108b8 result=103-instr]
+    /// The exact mirror of `pause()` below, and read the same way. Differences worth stating:
+    ///
+    /// · The literal is **`"pause.fill"`**, not `"play.fill"`: x22 is built by `mov`+3×`movk` to
+    ///   the bytes `pause.fi`, with x1 carrying `ll` under count byte **0xEA** (= 0xE0|10).
+    ///   It is built ONCE and bridged twice, once per button.
+    /// · `super.play()` is settled beyond argument here. `PlayerView.play()` has THREE statements,
+    ///   and the binary inlines all three in order: `becomeFirstResponder()` (0x101b108dc,
+    ///   ⚑[tool=decode_objc_selector ref=0x10440a828 result='becomeFirstResponder']), the
+    ///   `playerLayer?` dispatch through metadata word +0x78, and
+    ///   `toolBar.playButton.isSelected = true` (`setSelected:` with `w2 = 1` at 0x101b10940).
+    ///   A re-spelled body would have to reproduce the superclass's other two statements by
+    ///   coincidence.
+    /// · The pairing is the same and is READ, not assumed: global 0x1044f0e98 =
+    ///   `playPauseButton` takes 0x1044f0f88 = `playButtonConfig`, and 0x1044f0e68 =
+    ///   `toolBarPlayButton` takes 0x1044f0f90 = `toolBarPlayButtonConfig`.
+    ///   ⚑ s107 named the two config globals by their VALUE — each holds the field's byte offset,
+    ///     and this class's metadata is static, so the offset resolves in the field-offset vector
+    ///     directly. That independently reproduced the store-run derivation recorded under
+    ///     `pause()`.
+    override open func play() {
+        super.play()
+        playPauseButton.setImage(UIImage(systemName: "pause.fill", withConfiguration: playButtonConfig), for: .normal)
+        toolBarPlayButton.setImage(UIImage(systemName: "pause.fill", withConfiguration: toolBarPlayButtonConfig), for: .normal)
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.IOSVideoPlayerView.pause():0x101b10a54 result=91-instr]
     /// Sets the "play.fill" glyph on BOTH play buttons after pausing. Every element is read:
     ///
