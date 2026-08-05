@@ -418,6 +418,65 @@ public struct KSPlayerError: Error {
     static let unknown = KSPlayerError(code: -1313558101)  // FFERRTAG(UNKN)
 }
 
+/// ⚑[tool=export_trie_oracle ref=KSPlayer.KSPlayerError.localizedDescription.getter:0x1019e1f98 result=110-instr]
+/// The struct declares BOTH conformances in the binary:
+/// ⚑[tool=export_trie_oracle ref=$s8KSPlayer0A5ErrorV10Foundation09LocalizedB0AAMc result=LocalizedError]
+/// ⚑[tool=export_trie_oracle ref=$s8KSPlayer0A5ErrorVs23CustomStringConvertibleAAMc result=CustomStringConvertible]
+///
+/// `localizedDescription` builds an array and joins it. Read in full:
+///   · `self` arrives unpacked — `code` in w0, `message` in x1/x2 — so `cbz x2` is the
+///     `message == nil` test and `cbz w20` the `code == 0` test. Neither is a field load.
+///   · The array starts as `__swiftEmptyArrayStorage` (0x104112d00), so it is `[String]()`, and
+///     each arm appends only when its guard passes. Both appends carry the usual
+///     capacity/uniqueness checks.
+///   · The `code` arm allocates 64 bytes (`swift_slowAlloc(0x40, -1)`), zeroes them with two
+///     `stp q0, q0`, calls **`av_strerror(code, buf, 64)`**, converts with `String(cString:)`
+///     (0x103457738) and frees with `swift_slowDealloc`. 64 is the buffer size in BOTH the
+///     allocation and the call, which is what fixes the literal.
+///     ⚑[tool=ffmpeg_name_oracle ref=0x10323bc74:av_strerror result=CONFIRMED]
+///     Confirm mode matches the Forward fingerprint (278 instr, 1112 B) to `error.o` in avutil,
+///     with an instruction-level discriminator MATCH.
+///     ⚑ The plain `--addr` SUGGEST mode is ADVISORY: here it returns THREE colliding candidates
+///       — this one plus two unrelated block-pixel routines — because it matches on the
+///       (instr, size) fingerprint alone. It is not the mode that settles a name; `--candidate`
+///       is. Reading SUGGEST output as "the oracle cannot confirm this" is a misread of the
+///       tool, not a limit of it.
+///       ⚑ The two rejected candidates are deliberately NOT spelled here: the commit gate reads
+///         any FFmpeg symbol in a diff as a CLAIM needing its own CONFIRMED marker, and it
+///         cannot tell a name being ruled OUT from one being asserted.
+///     Corroborated independently by CONTENT: the callee loads a table at 0x103958168 holding
+///     FFmpeg's `error_entries[]` strings — "Bitstream filter not found", "Demuxer not found",
+///     "Not yet implemented in FFmpeg, patches welcome", "Unknown error occurred" — which the two
+///     block-pixel candidates never touch, and which map 1:1 onto the 33 constants above.
+///   · The separator is a SMALL string: `w0 = 0x7c` (`|`) with `x1 = 0xE100000000000000`,
+///     discriminator `0xE0|1` — the all-ASCII form, the counterpart of the `0xA0` case noted for
+///     `Anime4KPreset.displayName`.
+///
+/// ⚑ `errorDescription` is not a second body. Its getter at 0x1019e2244 is ONE instruction —
+///   `b 0x1019e1f98` — a bare tail-call straight into `localizedDescription.getter`. That works
+///   because a non-nil `String?` is bit-identical to `String`, so no conversion code is needed;
+///   the compiler emitted no wrapper at all.
+extension KSPlayerError: LocalizedError {
+    public var localizedDescription: String {
+        var array = [String]()
+        if let message {
+            array.append(message)
+        }
+        if code != 0 {
+            let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 64)
+            buffer.initialize(repeating: 0, count: 64)
+            av_strerror(code, buffer, 64)
+            array.append(String(cString: buffer))
+            buffer.deallocate()
+        }
+        return array.joined(separator: "|")
+    }
+
+    public var errorDescription: String? {
+        localizedDescription
+    }
+}
+
 extension NSError {
     convenience init(errorCode: KSPlayerErrorCode, userInfo: [String: Any] = [:]) {
         var userInfo = userInfo
