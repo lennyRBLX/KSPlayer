@@ -368,6 +368,34 @@ The remaining ~250 instructions are the UIKit work, and `IOSVideoPlayerView`'s f
 all readable (see the STATIC list above), so this is a straight read with no blocker in front of it.
 It was left unfinished rather than guessed at.
 
+**The closure's whole call set is already resolved — 46 targets, so do not re-derive it.**
+Non-ObjC: `String._bridgeToObjectiveC`, `Array._bridgeToObjectiveC`, `MainActor.shared` + its
+metadata + `Actor.unownedExecutor` (the isolation check), `_Block_copy`/`_Block_release`,
+`swift_allocObject`, `swift_beginAccess`, `swift_release`, `swift_task_isCurrentExecutor`,
+`swift_task_reportUnexpectedExecutor`, `swift_unknownObjectWeakLoadStrong`, and the usual
+`objc_retain*`/`objc_release*`/`objc_opt_self` family. Three local helpers are NOT_IN_TRIE:
+0x100006158 (witness-table accessor), 0x100029510, 0x10002d984 (mangled-name type instantiation).
+
+The 19 ObjC selectors spell the whole behaviour, in the order they appear:
+
+    removeFromSuperview · setText: · setTranslatesAutoresizingMaskIntoConstraints:
+    addSubview: · bringSubviewToFront: · safeAreaLayoutGuide
+    topAnchor · centerXAnchor · widthAnchor · heightAnchor
+    constraintEqualToAnchor: · constraintEqualToAnchor:constant:
+    constraintGreaterThanOrEqualToConstant: · constraintLessThanOrEqualToAnchor:multiplier:
+    activateConstraints: · setAlpha: · animateWithDuration:animations:
+    cancelPreviousPerformRequestsWithTarget:selector:object: · performSelector:withObject:afterDelay:
+
+i.e. a prompt/toast: tear down any existing prompt view, build a label carrying the `message`
+parameter, pin it under the safe-area top and centred with width/height constraints, activate them,
+fade it in with a UIView animation, and reschedule a delayed dismissal (the
+`cancelPreviousPerformRequests…` / `performSelector:…afterDelay:` pair).
+
+**What is still genuinely unread**, and what the next session must take from the binary rather than
+from this paragraph: which `IOSVideoPlayerView` field holds the prompt view, every Auto Layout
+constant, the animation duration, and the `afterDelay:` value plus the selector it performs. Those
+are immediates and offsets in the body — all readable, none of them guessed here.
+
 ## 12. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
