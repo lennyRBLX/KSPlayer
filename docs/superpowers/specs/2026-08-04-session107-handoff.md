@@ -766,6 +766,39 @@ even when ICF has folded that override onto the parent's bytes.
   also means §2n's identification of it as `_isClosed` rests on the earlier `CacheIOContext` unit,
   not on a descriptor. Re-derive before declaring the two subclass overrides.
 
+## 2ae. `FFThumbnail.jpegData` is NOT a one-member row — the STRUCT is wrong
+
+Sized at 11 instructions, so it looks like the cheapest row left. It is not: declaring it means
+reworking `FFThumbnail`, which source has as
+
+```swift
+public struct FFThumbnail: Sendable { public let image: UIImage; public let time: TimeInterval }
+```
+
+The binary's version is bigger, and the layout is read from the three getters:
+
+- **`jpegData: Data?` occupies words 0–1.** Its getter @0x101a6c318 is
+  `mov x19,x1 / mov x20,x0 / bl <outlined copy> / mov x0,x20 / mov x1,x19 / ret` — it copies the
+  first two words and returns them, doing no work. That is a STORED property, not something
+  derived from `image`.
+- **Word 2 is an OPTIONAL stored image.** `image`'s getter @0x101a6c344 opens `cbz x2` and returns
+  x2 unchanged when non-nil; only on nil does it take the `UIImage` classref (0x104410600) and
+  build one from the `Data?` in x0/x1. So `image` is COMPUTED over both, and source's
+  non-optional `public let image: UIImage` is the wrong shape.
+- **`time`'s getter is 0x10000e52c** — the image's canonical ICF-folded EMPTY body (a bare `ret`).
+  For a `Double` returned in d0 that is the identity getter of a register-passed stored property,
+  which is consistent but tells you nothing more.
+
+The trie also exports **three** initializers where source has the implicit one:
+`init(image:time:)`, `init(jpegData:time:)`, and
+`init(cgImage:time:preferCompressedStorage:compressionQuality:)`. The last one names the design:
+a thumbnail holds EITHER a decoded image or compressed JPEG bytes.
+
+⚑ So this is a struct-shape unit, not a member unit. Doing it as a member would mean adding a
+  stored property to a type whose other two declarations are already wrong, and the row would
+  come back. Land the struct — three fields, three inits, `image` as the computed fallback — in
+  one go.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
