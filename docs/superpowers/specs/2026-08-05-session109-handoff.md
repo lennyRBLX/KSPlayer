@@ -263,7 +263,40 @@ parameter to the `Packet`, derives `assetTrack` from it, and added the `process(
 same class of evolution as §5, and one more instance of the pattern that every remaining row is
 gated by a signature change, a chain, a field derivation, or an unnameable symbol.
 
-## 10. Not started, deliberately
+## 10. `Anime4KPreset.autoSelect(for:)` — UNBLOCKED, just large. Start here.
+
+**Correction to this document's own framing.** §4–§9 could be read as "everything left is blocked."
+That is not true, and this row is the counterexample: it has no protocol evolution, no chain, no
+unnameable symbol, and no field-derivation problem. `Anime4KPreset` is an **enum** — its "0 offset
+globals" is the correct answer for a type with no stored properties, not a gap. The only reason it
+did not land this session is size.
+
+`static Anime4KPreset.autoSelect(for: __C.MTLDevice?) -> Anime4KPreset` @0x101a7bb14,
+extent 0x101a7bb14-0x101a7bf98, 289 instr. The algorithm is already identified from its resolved
+call set, so the next session does not have to discover it:
+
+* `uname` (libSystem, __got 0x10410c698) after a `bzero` (0x10410bd68) — it reads `utsname`.
+* `Mirror.init(reflecting:)` (0x104112aa0), `Mirror.children` (0x104112ab0), `Mirror` metadata
+  (0x104112ab8), `_AnySequenceBox._makeIterator` (0x104111ff8) and `_AnyIteratorBox.next`
+  (0x104112198), with `swift_dynamicCast` (0x104112df8) on each child, and
+  `String._uncheckedFromUTF8` (0x1041113f0) plus `String.append` (0x104111448).
+  That is the standard `utsname.machine` → model-identifier idiom: reflect the C char tuple,
+  cast each child, append the bytes.
+* `StringProtocol.contains(_:)` (Foundation, __got 0x10410a6d0) — the model string is then matched
+  by SUBSTRING, repeatedly, and each match selects a case.
+* the `MTLDevice?` parameter is nil-checked at 0x101a7bb88 (`cbz x20`).
+* returns are bare case indices: `mov w0,#0x4` @0x101a7be6c and `mov w0,#0x1` @0x101a7bf04 are
+  already visible (case 4 = `modeAHQ`, case 1 = `modeAFast` against the 12-case order in
+  Anime4KPreset.swift:37-49). Two local helpers, 0x101a7c6b4 and 0x101a7c664, are called from the
+  string-building loop.
+
+What remains is mechanical: decode the `contains` literals and enumerate the remaining
+`mov w0,#N` returns with their guards. Note the s107 lesson recorded in this file's sibling
+commit — a small string's discriminator is `0xA0|n` when it holds any non-ASCII byte, and only
+`0xE0|n` when it is all-ASCII; device identifiers are ASCII, but any Chinese UI string in the
+same function is not.
+
+## 11. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
