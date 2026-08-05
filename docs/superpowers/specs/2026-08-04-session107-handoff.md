@@ -370,6 +370,45 @@ bytes, low word first.
   to be copied into a spec or it does not survive the machine. This joins
   `recover_field_offsets.py` and `method_source_presence.py` on the disk-only list.
 
+## 2w. TWO GATE GOLDENS WENT RED BECAUSE THE WORK SUCCEEDED — repaired, not relaxed
+
+`recon_gate --mode handoff` went PASS 42 / FAIL 6 → **PASS 44 / FAIL 4**. Both repairs are in
+`play/scripts/`, which is **gitignored**, so they exist only on this disk — recorded here for the
+same reason 2v is.
+
+**`sc_placement_sweep`** — its two NEGATIVE controls asserted that
+`MediaPlayerProtocol.subtitlesTracks` (0x1019dffb8) and `.videoFormat` (0x1019e04f0) read
+`NOT_IN_SOURCE`. This session declared both, so the controls failed *because the goal was met*.
+This is `golden-anchored-on-mutable-path-rots` in its purest form: a control keyed on a member's
+ABSENCE, inside a project whose entire purpose is to end absences.
+
+- The expectation was NOT relaxed. Re-anchoring on a different absent property was tried first and
+  is **impossible**: the sweep now reports **zero** `NOT_IN_SOURCE` property getters — that seam is
+  closed.
+- Both rows flipped to POSITIVE controls (`MATCH`, plus `fileid == MediaPlayerProtocol.swift`), so
+  the same code path is still asserted, in the direction that is now true.
+- Falsifiability was re-expressed so it **cannot rot**: the property matcher must return `[]` for a
+  name absent from the type's scope, and a hit for one present. That holds no matter how much of
+  the binary gets reconstructed — which is exactly what a body-anchored control cannot promise.
+
+**`sc_stale_screen`** — the long-standing red. Repaired by the protocol the fixture states for
+itself: `[248, 390, 463] → [287, 429, 502]`, all three moving by exactly **+39**, and
+`git diff -U0 ab45e5f..HEAD -- Sources/KSPlayer/AVPlayer/KSPlayerLayer.swift` restricted to hunks
+above old line 248 is `added=41 removed=2`, **net +39**. The delta matches the diff, so the spans
+themselves are untouched — this session declared `reachEndOfStream`, `makeUIView`, `pipStop` and
+two `KSComplexPlayerLayer` PiP delegates above them.
+⚑ The *uniform* +39 is a second, independent check: it proves nothing was inserted BETWEEN the
+  spans. Matching a single span would not have caught that.
+
+**Still red, and NOT this session's** (do not attribute them to the member work):
+`agg_critical 6`, `agg_high 24`, `agg_unresolved 1`, and `sc_wave_worklist`. The last one is
+`0x101a6ce44` = `VideoToolboxDecode.decodeFrame(from:completionHandler:)`,
+OPEN in `wave_exclusions.json` since **s93** and now vanished from the waves because the member is
+declared (VideoToolboxDecode.swift:52). Its residual work is small and bounded: verify the four
+`// P3 lastPosition->maxTimestamp` compile-placeholders at VideoToolboxDecode.swift:145, :146,
+:148, :153. That is a faithfulness defect sitting in LANDED source — worth a session, but it is
+adjudication debt, not a MEMBER_MISSING row.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
