@@ -413,6 +413,22 @@ public struct DOVIDecoderConfigurationRecord {
     public let el_present_flag: UInt8
     public let bl_present_flag: UInt8
     public let dv_bl_signal_compatibility_id: UInt8
+    /// ⚑[tool=export_trie_oracle ref=DOVIDecoderConfigurationRecord.dv_md_compression.getter:0x100137314 result=UInt8]
+    /// A ninth field the source lacked. Its getter is the whole of two instructions,
+    /// `mov x0, x1` / `ret` — it returns the SECOND register, which for a 9-byte struct passed in
+    /// registers is byte 8, i.e. the field after `dv_bl_signal_compatibility_id`.
+    /// Placement is corroborated, not assumed from that alone: this struct mirrors FFmpeg's
+    /// `AVDOVIDecoderConfigurationRecord`, and in THIS build's header
+    /// (FFmpeg-n8.1.1/libavutil/dovi_meta.h) `dv_md_compression` is the ninth and last `uint8_t`,
+    /// immediately after `dv_bl_signal_compatibility_id`. The first eight already match in order.
+    /// `fieldrec` cannot arbitrate here — the struct is not in the classmap — so the header and
+    /// the register position are the evidence.
+    /// Access read: carries a vpMV, so public. No vpfi among its symbols, so no declaration
+    /// default, which matches the other eight being plain `let`.
+    /// ⚠️ The getter address is an 18-symbol ICF fold; the two instructions are genuinely this
+    /// getter's code but carry nothing unique to it, which is why the placement rests on the
+    /// header rather than on the body.
+    public let dv_md_compression: UInt8
 }
 
 public enum FFmpegFieldOrder: UInt8 {
