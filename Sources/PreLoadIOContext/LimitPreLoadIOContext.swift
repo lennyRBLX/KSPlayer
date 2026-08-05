@@ -337,20 +337,4 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         }
         return max(min(Double(fetchedSize) / Double(maxFileSize), 1), 0.01)
     }
-
-    // shouldContinueRead() @0x101b8a0e0, 6 instr. A genuine OVERRIDE, not the inherited base —
-    // this class's descriptor reports `override_table=True`, and an `override func` goes in that
-    // trailing table rather than the class's own vtable, which is exactly why the address does
-    // not appear in `vtable_walk LimitPreLoadIOContext`'s listing. s108 §3 corrects an earlier
-    // ruling that called this row a false positive.
-    //
-    // The address is ICF-folded across CacheIOContext / PreLoadIOContext / this class because all
-    // three compile to the same one-field negation: load the byte through the offset global
-    // 0x1044f3848 and return `(x ^ 0xff) & 1` — `bic w0, w9, w8` with `w9 = 1`.
-    // ⚑ That fold is what forced `_isClosed` from `private` to internal in CacheIOContext.swift:
-    //   a body in this file cannot read a private field of another, so the identical body proves
-    //   the field is visible here.
-    override func shouldContinueRead() -> Bool {
-        !_isClosed
-    }
 }
