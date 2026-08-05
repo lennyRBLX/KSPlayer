@@ -154,4 +154,43 @@ public class Anime4KPipeline: VideoPipeline {
     public func loadPreset(_: Anime4KPreset) {
         // UNRESOLVED → own unit: 0x101a78b10, 156 instr.
     }
+
+    /// ⚑[tool=export_trie_oracle ref=Anime4KPipeline.getPerformanceStats():0x101a7b2a8 result=59-instr]
+    /// Every one of the four fields it touches is resolved BY NAME out of this class's own field
+    /// offset vector (@0x1044ebe58), not inferred from the access sites:
+    /// `preset` @0x20 · `supported` @0x89 · `lastFrameTime` @0xa8 · `frameTimeHistory` @0xb0.
+    /// ⚑[tool=field_offset_vector ref=Anime4KPipeline result=preset@0x20,supported@0x89,lastFrameTime@0xa8,frameTimeHistory@0xb0]
+    ///
+    /// The body sums `frameTimeHistory` under a read access — unrolled four-wide with `ldp q2,q3`
+    /// plus a scalar tail, which is what `reduce(0, +)` lowers to — then `ucvtf` the count and
+    /// `fdiv` for the mean. `estimatedFPS` is `fmov d2,#1.0` / `fdiv d2,d2,d1` guarded by
+    /// `fcmp d1,#0.0` / `fcsel …,gt`, i.e. reciprocal-of-mean only when the mean is positive.
+    ///
+    /// ⚑ The RETURN is register-packed, and that is how the last three fields are pinned. Three
+    ///   Doubles go in d0/d1/d2 — `lastFrameTime`, the mean, the FPS — and the trailing scalars
+    ///   are folded into w0 at fixed bit positions:
+    ///     bit 0  ← `cinc w8, w8, gt` from `fcmp d0, 0.033`  → `isDropping`
+    ///     bit 8  ← `mov w8,#0x100` / `csel` on `supported`  → `supported`
+    ///     bit 16 ← `orr w0, w8, w9, lsl #16` from `[x20,#0x20]` → `preset`
+    ///   That ordering matches Anime4KPerformanceStats' declaration exactly, which is what makes
+    ///   the mapping a reading rather than a guess.
+    /// ⚑ 0.033 is READ from the constant pool at 0x1035647c8, not assumed from "30fps".
+    ///
+    /// ⚑ An empty history yields mean 0 AND fps 0: the `cbz` skips both the sum and the divide,
+    ///   and the `fcsel` then rejects the `1.0/0` infinity. Spelling it with `isEmpty` reproduces
+    ///   that; a bare `sum / count` would give NaN.
+    /// ⚑ AMBIGUOUS: `isEmpty ? 0 : …` and an `if !isEmpty { }` over a `var` lower identically.
+    public func getPerformanceStats() -> Anime4KPerformanceStats {
+        let average = frameTimeHistory.isEmpty
+            ? 0
+            : frameTimeHistory.reduce(0, +) / Double(frameTimeHistory.count)
+        return Anime4KPerformanceStats(
+            lastFrameTime: lastFrameTime,
+            averageFrameTime: average,
+            estimatedFPS: average > 0 ? 1 / average : 0,
+            isDropping: lastFrameTime > 0.033,
+            supported: supported,
+            preset: preset
+        )
+    }
 }
