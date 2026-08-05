@@ -1592,3 +1592,25 @@ miss it.
 Chain to land `AssImageParse.parse`, in order: (1) read this 103-instruction init and retype
 `AssIncrementImageRenderer.init(content:)`; (2) name 0x1019c46e0 and 0x101aa0390; (3) `parse` then
 transcribes directly from §24q.
+
+
+### §24s — how far the `AssIncrementImageRenderer.init(content:)` read gets, and where it stops
+Applied the §24j technique (find the field stores, don't decode the whole body). This class is
+`metadata_init=1`, so `field_offset_vector` REFUSES it — correctly — and the stores go through
+offset globals rather than literal offsets. Grepping for `str xN, [x19, xM]` finds exactly three:
+
+  · 0x101a92c14 `stp xzr, xzr, [x9]` — two words zeroed through an offset global
+  · 0x101a92c28 stores `__got 0x104112d00` = **`__swiftEmptyArrayStorage`** through offset global
+    0x1044edfe8. Identified by the stored VALUE, per [[offset-globals-not-in-field-record-order]]:
+    of this actor's fields only `subtitles` is an Array, so **0x1044edfe8 = `subtitles`**, the
+    declaration default `= []`.
+  · 0x101a92cfc stores the result of **0x101a946bc (NOT in the trie)** through offset global
+    0x1044edfd8.
+
+All four of this actor's offset globals are absent from the trie, which is consistent with every
+field being declared `private`.
+
+**Where it stops:** `renderer: AssImageRenderer` is non-optional and must be assigned, and the only
+candidate producer is the unnamed 0x101a946bc. Naming that is the last thing between here and both
+the `init(content:)` retype AND `AssImageParse.parse`. Run `helper_fingerprint.py` on it first — it
+is 0x101a946bc and 0x101a97058 that remain, and neither has been profiled.
