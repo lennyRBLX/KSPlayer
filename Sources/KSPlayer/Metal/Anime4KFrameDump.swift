@@ -63,7 +63,31 @@ public enum Anime4KFrameDump {
     /// default qos, empty attributes → serial). Storage DAT_1044ebd00. ⚑ name INFERRED (absent from trie).
     static let queue = DispatchQueue(label: "Anime4KFrameDump")
 
-    // ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.reset():() result=MISSING FROM SOURCE — the binary exports `static KSPlayer.Anime4KFrameDump.reset() -> ()`. Its body is NOT reconstructed here and is NOT guessed; it needs its own decompile unit]
+    /// ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.reset():0x101a7783c result=23-instr]
+    /// The decompile unit the previous marker here asked for. Nothing is guessed:
+    ///
+    ///   · `swift_once(&0x1044ebce0, 0x101a77598)` (__got 0x104113018) then load `[0x1044ebce8]`.
+    ///     That token/initializer PAIR is the same one `configure` below uses @0x101a7780c, which
+    ///     is what identifies the object as `stateLock` rather than `queue` — both are lazy
+    ///     `static let`s and only the shared once-token distinguishes them.
+    ///   · two ObjC sends on it, decoded from their selrefs: `lock` (0x10440c080) and `unlock`
+    ///     (0x10440e750, reached as a tail-call).
+    ///     ⚑[tool=decode_objc_selector ref=0x10440c080 result='lock']
+    ///   · between them, one `str xzr, [0x1044ebcf0]` — a 64-bit zero store.
+    ///
+    /// ⚑ WHICH Int static that is, is settled by ELIMINATION rather than by name or adjacency:
+    ///   this type has exactly two `Int` statics, and `configure` writes `maxFrames` at
+    ///   **0x1044ebcd0** (`str x27` after its own begin-access). `reset` writes **0x1044ebcf0**, a
+    ///   different global, leaving `frameCounter` as the only candidate.
+    ///
+    /// ⚑ Corroboration, not derivation: `configure` below already ends with this exact
+    ///   lock/zero/unlock triple, reconstructed in an earlier session from its own body. `reset()`
+    ///   is that block standing alone.
+    public static func reset() {
+        stateLock.lock()
+        frameCounter = 0
+        stateLock.unlock()
+    }
 
     /// Public config entry. The method name and ALL FIVE parameter labels are RECOVERED, not
     /// inferred — `recover_swift_function_name` returned None here, but the orphaned export trie
