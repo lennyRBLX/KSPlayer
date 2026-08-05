@@ -1614,3 +1614,17 @@ field being declared `private`.
 candidate producer is the unnamed 0x101a946bc. Naming that is the last thing between here and both
 the `init(content:)` retype AND `AssImageParse.parse`. Run `helper_fingerprint.py` on it first — it
 is 0x101a946bc and 0x101a97058 that remain, and neither has been profiled.
+
+
+### §24t — §24s's last unknown, profiled: 0x101a946bc is 345 instructions
+Closing the loop §24s opened rather than leaving it as an instruction. `helper_fingerprint`:
+**345 instr, 40 calls, NO named in-module callees, NO metadata accessors, NO allocObject sites.**
+Its `__got` candidates are UIKit font symbols (`UIFontTextStyleTitle2`, `UIFontWeightBold`,
+`UIFontWeightSemibold`, `UIFontDescriptorTraitsAttribute`) — CANDIDATES only, per the limitation
+documented in the tool itself, but they fit a font/style-setup role and it is the producer of the
+`renderer` field, so an `AssImageRenderer` build is the shape to expect.
+
+So the `AssImageParse.parse` chain bottoms out in a 345-instruction unnamed private body, not in a
+missing fact. **The whole chain is now sized end to end**: `parse` (73, read) →
+`AssIncrementImageRenderer.init(content:)` (103, stores located, one unknown) → 0x101a946bc (345).
+That is the unit; nothing about it is undiscovered any more.
