@@ -20,6 +20,22 @@ public final class KSMEPlayer: NSObject {
     // shouldResumePlayback added; _pipController lazy→stored pipController; bufferingProgress Int→UInt8.
     private var loopCount: Int = 1
     public var playerItem: MEPlayerItem
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.ioContext.getter:0x101a42340 result=24-instr]
+    /// A forward, with `MEPlayerItem.ioContext` INLINED — which is why the body reads two field
+    /// globals and a literal offset rather than making a call:
+    ///   `ldr x19, [0x1044ea140]` / `swift_beginAccess` / `ldr x8, [self, x19]` — `playerItem`,
+    ///   named from its `vpWvd`.
+    ///   `ldr x9, [0x1044ea218]` / `ldr x8, [x8, x9]` — the ivar `MEPlayerItem.ioContext` itself
+    ///   loads, recorded at MEPlayerItem.swift:109 from an earlier session's read; that member is
+    ///   `formatContext?.ioContext`.
+    ///   `cbz x8` → nil, else `ldr x0, [x8, #0x20]` — and `+0x20 = ioContext` is the constant that
+    ///   same file records at :115 from a read of the owning class's init.
+    /// So all three loads line up with the existing `MEPlayerItem.ioContext` declaration, and this
+    /// getter is that expression reached through `playerItem`.
+    public var ioContext: AbstractAVIOContext? {
+        playerItem.ioContext
+    }
+
     public let audioOutput: AudioOutput
     public var options: KSOptions
     // ⚑[tool=binding_gate ref=KSMEPlayer.videoOutput:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
