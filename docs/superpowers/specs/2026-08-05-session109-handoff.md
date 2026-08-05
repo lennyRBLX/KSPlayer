@@ -806,10 +806,28 @@ Each key is followed by its own value pieces, which pins four of the six:
 Frame Rate and Bitrate appear TWICE (L332/L373 and L453/L495), on either side of the Color Depth
 block — so there is a branch, and both arms emit those two keys.
 
-**What still must be read, not guessed:** the operands feeding the two `%.2f` calls, and the value
-expressions for **Title** and **Color Depth** (Title's key is materialised twice, at L275 and L325,
-which is itself unexplained). Those are register traces through the branch, and they are the last
-step of this unit.
+**Frame Rate's value is now read in full structure** (0x101b11ff8-0x101b12068):
+
+    __swift_instantiateConcreteTypeFromMangledName -> swift_allocObject(size 0x48, align 7)
+    = the CVarArg array; `ldr s0, [x23,#0x40]` (a 32-bit FLOAT) is stored into it at +0x20,
+    with the Float's CVarArg witness/metadata from __got 0x104111870 / 0x1041118a8;
+    then String.init(format:_:) with "%.2f", then String.append.
+
+⚑ The appended literal is **"FPS"**, count 3 (`w0 = 0x00535046`, discriminator `0xE3`) — **no
+leading space**. `"%.2f"` is likewise exactly 4 chars. So the value is
+`String(format: "%.2f", x) + "FPS"`, not `" FPS"`. That is the kind of detail that reads as a typo
+and gets silently "fixed"; it is what the binary says.
+
+**What still must be read, not guessed:** the OPERAND of each `%.2f` — the Float at `[x23,#0x40]`
+and Bitrate's equivalent — plus the values for **Title** and **Color Depth** (Title's key is
+materialised twice, at L275 and L325, which is itself unexplained).
+
+⚑ A warning for whoever traces that operand: `FFmpegAssetTrack.formatDescription` sits at **0xd0**
+and the body does `ldr x23, [x25,#0xd0]`, which makes "x25 is the track" look immediate. Do not
+take it — the subsequent `ldr s0,[x23,#0x40]` does not fit that holder (the track's Floats are
+`nominalFrameRate` 0x58 / `avgFrameRate` 0x5c / `realFrameRate` 0x64, and a CMFormatDescription has
+no Swift field at 0x40). One of the two reads is against a different object; the register must be
+traced, not matched on a single offset coincidence.
 
 ## 20. Not started, deliberately
 
