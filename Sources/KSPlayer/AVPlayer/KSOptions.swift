@@ -1050,6 +1050,24 @@ public extension KSOptions {
     // ⚑ displayEnumDovi is NOT declared either: its storage types as `KSPlayer.DoviDisplayModel`,
     //   and that class does not exist in Sources at all. It needs standing up first.
     nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
+    // ── s106, two more once-statics ──────────────────────────────────────────────────────────
+    /// ⚑[tool=llvm-objdump ref=KSOptions.doviMatrix:once-init@0x1019bc3ac result=11-instr]
+    /// The init copies 48 bytes of constant into the storage as three 16-byte columns, from
+    /// 0x103564510 / 0x103564520 / 0x103564530. Read as floats those are
+    /// (1,0,0,_) (0,1,0,_) (0,0,1,_) — the identity. Storage types as `__C.simd_float3x3`.
+    /// ⚑ SPELLING is undecidable and that is recorded rather than hidden: `matrix_identity_float3x3`,
+    /// `simd_float3x3(1)` and the explicit three-column form all constant-fold to these same 48
+    /// bytes, so the binary cannot distinguish them. The identity spelling is used as the clearest.
+    nonisolated(unsafe) static var doviMatrix = matrix_identity_float3x3
+    /// ⚑[tool=llvm-objdump ref=KSOptions.pictureInPictureType:once-init@0x1019bc7a8 result=11-instr]
+    /// `mov x0,#0` / `bl 0x1019c7568` gets a type metadata, then `stp x0, x8` writes the pair
+    /// (metatype, witness table) — an existential metatype, matching the storage's own type
+    /// `KSPlayer.KSPictureInPictureProtocol.Type`.
+    /// ⚑[tool=export_trie_oracle ref=0x1019c7568 result=metadata-accessor-KSPictureInPictureController]
+    /// ⚑[tool=decode_witness_table ref=0x1041d45a0 result=KSPictureInPictureController:KSPictureInPictureProtocol]
+    /// The witness table stored alongside is that class's conformance to the protocol, which is
+    /// what makes the value `KSPictureInPictureController.self` rather than any other conformer.
+    nonisolated(unsafe) static var pictureInPictureType: KSPictureInPictureProtocol.Type = KSPictureInPictureController.self
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
