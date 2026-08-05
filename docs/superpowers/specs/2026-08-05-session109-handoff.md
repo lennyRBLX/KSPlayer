@@ -1487,3 +1487,29 @@ identifying the function.
 0x1019d1d70 (the `reCheckSubtitle`/`readyToPlay` pair) and 0x1019aba90 / 0x101a391bc / 0x101a392a0 /
 0x101aa0308 (the `FFmpegSubtitle` init). Each was declared unnameable by SYMBOL; none has yet been
 profiled by STRUCTURE.
+
+
+### §24o — first fingerprint sweep: 0x1019c7410 decoded, and req1 gains EVIDENCE
+Ran `helper_fingerprint.py` on the `reCheckSubtitle`/`readyToPlay` pair as §24n directed.
+
+`0x1019c7410` profiles as **17 instructions, ZERO calls** — a leaf, so it was read directly rather
+than profiled further:
+    x4 = witness table, x3 = instance, x19 = the incoming context
+    x8 = [witness + 0x10]                       ; req1 of KSPictureInPictureProtocol
+    x1 = 0x65746167656c6564, x2 = 0xE8…         ; the inline small string "delegate" (8 chars)
+    blr x8                                      ; req1(…, "delegate", …)
+    tail-call 0x1019c78a4
+**KSPictureInPictureController.swift records req1 as IRREDUCIBLE** — "`b 0x1019c769c`, and that
+target is ALSO a real trie negative, with no single selector to name it". That stands, but req1 is
+no longer characterless: **it takes a String and this call site passes the literal `"delegate"`.**
+Combined with the file's note that req5 reaches objc `valueForKey:`, the protocol evidently carries
+a KVC-shaped pair. Anyone attacking req1 should start from "a requirement taking a String, called
+with `"delegate"`", not from the selector hunt that already failed.
+
+`0x1019d1d70` (81 instr, 13 calls) materialises only `KSComplexPlayerLayer` metadata and names no
+in-module callee — its 13 calls are all stub-island. Still unnamed, but now *characterised*: it
+allocates nothing and constructs no KSPlayer type, so it is control-flow over existing objects
+rather than a factory.
+
+Remaining to profile: 0x1019aba90 / 0x101a391bc / 0x101a392a0 / 0x101aa0308 (the `FFmpegSubtitle`
+init's four).
