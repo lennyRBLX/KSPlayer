@@ -1427,3 +1427,28 @@ blocked, because its other helper 0x1019c7410 returns no name by any route — b
 unknown, not two. Same for the FFmpegSubtitle init: 0x1019aba90 and 0x101a392a0 are confirmed
 UNNAMED (their hits are false), leaving 0x1019aba90 / 0x101a391bc / 0x101a392a0 / 0x101aa0308 all
 genuinely unnamed rather than untested.
+
+
+### §24m — `KSOptions.makeDecode` @0x1019b604c, and the UNIFORM shape of what remains
+Last untried small row, opened rather than assumed. Trie:
+`KSOptions.makeDecode(packet: Packet) -> DecodeProtocol`. Read:
+  · READ beginAccess on `packet+0x40`, then `cbz -> brk #1` — a FORCE-unwrap of that field.
+  · `[metadata+0x5f0]` = vtable slot 96 = **`KSOptions.process<A: MediaPlayerTrack>(assetTrack: A)`**,
+    dispatched with the `FFmpegAssetTrack` metadata (0x101a21c14) and a witness table built by the
+    conformance-lookup call at 0x100006158 — i.e. `process(assetTrack:)` on the unwrapped track.
+  · then 0x1019b611c with (track, self, packet) and an sret, returning the 2-word existential.
+**Blocked on 0x1019b611c**, which `recover_swift_function_name` "recovers" as `ReadCacheIOContext`
+— a TYPE name, which §24l's corrected rule classifies as a false anchor. So it is genuinely unnamed.
+
+**The blocker class is now uniform, and that is the useful conclusion of this session's tail.**
+Every small row opened after the ffurl cluster — `readyToPlay`, `reCheckSubtitle`,
+`FFmpegSubtitleParse.parse`, the `FFmpegSubtitle` init, `makeDecode` — reads cleanly and then
+terminates in a PRIVATE HELPER that no route names (trie / objc trampoline / vtable /
+#function-with-materialization). The remaining 76 are not gated on effort or on body size; they are
+gated on a stripped private-symbol surface.
+
+**So the next session's highest-leverage move is NOT another row.** It is a tool: something that
+names private helpers structurally — by call-site signature, by the metadata/witness tables they are
+handed, by the types they allocate — rather than by symbol. Every blocked row above hands its helper
+enough typed context to identify it. Build that, and these rows fall together rather than one at a
+time.
