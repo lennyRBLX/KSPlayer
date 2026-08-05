@@ -889,6 +889,21 @@ read), **(2)** land this body, **(3)** add `changePlaybackTime(player:time:)` to
 between `changeBuffering` and `playBack`, **(4)** land `KSAVPlayer.changePlaybackTime` (already read,
 §2ag). Steps 2–4 are then free.
 
+⛔ **Step 1 is itself blocked, and this is where the chain currently ENDS.**
+`subtitle(currentTime:playRatio:screenSize:)` @0x101ab3fec (211 instr) touches **six** field
+globals on the 0x1044ee000 page — 0xea0, 0xea8, 0xeb0, 0xeb8, 0xec0, 0xec8 — and the base register
+at every one is `x19` = `self`, so they are `SubtitleModel`'s OWN fields. Neither naming route
+reaches them:
+
+- `SubtitleModel` exports only **8** `vpWvd` symbols for **24** field records, and none of the six
+  is among them (`0x104c637e0` = `playRatio` IS, and the method stores to it).
+- The value-read route (§2ab) refuses: all six read **0x0** statically because `SubtitleModel` is
+  `metadata_init=1`, so their offsets are installed at runtime.
+
+What is left is the §2u treatment — anchor the class's initializer store run on VALUES. That is the
+same technique that named `IOSVideoPlayerView`'s configs, and it is the only route left here.
+Until it lands, the whole four-step chain is stalled behind six field names.
+
 ⚑ I attempted 2+3 without 1 and the build failed at the call site with "extra arguments at
   positions #2, #3". The edits were reverted; tree is clean and 4/4. Do step 1 first.
 
