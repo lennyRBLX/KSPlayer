@@ -226,6 +226,37 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         true
     }
 
+    /// @0x101b9dd1c, 113 instructions. `override` is proven, not inferred from the base having a
+    /// `canAccessNetwork()`: ⚑[tool=override_table ref=LimitPreLoadIOContext.canAccessNetwork:0x101b9dd1c result=YES-index-2]
+    ///
+    ///   · the first statement reads `stopOnLimitReached` (global 0x104c63920, inherited from
+    ///     CacheIOContext) under a (0, 0) beginAccess; `cmp w8,#1 / b.ne` goes straight to the
+    ///     `mov w0,#1` return. So a false flag short-circuits to `true` — the limit is only
+    ///     enforced when the caller asked for it.
+    ///   · `fetchedSize` (global 0x104c63928, `Int64`) is loaded and immediately
+    ///     `tbnz x21,#0x3f` → `brk`. A trap on the sign bit is the `UInt64(_:)` conversion, which
+    ///     is why the comparison below is unsigned throughout.
+    ///   · the array is `self + 0x88` as a CONSTANT immediate, not an offset global — this class
+    ///     is `metadata_init=1` so there is no static field-offset vector, and the offset resolver
+    ///     REFUSES 0x88. It is identified two ways that agree: CacheIOContext.swift:95 already
+    ///     pins `entryList` at self+0x88, and each element here is dereferenced through the
+    ///     offset global for `CacheFileEntry.size : Swift.UInt32` (0x104c63950), so the ELEMENT
+    ///     type is CacheFileEntry. Identified by what it holds, never by position.
+    ///   · the loop is a native-array walk with the `_CocoaArrayWrapper.endIndex` bridged fallback
+    ///     the compiler always emits; `ldr w24` is the 32-bit `size` and `adds x27,x27,x24` with
+    ///     `b.lo` to continue is a checked UInt64 accumulate (the carry path is a `brk`).
+    ///   · `csel x19, x27, x8, hi` after `cmp x27, x8` is `max(total, UInt64(fetchedSize))`.
+    ///   · `maxFileSize` (global 0x104c63988, `UInt64`) is then compared `b.hs` → `mov w0,#0`,
+    ///     so the result is `< maxFileSize` and the boundary is EXCLUSIVE: reaching the cap
+    ///     exactly returns false.
+    /// ⚑[tool=recover_field_offsets ref=CacheFileEntry.size:0x104c63950 result=UInt32]
+    override public func canAccessNetwork() -> Bool {
+        guard stopOnLimitReached else {
+            return true
+        }
+        return max(entryList.reduce(0) { $0 + UInt64($1.size) }, UInt64(fetchedSize)) < maxFileSize
+    }
+
     // ⚑ s106 RENAME `resetPlaybackPosition()` → `clearPlaybackPosition()`. The old name carried
     //   its own disclaimer, "name inferred (devirt)", and the inference was never needed: the
     //   export trie names 0x101b9d4dc directly. Arity 0, Void return and the body all match, so
