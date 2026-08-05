@@ -592,6 +592,49 @@ public extension MediaPlayerTrack {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerTrack.codecs.getter:0x1019e0bc8 result=86-instr]
+    /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot. It reaches the
+    /// same `dovi` requirement `videoRange` below uses (`[x22,#0x80]`, optional tag in `w1`'s byte
+    /// 1), and reads the same two bytes of it: `ubfx w26,w8,#16,#8` = `dv_profile` and
+    /// `lsr x25,x8,#56` = `dv_bl_signal_compatibility_id`.
+    ///
+    /// The three FourCCs are read from the instructions, not from a codec table:
+    ///   · `mov w0,#0x6831` + `movk w0,#0x6476,lsl#16` → 0x64766831 = 'dvh1'
+    ///   · `mov w8,#0x3031` + `movk w8,#0x6176,lsl#16` → 0x61763031 = 'av01'
+    ///   · the small-string immediate 0x31766164 with count byte 0xE4 → the 4-char String "dav1"
+    ///
+    /// ⚑ WHY THE THIRD ONE IS SPELLED DIFFERENTLY, and why that is evidence rather than style:
+    ///   'dvh1' and 'av01' appear as bare immediates, so the source names existing CoreMedia
+    ///   constants. 'dav1' instead goes through
+    ///   `_CMFormatDescriptionFourCCConvertible.init(string:)` (__got 0x104113208) followed by
+    ///   `CMFormatDescription.MediaSubType.rawValue` (__got 0x104113278), with the MediaSubType
+    ///   metadata fetched at 0x103458488 and stack-allocated from its value witness. CoreMedia has
+    ///   no constant for 'dav1', which is exactly why only that one is built from a string.
+    ///
+    /// Control flow, read off the branches:
+    ///   profile 5 → 'dvh1'; profile 8 with compatibility 1 → 'dvh1' (`ccmp x25,#1,#0,eq`);
+    ///   profile 10 AND `codecType == 'av01'` (`ccmp w0,w8,#0,eq`) AND compatibility 1 or 4
+    ///   (`cmp w25,#4` / `cmp w25,#1`) → the "dav1" subtype; every other path falls to `codecType`.
+    ///
+    /// ⚑ Despite the `UInt32?` return every path yields `.some` — the returns go through
+    ///   `mov w0, w0`, which zero-extends into the tag bits. There is no nil arm in this body.
+    var codecs: UInt32? {
+        if let dovi {
+            if dovi.dv_profile == 5 {
+                return kCMVideoCodecType_DolbyVisionHEVC
+            }
+            if dovi.dv_profile == 8, dovi.dv_bl_signal_compatibility_id == 1 {
+                return kCMVideoCodecType_DolbyVisionHEVC
+            }
+            if dovi.dv_profile == 10, codecType == kCMVideoCodecType_AV1,
+               dovi.dv_bl_signal_compatibility_id == 1 || dovi.dv_bl_signal_compatibility_id == 4
+            {
+                return CMFormatDescription.MediaSubType(string: "dav1").rawValue
+            }
+        }
+        return codecType
+    }
+
     /// ⚑[tool=export_trie_oracle ref=MediaPlayerTrack.videoRange.getter:0x1019e0d20 result=53-instr]
     /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot.
     ///
