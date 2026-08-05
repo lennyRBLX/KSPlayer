@@ -615,6 +615,26 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     // `b.hs` -> if that subtraction BORROWED (i.e. fakeUrlPos < logicalPos) return 0; otherwise
     // `cmn x8,#0x1` / `csel x0, x8, Int64.max, gt` -> return the difference, saturating to
     // Int64.max when its sign bit is set. Its only call is a read `swift_beginAccess` on logicalPos.
+    /// @0x101ba4244, 21 instructions. Get-only (no `vs` in the trie) and public (its own `vpMV`).
+    ///
+    /// The getter takes a READ `swift_beginAccess` (flags 0, 0) on `self+0x88`, retains what it
+    /// loads, hands it to the outlined helper @0x101bab128 and releases the original. +0x88 is
+    /// `CacheIOContext.entryList`, the offset that class's own notes already pin, and this class
+    /// inherits it. The helper is the 108-instruction array conversion — tagged-pointer check,
+    /// count load, fresh buffer, per-element box — that Swift emits for the covariant
+    /// `[CacheFileEntry]` -> `[any CacheEntryProtocol]` conversion, which is available because
+    /// `CacheFileEntry` conforms to `CacheEntryProtocol`. So the body is the bare `entryList`.
+    ///
+    /// ⚑ The getter ADDRESS is shared with the sibling class's `cacheList` — an ICF fold, not one
+    ///   property. Both carry their OWN `vpMV` (0x103572120 and 0x103572198), and this file's
+    ///   PreLoadProtocol note already establishes why the two fold: they are siblings under
+    ///   CacheIOContext with an identical inherited layout, so bit-identical bodies come out of
+    ///   the same source and the linker merges them. Each is declared on its own class.
+    /// ⚑[tool=export_trie_oracle ref=cacheList.getter:0x101ba4244 result=two-vpMV-one-ICF-folded-body]
+    public var cacheList: [any CacheEntryProtocol] {
+        entryList
+    }
+
     public var loadedSize: Int64 {
         guard fakeUrlPos != .max, fakeUrlPos >= logicalPos else {
             return 0
