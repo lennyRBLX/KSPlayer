@@ -76,12 +76,24 @@ protocol CodecCapacityDelegate: AnyObject {
 //   descriptor, so its type must be public. Not separately observed — MEPlayerDelegate
 //   has ZERO owner-position symbols in the export trie.
 // ⚑[tool=export_trie_oracle ref=MEPlayerItem.delegate:vpMV result=public ⇒ MEPlayerDelegate public by the type-visibility rule]
+/// ⚑ s107: this protocol had FIVE requirements declared and the descriptor @0x1039efe84 says
+/// **seven**. The two missing ones are added below, and their POSITIONS are read rather than
+/// appended: walking `KSMEPlayer`'s witness table @0x1041d7c28 slot by slot and following each
+/// 1-instruction thunk gives the order outright —
+///   req0 `sourceDidChange(loadingState:)` · req1 `sourceDidOpened()` · req2 **`sourceDidEOF()`** ·
+///   req3 `sourceDidFailed(error:)` · req4 `sourceDidFinished()` ·
+///   req5 `sourceDidChange(oldBitRate:newBitrate:)` (its witness 0x101a45ed4 is an unnamed
+///   reabstraction thunk, so this one is by elimination) · req6 **`sourceDidClear()`**.
+/// A requirement's index is its witness-table slot, so appending the two at the end would have
+/// put `sourceDidEOF` in the wrong slot.
 public protocol MEPlayerDelegate: AnyObject {
     func sourceDidChange(loadingState: LoadingState)
     func sourceDidOpened()
+    func sourceDidEOF()
     func sourceDidFailed(error: NSError?)
     func sourceDidFinished()
     func sourceDidChange(oldBitRate: Int64, newBitrate: Int64)
+    func sourceDidClear()
 }
 
 // MARK: protocol

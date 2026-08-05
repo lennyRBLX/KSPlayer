@@ -489,13 +489,32 @@ public extension MediaPlayerProtocol {
 }
 
 @MainActor
+/// ⚑ s107: the descriptor declares **8** requirements and this protocol listed 5. The full order is
+/// READ, by walking `KSPlayerLayer`'s witness table @0x1041d49b8 slot by slot — some slots name
+/// their witness outright, the rest are thunks whose `ldr x3, [x8, #imm]` maps through
+/// `KSPlayerLayer`'s vtable (`VTableOffset = 27 words`, so slot = (imm − 0xd8) / 8):
+///
+///   req0 +0x08 → slot 69 `readyToPlay(player:)`        req4 +0x28 `playBack(player:loopCount:)`
+///   req1 +0x10 → slot 70 `changeLoadState(player:)`    req5 +0x30 → slot 73 **`reachEndOfStream(player:)`**
+///   req2 +0x18 `changeBuffering(player:progress:)`     req6 +0x38 → slot 74 `finish(player:error:)`
+///   req3 +0x20 → slot 59 **`changePlaybackTime(player:time:)`**   req7 +0x40 **`playerDidClear(player:)`**
+///
+/// A requirement's index IS its witness-table slot, so the two added below sit at 5 and 7 rather
+/// than being appended.
+///
+/// ⚑ `changePlaybackTime(player:time:)` (req3) is READ but deliberately NOT added yet:
+///   `KSPlayerLayer` does not implement it — that member is still an open MEMBER_MISSING row
+///   (0x1019cc2b8, 208 instr) — so declaring the requirement now would break the build. Add it in
+///   the same commit that lands that body, between `changeBuffering` and `playBack`.
 public protocol MediaPlayerDelegate: AnyObject {
     func readyToPlay(player: some MediaPlayerProtocol)
     func changeLoadState(player: some MediaPlayerProtocol)
     // 缓冲加载进度，0-100
     func changeBuffering(player: some MediaPlayerProtocol, progress: UInt8)
     func playBack(player: some MediaPlayerProtocol, loopCount: Int)
+    func reachEndOfStream(player: some MediaPlayerProtocol)
     func finish(player: some MediaPlayerProtocol, error: Error?)
+    func playerDidClear(player: some MediaPlayerProtocol)
 }
 
 public protocol MediaPlayerTrack: AnyObject, CustomStringConvertible {

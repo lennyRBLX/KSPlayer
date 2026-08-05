@@ -260,6 +260,23 @@ extension KSMEPlayer: MEPlayerDelegate {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.sourceDidClear():0x101a42094 result=9-instr]
+    /// Byte-for-byte the same marshal as `sourceDidEOF` above — same `runOnMainThread` trampoline,
+    /// same two weak loads — differing in exactly ONE instruction.
+    ///
+    /// ⚑ THAT ONE INSTRUCTION IS THE WHOLE POINT, and a prior pass got it wrong. §2l recorded both
+    ///   bodies as dispatching `reachEndOfStream(player:)`. They do not: the EOF closure loads
+    ///   `ldr x23, [x21, #0x30]` and this one loads **`[x21, #0x40]`**. Reading
+    ///   `KSPlayerLayer`'s `MediaPlayerDelegate` witness table @0x1041d49b8 at that slot names it
+    ///   outright.
+    ///   ⚑[tool=export_trie_oracle ref=0x1019ceaf4 result=KSPlayerLayer.playerDidClear(player:)]
+    public func sourceDidClear() {
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            self.delegate?.playerDidClear(player: self)
+        }
+    }
+
     public func sourceDidFailed(error: NSError?) {
         runOnMainThread { [weak self] in
             guard let self else { return }
@@ -278,6 +295,30 @@ extension KSMEPlayer: MEPlayerDelegate {
             } else {
                 self.playbackState = .finished
             }
+        }
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.sourceDidEOF():0x101a41568 result=9-instr]
+    /// The 9-instruction body is only a marshal: it loads four arguments and tail-calls a shared
+    /// 107-instruction trampoline @0x101a420b8. **That trampoline is `runOnMainThread(block:)`**,
+    /// which a prior pass could not identify and left as this row's single blocker. It is settled
+    /// by content: the trampoline sends `isMainThread` to the `NSThread` class and branches on the
+    /// result — exactly the `if Thread.isMainThread { block() } else { Task { … } }` shape of
+    /// Utility.swift:368.
+    ///   ⚑[tool=bind_oracle ref=__objc_classrefs:0x1044105a0 result=_OBJC_CLASS_$_NSThread]
+    ///   ⚑[tool=decode_objc_selector ref=0x10440bdf8 result='isMainThread']
+    ///   ⚑ The "four generic arguments" that ruled `runOnMainThread` out before are the closure's
+    ///     function pointer and context plus the `Task`/`MainActor.run` metadata the specialization
+    ///     threads through — not four user-visible parameters.
+    ///
+    /// The closure body @0x101a4158c does two weak loads: the `[weak self]` capture at +0x10
+    /// (`cbz` = `guard let self`) and `delegate` (global 0x1044ea188, `vpWvd`-named), then
+    /// dispatches `MediaPlayerDelegate` witness **+0x30**.
+    /// ⚑[tool=vtable_walk ref=KSPlayerLayer:slot73 result=reachEndOfStream(player:)]
+    public func sourceDidEOF() {
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            self.delegate?.reachEndOfStream(player: self)
         }
     }
 
