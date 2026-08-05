@@ -176,6 +176,37 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifia
 
 public extension SubtitleInfo {
     var id: String { subtitleID }
+
+    /// ⚑[tool=export_trie_oracle ref=SubtitleInfo.language.getter:0x101aa23d0 result=23-instr]
+    /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot. Its type comes
+    /// off the mangling (`…8language10Foundation6LocaleV8LanguageVSg…`), so it is
+    /// `Locale.Language?`, NOT the `String?` that `MediaPlayerTrack.language` returns.
+    ///
+    /// The body is short and complete:
+    ///   · `ldr x8,[x1,#0x28]` / `blr` — witness +0x28, which THIS FILE's own requirement-order
+    ///     note above already pins to `languageCode` (+0x10…+0x38 = subtitleID / name / delay /
+    ///     languageCode / <Locale.Language? member> / isEnabled). No new count was taken.
+    ///   · `cbz x1` on the returned String?'s second word selects the nil arm (`w20 = 1`);
+    ///     otherwise `Locale.Language.init(identifier:)` (__got 0x104109ed8) builds into the
+    ///     indirect return and `w20 = 0`.
+    ///   · the tail loads the `Locale.Language` value witness table (metadata __got 0x104109ee8),
+    ///     takes `[vwt,#0x38]` — `storeEnumTagSinglePayload` — and tail-calls it with
+    ///     `numEmptyCases = 1` to stamp the Optional tag. That is the `?` wrapper, not a branch.
+    /// So the closure result is non-optional and the map is `map`, not `flatMap`.
+    /// ⚑[tool=bind_oracle ref=__got:0x104109ed8 result=Locale.Language.init(identifier:)]
+    ///
+    /// ⚑ OPEN, and deliberately NOT acted on: the protocol above declares a `Locale.Language?`
+    ///   requirement whose name this reconstruction invented as `subtitleLanguage` ("true name
+    ///   stripped"), and the trie's ONLY `SubtitleInfo` member of that type is this `language`.
+    ///   That makes "the requirement is really named `language`, and this is its default" the
+    ///   obvious hypothesis — but it is NOT proven and was not assumed. All four conformers'
+    ///   slot-5 witnesses (URLSubtitleInfo 0x101aa3cc8, EmptySubtitleInfo 0x101aa269c,
+    ///   AVMediaSelectionTrack 0x100abde9c) are 37-instruction bodies reading their OWN stored
+    ///   fields, not thunks to 0x101aa23d0, so nothing here shows this member serving as that
+    ///   requirement's default. Renaming on that hypothesis would assert more than is read.
+    var language: Locale.Language? {
+        languageCode.map { Locale.Language(identifier: $0) }
+    }
     /// ⚑ getter 0x10002c740 — `mov w0, #0x1` / `ret`. Unconditional true: the body reads no
     /// field and takes no branch, so it does NOT inspect the subtitle's type or extension.
     /// The address is the image's canonical `return true` and is ICF-folded, so the constant is

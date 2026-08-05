@@ -111,7 +111,15 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         if bitRate > 0 {
             description += ", \(bitRate.kmFormatted)bps"
         }
-        if let language {
+        // ⚑ The type annotation is REQUIRED, and its necessity is itself a finding. This class
+        // conforms to BOTH MediaPlayerTrack and SubtitleInfo, and the binary carries a `language`
+        // extension member on EACH — `MediaPlayerTrack.language: String?` and
+        // `SubtitleInfo.language: Locale.Language?` (KSSubtitle.swift) — so a bare `if let
+        // language` is ambiguous and does not compile. That means the bare spelling this line
+        // previously carried CANNOT be what the original source had; it only ever compiled here
+        // because SubtitleInfo.language had not been reconstructed yet. The annotation selects the
+        // String? overload, which is the one a track description formats.
+        if let language: String = language {
             description += "(\(language))"
         }
         return description
