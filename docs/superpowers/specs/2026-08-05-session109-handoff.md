@@ -396,7 +396,52 @@ from this paragraph: which `IOSVideoPlayerView` field holds the prompt view, eve
 constant, the animation duration, and the `afterDelay:` value plus the selector it performs. Those
 are immediates and offsets in the body — all readable, none of them guessed here.
 
-## 12. THE BIG ONE: a runtime offset global's STATIC VALUE names the field. §6 is broken open.
+## 12. §6's blocker does not exist — and the tool already knew. Read this as a process failure.
+
+**Correction to my own first draft of this section.** I derived the value→field route by hand,
+wrote it up as a new technique, and was wrong about the "new". `recover_field_offsets` already has
+it, added in s107 as `name_global_by_value(cls, glob, module)`. It answers every case I
+hand-derived, in one call:
+
+    name_global_by_value("IOSVideoPlayerView", 0x1044f1000) -> 'promptLabel'
+    name_global_by_value("IOSVideoPlayerView", 0x1044f0ea8) -> 'title'
+    name_global_by_value("MetalPlayView",      0x1044ea8f8) -> 'isBackground'
+
+The third is the one that matters: **MetalPlayView, the class §6 pinned as needing anchor
+recovery.** The tool names its private globals outright. My hand derivation independently
+reproduced all three answers, which is how the tool turned out to have them — corroboration, not
+discovery.
+
+**So why did §6 record a blocker?** Because `field_offset_vector`'s **CLI refuses MetalPlayView**
+("has metadata_init=1 … the static image holds no field offsets") while its own
+**`resolve()` succeeds** on the same class and returns 17 fields with real offsets. I hit exactly
+that refusal, believed it, and wrote §6 around it. `name_global_by_value` calls `resolve()`, not
+the CLI, which is why it works where the command line says it cannot.
+
+That CLI/library split is a real defect and the actionable item here — it is a trap that has now
+cost two write-ups. Either the CLI's refusal is too strict, or `resolve()` is returning offsets the
+CLI is right to distrust; **one of them is wrong and a golden should decide which** before the
+route is leaned on across the ~74 rows §6 assigned to per-class derivation.
+
+Pending that, the naming is well corroborated. For MetalPlayView every prediction is confirmed by
+the LOAD WIDTH at its use site in `enterBackground` — a discrimination a wrong mapping could not
+fake:
+
+    0x1044ea8f8 = 0x82 → isBackground                   `strb` 1  — and the method is enterBackground
+    0x1044ea928 = 0xa8 → renderUseDispatchSourceTimer   `ldrb`
+    0x1044ea8d8 = 0x08 → isPaused                       `ldrb`
+    0x1044ea908 = 0xa0 → backgroundTimer                `ldr x` (object)
+    0x1044ea8e8 = 0x18 → fps                            `ldr s0` + `fcvt d0,s0` — a 32-bit FLOAT
+
+Three Bools as bytes, the Float in a single-precision register, the timer as a word. The dense-index
+mapping §6 refuted got `0x1044ea8f8` wrong; this gets it right and says `isBackground`, inside a
+method called `enterBackground`.
+
+**The lesson, which is MEMORY rule 4 verbatim: compute a fact with its tool, never recall it.**
+§6 recalled a limitation instead of calling `name_global_by_value`. I then hand-derived instead of
+calling it too. The route existed the whole time.
+
+### superseded first draft of this section — kept for provenance
 
 §6 says MetalPlayView's five private offset globals cannot be named without anchor recovery, and
 records the positional mapping as refuted. **The refutation stands but the conclusion was wrong** —
