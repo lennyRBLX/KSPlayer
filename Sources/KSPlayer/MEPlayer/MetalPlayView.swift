@@ -224,7 +224,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     ///   pixelBuffer · 8c0 options · 8c8 renderSource · 8d0 drawable): they are contiguous at
     ///   stride 8, but extending that run backward gives 0x8a0 → `formatDescription`, which cannot
     ///   answer `isHidden`. The global array is not index-ordered across this class.
-    public func didStartPIP(to view: UIView) {
+    override public func didStartPIP(to view: UIView) {
         if !metalView.isHidden {
             view.addSub(view: metalView)
         }
@@ -243,7 +243,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     ///     with that rect still live in the FP registers — i.e. `metalView.frame = bounds`.
     /// ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
     /// ⚑[tool=decode_objc_selector ref=0x10440d4b8 result='setFrame:']
-    public func didStopPIP() {
+    override public func didStopPIP() {
         if !metalView.isHidden {
             addSub(view: metalView)
             metalView.frame = bounds

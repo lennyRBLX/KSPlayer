@@ -65,6 +65,33 @@ extension UIView {
         addSubview(view)
     }
 
+    /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.didStartPIP(to:):0x10000e52c result=1-instr-empty]
+    /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.didStopPIP():0x10000e52c result=1-instr-empty]
+    /// A no-op DEFAULT PAIR on UIView, distinct from `MetalPlayView.didStartPIP(to:)` /
+    /// `didStopPIP()` — the trie carries all four symbols separately. KSComplexPlayerLayer's PiP
+    /// delegates call these on `player.view`, whose static type is `UIView`, so the MetalPlayView
+    /// pair cannot satisfy those call sites; that is what surfaced these.
+    ///
+    /// ⚑ EMPTY IS THE READING, not a stub. Both resolve to **0x10000e52c**, which disassembles to
+    ///   a bare `ret` and is the image's canonical ICF-folded empty body. Unlike a folded *method*
+    ///   body — which carries no per-member information — "this function does nothing" is the
+    ///   entire content of an empty body, so the fold is not a loss here.
+    ///
+    /// ⚑ `@objc` IS REQUIRED, and it is proven by two independent facts rather than by taste:
+    ///   1. The call site is an `objc_msgSend` with selector `didStopPIP` (__got 0x10410b928,
+    ///      selref 0x10440b138) sent to `player.view` — a dynamic dispatch, which a plain Swift
+    ///      extension method never produces.
+    ///   2. `MetalPlayView` declares members of the same names. Without `@objc` here the compiler
+    ///      rejects that outright — "non-'@objc' instance method … is declared in extension of
+    ///      'UIView' and cannot be overridden" — so the original cannot have been non-`@objc`.
+    ///   ⚑ The absence of a `…To`-suffixed thunk in the trie is NOT counter-evidence: for an
+    ///     `@objc` member on a class that is already ObjC, the ObjC method list can point straight
+    ///     at the Swift implementation, so no separate thunk symbol is emitted. An earlier note
+    ///     here read that absence as "not @objc"; the compiler refuted it.
+    @objc func didStartPIP(to _: UIView) {}
+
+    @objc func didStopPIP() {}
+
     var backingLayer: CALayer? {
         #if !canImport(UIKit)
         wantsLayer = true
