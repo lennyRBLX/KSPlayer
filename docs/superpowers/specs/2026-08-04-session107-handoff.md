@@ -563,6 +563,51 @@ elimination-on-type is not decisive either. Naming them needs the §2u value-anc
 treatment, which for this class means finding a per-field anchor for each Bool. Same class of
 blocker as `KSComplexPlayerLayer.pause()`: the body is read, the NAMES are not available.
 
+## 2aa. ⭐ TOOL FIX — `field_offset_vector.py` was silently refusing 73 of 1064 classes
+
+Found by rule 9 (when a tool disagrees with the binary, suspect the tool). Asking it for
+`CacheIOContext` produced:
+
+> `CacheIOContext has no exported metadata symbol $s16PreLoadIOContext14CacheIOContextCN in the
+> trie. There is no field-offset vector to read; refusing to infer offsets from field-record order.`
+
+That reads like "this class has no field-offset vector". It is a **FALSE NEGATIVE**. The class's
+metadata IS exported — as `$s16PreLoadIOContext05CacheC0CN`. `mangle_metadata_symbol` spells the
+class literally, but Swift word-substitutes any identifier reusing a word already spelled earlier
+in the same name, so the literal `14CacheIOContext` token never appears. This is §2h again, but
+*inside a tool*, where it is invisible.
+
+**The fix** (in `metadata_addr`, as a FALLBACK only — the direct path is untouched, so the change
+is strictly additive): prefilter the name cache on the MODULE prefix, which is spelled literally at
+the front of every symbol and is never substituted, then let the **toolchain demangler** settle the
+class half. Never re-implement substitution — `export_trie_oracle.demangle_all` documents why.
+⚑ A `...CN` symbol demangles to `type metadata for <module>.<Class>`, NOT to a bare type name;
+  matching the bare name finds nothing and looks exactly like "absent".
+
+**Measured over all 1064 classes in `classmap_1.3.17.jsonl`:**
+
+| | count |
+|---|---|
+| resolved by the original literal path (unchanged) | 400 |
+| **newly reachable via the fallback** | **73** |
+| still unresolved (unchanged) | 591 |
+
+Of the 73, **48 yield real static field offsets** and 25 correctly report `metadata_init=1` — which
+is a true answer instead of a misleading one. The whole `PreLoadIOContext` family was affected:
+`CacheIOContext`, `HLSCacheIOContext`, `ReadCacheIOContext`, `CacheOnlyIOContext`,
+`LimitCacheIOContext`, `LimitCountIOContext`, `LimitSeparatePreLoadIOContext`,
+`LimitPreLoadIOContext` — together **34 of the remaining MEMBER_MISSING rows**.
+
+Four goldens were added and pass (rule 11): the fallback resolves `CacheIOContext` to the
+compressed symbol; the literal spelling it replaces is *proved absent* so the control is not
+vacuous; a bogus class still returns `None`; and a literal-resolvable class (`Anime4KPipeline`)
+still resolves by the DIRECT path, which is what makes the change additive rather than a
+displacement.
+
+⚑ `play/scripts/` is gitignored, so this fix exists ONLY on this disk — same exposure as
+  `recover_field_offsets.py` and `method_source_presence.py`. Recorded here because that is the
+  only tracked place it can live.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
