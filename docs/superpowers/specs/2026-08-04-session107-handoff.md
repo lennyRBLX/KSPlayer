@@ -526,6 +526,43 @@ concluded the commit gate was unsatisfiable, and started down the `--deferral` r
   mangles to `0A5Error`, so `"KSPlayerError"` matches **zero** of its 60+ symbols. Third instance
   of §2h this session (after `CacheIOContext` and `KSPictureInPictureProtocol`).
 
+## 2z. THE POSITIONAL ROUTE IS DEAD ON `MetalPlayView` — a concrete counterexample, not a caution
+
+§2q says offset arithmetic is never valid. `MetalPlayView` now supplies the proof, and it is worth
+having in hand because the class LOOKS like it should work:
+
+```
+0x1044ea8b0  rotation      field 4      <- five consecutive globals for
+0x1044ea8b8  pixelBuffer   field 5         five consecutive fields, which is
+0x1044ea8c0  options       field 6         exactly the pattern that invites
+0x1044ea8c8  renderSource  field 7         extrapolation
+0x1044ea8d0  drawable      field 8
+```
+
+Fields 9…17 are nine fields and 0x8d8…0x918 are nine globals, so the extrapolation is not merely
+tempting — it is *forced*, and it lands `0x8f8` on `displayLink`. But `init(options:)` stores to
+0x8f8 with **`strb wzr`**, a ONE-BYTE store, and `displayLink` is a two-word existential. The
+extrapolation is refuted by the store width alone.
+
+⚑ **The decisive kill:** `0x1044ea8a0` is **`metalView`**, field **9** — named earlier this session
+  from a binary-internal anchor (only `MetalView` declares `layerClass = CAMetalLayer.self`, and
+  `init` casts `<0x8a0>.layer` to `CAMetalLayer`). So field 9 sits at 0x8a0, **below** field 4 at
+  0x8b0. A later field at a lower address ends the positional argument outright — the run of five
+  is a coincidence of emission order, not a layout rule.
+
+⚑ **Store WIDTH is the cheap type check** and it is reliable: 0x8b0 takes `strh` and `rotation` is
+  `UInt16`; 0x8f8 and 0x918 take `strb` so both are `Bool`; 0x8c0 takes `str x28` and `options` is
+  a class ref. Use it to reject a candidate before spending anything on confirming one.
+
+**Consequence — `MetalPlayView.enterBackground` (0x101a6095c, 93 instr) is BLOCKED**, and so are
+`enterForeground` and `layoutSubviews`. The body is legible — it sets the Bool at 0x8f8 to `true`,
+early-returns on the Bools at 0x928 and 0x8d8, then reads a pointer at 0x908 — but the class
+exports only **5** `vpWvd` symbols (exactly the 5 already recovered) and has **4** `Bool` fields
+(`isPaused`, `isBackground`, `renderUseDispatchSourceTimer`, `forcedFrameRetryScheduled`), so
+elimination-on-type is not decisive either. Naming them needs the §2u value-anchored store-run
+treatment, which for this class means finding a per-field anchor for each Bool. Same class of
+blocker as `KSComplexPlayerLayer.pause()`: the body is read, the NAMES are not available.
+
 ## 2t. TWO rows have NO RECOVERABLE BODY — deleted methods. Measured, not assumed.
 
 `IOSVideoPlayerView.toggleBottomSlimProgress` and `IOSVideoPlayerView.updateTitle` both resolve to
