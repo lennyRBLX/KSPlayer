@@ -461,6 +461,23 @@ public extension MediaPlayerTrack {
         }
     }
 
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerTrack.isDovi.getter:0x1019de614 result=8-instr]
+    /// `bl 0x1019de560` — which the trie names `MediaPlayerTrack.dynamicRange.getter` (the
+    /// property directly above) — then `and w8,w0,#0xff` / `cmp w8,#0x3` / `cset w0,eq`.
+    /// ⚠️ 3 is the CASE TAG, not the raw value. `DynamicRange`'s raw values are 0,2,3,5 but its
+    /// tags are 0,1,2,3, so tag 3 is `.dolbyVision` — raw value 3 would have been `.hlg`. The
+    /// note at PlayerDefines.swift:54 established that tag/raw split independently.
+    var isDovi: Bool {
+        dynamicRange == .dolbyVision
+    }
+
+    /// ⚑ s106: the other TWO MediaPlayerTrack extension defaults are read but NOT transcribed —
+    /// `videoRange` @0x1019e0d20 (53) and `codecs` @0x1019e0bc8 (86). videoRange is decoded as
+    /// far as its three small-string immediates (0xE3 "HLG", 0xE2 "PQ", 0xE3 "SDR", selected on
+    /// the dynamicRange tag) but it also branches on a second witness call at table word 16
+    /// whose requirement is not yet named, so it is left out rather than half-written.
+    /// ⚑[tool=member_missing_triage ref=MediaPlayerTrack:2-of-3 result=deferred]
+
     var colorSpace: CGColorSpace? {
         KSOptions.colorSpace(ycbcrMatrix: yCbCrMatrix as CFString?, transferFunction: transferFunction as CFString?)
     }
