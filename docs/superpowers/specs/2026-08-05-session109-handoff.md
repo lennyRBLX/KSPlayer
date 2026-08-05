@@ -648,7 +648,49 @@ tool in `scripts/` dumps override-table ENTRIES — `vtable_walk` only reports t
 this row needs a tool that lists the entries, or a different discriminator. Until then it should
 stay open rather than be landed on either reading.
 
-## 17. Not started, deliberately
+## 17. NEW TOOL `override_table.py` — and it settles §16 against me
+
+The §16 failure was a missing tool, so I built it: `play/scripts/override_table.py` lists a class's
+override-table ENTRIES, which nothing in `scripts/` could do — `vtable_walk` reports only the
+boolean flag. **`play/scripts/` is gitignored, so this lives on one disk**, exactly like s108 §4's
+fixes. If it is gone, this section is the spec: the entries follow the vtable's, as
+`[OverrideTableHeader {NumEntries}] [NumEntries x {Class, Method, Impl}]`, each field a relative
+pointer resolved against its OWN address; `Class`/`Method` are relative-INDIRECTABLE (low bit set =
+via a GOT slot), `Impl` is a plain relative direct pointer, and a zero `Impl` is a removed override.
+It reads the Mach-O directly through `fieldrec.va2off` — no Ghidra connection — and reuses
+`vtable_walk.vtable_header_offset_generic` so the header arithmetic has one owner.
+
+Validated before use, per MEMORY rule 11, and swept per rule 10:
+
+* `--selfcheck` passes: a positive (the table parses, is non-empty, every non-zero Impl lands in
+  `__text`, every entry names a base descriptor) plus two negatives — a class with the flag CLEAR
+  is **refused** rather than read as an empty table (otherwise "no entries" and "no table" become
+  indistinguishable and every override looks inherited), and an unknown class errors.
+* Swept over all **1039** classmap rows: 104 parsed, 820 correctly refused (no override table),
+  115 refused (no vtable), **0 exceptions and 0 Impls outside `__text`**.
+
+**What it decides.** For `LimitPreLoadIOContext`:
+
+    python3 scripts/override_table.py --class LimitPreLoadIOContext --module PreLoadIOContext --impl 0x101b8a0e0
+    YES  index=4
+
+So `shouldContinueRead` IS a genuine override — **s108 §3 was right, and §16's speculation that it
+"would be a false positive after all" was wrong.** Both of my readings this session were wrong in
+opposite directions; the tool is the thing that settles it.
+
+**Which sharpens the real question.** Two facts are now both PROVEN and they look incompatible:
+the override is real (entry index 4, Impl 0x101b8a0e0, ICF-folded onto the base's body), and
+`CacheIOContext._isClosed` is `private` (per-file discriminator). A body in another FILE cannot
+read a private field — but Swift's `private` is FILE-scoped, so both hold if Forward declares
+`CacheIOContext` and `LimitPreLoadIOContext` **in the same file**. This tree splits them across
+`CacheIOContext.swift` and `LimitPreLoadIOContext.swift`, and that split — not the access level —
+is what makes the override unwritable here.
+
+So this is a PLACEMENT divergence, and [[fileid-literals-decide-placement]] is the right lens for
+it. Do not widen `_isClosed` to land the row; either co-locate the two classes or leave the row
+open. §16's commit did exactly the wrong one of those and was reverted.
+
+## 18. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
