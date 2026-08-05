@@ -720,9 +720,23 @@ That inference is actually decent: this file's own note records that the compile
 reabstraction thunk (FUN_101a1f1a8) and passes the block through rather than constructing one, and
 a reabstraction thunk is what you get when the types match modulo abstraction — not when an
 Optional is being bridged. **But §16 was landed on reasoning of exactly that quality and was
-wrong**, so it was not landed here. The protocol requirement's own signature is not in the trie;
-recover it from the protocol descriptor and then the whole cluster — this row plus the three
-conformers — moves in one commit.
+wrong**, so it was not landed here.
+
+**And the inference cannot be upgraded — I chased both routes and both are closed.**
+
+1. *The protocol descriptor.* `protocol_signature.py`'s own docstring settles it: a requirement's
+   method SIGNATURE "is not emitted by Swift", which is precisely why that tool exists (to tell an
+   associated type, which IS stored, from a concrete existential, which is not). So
+   `TranscodeProtocol.transcode`'s parameter types are irreducible from the protocol.
+2. *The conformers.* A witness must match its requirement, so a concrete
+   `Copy`/`BSF`/`AudioTranscodeContext.transcode` symbol would give the types outright. A trie
+   sweep over all three class names crossed with `transcode` returns **0 symbols** — all three
+   implementations are devirtualized and unnamed.
+
+So the closure's optionality is **not recoverable** on current evidence, and this row is blocked by
+a measured negative rather than by caution. Do not re-walk those two routes. What would break it:
+reading one conformer's body at its (unnamed) address and deciding the parameter shape from how it
+uses the argument — a body read, not a signature lookup.
 
 ## 19. Not started, deliberately
 
