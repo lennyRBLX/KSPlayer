@@ -853,6 +853,37 @@ that requirement cannot be added until `KSPlayerLayer` implements it — which i
 Best value left on the board: one substantial read closes two MEMBER_MISSING rows and completes a
 protocol that three sections of this handoff have been working around.
 
+### `KSPlayerLayer.changePlaybackTime(player:time:)` @0x1019cc2b8 (208 instr) — PARTIAL READ
+
+Started the §2ag unit; this is how far it got. Everything below is read, so do not re-derive it.
+
+**Signature/registers.** `x19` = self, `x22`/`x21` = the `player` existential (value, witness
+table), `v8` = `time`.
+
+**Structure, in order:**
+
+1. `ldr x8, [x21, #0x58]` / `blr` — a `MediaPlayerProtocol` witness returning `Bool`; `tbz w0, #0`
+   skips the whole subtitle block. Its KSMEPlayer witness is 0x1019e0e50, a thunk to **0x1019dfd50,
+   which is NOT in the trie** — naming that is the first open piece.
+2. A `@Published`-shaped read (`0x1034532ec` with a metadata pair) into `sp+0x58`, whose byte is
+   then compared against **two** bytes loaded from `0x1044e61e0` via `cmp` + `ccmp …, #0x4, ne` —
+   i.e. "equals either of two constants". Read those two bytes and the enum they belong to.
+3. The subtitle block loads `subtitleView` (global 0x104c634e8), `options` (0x104c634e0) and
+   `subtitleModel` (0x104c63500) — all three `vpWvd`-named — and ends in
+   ⚑[tool=export_trie_oracle ref=0x101ab3fec result=SubtitleModel.subtitle(currentTime:playRatio:screenSize:)]
+   with a `fdiv` guarded by `fccmp` supplying `playRatio`.
+4. **The tail is settled.** `0x1044e6138` is `KSPlayerLayer.delegate`; it is weak-loaded
+   (`swift_unknownObjectWeakLoadStrong` + `cbz`), and the dispatch is that delegate's witness
+   `+0x10`. `KSPlayerLayerDelegate`'s req1 is
+   `player(layer:currentTime:totalTime:)` (KSPlayerLayer.swift:62) — which matches the call
+   passing two Doubles: `v8` (time) and the result of a `MediaPlayback` base-table call
+   (`x21[8]` then `+0x8`).
+
+⚑ The delegate here is `KSPlayerLayerDelegate`, NOT `MediaPlayerDelegate`. Both are reached
+  through a weak field on this class, and mistaking one for the other would map `+0x10` onto
+  `changeLoadState(player:)` instead of `player(layer:currentTime:totalTime:)`. Check which
+  protocol the witness table belongs to before indexing it.
+
 ## 2ah. THE WORKLIST'S SIZE COLUMN UNDERSTATES — rank by TRANSITIVE cost
 
 Ranking open rows by body size picked three misleading targets in a row this session:
