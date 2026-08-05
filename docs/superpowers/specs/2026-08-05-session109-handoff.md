@@ -177,7 +177,47 @@ shape. Count that protocol as gating at least 15 rows, not 13.
 Deriving that one requirement's name and signature unblocks two rows immediately and is a
 prerequisite for the KSComplexPlayerLayer 13 regardless.
 
-## 8. Not started, deliberately
+## 8. `KSAVPlayer.readyToPlay()` is READ IN FULL and blocked only by a helper's signature
+
+Body @0x1019a402c (130 instr, vtable slot 93), and its deferred closure @0x1019a4234 (51 instr)
+which the s89 verdict left closed — **I opened it**. Nothing about this member is unknown:
+
+    public func readyToPlay() {
+        options.readyTime = CACurrentMediaTime()
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            delegate?.readyToPlay(player: self)
+        }
+    }
+
+The closure is the same shape as `process(error:)`'s continuation: `swift_weakLoadStrong` + `cbz`
+is `guard let self`, `swift_unknownObjectWeakLoadStrong` on 0x104c63068 + `cbz` is `delegate?`,
+and the call is witness slot **+0x8** = req0 `readyToPlay(player:)`. The body changes no KSAVPlayer
+stored property — notably it does NOT set `isReadyToPlay`.
+
+**It does not compile, and the reason is a real divergence, not a spelling problem.**
+`MediaPlayerDelegate` is `@MainActor`-isolated, so the call needs MainActor context. This tree's
+helper is `runOnMainThread(block: @escaping @Sendable () -> Void)` using `MainActor.run(body:)`
+(Core/Utility.swift:368), which gives the block no static isolation — so line
+`delegate?.readyToPlay(player: self)` fails with *"sending value of non-Sendable type
+'any MediaPlayerDelegate' risks causing data races"*.
+
+Forward's helper has EVOLVED, and the binary says exactly how: the `Thread.isMainThread` true arm
+calls a **`MainActor.assumeIsolated`** specialization and the false arm creates a **`Task` whose
+operation is `@MainActor`**. That pair is the lowering of a helper whose block is `@MainActor`,
+not `@Sendable`:
+
+    func runOnMainThread(_ block: @escaping @MainActor () -> Void)
+
+Changing it is a cross-file unit with measured blast radius: **~33 call sites** across
+KSPlayerLayer, KSOptions, AudioBaseOutput, MEPlayerItem and others (`grep -rn runOnMainThread
+Sources/` → 34 hits including the definition). I did not widen this unit to do it; the edit was
+reverted and the tree left green at `0bef333`.
+
+Land the helper signature first, then this member is a paste. The same change plausibly unblocks
+other deferred-work rows that end in a `@MainActor`-isolated delegate call.
+
+## 9. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
