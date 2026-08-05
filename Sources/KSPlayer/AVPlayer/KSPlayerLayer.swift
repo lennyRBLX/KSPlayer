@@ -744,6 +744,28 @@ extension KSPlayerLayer {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.pipStop(restoreUserInterface:):0x1019ced14 result=46-instr]
+    /// `player` comes from its own `vpWvd` (offset global 0x104c634f0) and is loaded as the
+    /// non-optional (instance, witness-table) pair with no null test, exactly as in `makeUIView`.
+    ///
+    /// BOTH witness slots are NAMED, neither is counted — the same discipline `makeUIView` needed,
+    /// because this protocol's indices are shifted by unrecovered requirements:
+    ///   · `ldr x24,[x21,#0xf8]` → witness 30 of MediaPlayerProtocol. `KSMEPlayer`'s table
+    ///     (0x1041d7c68) names it `KSPlayer.KSMEPlayer.pipController.getter :
+    ///     (any KSPictureInPictureProtocol)?`. Its result is a two-word optional existential, and
+    ///     the `cbz x20` that follows is the `?.`.
+    ///   · the second dispatch reloads the witness table from THAT result (`x21` is reassigned to
+    ///     the returned `x1`), so `ldr x8,[x21,#0x48]` is witness 8 of KSPictureInPictureProtocol,
+    ///     not of MediaPlayerProtocol. `KSPictureInPictureController`'s table (0x1041d45a0) names
+    ///     it `stop(restoreUserInterface:)`.
+    ///   · `and w0, w19, #0x1` narrows the incoming Bool to its low bit and passes it as that
+    ///     call's only argument, which is what fixes the argument as `restoreUserInterface`.
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot30=pipController.getter]
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=slot8=stop(restoreUserInterface:)]
+    public func pipStop(restoreUserInterface: Bool) {
+        player.pipController?.stop(restoreUserInterface: restoreUserInterface)
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
     /// Mangled `…0A5LayerC10makeUIViewSo0D0CyF` — returns `UIView`, non-optional.
     ///
