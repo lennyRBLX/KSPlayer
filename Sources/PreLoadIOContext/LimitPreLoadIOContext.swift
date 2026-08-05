@@ -257,6 +257,44 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         return max(entryList.reduce(0) { $0 + UInt64($1.size) }, UInt64(fetchedSize)) < maxFileSize
     }
 
+    /// @0x101b9dee0, 177 instructions. Signature from the trie — BOTH parameters are `UInt64?`,
+    /// and the prologue confirms it: each arrives as a (payload, isNil-flag) pair and each is
+    /// gated by `cmp w,#1 / b.eq` past its own store.
+    ///
+    ///   · `strb wzr` through 0x104c63920 is the FIRST statement and is unconditional —
+    ///     `stopOnLimitReached = false`, before either optional is examined.
+    ///   · `moovProtectionSize` comes from the `vpWvd` symbol at offset global 0x104c63998, not
+    ///     from position: `recover_field_offsets` refuses that global outright. The stored value
+    ///     is `mov w8, #0xa00000` = 10_485_760, which independently matches the declaration
+    ///     default already on that property above.
+    ///   · the log gate is `ldrb` of `KSOptions.logLevel` then `cmp w8,#3 / b.lo` past the call.
+    ///     3 is the CASE INDEX (LogLevel's rawValues are 0/8/16/24…, so 3 is `.warning`), and
+    ///     `KSLog`'s own `level.rawValue <= KSOptions.logLevel.rawValue` folds to exactly that tag
+    ///     compare. `.warning` is KSLog's DEFAULT level, so the source passes no level argument.
+    ///   · the message is two literals with two interpolations between them, read off the image:
+    ///     56 bytes at 0x103d3f5d0 and 19 at 0x103d3f610, both in the large-string form (count in
+    ///     the first word, pointer 32 bytes above the `sub` result). `_StringGuts.grow(79)`
+    ///     reserves 56+19+slack, corroborating the pair.
+    /// ⚑ The interpolations read the STORED PROPERTIES, not the parameters — each is a fresh
+    ///   `beginAccess` + load through the field's own offset global (0x104c63988 at 0x101b9e068,
+    ///   0x104c63990 at 0x101b9e0dc) AFTER the two conditional stores. So a nil argument logs the
+    ///   value that was already there, which `self.` makes explicit here.
+    /// ⚑[tool=export_trie_oracle ref=LimitPreLoadIOContext.moovProtectionSize:0x104c63998 result=vpWvd-named-UInt64]
+    /// ⚑[tool=decode_string_literal ref=0x103d3f5d0:56 result='[CacheIOContext] switched to playback mode, maxFileSize=']
+    /// ⚑ ACCESS not independently proven: no private discriminator on the symbol, and a method
+    ///   carries no `vpMV`. `public` matches every sibling in this class.
+    public func switchToPlaybackMode(maxFileSize: UInt64?, maxReadedFileSize: UInt64?) {
+        stopOnLimitReached = false
+        if let maxFileSize {
+            self.maxFileSize = maxFileSize
+        }
+        if let maxReadedFileSize {
+            self.maxReadedFileSize = maxReadedFileSize
+        }
+        moovProtectionSize = 10_485_760
+        KSLog("[CacheIOContext] switched to playback mode, maxFileSize=\(self.maxFileSize) maxReadedFileSize=\(self.maxReadedFileSize)")
+    }
+
     // ⚑ s106 RENAME `resetPlaybackPosition()` → `clearPlaybackPosition()`. The old name carried
     //   its own disclaimer, "name inferred (devirt)", and the inference was never needed: the
     //   export trie names 0x101b9d4dc directly. Arity 0, Void return and the body all match, so
