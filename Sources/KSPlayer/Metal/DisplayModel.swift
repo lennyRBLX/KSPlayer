@@ -334,9 +334,15 @@ public class VRBoxDisplayModel: SphereDisplayModel {
 // InstanceSize 0x58, AlignMask 7, three own fields at 0x40 / 0x48 / 0x50. The allocation in that
 // same initializer is `swift_allocObject(size: 0x58, alignMask: 7)`, which agrees.
 //
-// ⚑ PARTIAL. The class's own vtable is 10 slots — three property groups plus ONE method at slot 9
-//   (impl 0x101a8299c). That method exports no symbol and is NOT reconstructed here; declaring a
-//   signature whose body would have to be invented is the one thing this may not do.
+// ⚑ PARTIAL, and standing this class up SURFACED its own open row — expected, not a regression:
+//   declaring a type makes its undeclared members visible to pin_sweep.
+//     · `set(frame:encoder:)` @0x101a825b4, 250 instr — the `DisplayEnum` requirement, an
+//       OVERRIDE of PlaneDisplayModel's. Named in the trie, not yet read.
+//     · slot 9 of this class's own vtable, impl 0x101a8299c, 181 instr — a PRIVATE helper taking
+//       FIVE arguments (x0..x4), so it is not `set` under another name. It exports no symbol, and
+//       it does String/Dictionary work, which is what `pipelineMap` above exists for.
+//   Neither is reconstructed here; declaring a signature whose body would have to be invented is
+//   the one thing this may not do.
 @MainActor
 public class DoviDisplayModel: PlaneDisplayModel {
     /// ⚑ Both literals are decoded, not matched to the field name:
