@@ -465,6 +465,48 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   fileSize) are not cleanly readable Foundation/Swift in the binary (devirt /
     //   FFmpeg-adjacent) → inherited from AbstractAVIOContext, NOT reconstructed. — P2
 
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryContain(logicalPos:):0x101b89d60 result=136-instr]
+    /// The sibling of `firstEntryAfter` below, but NOT the same loop — the differences are read,
+    /// not carried over:
+    ///   · the bound is INCLUSIVE here. `subs x24, x0, #0x1` makes `hi = count - 1` and the
+    ///     back-edge is `cmp x24, x27` / `b.ge`, i.e. `while lo <= hi`; the narrowing step is
+    ///     `sub x24, x21, #0x1` (`hi = mid - 1`). `firstEntryAfter` instead keeps `hi = count`
+    ///     with `hi = mid`.
+    ///   · an empty list exits twice over: `cbz x0` on the count, then `tbnz x24, #0x3f` on the
+    ///     negative `count - 1`.
+    ///   · it RETURNS on a hit rather than narrowing further, so it is a plain containment search,
+    ///     not a lower bound.
+    ///
+    /// The containment test uses BOTH entry fields, each named by its own `vpWvd`:
+    ///   · global 0x104c63948 → `CacheFileEntry.position : UInt64`. `cmp x19, x23` / `b.lo` sends
+    ///     `logicalPos < position` to the `hi = mid - 1` arm.
+    ///   · global 0x104c63950 → `CacheFileEntry.size : UInt32`. It is loaded with `ldr w27` — a
+    ///     32-BIT load, which is what fixes the `UInt64(...)` widening in the sum below — under
+    ///     its own `swift_beginAccess`.
+    ///   · `adds x8, x23, x27` forms `position + size` with a carry trap (`b.hs` → trap), and
+    ///     `cmp x19, x8` / `b.lo` is the upper half of the half-open range.
+    /// ⚑[tool=export_trie_oracle ref=CacheFileEntry.size:0x104c63950 result=vpWvd-named]
+    ///
+    /// ⚑ The range is HALF-OPEN: the lower test is `logicalPos < position` (so `>=` continues) and
+    ///   the upper is `logicalPos < position + size`. An inclusive upper bound would need `b.ls`
+    ///   here and the binary uses `b.lo`.
+    public func firstEntryContain(logicalPos: UInt64) -> CacheFileEntry? {
+        var lo = 0
+        var hi = entryList.count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let entry = entryList[mid]
+            if logicalPos < entry.position {
+                hi = mid - 1
+            } else if logicalPos < entry.position + UInt64(entry.size) {
+                return entry
+            } else {
+                lo = mid + 1
+            }
+        }
+        return nil
+    }
+
     /// ⚑[tool=export_trie_oracle ref=CacheIOContext.firstEntryAfter(logicalPos:):0x101b89f80 result=88-instr]
     /// A LOWER-BOUND BINARY SEARCH, not a linear scan — read off the arithmetic, which is what
     /// distinguishes it: `adds x8, x27, x21` sums the bounds under an overflow trap (`b.vs` →
