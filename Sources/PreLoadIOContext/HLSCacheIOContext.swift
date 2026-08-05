@@ -232,6 +232,35 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         return nil
     }
 
+    /// ⚑[tool=export_trie_oracle ref=HLSCacheIOContext.getSubContext(for:):0x101b9aaf4 result=50-instr]
+    /// Trie signature: `getSubContext(for: Swift.String) -> PreLoadIOContext.CacheIOContext?` —
+    /// the key is a **String**, matching `subContexts: [String: CacheIOContext]`.
+    ///
+    /// Read straight through:
+    ///   · global 0x1044f4320 is the `subContextsLock` field; `bl 0x103464ae0` is selector
+    ///     `lock` and the tail `bl 0x10346e620` is `unlock` (the same pair decoded for
+    ///     Anime4KFrameDump.reset), so the whole body runs under that lock.
+    ///   · global 0x1044f4318 is `subContexts`. `ldr x8,[x20,#0x10]` is the dictionary COUNT and
+    ///     `cbz` returns nil for an empty dictionary before hashing at all.
+    ///   · `bl 0x100020444` is the keyed lookup returning (index in x0, found-flag in w1);
+    ///     `tbz w1,#0` takes the not-found arm to nil, otherwise `ldr x8,[x20,#0x38]` is the
+    ///     values buffer and `ldr x21,[x8, x0, lsl #3]` loads the element, which is then retained.
+    /// That is a plain `subContexts[key]` under the lock — no insert, no default.
+    func getSubContext(for key: String) -> CacheIOContext? {
+        subContextsLock.lock()
+        defer { subContextsLock.unlock() }
+        return subContexts[key]
+    }
+
+    // ⚠️ TWO CORRECTIONS to the note below, both from the export trie, which was not consulted
+    //   when it was written:
+    //   1. The name is NOT inferred — the trie carries
+    //      `PreLoadIOContext.HLSCacheIOContext.setSubContext(_: PreLoadIOContext.CacheIOContext, for: Swift.String)`.
+    //   2. Its second parameter is **`Swift.String`, not `URL`** — the signature below is a type
+    //      divergence. It is left unchanged here because retyping it touches every call site and
+    //      is its own unit; `getSubContext` above uses the correct `String` key, and the two must
+    //      end up agreeing.
+    //   ⚑[tool=export_trie_oracle ref=HLSCacheIOContext.setSubContext result=for:String-not-URL]
     // s24 @101b9abbc — `func setSubContext(_ context: CacheIOContext, for url: URL)`
     //   (name inferred, devirt). FAITHFUL SPINE + UNRESOLVED on the mutating helper. Under
     //   subContextsLock, with exclusive (mutating) access on `subContexts`, the binary
