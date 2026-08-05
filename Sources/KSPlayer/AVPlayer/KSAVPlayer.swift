@@ -506,6 +506,43 @@ extension KSAVPlayer {
         delegate?.playerDidClear(player: self)
     }
 
+    // process(error:) @0x1019a5158, 81 instr, vtable slot 100. No ICF fold. `public` on the same
+    // basis as reset(): the method descriptor $s8KSPlayer10KSAVPlayerC7process5errorys5Error_p_tFTq
+    // exists @0x1039ec4a8. ⚑ access is the weakest claim here, as it is for reset().
+    //
+    // The body itself does exactly ONE thing and takes no branch — control flow is fully linear
+    // with a single `ret` — so every effect below is inside the closure:
+    //  · swift_allocObject(0x1041d3e70, 0x18, 7) then swift_weakInit(box+0x10, self) — `[weak self]`.
+    //  · MainActor.shared ($sScM6sharedScMvgZ) plus the MainActor:Actor witness table built from
+    //    conformance descriptor 0x104113870 — the `@MainActor` isolation, not a hop written by hand.
+    //  · swift_errorRetain(error) — the error is captured STRONGLY, unlike self.
+    //  · swift_allocObject(0x1041d3f10, 0x30, 7) for the 48-byte context, filled
+    //    `stp x20,x23,[x0,#0x10]` / `stp x22,x19,[x0,#0x20]` = MainActor.shared, its witness table,
+    //    the weak-self box, the error.
+    //  · the Task is created through 0x101a03fd4 with the async function pointer 0x103566c80, and
+    //    the returned handle is immediately swift_release'd — a bare `Task { }` statement, never a
+    //    stored handle.
+    //
+    // The operation resumes at 0x1019a529c (the @MainActor hop, ending in swift_task_switch) and
+    // continues at 0x1019a532c, where the two `?`s are both explicit:
+    //  · swift_weakLoadStrong on the box then `cbz` — `guard let self else { return }`.
+    //  · swift_unknownObjectWeakLoadStrong on delegate (offset global 0x104c63068) then `cbz`.
+    //  · the call is witness slot +0x38 with x1 = the captured error. This file's own requirement
+    //    table maps +0x38 to req6 `finish(player:error:)`, and self is handed over as the
+    //    (object, metadata, witness) triple 0x1041d3f78 — the `some MediaPlayerProtocol` form.
+    // Both beginAccess sites pass flags 0, so both are reads and no endAccess is emitted.
+    // ⚑[tool=bind_oracle ref=MainActor.shared:0x104113860 result=libswift_Concurrency]
+    // ⚑[tool=bind_oracle ref=_swift_errorRetain:0x104112e50 result=libswiftCore]
+    // ⚑[tool=bind_oracle ref=_swift_unknownObjectWeakLoadStrong:0x1041130e8 result=libswiftCore]
+    public func process(error: Error) {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            delegate?.finish(player: self, error: error)
+        }
+    }
+
     private func observer(playerItem: AVPlayerItem?) {
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)
