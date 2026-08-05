@@ -1117,3 +1117,39 @@ translationTarget` · `KSPlayerLayer.isPictureInPictureActive` · `KSAVPlayer.co
 - **`ReadCacheIOContext.close`** @0x101bad688 (42 instr) — next in line, needs the weak-reference
   load at 0x10002e588 and the outlined helpers 0x10002abb8 / 0x100012a78 / 0x10003751c typed first.
   Its four siblings are 134–576 instructions and are the cache logic, NOT ffurl delegations.
+
+
+### §24b — the structural unblocks, which matter more than the row count
+Three blockers that had been recorded as settled were re-tested and fell. Each unblocked members
+that had been parked for sessions, and the pattern is the same every time: **the note quoted one
+symptom and generalised it.**
+
+1. **PiP req2** — `init?(playerLayer:)`. The note predicted a `required`-initializer error; the real
+   error is failability, and the binary's own `csel` on the call result says the same.
+2. **PiP req3** — `required init(contentSource:)`. The note said the binary "does not show" the
+   initializer; the trie carries BOTH `…cfC` (allocating) and `…cfc` (initializing) entry points,
+   and a purely inherited ObjC init emits only the former.
+3. **`DownloadProtocol`'s eight "deferred residue" requirements** — all eight named in one pass, and
+   the technique generalises: read each witness thunk, and it either touches a field offset directly
+   (giving you get/set/modify vs a bare `let` read — the ABSENCE of a `swift_beginAccess` is what
+   proves `let`) or dispatches `[metadata + N]`, which `vtable_walk --metadata-offset N` turns into
+   a slot and an impl. Corroborate the slot→member mapping with the IMPLS, not just the ordering:
+   here slots 6 and 8 share 0x10000e52c because `seek` returns its already-in-x0 `offset` and
+   `close` is empty, and ICF folds only byte-identical bodies.
+
+**Do this before declaring any row blocked by an empty/partial protocol.** `DownloadProtocol`,
+`KSPictureInPictureProtocol` and `VideoOutput` all had unnamed requirements standing between a read
+body and a declaration.
+
+### Where the remaining 79 actually are
+The cheap rows are gone. What is left is dominated by:
+- **large engine bodies** — `CacheIOContext` alone has 162/175/284/412/413/433/789/1638-instruction
+  rows; `ReadCacheIOContext` has 134–576; `KSComplexPlayerLayer` has 12 rows including a
+  227-instruction helper that `pictureInPictureControllerDidStopPictureInPicture` depends on.
+- **type divergences that gate a body** — `CacheIOContext.tmpURL` (non-optional per its `vpWvd`,
+  but its initializer is in the init's UNRESOLVED region) blocks `clearOtherCache`, which is
+  otherwise read in full and transcribed into the source.
+- **non-binary-derived isolation** — `displayEnumVR`/`displayEnumVRBox`, where both escape routes
+  are measured and recorded in this file.
+- **one field-identity gap** — `MetalSubtitleView`'s three same-typed array fields.
+Reaching 0 runs through those, not around them.
