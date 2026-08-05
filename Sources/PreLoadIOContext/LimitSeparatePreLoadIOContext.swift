@@ -575,6 +575,25 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
         return delta > UInt64(Int64.max) ? .max : Int64(delta)
     }
 
+    /// ⚑[tool=disassemble ref=LimitSeparatePreLoadIOContext.position.getter:0x101ba41f4 result=20-instr]
+    /// An override whose body is IDENTICAL to the base's, which is why it is easy to miss: this is
+    /// a separate symbol at a separate address, not the inherited getter.
+    /// Read: a read access on self+0x50 and `ldr x0,[x20,#0x50]`, then `cmn x0,#0x1` / `b.ne` —
+    /// return that value unless it is the -1 sentinel; otherwise a second read access on self+0x80
+    /// and return `ldr x0,[x20,#0x80]`.
+    /// The two offsets are named from the SIBLING, not guessed: LimitSeparatePreLoadIOContext's own
+    /// accessors reach them by constant immediate so `recover_field_offsets` finds nothing for this
+    /// class, but `PreLoadIOContext` — which extends the same CacheIOContext and therefore shares
+    /// the inherited layout — maps +0x50 to `urlPos` and +0x80 to the field its `loadedSize` reads,
+    /// i.e. `logicalPos`. CacheIOContext.swift:383 anchors the same pair from the other direction.
+    /// ⚑[tool=recover_field_offsets ref=PreLoadIOContext:+0x50 result=urlPos]
+    /// This is byte-for-byte the base's `position` at CacheIOContext.swift:384, so the override
+    /// carries no new behaviour — it is declared because the binary declares it, not because it
+    /// differs.
+    override public var position: UInt64 {
+        urlPos == .max ? logicalPos : urlPos
+    }
+
     // Requirement 8. The witness for this requirement is 0x10000e52c — a BARE `ret`. That is an
     // EMPTY body, not a missing one: this class deliberately does nothing on a playback-position
     // sync, where PreLoadIOContext forwards to its own (time:position:) overload. The address is
