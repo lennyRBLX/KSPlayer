@@ -83,27 +83,38 @@ public class URLContextDownload: AbstractAVIOContext {
     /// ⚑[tool=ffmpeg_name_oracle ref=ffurl_seek2:0x1030c07ac result=NOT-UNIQUELY-NAMED-59-candidates]
     /// ⚑[tool=export_trie_oracle ref=URLContextDownload.fileSize:0x101b91150 result=LOCATED]
     ///
-    /// P43 existence check: LOCATED, not a failed search — the member, its address, its body and
-    /// its callee are all in hand. It is NOT DECLARED for one reason, and the reason is a build
-    /// wiring gap rather than anything unread. The body transcribes to:
-    ///
-    ///     override public func fileSize() -> Int64 {
-    ///         guard let context else { return -1 }
-    ///         return ffurl_seek2(context, 0, AVSEEK_SIZE)
-    ///     }
-    ///
-    /// and that does not compile: "cannot find 'ffurl_seek2' in scope". `ffurl_seek2` lives in
-    /// libavformat's INTERNAL url.h, which the built Libavformat.framework does not export — its
-    /// Headers directory carries only avformat/avio/config/os_support/version. FFmpegKit's
-    /// `avformat_shim.h` is exactly the place that gap is bridged: it is where `URLContext` itself
-    /// is declared for this file, it already carries `extern AVClass ffurl_context_class;`, and it
-    /// still has a commented-out `//#import <Libavformat/url.h>`. Adding
-    /// `int64_t ffurl_seek2(void *urlcontext, int64_t pos, int whence);` there makes this member —
-    /// and the sibling `HLSCacheIOContext.fileSize` @0x101b975e0, `URLContextDownload.seek`
-    /// @0x101b910f0 and `HLSCacheIOContext.seek` @0x101b9757c, which all call the same address —
-    /// declarable. That edit is in the FFmpegKit repo, so it is its own cross-repo unit.
+    /// ⚑ s109: NOW DECLARED. The blocker was never the read — it was that `ffurl_seek2` was not
+    /// in scope, because the built Libavformat.framework exports only
+    /// avformat/avio/config/os_support/version and url.h is internal. FFmpegKit's
+    /// `avformat_shim.h` is where this reconstruction already restates internal libavformat
+    /// prototypes (`ff_isom_write_vpcc` sits there for exactly the same reason, with its own
+    /// header import commented out), and it already declares `URLContext` and
+    /// `ffurl_context_class` for this very file. The prototype was added there verbatim from
+    /// url.h:207 — `void *` for the context, not `URLContext *`.
+    override public func fileSize() -> Int64 {
+        guard let context else {
+            return -1
+        }
+        return ffurl_seek2(context, 0, AVSEEK_SIZE)
+    }
 
-    // UNRESOLVED: read(buffer:size:) / write(buffer:size:) / seek(offset:whence:)
-    //   overrides are devirtualized in the binary (no readable body) — inherited
-    //   from AbstractAVIOContext, NOT reconstructed. — P2
+    /// @0x101b910f0, 24 instructions. `override_table.py --impl` answers YES at index 1.
+    /// Identical to `fileSize()` above except that the two immediates are replaced by the
+    /// parameters: `x1 = x21` is `offset` and `x2 = x19` is `whence`, both moved out of x0/x1 in
+    /// the prologue before the `context` read. Same `cbz` → −1 guard.
+    /// ⚑[tool=override_table ref=URLContextDownload.seek(offset:whence:):0x101b910f0 result=YES-index-1]
+    override public func seek(offset: Int64, whence: Int32) -> Int64 {
+        guard let context else {
+            return -1
+        }
+        return ffurl_seek2(context, offset, whence)
+    }
+
+    // ⚠️ s109 CORRECTION: this note used to include `seek(offset:whence:)` in the
+    //   "devirtualized in the binary (no readable body)" list. That was wrong — the trie names
+    //   `URLContextDownload.seek(offset:whence:)` at 0x101b910f0 and its 24-instruction body is
+    //   read and declared above. `read(buffer:size:)` and `write(buffer:size:)` are unaffected by
+    //   this correction and remain unlisted in the trie for this class.
+    // UNRESOLVED: read(buffer:size:) / write(buffer:size:) overrides are devirtualized in the
+    //   binary (no readable body) — inherited from AbstractAVIOContext, NOT reconstructed. — P2
 }

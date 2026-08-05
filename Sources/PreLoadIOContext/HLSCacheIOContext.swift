@@ -362,6 +362,36 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         }
     }
 
+    /// @0x101b975e0 (21 instr) and @0x101b9757c (25 instr). `override_table.py --impl` answers
+    /// YES at index 2 and index 1 respectively, so both override `AbstractAVIOContext`.
+    ///
+    /// Both delegate through `download` rather than owning a URLContext: `ldr x19,[x20,#0x18]`
+    /// loads this class's field at +0x18 and then reads THAT object at ITS +0x18, which is the
+    /// offset `URLContextDownload.nextAVOptions` already pins as `context`. So the object at
+    /// +0x18 is a URLContextDownload — identified by what is dereferenced out of it, not by
+    /// position — and `download` is this class's only field of that type.
+    /// From there the shape is the same as the URLContextDownload pair: a READ `swift_beginAccess`
+    /// (flags 0, 0) on that context slot, `cbz` → the base class's −1 default, otherwise one
+    /// `ffurl_seek2` call — with `x1 = 0` / `w2 = 0x10000` (`AVSEEK_SIZE`, avio.h:468) for
+    /// `fileSize`, and with the two parameters for `seek`.
+    /// The callee's naming and the FFmpegKit shim prototype it needs are documented on
+    /// `URLContextDownload.fileSize`.
+    /// ⚑[tool=override_table ref=HLSCacheIOContext.fileSize:0x101b975e0 result=YES-index-2]
+    /// ⚑[tool=override_table ref=HLSCacheIOContext.seek(offset:whence:):0x101b9757c result=YES-index-1]
+    override public func fileSize() -> Int64 {
+        guard let context = download.context else {
+            return -1
+        }
+        return ffurl_seek2(context, 0, AVSEEK_SIZE)
+    }
+
+    override public func seek(offset: Int64, whence: Int32) -> Int64 {
+        guard let context = download.context else {
+            return -1
+        }
+        return ffurl_seek2(context, offset, whence)
+    }
+
     // UNRESOLVED → later phase (do NOT reconstruct — declared nowhere beyond these
     //   markers; their bodies are deep/devirt and/or call stripped FFmpeg + DirectoryWatcher
     //   (1C.3) the P2 oracle names — fabrication risk):
