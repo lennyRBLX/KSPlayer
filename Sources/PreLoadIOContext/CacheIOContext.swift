@@ -105,7 +105,19 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   RESOLVED in session 62: `saveFile` is now `let` — the designated init assigns it from
     //   its `saveFile` PARAMETER (the convenience init delegates, so it obligates nothing),
     //   making the `= false` default unobservable. `tmpURL` still stands.
-    public var tmpURL: URL? // type inferred — ⚑ (Foundation; unmapped)
+    // ⚑ s109: the type is now DERIVED, and it DIVERGES from what is written here. The field's
+    //   own `vpWvd` demangles to `… CacheIOContext.tmpURL : Foundation.URL` with NO trailing `Sg`,
+    //   so the binary field is NON-optional; `URL?` is the old inference this comment used to
+    //   admit to. It is left as `URL?` only because correcting it does not stand alone:
+    //   changing it to `URL` builds with exactly ONE error — "property 'self.tmpURL' not
+    //   initialized at super.init call" at the designated init below — and the value that would
+    //   satisfy it is written at 0x101b8745c by `blr x9` on a two-argument virtual call, inside
+    //   the very Foundation cache-directory region that init records as UNRESOLVED. Making the
+    //   field non-optional therefore requires reconstructing that construction first, which is
+    //   the init's own unit. Do NOT spell it `URL!` — a field mangle without `Sg` is plain `T`,
+    //   and IUO is not reflection-visible either way.
+    //   ⚑[tool=export_trie_oracle ref=CacheIOContext.tmpURL:0x104c63908 result=vpWvd-URL-no-Sg]
+    public var tmpURL: URL? // ⚑ DIVERGENT: binary says non-optional URL (see above)
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
     //    defaults it true. field-record.
     var isJudgeEOF: Bool = true
@@ -653,4 +665,41 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
         return exists && isDirectory.boolValue
     }
+
+    // ⚑[tool=export_trie_oracle ref=CacheIOContext.clearOtherCache:0x101b8d948 result=LOCATED]
+    // P43 existence check: this deferral is LOCATED, not a failed search. The member exists in the
+    // trie at a known address, its body is read end to end below, and the single thing standing
+    // between the read and a declaration is named exactly — `tmpURL`'s optionality, whose own
+    // blocker is located at 0x101b8745c in the designated init. Nothing here is pending discovery.
+    // ⚑ `clearOtherCache()` @0x101b8d948 — READ IN FULL, DECLARED NOWHERE, and blocked only on
+    //   `tmpURL`'s type. Trie: `CacheIOContext.clearOtherCache() -> ()`, carrying its own `Tq`, and
+    //   `override_table.py --impl 0x101b8d948` answers NO — so it is a NEW overridable member of
+    //   this class, not an override. All 25 of its calls are Foundation/libc stubs; nothing is
+    //   devirtualised. Written out here rather than declared, so the read is not lost:
+    //
+    //     let parent = tmpURL.deletingLastPathComponent()
+    //     let keep = tmpURL.lastPathComponent
+    //     guard let names = try? FileManager.default.contentsOfDirectory(atPath: parent.path)
+    //     else { return }
+    //     for name in names where name != keep {
+    //         try? FileManager.default.removeItem(at: parent.appendingPathComponent(name))
+    //     }
+    //
+    //   Every step is resolved: __got 0x104109a88 `URL.deletingLastPathComponent`, 0x104109a38
+    //   `URL.lastPathComponent.getter`, 0x104109ac8 `URL.path.getter`, 0x10410a238
+    //   `String._bridgeToObjectiveC`, selref 0x10440ad40 `contentsOfDirectoryAtPath:error:`,
+    //   $sSSN as the bridge element type (so `[String]`), 0x104109a70
+    //   `URL.appendingPathComponent`, 0x104109a48 `URL._bridgeToObjectiveC` and selref
+    //   0x10440ca38 `removeItemAtURL:error:`. The skip test is a pointer-equality fast path
+    //   (`cmp x20,x25` / `ccmp x21,x23`) followed by `_stringCompareWithSmolCheck` with
+    //   expecting=0 (.equal) and `tbnz w0,#0` continuing on a match — i.e. `name != keep`. Both
+    //   error arms (0x101b8db88 for the listing, the loop tail for the removal) run
+    //   convert/willThrow/errorRelease without rethrowing from a non-throwing signature, so both
+    //   are `try?`; the listing one returns, the removal one continues the loop.
+    //   The ONLY blocker is that the body reads `self.tmpURL` with no nil test, which the field's
+    //   declared `URL?` cannot express — see the divergence note on that field. When `tmpURL`
+    //   becomes non-optional this transcribes verbatim.
+    // ⚑[tool=override_table ref=CacheIOContext.clearOtherCache:0x101b8d948 result=NO-not-an-override]
+    // ⚑[tool=decode_objc_selector ref=0x10440ca38 result=removeItemAtURL:error:]
+    // ⚑[tool=bind_oracle ref=__got:0x104109a88 result=Foundation.URL.deletingLastPathComponent]
 }
