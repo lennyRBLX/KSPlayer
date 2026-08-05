@@ -1513,3 +1513,30 @@ rather than a factory.
 
 Remaining to profile: 0x1019aba90 / 0x101a391bc / 0x101a392a0 / 0x101aa0308 (the `FFmpegSubtitle`
 init's four).
+
+
+### §24p — a blocker that was never a blocker: COMPILER-GENERATED helpers
+Profiling the `FFmpegSubtitle` init's four unnamed helpers turned one of them into a non-problem.
+
+**0x101aa0308 — called TWICE from the init — is an OUTLINED DESTROY, not a source member.**
+18 instructions, read directly:
+    x19 = x0
+    __swift_instantiateConcreteTypeFromMangledName(cache 0x1044e4778, name 0x103566d40) -> metadata
+    x8 = [metadata-8][+0x8]        ; the type's value-witness `destroy`
+    destroy(x19, metadata); return x19
+That is compiler-emitted value-witness plumbing. **It has NO source counterpart and must never be
+named or written** — the reconstruction simply doesn't contain it. One of the four is now off the
+list, and it was never really on it.
+
+**Generalise this before hunting any more names:** an unnamed helper whose whole body is
+`instantiateConcreteTypeFromMangledName` followed by a dispatch through a VWT slot
+(+0x0 initializeBufferWithCopyOfBuffer, +0x8 destroy, +0x10 initializeWithCopy, +0x18 assignWithCopy,
++0x20 initializeWithTake, …) is an OUTLINED value-witness function. This session already met three
+more of the shape — 0x10002e588 (outlined copy, §24 ReadCacheIOContext.close), 0x100012a78 and
+0x10003751c (its destroys). Check for that shape FIRST; it costs one disassembly and removes the
+helper from the queue entirely, whereas a naming hunt on it can never succeed.
+
+**Still genuinely unnamed and source-level:** 0x1019aba90 (103 instr; materialises
+`FFmpegAssetTrack` metadata — the track factory), 0x101a391bc (57 instr; `swift_allocObject(0x20, 7)`
+— and NOT `IOInterruptContext`, whose InstanceSize is 0x30, so the 32-byte type is still to be
+identified), 0x101a392a0 (902 instr).
