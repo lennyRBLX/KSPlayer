@@ -580,7 +580,44 @@ its own unit and a large one; `updateVideMetaLabel` is a short paste once it exi
 but nothing in this body sets alpha back to 1, so either `getVideoMeta` always populates all four
 keys or the reset lives elsewhere. Read it; do not assume.
 
-## 15. Not started, deliberately
+## 15. DirectoryWatcher: the bodies EXIST under invented names — this is a rename, not a write
+
+Rule 13 ("audit a body that already exists before you write a new one") pays off here, and the
+current source is provably wrong in a way worth recording even before the fix lands.
+
+`DirectoryWatcher.swift` already reconstructs both addresses, but under **self-declared inferred**
+names and signatures:
+
+    source (today)                                          binary (read from the trie)
+    ─────────────────────────────────────────────────────   ────────────────────────────────────
+    startWatching(url:handler:qos:)        @0x101a04e78  →   watchModify(fileURL:completion:)
+    startWatchingParent(url:handler:qos:)  @0x101a0578c  →   watchNew(fileURL:completion:)
+
+Three separate corrections, all read rather than inferred:
+
+1. **the names** — `watchModify` / `watchNew`. The source comments say "name inferred" at both
+   sites, so this replaces a guess with the trie's answer.
+2. **the labels** — `url:` → `fileURL:`, `handler:` → `completion:`.
+3. **the arity** — the demangled signatures are
+   `(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ()) -> ()`: **two parameters**.
+   Source declares a third, `qos: DispatchQoS`, and its own comment admits it was read off decompiler
+   `param_3`. There is no such parameter. The `DispatchQoS` in the body is the argument to
+   `DispatchQueue.global(qos:)`, not an input. **That invented parameter is a live divergence in
+   the tree right now**, independent of whether the rename lands.
+
+Also note the completion is `(Bool) -> ()`, not the `() -> Void` the source declares.
+
+**What stops the rename landing.** The closures currently stub as `handler()`. Under the real
+signature they must pass a `Bool`, and that value is computed inside the event handler, which is
+NOT reconstructed: `setEventHandler`'s block @0x101a06254 is an 18-instruction partial-apply
+forwarder (it recomputes the URL's size/alignment from the value witness to find the capture
+offsets) onto the real body **0x101a05464, 102 instr**, which weak-loads self and goes on into
+Foundation calls. `watchNew`'s equivalent is @0x101a06364 → its own body. Writing `completion(true)`
+would be inventing a raw value, so it was not written.
+
+Read 0x101a05464 and both rows land together as a rename plus a two-line signature fix.
+
+## 16. Not started, deliberately
 
 `SubtitlePart.change` (3 overloads @0x101abb3f0 / 0x101abb524 / 0x101abb6c0) — whole-struct
 copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. §6's problem
