@@ -1060,3 +1060,60 @@ that read end-to-end without chasing devirtualised helpers; that ranking picked 
 the four KSOptions statics, both `configPIP`s and `syncPlaybackPosition`. Beware: the triage's
 instruction count is the THUNK's, not the body's — five rows that looked like 1-4 instructions were
 thunks branching to 107-, 181- and 227-instruction bodies.
+
+
+---
+
+## §24 — s109 close. MEMBER_MISSING 108 → 80.
+
+Gate **PASS 44 / ANOMALY 6 / FAIL 4** throughout — identical to the s108 baseline, nothing regressed.
+Build 4/4 at every commit. Re-derive with `recon_gate.py --mode handoff` and `pin_sweep.py --every`.
+
+### ⚠️ READ THIS FIRST: an UNCOMMITTED sibling-repo edit is load-bearing for five landed rows
+`FFmpegKit/Sources/FFmpegKit/include/avformat_shim.h` now declares two internal libavformat
+prototypes:
+
+    int64_t ffurl_seek2(void *urlcontext, int64_t pos, int whence);   // url.h:207
+    int ffurl_closep(URLContext **h);                                 // url.h:234, AFTER the URLContext typedef
+
+Without them `URLContextDownload.fileSize/seek/close` and `HLSCacheIOContext.fileSize/seek` do not
+compile. **That edit is NOT committed**: the FFmpegKit tree carries unrelated uncommitted work
+(BuildFFMPEG.swift, avutil_shim.h, several xcframework Info.plists), so committing it would have
+swept in someone else's changes. If a clean checkout of FFmpegKit ever replaces that tree, re-apply
+both prototypes or those five members stop building.
+
+The shim is the right home for them, not a workaround: `ff_isom_write_vpcc` already sits there for
+exactly the same reason (with `//#import <Libavformat/vpcc.h>` commented out beside it), the file
+already declares `URLContext` and `ffurl_context_class` for these very sources, and it still carries
+a commented-out `//#import <Libavformat/url.h>`. The built Libavformat.framework exports only
+avformat/avio/config/os_support/version, which is why the internal header cannot simply be imported.
+
+### Naming an FFmpeg call the oracle cannot narrow
+`ffmpeg_name_oracle` returns 59 band candidates for 0x1030c07ac and does NOT include `ffurl_seek`.
+That is not a dead end and not a licence to guess — the answer came from three independent places:
+1. **This build's own headers.** `libavformat/url.h` defines `ffurl_seek` as a `static inline` that
+   only does `return ffurl_seek2(h, pos, whence)`, so it can never survive as a call target; the
+   exported symbol is `ffurl_seek2`, whose signature takes `void *`, not `URLContext *`.
+2. **A literal inside the binary.** The log string this reconstruction already reads at
+   LimitSeparatePreLoadIOContext contains `"more ffurl_seek2 "`.
+3. **The call shape.** pos 0 with whence 0x10000 = `AVSEEK_SIZE` (avio.h:468 in this build).
+For `close`, the one/two-star ambiguity between `ffurl_close` and `ffurl_closep` is settled by the
+ACCESS FLAGS, not by preference: the body opens a second `swift_beginAccess` with flags 0x21
+(Modify|Tracking) closed by `swift_endAccess`, and passes `x20+0x18` — the ADDRESS of `context`.
+Only the two-star form takes that and nils the caller's pointer.
+
+### Rows landed in the second half
+`HLSCacheIOContext.clearCache` · `KSOptions.defaultFont / recordDir / subtitleDynamicRange /
+translationTarget` · `KSPlayerLayer.isPictureInPictureActive` · `KSAVPlayer.configPIP` ·
+`KSMEPlayer.configPIP` · `KSComplexPlayerLayer.pause` · `LimitPreLoadIOContext.syncPlaybackPosition`
+· `URLContextDownload.fileSize / seek / close` · `HLSCacheIOContext.fileSize / seek`.
+
+### Read in full, deliberately NOT declared
+- **`CacheIOContext.clearOtherCache`** @0x101b8d948 — transcribed into the source file. Blocked on
+  `tmpURL`, whose type is now DERIVED (its `vpWvd` has no `Sg` ⇒ non-optional `URL`, and the source's
+  `URL?` was the old inference). Correcting it builds with exactly one error — not initialized at
+  `super.init` — and the satisfying value is written by a virtual call at 0x101b8745c inside the
+  init's UNRESOLVED region. Do not spell it `URL!`.
+- **`ReadCacheIOContext.close`** @0x101bad688 (42 instr) — next in line, needs the weak-reference
+  load at 0x10002e588 and the outlined helpers 0x10002abb8 / 0x100012a78 / 0x10003751c typed first.
+  Its four siblings are 134–576 instructions and are the cache logic, NOT ffurl delegations.
