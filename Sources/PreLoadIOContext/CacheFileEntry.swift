@@ -129,7 +129,16 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     //   overflow-checked `maxSize < size + appending` → true. Else false.
     //   NOTE: s12 does NOT read `saveFile`; the byte at maxSize+4 is the UInt32?
     //   optional tag, not saveFile.
-    func wouldOverflow(_ appending: UInt32) -> Bool { // name inferred (devirt)
+    // ⚑ s106 RENAME `wouldOverflow(_:)` → `isOut(size:)`. The old name carried its own disclaimer,
+    //   "name inferred (devirt)", and the inference was never needed: the trie names 0x101b90620
+    //   `PreLoadIOContext.CacheFileEntry.isOut(size: Swift.UInt32) -> Swift.Bool` directly.
+    //   BOTH parts come from the trie — the base name and the argument label (`_` → `size:`).
+    //   Parameter type UInt32 and Bool return already matched, so this is a rename and not a
+    //   signature change; that distinction was checked by comparing parameters, not assumed.
+    //   No call sites: the tree-wide grep on the bare name returns only this declaration and its
+    //   own comment.
+    //   ⚑[tool=export_trie_oracle ref=CacheFileEntry.isOut(size:):0x101b90620 result=isOut-not-wouldOverflow]
+    func isOut(size appending: UInt32) -> Bool {
         if size >= 0x2000001 {
             return true
         }
