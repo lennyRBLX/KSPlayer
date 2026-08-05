@@ -958,3 +958,81 @@ copies guarded on a Bool at +0x81; needs SubtitlePart's full named layout, i.e. 
 again. The `changePlaybackTime` chain and the `SubtitleModel` `Task` closure were left alone:
 s108 §6 describes them precisely so that resuming them is a decision rather than a default, and
 nothing this session changed that.
+
+---
+
+## §23 — Second half of s109 (post-compaction). MEMBER_MISSING 95 → 86.
+
+State at close: **MEMBER_MISSING 86 · ACCESS 26 · NOT_IN_TRIE 23 · AMBIGUOUS_OVERLOAD 10 ·
+TYPE_DIVERGENCE 4**; gate **PASS 44 / ANOMALY 6 / FAIL 4** — identical to the s108 baseline, so
+nothing regressed; build 4/4 at every commit; tree clean apart from the pre-existing untracked
+`docs/superpowers/specs/*` files. Re-derive all of it with `recon_gate.py --mode handoff` and
+`pin_sweep.py --every` rather than quoting these numbers.
+
+### Rows landed
+| row | addr | note |
+|---|---|---|
+| `HLSCacheIOContext.clearCache(for:)` | 0x101b9ad90 | static (no `Tq`); all 28 calls are Foundation/libc stubs |
+| `KSOptions.defaultFont` | 0x1019b93a8 | `nil` via `storeEnumTagSinglePayload(dest, 1, 1)` on URL's VWT |
+| `KSOptions.recordDir` | 0x1019b598c | documentDirectory urls, `.first?`, `appendingPathComponent("record")` |
+| `KSOptions.subtitleDynamicRange` | 0x1019bb404 | `SwiftUI.Image.DynamicRange.high` |
+| `KSOptions.translationTarget` | 0x1019ba494 | `Locale.current.language` |
+| `KSPlayerLayer.isPictureInPictureActive` | 0x1019d007c | witness 30 then PiP req0, confirmed by selector |
+| `KSAVPlayer.configPIP` | 0x1019ab4dc | needed PiP req2 declared as `init?(playerLayer:)` |
+| `KSMEPlayer.configPIP` | 0x101a445c8 | needed PiP req3 + `override public required init(contentSource:)` |
+| `KSComplexPlayerLayer.pause` | 0x1019d1bc0 | `override` proven by `override_table --impl` (YES index 4) |
+
+### Two corrections to earlier sessions' recorded blockers — both were wrong, and wrong the same way
+Both had been written as settled negatives after ONE error message was read and generalised.
+
+1. **PiP req2 was NOT undeclarable.** `KSPictureInPictureController.swift` recorded both init
+   requirements as impossible, quoting the `required`-initializer error that `init(contentSource:)`
+   produces. req2 fails *differently* — "non-failable initializer requirement cannot be satisfied by
+   a failable initializer" — and spelled `init?(playerLayer:)` it builds 4/4. The `?` is
+   independently binary-backed: `configPIP`'s `cmp x0,#0` / `csel x21, xzr, x22, eq` rebuilds a nil
+   existential, so the failability is readable at the call site.
+2. **req3's `required init` IS in the binary.** The same note said declaring it "would put an
+   initializer in the source that the binary does not show". The trie carries BOTH entry points —
+   `…cfC` allocating @0x1019c74e4 and `…cfc` **initializing** @0x1019c751c — and a purely inherited
+   ObjC init emits only the former. The initializing body is `objc_super` + `objc_msgSendSuper2` on
+   `initWithContentSource:`, i.e. `super.init(contentSource:)`, which also forces `override`.
+   **Generalise the method, not the two results: an "it does not compile" note is only as good as
+   the error it quotes, and a per-member re-test is cheap.**
+
+### Tool fix (disk-only — `play/scripts/` is gitignored)
+`bind_oracle.py`'s row regex anchored the symbol at end-of-line, so every `(weak_import)` row failed
+to match and was **dropped in silence**; `--addr` then answered "NO BIND at this address (not a bind
+site)" for addresses that are plainly binds — the exact shape that invites a false "unreadable" pin.
+Making the suffix optional recovers **377 rows**, with **0 existing rows changed and 0 lost**, and
+`--selfcheck` passes. It was found because `subtitleDynamicRange`'s value is the weak-imported
+`SwiftUI.Image.DynamicRange.high`; the chained-fixup word at that `__got` slot decodes to bind
+ordinal 0x10d2, one past its neighbour, which is what proved the miss was the parser's.
+⚠️ If `scripts/` is ever restored from a backup, re-apply this.
+
+### Still blocked, with the escape routes now MEASURED rather than guessed
+- **`KSOptions.displayEnumVR` / `displayEnumVRBox`** — values fully read since s106. Dropping
+  `@MainActor` from `SphereDisplayModel` builds 4/4 but changes nothing (the isolation comes from
+  the `DisplayEnum` protocol); marking both `override required init()` `nonisolated` just moves the
+  error onto `KSOptions.sceneSize` and `super.init()`. Landing two read values would cost three
+  isolation edits that `PlayerDefines.swift:179` already states are not binary-derived. Left blocked.
+- **`MetalSubtitleView.mtkView(_:drawableSizeWillChange:)`** @0x101ac0a90 — blocked on typing the
+  private layout helper @0x101abc398 (not in the trie). The field-offset map is now recorded in
+  `MetalSubtitleView.swift`; `{0x5c0, 0x5c8, 0x5d8}` → `{subtitleImages, pendingTexts, parts}` stays
+  open. **Do not guess those three from field order** — see below.
+- **`KSComplexPlayerLayer.pictureInPictureControllerDidStopPictureInPicture`** @0x1019d62ec — read
+  end to end except the 227-instruction tail call at 0x1019d2bb0, which is not in the trie and is its
+  own unit. The rest is: `player.view` (witness 0x28) sent `didStopPIP`, then the private
+  `KSPlayerLayer.addSubtitle(to:)` @0x1019cf5d8, then `pipController?.stop(restoreUserInterface: false)`.
+
+### The trap worth carrying forward: offset globals are NOT in field-record order
+Hit twice, in two unrelated classes, and it silently produces a plausible wrong map.
+`MetalSubtitleView` has seven fields whose offsets ascend (0x8, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58)
+and seven offset globals whose addresses ascend (0x1044ef5a8…5e0) — and pairing them is WRONG:
+0x5d0 is `cancellables`, proved by its init store of `__got 0x104112d10`
+(`__swiftEmptySetSingleton`, adjacent to the array singleton at 0xd00 and the dictionary one at
+0xd08). `KSComplexPlayerLayer` is the same: `urls` is trie-pinned at 0x104c63528, the *middle* of
+its three globals. **Identify a field by what is stored into it — store WIDTH (`strb` ⇒ Bool),
+the empty-collection singleton, an immediate like 0x3ff0000000000000 ⇒ 1.0 — or by the type of the
+parameter it feeds. Never by position.** That is how `KSComplexPlayerLayer.pause`'s
+`isPictureInPictureStoped` and `MetalSubtitleView.playRatio` were pinned, and why the three
+MetalSubtitleView arrays are still open: nothing distinguishes three same-typed empty arrays.
