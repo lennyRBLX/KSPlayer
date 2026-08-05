@@ -458,6 +458,54 @@ extension KSAVPlayer {
         }
     }
 
+    // reset() @0x1019a5410, 139 instr, vtable slot 102. Exactly one symbol at the address (no ICF
+    // fold). `public` rests on the method descriptor $s8KSPlayer10KSAVPlayerC5resetyyFTq existing
+    // @0x1039ec4b8 — a cross-module vtable entry. It is NOT `open`: no ProAVPlayer override of
+    // this selector is in the trie. ⚑ access is the weakest claim here; the ACCESS bucket, not
+    // this unit, is where it gets settled.
+    //
+    // Ten steps, in instruction order 0x1019a542c -> 0x1019a5618, each re-read from the binary:
+    //  1 self.options (offset global 0x104c63098) then a VIRTUAL `ldr x8,[x20]; ldr x21,[x8,#0x310]`
+    //    — KSOptions VTableOffset is 94 words (0x2f0), so (0x310-0x2f0)/8 = slot 4 = KSOptions.reset().
+    //  2 isReadyToPlay (0x104c630d0) `strb wzr` = false.
+    //  3 playbackState (0x104c630b8) read-then-write `mov w8,#0x5`. MediaPlaybackState's own
+    //    descriptor 0x1039ed96c lists 6 cases, index 5 = .stopped. The old value then goes to the
+    //    compiler-emitted didSet observer at 0x1019a24a8, which has no source spelling.
+    //  4 loadState (0x104c630c8) read-then-write `strb wzr`. Descriptor 0x1039ed988, 3 cases,
+    //    index 0 = .idle. Followed by the didSet's virtual call to update(loadState:oldValue:).
+    //  5 duration (0x104c63070) `str xzr` = 0.
+    //  6 subtitleTracks (0x104c63058) = the __swiftEmptyArrayStorage singleton, i.e. [].
+    //  7 the same singleton into the UNEXPORTED global 0x1044e46f8. That is mediaPlayerTracks by
+    //    a CLOSED elimination, not by position: the field records give KSAVPlayer 28 fields, of
+    //    which exactly three are Arrays — mediaPlayerTracks (6) and subtitleTracks (7) share one
+    //    element type, chapters (16) has another — and subtitleTracks (0x104c63058) and chapters
+    //    (0x104c63088) are both independently named. mediaPlayerTracks is `internal`, which is
+    //    precisely why it emits no vpWvd global to be named by.
+    //    ⚑[tool=fieldrec ref=KSAVPlayer.mediaPlayerTracks:0x1044e46f8 result=elimination-over-28-field-records]
+    //  8 playerView (the fixed instance offset +0x38) -> KSAVPlayerView.player (offset global
+    //    0x1044e46b0) -> selectors 'currentItem', 'asset', 'cancelLoading', with the `cbz` after
+    //    currentItem supplying the `?`.
+    //  9 replaceCurrentItem with x0 = 0 — the nil literal, calling this file's own member @0x1019a563c.
+    // 10 delegate (0x104c63068) is loaded with swift_weakLoadStrong and `cbz`-guarded, which is the
+    //    `?`; field record 12 carries the `Xw` tail, so the weak-ness is reflection-visible. The
+    //    call is witness slot +0x40 — which MediaPlayerProtocol.swift already pins as req7
+    //    playerDidClear(player:) — and self is passed as the (object, metadata, witness) triple
+    //    0x1041d3f78, matching that requirement's `some MediaPlayerProtocol` parameter.
+    // ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
+    // ⚑[tool=export_trie_oracle ref=KSAVPlayerView.player:0x1044e46b0 result=player]
+    public func reset() {
+        options.reset()
+        isReadyToPlay = false
+        playbackState = .stopped
+        loadState = .idle
+        duration = 0
+        subtitleTracks = []
+        mediaPlayerTracks = []
+        playerView.player.currentItem?.asset.cancelLoading()
+        replaceCurrentItem(playerItem: nil)
+        delegate?.playerDidClear(player: self)
+    }
+
     private func observer(playerItem: AVPlayerItem?) {
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)
