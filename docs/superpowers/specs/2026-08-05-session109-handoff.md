@@ -1356,3 +1356,29 @@ supply a `let`'s value. Match the result against the caller's `swift_allocObject
 
 With the init read, this lands `FFmpegSubtitleParse.parse` too — its 46-instruction body is already
 decoded as `try FFmpegSubtitle(url: url)` with `scanner` provably unused (§24g).
+
+
+### §24j — the `FFmpegSubtitle` init, partially read. The three `let` stores are LOCATED.
+§24i said the `let` assignments were unread and therefore uninventable. They are readable, and
+finding them does not require decoding all 409 instructions — only the stores at the field offsets.
+
+`field_offset_vector FFmpegSubtitle`: InstanceSize **0xa8 = 168**, which matches the caller's
+`swift_allocObject(168, 15)` exactly — the layout check of §24h passes. Offsets:
+`$defaultActor` 0x10 · `formatContext` 0x70 · `decode` 0x78 · `subtitleStreamIndex` 0x80 ·
+`preTime` 0x88 · `startTime` 0x90 · `endTime` 0x98 · `parts` 0xa0.
+
+Grepping the init for stores through `x19` (= self, reloaded from [x29,#-0xc8]) finds exactly three:
+  · `str w8, [x19,#0x80]`   @0x101a9f5b4 — `subtitleStreamIndex`, from `[x26,#0x10]`
+  · `stp x25, x0, [x19,#0x70]` @0x101a9f5e4 — `formatContext` = x25, `decode` = x0, stored together
+  · `str x8, [x19,#0xa0]`   @0x101a9f6c4 — `parts`
+
+And `decode`'s construction is fully resolved: `swift_allocObject(136, 7)` then
+0x101a6914c = **`SubtitleDecode.init(assetTrack: FFmpegAssetTrack, options: KSOptions?)`** with
+x1 = 0, i.e. `options: nil`. So `decode = SubtitleDecode(assetTrack: <x26>, options: nil)`, and
+`x26` is an `FFmpegAssetTrack` — the same object `subtitleStreamIndex` is read out of at +0x10.
+
+**Still to read before the type can be declared:** where `x25` (the `FormatContext`) is built — the
+FFmpeg open path earlier in the init — how the `FFmpegAssetTrack` x26 is produced, and the
+initialisation of `preTime`/`startTime`/`endTime` (no stores to 0x88/0x90/0x98 through x19 were
+found, so they are either written through another base or left at their declaration defaults —
+determine which, do not assume).
