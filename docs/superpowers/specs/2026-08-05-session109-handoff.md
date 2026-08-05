@@ -1452,3 +1452,38 @@ names private helpers structurally — by call-site signature, by the metadata/w
 handed, by the types they allocate — rather than by symbol. Every blocked row above hands its helper
 enough typed context to identify it. Build that, and these rows fall together rather than one at a
 time.
+
+
+### §24n — NEW TOOL `scripts/helper_fingerprint.py`, and it cracks the §24m wall
+§24m concluded the remaining blocker class is uniform — private helpers no naming route resolves —
+and that the next move is a tool, not another row. That tool now exists.
+
+⚠️ **`play/scripts/` is gitignored, so this tool is DISK-ONLY**, exactly like the s109 `bind_oracle`
+weak-import fix. If `scripts/` is ever restored from a backup, it is gone. Re-create it from this
+section's description.
+
+**What it does.** Given an unnamed function's address it reports, deterministically and without
+inventing a name: the type-metadata accessors it calls (i.e. the TYPES it materialises), every
+`swift_allocObject(size, alignMask)` site (matchable against `field_offset_vector`'s InstanceSize),
+the NAMED in-module calls that bound its role, and its `__got` witness-table/descriptor references.
+It emits EVIDENCE and leaves adjudication to the orchestrator — deliberately unlike
+`recover_swift_function_name`, whose confident names on these very helpers are false anchors.
+`--selfcheck` anchors on a trie-NAMED function (`FormatContext.init` @0x101a350bc) and requires the
+profile to be consistent with that known signature, per MEMORY rule 11; it also requires a bogus
+address to be REFUSED rather than returning an empty profile that reads like "touches nothing".
+
+**First result — `KSOptions.makeDecode`'s blocker @0x1019b611c is no longer opaque.** 362 instr,
+57 calls, and its profile names its whole job:
+  · `FFmpegDecode.init(assetTrack: FFmpegAssetTrack, options: KSOptions)`
+  · `SubtitleDecode.init(assetTrack: FFmpegAssetTrack, options: KSOptions?)`
+  · `VideoToolboxDecode` (metadata accessor)
+  · allocObject sizes 0x28 / 0x70 / 0x88 / 0xd08
+So it is the **decoder-selection switch**: VideoToolbox / Subtitle / FFmpeg chosen from
+`(assetTrack, options)`. That is what `makeDecode` returns as its `DecodeProtocol`. What remains is
+transcribing the selection predicate — the body's string comparisons over codec/track names — not
+identifying the function.
+
+**Run this on the other blocked helpers before anything else next session:** 0x1019c7410 and
+0x1019d1d70 (the `reCheckSubtitle`/`readyToPlay` pair) and 0x1019aba90 / 0x101a391bc / 0x101a392a0 /
+0x101aa0308 (the `FFmpegSubtitle` init). Each was declared unnameable by SYMBOL; none has yet been
+profiled by STRUCTURE.
