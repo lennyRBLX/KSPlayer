@@ -83,3 +83,22 @@ Plus **63** SOURCE helpers with fan-in 1 (one row each):
 | `0x101a767a8` | 1 | Anime4KPipeline.configure |
 | `0x101ab2de4` | 1 | KSPlayerLayer.select |
 | `0x1030c0994` | 1 | HLSCacheIOContext.read |
+
+## The SOURCE 72, split again by SHAPE (added after the first screen)
+
+A tail-branch thunk — no `bl`, no `ret`, ends in an unconditional `b` — has no independent source
+identity. It IS the call site's own expression, outlined, so it is inlined rather than stood up.
+
+| shape | count | instr sizes |
+|---|---|---|
+| tail-branch thunk (inline; nothing to declare) | 6 | 5, 5, 5, 8, 9, 17 |
+| real body (needs a disposition) | 66 | min 8, median 75, max 2659, **total 9983** |
+
+⚠️ Correction worth keeping: the thunk shape was inferred from the five SMALLEST entries, four of
+which are thunks — `0x1019ac5b4` materialises the small string "Anime4K" (0x6e41/0x6d69/0x3465/
+0x4b with the 0xE0|7 ASCII discriminator) and tail-branches. Generalising from that sample said
+"many of the 72 are thunks". The deterministic screen says **six**. Sample-then-generalise is
+exactly the failure mode `[[recorded-blocker-only-as-good-as-its-error]]` describes; the screen is
+cheap, so run it rather than infer it.
+
+So the real queue is **66 real helper bodies + 16 UNSURE = 82 units**, ~9983 instructions of reading.
