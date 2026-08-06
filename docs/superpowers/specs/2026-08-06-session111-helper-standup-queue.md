@@ -102,3 +102,28 @@ exactly the failure mode `[[recorded-blocker-only-as-good-as-its-error]]` descri
 cheap, so run it rather than infer it.
 
 So the real queue is **66 real helper bodies + 16 UNSURE = 82 units**, ~9983 instructions of reading.
+
+## Two units RESOLVED: `0x101a1f188` / `0x101a1f1bc` are type metadata accessors
+
+`classify_compiler_helpers.py` called both SOURCE. They are not. Each is 8 instructions —
+`adrp/add` a class object, `bl _objc_opt_self`, `mov x1, #0x0`, `ret` — and the classes are named
+from their nominal type descriptors at metadata+0x40: **`CopyTranscodeContext`** (0x1044e8da8) and
+**`BSFTranscodeContext`** (0x1044e8e40). Both are root Swift classes; their word-1 chained-fixup
+bind resolves to `_OBJC_CLASS_$__TtCs12_SwiftObject`.
+
+The two-word return is a **`MetadataResponse` `{const Metadata *Value; MetadataState State}`**, and
+`mov x1, #0` is `MetadataState::Complete` — not a nil second element. Proven at the CALLER rather
+than argued from the shape: `OutputStreamInfo.transcode` @0x101a1addc calls it, keeps x0 as the
+metatype (`mov x20, x0`) and OVERWRITES x1 on the very next instruction
+(`adrp x1, 0x1044e8000 / add x1, x1, #0xbe8`). A discarded second word cannot be a return value.
+
+So the disposition is **never write**: a type metadata accessor is compiler-generated and has no
+source counterpart, exactly like the outlined value witnesses in s110 §5.
+
+⚠️ This is a `classify_compiler_helpers.py` BLIND SPOT worth fixing at the tool: a body whose only
+call is `_objc_opt_self` and which sets `x1 = 0` before returning is a metadata accessor, never
+source. Screened all 66 real bodies for that exact shape — it finds **exactly these two**, so the
+blind spot is narrow. (Screened rather than assumed, after the thunk over-generalisation above.)
+
+Queue after this: **64 real bodies + 16 UNSURE = 80 units**. No ROW unblocked yet —
+`OutputStreamInfo.transcode` still carries 7 other unnamed callees.
