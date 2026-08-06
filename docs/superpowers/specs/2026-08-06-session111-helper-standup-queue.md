@@ -233,3 +233,36 @@ KSLog call inside. Note in passing, NOT resolved here: the literal carries TWO l
 is a possible signature divergence and belongs to its own unit.
 
 **Queue: 41 shared members + 16 UNSURE = 57 units.**
+
+## The address-range corroboration, and two more UNSURE resolved
+
+Split all 117 distinct callees at `0x101000000` — KSPlayer's own code sits above it; the low
+`__text` region is where this image emits shared compiler/runtime-support functions (the three
+outlined value witnesses s110 §5 named are all there).
+
+| region | count | verdicts |
+|---|---|---|
+| below `0x101000000` | 22 | HELPER 20, UNSURE 2, **SOURCE 0** |
+| at/above | 95 | SOURCE 70, UNSURE 14, HELPER 11 |
+
+Zero disagreement in the low region — the classifier and the range agree completely, which is what
+makes the range usable as corroboration rather than as a guess. The two UNSURE there were then read
+rather than assumed:
+
+  · `0x10016cb68` — ONE instruction, `b 0x1000b6684`, a thunk into another low-region helper.
+  · `0x100036e98` — 42 instructions opening `cbz x1` / `cmp x1, #0xf` / `b.hs`, the 15-byte
+    small-string threshold. Stdlib-shaped, no source counterpart.
+
+Both HELPER. Disposition: **never write**.
+
+## Running total
+
+| | |
+|---|---|
+| distinct unnamed callees | 117 |
+| HELPER (never write) | **38** |
+| SOURCE | 65 — of which 6 thunks and 18 single-call-site, neither a unit |
+| UNSURE | 14 |
+| **real standable units left** | **41 shared members + 14 UNSURE = 55** |
+
+Rows blocked on an unnamed helper: **45 -> 43**. Bodies READY: **17 -> 19**.
