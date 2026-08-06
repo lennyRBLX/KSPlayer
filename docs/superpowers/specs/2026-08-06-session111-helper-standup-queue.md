@@ -459,3 +459,39 @@ The other 14 string-carrying units reference only `#file` constants or generic t
 **Queue after C and D: 3 units are library-code naming problems (`0x1030c0994`, `0x10245e7d8`,
 `0x10245f0e0`), 1 is confirmed (`0x101a9f27c`), and the remaining ~46 carry caller-set evidence as
 pins.**
+
+## The invented-name gate (human decision, s111)
+
+All naming routes are closed for this population, so the human authorised names invented from
+PURPOSE — **as a one-off, behind a gate**. `scripts/name_exhaustion_gate.py` is that gate
+(selfcheck PASS, 5 anchors). Because `play/scripts/` is gitignored, the RULE is recorded here and
+in memory; the tool is not durable and must be rebuilt if lost.
+
+### The rule
+
+1. No invented name without `name_exhaustion_gate.py --addr <A>` returning **`EXHAUSTED`**. It runs
+   all seven routes and reports each OPEN/CLOSED. Any OPEN route ⇒ the name is recoverable and
+   rule 1 still governs.
+2. **`INLINE-INSTEAD` is a refusal.** One call site image-wide ⇒ no independent identity ⇒ inline
+   the expression, do not name it. This keeps the fabricated surface as small as the binary allows.
+3. The marker grammar is deliberately different:
+   `⚑[invented=<name> addr=<0xADDR> exhaustion=name_exhaustion_gate approved=<who>]`
+   `invented=` is never `tool=`, so one grep separates every fabricated identifier from every
+   derived fact, permanently.
+4. The gate is a PRECONDITION, not an approval. It answers "is this unrecoverable"; it neither
+   chooses nor blesses the name. `approved=` carries explicit human sign-off.
+5. A wrong NAME costs more than a wrong body: a body is caught by the next audit against the
+   binary; a name propagates into call sites and verdicts, where it reads as evidence.
+
+### What the gate's own goldens pin
+
+| anchor | asserts |
+|---|---|
+| `0x1019cc5f8` (`KSPlayerLayer.play`) | a trie-named address is `ROUTE-OPEN`, never `EXHAUSTED` |
+| `0x1019c7454` | the s111 KVC-key false anchor does NOT reopen the `#function` route — length matches, `#file` absent |
+| `0x101b8c114` | a one-call-site helper is `INLINE-INSTEAD`, not a naming problem |
+| `0x101b91580` | a genuinely exhausted shared helper (20 sites, 11 named callers) reaches `EXHAUSTED` |
+| `0x101a9f27c` | the unique-literal route OPENS where it demonstrably worked (`can not judge stream`) |
+
+The second and fifth are the load-bearing ones: they encode the two s111 corrections directly into
+the gate, so the refuted rule cannot quietly return.
