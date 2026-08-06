@@ -685,3 +685,45 @@ committed claim, not as a replacement claim.
 Three things are still unread and each would be an invention: the two `DispatchTimeInterval` case
 tags behind `__got 0x104113320` / `0x104113310`, the `PixelBufferProtocol` requirement at witness
 `+0xc8`, and the field at global `0x1044ea8e0`. The control flow is solid; the operands are not.
+
+## `enterForeground` — every operand now READ, and the one thing that still blocks it
+
+All four unknowns from the previous section are resolved from the binary:
+
+| operand | resolved |
+|---|---|
+| `__got 0x104113320` | `DispatchTimeInterval.never` -> `repeating: .never` |
+| `__got 0x104113310` | `DispatchTimeInterval.nanoseconds` with a zeroed payload -> `leeway: .nanoseconds(0)` |
+| global `0x1044ea8e0` | `formatDescription` |
+| global `0x1044ea8a8` | `displayView` |
+| classref `0x104410d18` | **`AVSampleBufferDisplayLayer`** — NOT `CAMetalLayer` |
+
+So the body is:
+
+    isBackground = false
+    if !renderUseDispatchSourceTimer {
+        backgroundTimer.schedule(deadline: .distantFuture, repeating: .never, leeway: .nanoseconds(0))
+    }
+    guard metalView.isHidden else { return }
+    guard let pixelBuffer else { return }
+    guard let imageBuffer = pixelBuffer.<witness +0xc8> else { return }
+    if let formatDescription {
+        (displayView.layer as! AVSampleBufferDisplayLayer).<0x101a61f60>(imageBuffer, formatDescription)
+    }
+
+**The single blocker is the SPELLING of `0x101a61f60`.** Its identity is now tightly constrained:
+an `AVSampleBufferDisplayLayer` receiver in swiftself, two arguments, the second demonstrably
+`formatDescription`. Source declares a THREE-label `enqueue(imageBuffer:formatDescription:time:)` on
+`AVSampleBufferDisplayView` (MetalPlayView.swift:544, called at :433) — a different type and a
+different arity, so it cannot be that member.
+
+Its `#function` literal reads `enqueue(imageBuffer:formatDescription:)`, which matches the call
+shape exactly. **It still fails the corrected two-part rule**: the body never materialises a
+39-character string, so by this session's own strengthened test the literal is not proof.
+`name_exhaustion_gate.route_function_literal` returns CLOSED for it, which routes it to the
+invented-name path rather than the recovered-name path — evidence pointing hard at a name the rule
+will not certify is exactly the case the gate exists to arbitrate.
+
+Writing `enterForeground` therefore requires first standing up that extension member AND reading
+its 439-instruction body. Left for the next session with every operand banked; the control flow and
+all five constants above are read, not inferred.
