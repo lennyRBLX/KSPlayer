@@ -1207,6 +1207,32 @@ public extension KSOptions {
     //   ⚑[tool=fieldrec ref=VRDisplayModel.modelViewProjectionMatrix:0x103cbdbf0 result=NumFields-1]
     //   ⚑[tool=fieldrec ref=VRBoxDisplayModel.modelViewProjectionMatrixLeft:0x103cbdc0c result=NumFields-2]
     //
+    //   s112 then RAN the isolation experiment end to end and reverted it, which narrows the blocker
+    //   from a judgement call to a readable body. Removing `@MainActor` from the `DisplayEnum`
+    //   protocol and from both conforming classes (plus `SphereDisplayModel.init` and
+    //   `touchesMoved`) leaves EXACTLY two unresolved references, and nothing else in the tree:
+    //     · `MotionSensor.shared.start()` @DisplayModel.swift:145 and `.matrix()` @:177
+    //     · `KSOptions.sceneSize` @DisplayModel.swift:274, :297, :311
+    //   The first of those is the real finding. **`MotionSensor` has ZERO symbols in the export
+    //   trie** — not one hit for the substring across all 57,138 names — and the initialiser chain
+    //   confirms it: `VRDisplayModel.init` @0x101a8c5b4 inlines `SphereDisplayModel.init` and makes
+    //   no motion call of any kind. So those two lines are reconstruction/upstream residue, and the
+    //   isolation they drag in is residue too. These rows are blocked behind a `SphereDisplayModel.init`
+    //   BODY correction, not behind an isolation preference.
+    //   ⚑[tool=export_trie_oracle ref=MotionSensor:0x0 result=ZERO_SYMBOLS]
+    //
+    //   The initialiser is locatable, which the earlier note thought it was not: the once-init
+    //   @0x1019bc664 passes metadata accessor 0x101a8d244, size 0x100 and storage 0x104c632b0 to a
+    //   shared tail @0x1019bc700, which `swift_allocObject`s and `blr`s **0x101a8c5b4** = the init.
+    //   Its 120 instructions inline the sceneSize computation directly — `objc_opt_self` on the
+    //   UIApplication classref 0x1044104f8, `sharedApplication`, the private body @0x101a02de0, then
+    //   `bounds` — and carry NO actor machinery: no `ScMMa`, no `swift_task_isCurrentExecutor`, no
+    //   `swift_task_reportUnexpectedExecutor`. That absence is EVIDENCE, not a gap: the async display
+    //   path @0x101a60fc8 in this same reconstruction emits all three, so the binary is capable of
+    //   showing isolation here and does not.
+    //   ⚑[tool=body_fingerprint ref=VRDisplayModel.init:0x101a8c5b4 result=no-actor-machinery]
+    //   ⚑[tool=body_fingerprint ref=MetalPlayView.set:0x101a60fc8 result=emits-ScMMa-and-task-checks]
+    //
     //   One lead this note did NOT have, for whoever takes the isolation unit: `KSOptions.sceneSize`
     //   — the member s109's `nonisolated` probe tripped over — has no `KSOptions` symbol at all. The
     //   trie carries it as `UIApplication.sceneSize` (`$sSo13UIApplicationC8KSPlayerE9sceneSizeSo6CGSizeVvgZ`,
