@@ -1191,6 +1191,28 @@ public extension KSOptions {
     //   Both are `vgZ`-only (no `vsZ` in the trie), so when they do land they are `let`, not `var`.
     //   ⚑[tool=export_trie_oracle ref=KSOptions.displayEnumVR:0x104c632b0 result=vgZ-no-vsZ]
     //   ⚑[tool=export_trie_oracle ref=KSOptions.displayEnumVRBox:0x104c632b8 result=vgZ-no-vsZ]
+    //
+    //   s112 closed two more escapes by MEASURING them, so no later session need re-probe:
+    //     · The `let` spelling this note itself recommends fails IDENTICALLY. Declared as
+    //       `nonisolated(unsafe) static let displayEnumVR = VRDisplayModel()` the compiler emits the
+    //       same `error: main actor-isolated default value in a nonisolated(unsafe) context`, at the
+    //       default-value column. Every error above was recorded against `var`; `let` is not a way
+    //       out, and the `vgZ`-no-`vsZ` reading does not unblock these rows.
+    //     · "Delete the invented init" is NOT available either. Both classes' stored properties are
+    //       REAL: the field records carry `modelViewProjectionMatrix` (VRDisplayModel, NumFields=1)
+    //       and `modelViewProjectionMatrixLeft`/`Right` (VRBoxDisplayModel, NumFields=2), all three
+    //       at the same symbolic type as `SphereDisplayModel.modelViewMatrix`. Fields that must be
+    //       assigned require the `override required init()` the reconstruction already declares, so
+    //       the isolation it inherits cannot be removed by removing the initialiser.
+    //   ⚑[tool=fieldrec ref=VRDisplayModel.modelViewProjectionMatrix:0x103cbdbf0 result=NumFields-1]
+    //   ⚑[tool=fieldrec ref=VRBoxDisplayModel.modelViewProjectionMatrixLeft:0x103cbdc0c result=NumFields-2]
+    //
+    //   One lead this note did NOT have, for whoever takes the isolation unit: `KSOptions.sceneSize`
+    //   — the member s109's `nonisolated` probe tripped over — has no `KSOptions` symbol at all. The
+    //   trie carries it as `UIApplication.sceneSize` (`$sSo13UIApplicationC8KSPlayerE9sceneSizeSo6CGSizeVvgZ`,
+    //   with a `vpZMV`, so public) in a KSPlayer extension on `__C.UIApplication`. Its OWNER is a
+    //   divergence in its own right, and it needs its own row before it is used as evidence here.
+    //   ⚑[tool=export_trie_oracle ref=UIApplication.sceneSize:0x101a01d1c result=owner-is-UIApplication-not-KSOptions]
     nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
     /// ⚑ s107: NOW DECLARED. The blocker recorded above — "`DoviDisplayModel` does not exist in
     /// Sources at all; it needs standing up first" — is cleared: that class is stood up in
