@@ -1213,23 +1213,43 @@ public extension KSOptions {
     //   `touchesMoved`) leaves EXACTLY two unresolved references, and nothing else in the tree:
     //     · `MotionSensor.shared.start()` @DisplayModel.swift:145 and `.matrix()` @:177
     //     · `KSOptions.sceneSize` @DisplayModel.swift:274, :297, :311
-    //   The first of those is the real finding. **`MotionSensor` has ZERO symbols in the export
-    //   trie** — not one hit for the substring across all 57,138 names — and the initialiser chain
-    //   confirms it: `VRDisplayModel.init` @0x101a8c5b4 inlines `SphereDisplayModel.init` and makes
-    //   no motion call of any kind. So those two lines are reconstruction/upstream residue, and the
-    //   isolation they drag in is residue too. These rows are blocked behind a `SphereDisplayModel.init`
-    //   BODY correction, not behind an isolation preference.
-    //   ⚑[tool=export_trie_oracle ref=MotionSensor:0x0 result=ZERO_SYMBOLS]
+    //   ❌ RETRACTED, same session, before anything was applied. The first draft of this paragraph
+    //   said the MotionSensor lines were residue because `MotionSensor` has ZERO symbols in the
+    //   export trie and `VRDisplayModel.init` "inlines SphereDisplayModel.init and makes no motion
+    //   call". The trie fact is true; BOTH inferences from it were wrong, and acting on them would
+    //   have deleted real binary-backed code.
+    //     · `VRDisplayModel.init` @0x101a8c5b4 does NOT inline the superclass init. Its last call,
+    //       0x101a8bf3c, IS `SphereDisplayModel.init` — 126 instructions of its own.
+    //     · That body carries the sensor path in full: the `static KSOptions.enableSensor` gate
+    //       @0x1044e5150, then `isDeviceMotionAvailable`, `isDeviceMotionActive`,
+    //       `setDeviceMotionUpdateInterval:` and `startDeviceMotionUpdates`. It also carries
+    //       genSphere @0x101a8cf1c and the three `newBufferWithBytes:length:options:` calls that
+    //       build indexBuffer/posBuffer/uvBuffer, exactly as spelled at DisplayModel.swift:136-146.
+    //   Zero trie symbols for `MotionSensor` means the TYPE is not separately exported — the
+    //   CoreMotion sends are emitted straight into the init — NOT that the calls are absent. The
+    //   same holds for `.matrix()` at :176, which this file already documents as binary-backed via
+    //   the provider @0x101a880e4 and the 0x40-byte copy into modelViewMatrix.
+    //   ⚑[tool=body_fingerprint ref=SphereDisplayModel.init:0x101a8bf3c result=enableSensor-and-CoreMotion-present]
     //
-    //   The initialiser is locatable, which the earlier note thought it was not: the once-init
-    //   @0x1019bc664 passes metadata accessor 0x101a8d244, size 0x100 and storage 0x104c632b0 to a
-    //   shared tail @0x1019bc700, which `swift_allocObject`s and `blr`s **0x101a8c5b4** = the init.
-    //   Its 120 instructions inline the sceneSize computation directly — `objc_opt_self` on the
-    //   UIApplication classref 0x1044104f8, `sharedApplication`, the private body @0x101a02de0, then
-    //   `bounds` — and carry NO actor machinery: no `ScMMa`, no `swift_task_isCurrentExecutor`, no
-    //   `swift_task_reportUnexpectedExecutor`. That absence is EVIDENCE, not a gap: the async display
-    //   path @0x101a60fc8 in this same reconstruction emits all three, so the binary is capable of
-    //   showing isolation here and does not.
+    //   So the isolation blocker is NOT residue and these two rows stay blocked for exactly the
+    //   reason s106 and s109 gave. What the experiment DOES establish, and what is still worth
+    //   inheriting, is the BOUND above: unpicking the @MainActor chain leaves those five references
+    //   and nothing else, so the unit is small and fully enumerated — it is just not free.
+    //
+    //   The initialiser IS locatable, which the earlier note thought it was not, and this part
+    //   stands: the once-init @0x1019bc664 hands metadata accessor 0x101a8d244, size 0x100 and
+    //   storage 0x104c632b0 to a shared tail @0x1019bc700, which `swift_allocObject`s and `blr`s
+    //   **0x101a8c5b4** = `VRDisplayModel.init`. Its 120 instructions match DisplayModel.swift:273-280
+    //   statement for statement: the sceneSize computation inlined (`objc_opt_self` on the
+    //   UIApplication classref 0x1044104f8, `sharedApplication`, the private body @0x101a02de0,
+    //   `bounds`), the two simd_float4x4 builders, then `super.init()` = 0x101a8bf3c.
+    //   It carries NO actor machinery — no `ScMMa`, no `swift_task_isCurrentExecutor`, no
+    //   `swift_task_reportUnexpectedExecutor` — and neither does 0x101a8bf3c. That absence is
+    //   EVIDENCE rather than a gap, because the async display path @0x101a60fc8 in this same
+    //   reconstruction emits all three; the binary can show isolation here and does not.
+    //   ⚠️ It is evidence about ISOLATION only. It says nothing about whether the sensor calls
+    //   belong — they demonstrably do — so do not chain the two readings together as the retracted
+    //   paragraph above did.
     //   ⚑[tool=body_fingerprint ref=VRDisplayModel.init:0x101a8c5b4 result=no-actor-machinery]
     //   ⚑[tool=body_fingerprint ref=MetalPlayView.set:0x101a60fc8 result=emits-ScMMa-and-task-checks]
     //
