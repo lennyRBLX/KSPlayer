@@ -562,3 +562,41 @@ first two uses, which is the argument for its goldens rather than against the ga
 ### So the invented-name surface is 40, not 46
 
 and every one of those 40 carries route-C caller-set evidence to name it FROM.
+
+## The MetalPlayView field standup — 3 rows for one unit, all four names READ
+
+`MetalPlayView.enterBackground` / `enterForeground` / `layoutSubviews` are all blocked on the same
+four fields, present in the binary field records and absent from Sources. **No name here is
+invented** — every one comes off `recover_field_offsets --class MetalPlayView --global <G>`, and
+every type off the field record's mangle:
+
+| field | idx | offset | record | binding | declaration default |
+|---|---|---|---|---|---|
+| `isPaused` | 0 | 0x8 | `Sb` | var | vpfi `0x10002c740` = `mov w0,#1` -> **`= true`** |
+| `isBackground` | 10 | 0x82 | `Sb` | var | vpfi `0x10002dab0` = `mov w0,#0` -> **`= false`** |
+| `backgroundTimer` | 13 | 0xa0 | `So24OS_dispatch_source_timer_p` | let | vpfi `0x10199ae6c`, see below |
+| `renderUseDispatchSourceTimer` | 14 | 0xa8 | `Sb` | let | **no vpfi** -> assigned in `init(options:)` |
+
+`backgroundTimer`'s default is read from its own vpfi: it materialises
+`DispatchSource.TimerFlags` metadata, fetches `DispatchQueue.main`, builds the flag set through
+`SetAlgebra.init(_:)` and calls
+`DispatchSource.makeTimerSource(flags:queue:)`. Upstream `MetalPlayView.swift` carries this exact
+line **commented out** — `private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)`
+— so Forward kept it live and renamed it. Corroboration from two directions, and the NAME still
+comes from the offset resolver, not from upstream.
+
+⚠️ `renderUseDispatchSourceTimer` is the one open question: field-record flags say `let`, and it has
+no vpfi, so it must be assigned in `init(options:)`. That assignment has to be read before the
+field can be declared `let`; do not reach for `var` to dodge it, and do not invent a default.
+This is the same shape as the `tmpURL` blocker below — a field whose binding is provable but whose
+value lives in an init that has not been read.
+
+### Why `CacheIOContext.clearOtherCache` is NOT the cheap row it looks like
+
+Its body is already transcribed in `CacheIOContext.swift` and the gate calls it READY. It is
+blocked on `tmpURL: URL?` vs the binary's non-optional `URL` (`vpWvd` with no `Sg`). Declaring it
+under `URL?` needs either a `guard let` — a branch the binary does not have — or a `!` — a trap the
+binary does not have. **Both write code that is not in the binary**, so the row waits on the
+`tmpURL` retype, whose own value is built at `0x101b8745c` inside the init's UNRESOLVED region.
+A row can be route-clean and still blocked by a TYPE, which is the fourth axis the ranker still
+does not measure.
