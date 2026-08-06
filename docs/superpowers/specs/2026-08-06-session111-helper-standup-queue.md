@@ -349,3 +349,32 @@ So: **0 of 49 units have a recoverable name.** The `#function` route is exhauste
 The 37 shared members are real private members whose names are not in the trie and not in a
 `#function` literal; what remains for them is the objc-selector route, or a `⚑` pin. That is a
 conclusion about the queue, not a failure to look.
+
+## All three naming routes, measured to exhaustion
+
+| route | result over the 49 |
+|---|---|
+| `#function` literal | **0 usable.** 11 candidates: 10 three-char garbage, 1 refuted false anchor (above) |
+| objc selector | **0 usable.** 39 units send no selector at all; 5 send exactly one but across 13-41 calls, so the selector is one call inside a larger body, never the 2-instruction tail-call shape that named `KSPictureInPictureController.start` |
+| `#file` origin | names the FILE, never the member — MEMORY is explicit that this is evidence of origin only |
+
+The `#file` route came closest and still fails. `0x1019a26a8` (7 sites, 107 instr) and `0x101a3e510`
+(8 sites, 128 instr) both report `#file: KSPlayer/Utility.swift`, both send `isMainThread`, and both
+allocate a closure context, `swift_weakInit` a captured self, and materialise `ScM`/`ScP` (MainActor
+/ TaskPriority) metadata. That is unmistakably a main-thread dispatch helper declared in
+Utility.swift — and `Utility.swift:368` declares `public func runOnMainThread(block:)`.
+
+**It still cannot be named.** `runOnMainThread` has ZERO entries in the export trie, so nothing
+connects the address to the spelling except the shape, and shape is not a name. Both also call
+`0x101a04674` and `0x101a03fd4`, the Task-closure helpers the s108 SubtitleModel work is off-limits
+on.
+
+### So every remaining unit's DISPOSITION is now decided, and it is `⚑` pin
+
+That is a real outcome, not a shortfall: MEMORY rule 2 exists precisely for a value that cannot be
+read, and this document's own disposition rule says a helper whose name is not independently
+recoverable stays a pin rather than a guess. What CANNOT be done is declare 37 named private
+members — every name would be invented, and rule 1 forbids exactly that.
+
+**Final state: 49 units, all with a determined disposition of PIN.** Standing them up as named
+members requires evidence that does not exist in this binary.
