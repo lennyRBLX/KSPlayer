@@ -157,7 +157,37 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     public var stopOnLimitReached: Bool = false
     // 23 fetchedSize: bytes fetched into the cache (SIGNED — gate-confirmed Int64,
     //    NOT UInt64). read() advances it (self+fetchedSize) with a SIGNED SCARRY8.
-    public var fetchedSize: Int64 = 0 // gate-confirmed (SIGNED)
+    // s112 — the `didSet` is READ, not added for effect. The setter @0x101b865c8 is 20 instructions:
+    // `swift_beginAccess(&self.fetchedSize, …, flags=1)`, `str x19` of the new value, THEN
+    // `bl 0x101b863f0`. Store first, observer second, so this is `didSet` and not `willSet`; a
+    // `willSet` would also have used `newValue` rather than re-reading the stored property, which
+    // 0x101b863f0 does under its own `beginAccess`.
+    //
+    // 0x101b863f0 has three call sites — this setter, the `modify` coroutine @0x101b8665c, and
+    // `readComplete` @0x101b8a0f8, which assigns the property and gets the observer inlined. That
+    // shared-ness is why it is a body of its own rather than an outlined single-caller chunk.
+    //
+    // The NAME is read from the LogHandler call at 0x101b86558, whose `#function` argument is a
+    // SMALL string carried in registers rather than a pointer — x4 = `fetchedS` (0x5364656863746566)
+    // and x5 = `ize` under discriminator 0xEB = 0xE0|11, i.e. **fetchedSize**, 11 characters — beside
+    // its 37-character `#file` (`PreLoadIOContext/CacheIOContext.swift` @0x103d3eb40) and `w6` = 127.
+    // `#function` inside an accessor is the PROPERTY's name, which is what identifies this body as
+    // this property's observer. (`name_exhaustion_gate` reports "no #function candidate" here: its
+    // recovery step looks for a pointer-form literal and does not read the register-built small
+    // string. The route is open; the tool just cannot walk it.)
+    // ⚑[tool=decode_string_literal ref=CacheIOContext.fetchedSize:0x103d3eb40 result=PreLoadIOContext-CacheIOContext-swift]
+    //
+    // The message is built from an empty String: append `"fetchedSize "` (12 chars, discriminator
+    // 0xEC), then `Double.write(to:)` of the value, then append `"M"` (w0 = 0x4d, count 1). The
+    // scale is TWO `fmul`s by the same constant 0x3f50000000000000 = 2^-10, not one by 2^-20, so the
+    // source divides twice rather than by `1024 * 1024`. `scvtf` (signed) re-confirms Int64.
+    // Level is case index 3 = `.warning`, KSLog's default, so it stays unspelled.
+    // ⚑[tool=body_fingerprint ref=CacheIOContext.fetchedSize.didSet:0x101b863f0 result=warning-level-fetchedSize-MB]
+    public var fetchedSize: Int64 = 0 { // gate-confirmed (SIGNED)
+        didSet {
+            KSLog("fetchedSize \(Double(fetchedSize) / 1024 / 1024)M")
+        }
+    }
     // 24 firstSeekTime: timestamp of the first seek. Designated init defaults it 0.
     //    field-record.
     private var firstSeekTime: Double = 0
