@@ -529,3 +529,36 @@ the golden went green against a check that did nothing. It now matches the RESOL
 signature that finds nothing.
 
 The gate's goldens now pin all four verdicts, and `0x101b91580` is the ARTIFACT anchor.
+
+## The gate over all 50 units, and a second gate defect it exposed
+
+| verdict | count | meaning |
+|---|---|---|
+| `EXHAUSTED` | **40** | every route closed, shared, and it IS a source member — an invented name is permitted with human approval |
+| `ARTIFACT` | 9 | no source counterpart. Never name, never write. |
+| `ROUTE-OPEN` | 1 | `0x101a9f27c` — the unique literal `can not judge stream` names it `FFmpegSubtitle.init(url:)` |
+
+⚠️ **The first sweep read 38 / 9 / 3, and two of those three ROUTE-OPENs were FALSE.** The gate
+accepted the string `zpl` as a recovered name purely because a genuine `#file:
+KSPlayer/Utility.swift` sat beside it. `zpl` is one of the ten 3-character noise strings
+`recover_swift_function_name` returned across this queue (`zpl` x4, `Hql`, `ppl`, `Bel`, `jcl`,
+`nkl`).
+
+So BOTH naming tests are necessary and NEITHER is sufficient:
+
+  · s110's test — the body materialises the literal early with a **matching length** — passes a KVC
+    key of the right length (`0x1019c7454`).
+  · s111's test — a **`#file` companion** — passes 3-character noise that happens to sit in a file
+    with a `#file` constant.
+
+`route_function_literal` now requires both, and `_materialises()` checks the body for a large-string
+`mov #<len>` + `0xd000` pair or a small-string `0xE0|n` / `0xA0|n` discriminator. Both false opens
+close; the KVC key stays closed on the `#file` half. Golden pins the noise case so it cannot return.
+
+**This defect erred SAFE** — a false ROUTE-OPEN refuses to invent — but it was still wrong, and the
+opposite polarity of the ARTIFACT bug above. The gate has now been wrong in both directions on its
+first two uses, which is the argument for its goldens rather than against the gate.
+
+### So the invented-name surface is 40, not 46
+
+and every one of those 40 carries route-C caller-set evidence to name it FROM.
