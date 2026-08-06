@@ -203,3 +203,33 @@ real private member, and its name is the most load-bearing thing left to recover
 | 5 | 32 | `0x1019d5978` |
 
 (full list in `callsites.json`; the tail is 2-3 sites each)
+
+## Four more units RESOLVED: outlined `KSLog` bodies
+
+Screened all 45 shared members for the pair `static KSOptions.logLevel` + `static KSOptions.logger`.
+Four touch both, and each also builds a String, calls `_print_unlocked`, and ends at `swift_once`:
+
+| helper | call sites | instr | baked `#file` |
+|---|---|---|---|
+| `0x1019c9cd4` | 15 | 297 | `KSPlayer/KSPlayerLayer.swift` |
+| `0x101a4b20c` | 16 | 126 | `KSPlayer/MEPlayerItem.swift` |
+| `0x101a61f60` |  4 | 439 | `KSPlayer/MetalPlayView.swift` |
+| `0x101b863f0` |  3 | 102 | `PreLoadIOContext/CacheIOContext.swift` |
+
+`KSLog` is `@inlinable`, so every call site inlines it and the compiler then outlines the shared
+emission tail back out — ONE helper per file, carrying that file's `#file` constant. `#function`
+is NOT baked (it varies per call site), which is why three of the four recover `#function: None`.
+Disposition: **never write**. The source spells `KSLog(...)` at each of the 38 call sites.
+
+`0x1019c9cd4` was the head of the fan-in table and gates `KSPlayerLayer.changePlaybackTime`,
+`replace` and `reset` — three rows, and it is not a member at all.
+
+⚠️ `0x101a61f60` recovers `#function: enqueue(imageBuffer:formatDescription:)` at confidence=high.
+It is a FALSE ANCHOR by the s110 rule and was checked rather than trusted: there is no early
+in-body materialisation whose loaded length matches (the first 14 instructions are prologue and a
+`__got` load, no `mov x0,#0x26`), and the literal is the `#function` default-arg constant of a
+KSLog call inside. Note in passing, NOT resolved here: the literal carries TWO labels while
+`MetalPlayView.swift:544` declares `enqueue(imageBuffer:formatDescription:time:)` with THREE. That
+is a possible signature divergence and belongs to its own unit.
+
+**Queue: 41 shared members + 16 UNSURE = 57 units.**
