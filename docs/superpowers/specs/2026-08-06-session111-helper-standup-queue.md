@@ -319,3 +319,33 @@ That leaves **12 UNSURE** needing genuine adjudication, all in KSPlayer's own ra
 `0x101a5960c` `0x101a767a8` `0x101ab2540` `0x101ab2de4` `0x101b91580`.
 
 **Queue: 37 shared members + 12 UNSURE = 49 units**, plus one FFmpeg naming unit.
+
+## Name recovery across all 49: exactly ZERO usable names — and an s110 verdict REFUTED
+
+Ran `recover_swift_function_name` over all 49 remaining units. 11 returned a candidate; 10 are
+three-character garbage (`zpl` x4, `Hql`, `ppl`, `Bel`, `jcl`, `nkl`) picked out of body bytes.
+The eleventh is the one s110 §6 recorded as the rule's GENUINE example:
+
+    0x1019c7454  confidence=high  #function: pictureInPictureViewController
+
+**It is a false anchor, and the s110 trust rule cannot see it.** The rule is "an early in-body
+materialisation whose loaded length matches". That holds here: `mov x0,#0x1e` = 30 with the
+`movk #0xd000` large-string discriminator, and the literal read from 0x103d349e0 is genuinely
+`pictureInPictureViewController`, exactly 30 characters. The rule fires, and it is WRONG.
+
+What it misses is what the string is FOR. The body passes it to a protocol witness at `[x1+0x30]`
+and `swift_dynamicCast`s the result (`0x10345cc7c`, flags `w4=6`). That is a **lookup by string
+key**, not a logging default argument. Its sibling `0x1019c7410` — s110 already decoded it as
+"dispatches PiP req1 with the literal `delegate`" — has the IDENTICAL shape: it builds the small
+string `delegate` (`64 65 6c 65 67 61 74 65`, `0xE0|8`) and dispatches a witness at `[x2+0x10]`.
+The same rule applied there would "recover" the name `delegate`.
+
+**The discriminator the rule is missing: a real `#function` default argument never travels alone.**
+It arrives with `#file` (and a line). The outlined KSLog body `0x101a4b20c` carries
+`#file: KSPlayer/MEPlayerItem.swift`; `0x1019c7454` reports `#file: None`. A length-matching string
+with no `#file` companion is DATA the function uses, not the function's own name.
+
+So: **0 of 49 units have a recoverable name.** The `#function` route is exhausted for this queue.
+The 37 shared members are real private members whose names are not in the trie and not in a
+`#function` literal; what remains for them is the objc-selector route, or a `⚑` pin. That is a
+conclusion about the queue, not a failure to look.
