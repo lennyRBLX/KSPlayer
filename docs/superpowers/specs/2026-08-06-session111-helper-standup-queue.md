@@ -159,3 +159,47 @@ These are REAL bodies. Three compiler-artifact shapes have now been screened out
 (outlined value witness -> already HELPER; type metadata accessor -> 2; lazy witness cache -> 1),
 and each screen was run over the whole set rather than inferred from a sample. **Queue: 63 real
 bodies + 16 UNSURE = 79 units.** The two pure leaves are the cheapest genuine reads left.
+
+## The structural correction: 18 of the 63 are NOT units at all
+
+Decoded every `BL` in `__text` directly from the bytes (1,189,121 call sites; a BL is opcode
+`0b100101` with a signed imm26, so the target is arithmetic, not a disassembly pass) and counted
+call sites per helper.
+
+| | count |
+|---|---|
+| called from exactly **ONE** site image-wide | **18** |
+| called from more than one site | **45** |
+
+A helper with a single call site and no trie name is **not a standable unit**. It has no
+independent identity to declare — it is its caller's own code, outlined. It resolves only when
+that caller is reconstructed, and declaring it separately would invent a private member the source
+never had. This settles `0x101b8c114` (25 instr, the "cheapest pure leaf"): it is called once,
+from `CacheIOContext.seek` @0x101b8abc0, so it is part of that body and cannot be stood up alone.
+Its mechanics ARE readable — a pairwise scan over an 8-byte-element array returning false when two
+adjacent elements share a strict sign — but that expression belongs inside `seek`.
+
+**So the queue is 45 shared members + 16 UNSURE = 61 units, not 79.** The 18 fold into the 44
+blocked rows rather than sitting beside them.
+
+### The 45 real shared members, by call-site count
+
+Call-site count is the right priority order here: a helper called from 16 sites is unambiguously a
+real private member, and its name is the most load-bearing thing left to recover.
+
+| call sites | instr | helper |
+|---|---|---|
+| 16 | 126 | `0x101a4b20c` |
+| 15 | 297 | `0x1019c9cd4` |
+| 10 | 11 | `0x1019afab0` |
+| 10 | 67 | `0x1019c1ca4` |
+| 10 | 20 | `0x101baf98c` |
+| 8 | 128 | `0x101a3e510` |
+| 7 | 107 | `0x1019a26a8` |
+| 7 | 76 | `0x1019ad650` |
+| 7 | 20 | `0x101b95200` |
+| 7 | 35 | `0x101ba3fd0` |
+| 5 | 84 | `0x1019c9a68` |
+| 5 | 32 | `0x1019d5978` |
+
+(full list in `callsites.json`; the tail is 2-3 sites each)
