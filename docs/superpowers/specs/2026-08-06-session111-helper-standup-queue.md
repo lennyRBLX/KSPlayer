@@ -633,3 +633,55 @@ It is the `enterBackground` mirror and every field it touches is now declared:
 Not written here: the order and the branch conditions need the instruction read, and a body
 guessed from a call list is exactly what this project forbids. The fingerprint is banked so the
 next session starts from it rather than re-deriving.
+
+## CORRECTION to the KSLog batch: `0x101a61f60` is a METHOD, not an outlined KSLog
+
+Committed earlier this session (`b8ba9af`) as one of four per-file outlined `KSLog` bodies, on the
+evidence that it touches `KSOptions.logLevel` + `KSOptions.logger` and carries
+`#file: KSPlayer/MetalPlayView.swift`. Reading `enterForeground`'s call site refutes that.
+
+At `0x101a60d10`, `enterForeground` calls it as:
+
+    ldr  x19, self.<global 0x1044ea8a8>        ; a view
+    bl   objc_msgSend[layer]
+    bl   _objc_opt_self  (classref 0x104410d18)
+    bl   _swift_dynamicCastObjCClassUnconditional     ; forced cast to that class
+    mov  x20, x0                               ; <-- the cast result becomes SWIFTSELF
+    mov  x0, x21 / mov x1, x22
+    bl   0x101a61f60
+
+`x20` is the Swift self register. So the callee is a method **dispatched on the cast layer object**,
+taking two arguments — not a shared logging tail. A helper that merely CONTAINS a KSLog call also
+touches `logLevel`/`logger` and carries the file's `#file`, so that signature does not separate
+"is an outlined KSLog" from "contains one". The other three in that batch have 15/16/3 call sites
+and no self operand; this one has 4 and takes a receiver.
+
+That also reopens its `#function: enqueue(imageBuffer:formatDescription:)`, which this session
+dismissed as a false anchor because `MetalPlayView.swift:544` declares `enqueue` with THREE labels.
+Route C already found a KSPlayer extension on `__C.CAMetalLayer` (`updateInfo(frame:)`, via
+`0x101a31310`), so a TWO-label `CAMetalLayer.enqueue(imageBuffer:formatDescription:)` extension
+member is a live hypothesis and the label mismatch is no longer evidence against it.
+
+⚠️ NOT resolved here, deliberately. Settling it needs the classref `0x104410d18` read, the
+`#function` materialisation re-tested against the corrected two-part rule, and the KSLog-vs-method
+question decided at the callee rather than from its call site. Recorded as a REFUTATION of a
+committed claim, not as a replacement claim.
+
+### `enterForeground` @0x101a60ad0 — decoded, and why it is still not written
+
+    isBackground = false
+    if !renderUseDispatchSourceTimer {
+        backgroundTimer.schedule(deadline: .distantFuture,
+                                 repeating: <interval tag @__got 0x104113320>,
+                                 leeway:    <interval tag @__got 0x104113310 = .nanoseconds(0)>)
+    }
+    guard metalView.isHidden else { return }          // `cbz w0` on the isHidden result exits
+    guard let pixelBuffer else { return }             // beginAccess(0,0), cbz on the instance word
+    guard let X = pixelBuffer.<witness +0xc8>() else { return }
+    if self.<global 0x1044ea8e0> != nil {
+        <cast layer>.<0x101a61f60>(X, <retained self.0x1044ea8e0>)
+    }
+
+Three things are still unread and each would be an invention: the two `DispatchTimeInterval` case
+tags behind `__got 0x104113320` / `0x104113310`, the `PixelBufferProtocol` requirement at witness
+`+0xc8`, and the field at global `0x1044ea8e0`. The control flow is solid; the operands are not.
