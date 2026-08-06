@@ -297,3 +297,25 @@ the call set, <=40 instructions):
 Disposition: **never write**.
 
 **Queue: 37 shared members + 14 UNSURE = 51 units.** 42 of the 117 callees are now HELPER.
+
+## The 14 UNSURE, screened the same way
+
+Applied both screens the SOURCE set already got — the call-site census and the tail-branch shape.
+(The thunk screen had only ever run over the 72 SOURCE; the UNSURE set never saw it.)
+
+All 14 are SHARED — none is single-call-site — so none folds into a caller. Two resolve anyway:
+
+  · `0x1019ac888` — 3 instructions, **49 call sites**: `adrp/ldr` a `__got` value into x4, then
+    `b 0x1019b02b0`. A tail-branch argument-setup thunk. **Never write.**
+  · `0x1030c0994` — 93 instructions, **42 call sites**, and it sits at `0x1030c…`, inside the
+    FFMPEG/library region of `__text`, not KSPlayer's. It is not a private member of anything and
+    cannot be "stood up": it is an FFmpeg symbol, and its unit is a NAMING one.
+    `ffmpeg_name_oracle` returns **6 candidates** and does not narrow, so it needs the s110 §6
+    treatment (this build's own headers + a log literal + call shape), not a declaration.
+    It gates `HLSCacheIOContext.read`.
+
+That leaves **12 UNSURE** needing genuine adjudication, all in KSPlayer's own range and all shared:
+`0x1019b1080` `0x1019b3b50` `0x1019c4720` `0x1019c80fc` `0x1019d5bd8` `0x101a31310` `0x101a460e8`
+`0x101a5960c` `0x101a767a8` `0x101ab2540` `0x101ab2de4` `0x101b91580`.
+
+**Queue: 37 shared members + 12 UNSURE = 49 units**, plus one FFmpeg naming unit.
