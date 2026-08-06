@@ -495,3 +495,37 @@ in memory; the tool is not durable and must be rebuilt if lost.
 
 The second and fifth are the load-bearing ones: they encode the two s111 corrections directly into
 the gate, so the refuted rule cannot quietly return.
+
+## The gate's first real use caught the gate
+
+On its first application — `0x101b91580`, the highest-fan-in unit in the queue — the gate returned
+**EXHAUSTED**. Every naming route is genuinely closed: not in the trie, no `#function`, no selector,
+not an IMP, not a vtable Impl, no `#file`, no unique literal, and 20 call sites so it is not
+single-site either. By the rule as written, a name could have been invented for it.
+
+It is **Swift standard library code**. Its literals are
+
+    'Down-casted Array element failed to match the target type\nExpected '
+    'NSArray element failed to match the Swift Array Element type\nExpected '
+
+and its calls are `swift_dynamicCastClass` → `_typeName(_:qualified:)` → `_assertionFailure`. It is
+the outlined failure path of `as! [CacheFileEntry]`. The 11 named `CacheIOContext` callers that
+made it look like a core member are simply the 11 methods that force-cast their entries array.
+
+**The gate was asking the wrong question.** "Is the name unrecoverable" and "is there a member here
+to name" are different, and only the second licenses inventing anything. A helper can be
+permanently unnameable *because it was never a source member*.
+
+Fixed: `is_compiler_artifact()` now runs BEFORE every route and returns a fourth verdict,
+`ARTIFACT`. It refuses on (a) `classify_compiler_helpers` saying HELPER, (b) `_typeName` +
+`_assertionFailure` — the outlined cast/precondition diagnostic, (c) the three shapes s111 screened
+by hand (metadata accessor, lazy witness cache, outlined value witness), (d) the library and low
+compiler regions of `__text`.
+
+⚠️ A second, quieter bug worth keeping: the first cut of that check matched against RAW objdump
+text, which prints `bl 0x103459bd4` and never `_typeName` — so the signature could not fire, and
+the golden went green against a check that did nothing. It now matches the RESOLVED
+`body_fingerprint` view. A signature written against the wrong view is indistinguishable from a
+signature that finds nothing.
+
+The gate's goldens now pin all four verdicts, and `0x101b91580` is the ARTIFACT anchor.
