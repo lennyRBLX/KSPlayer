@@ -266,3 +266,34 @@ Both HELPER. Disposition: **never write**.
 | **real standable units left** | **41 shared members + 14 UNSURE = 55** |
 
 Rows blocked on an unnamed helper: **45 -> 43**. Bodies READY: **17 -> 19**.
+
+## Four more RESOLVED: outlined value witnesses the classifier missed
+
+s110 §5 already describes this shape — `__swift_instantiateConcreteTypeFromMangledName` followed by
+a dispatch through a VWT slot (+0x0 initBufferWithCopyOfBuffer, +0x8 destroy, +0x10 initWithCopy,
++0x18 assignWithCopy, +0x20 initWithTake) is an outlined value-witness function with no source
+counterpart. `classify_compiler_helpers.py` misses these because the instantiation is reached
+through a HELPER (`0x10002d984`) rather than emitted inline, so the body looks like ordinary code.
+
+`0x101baf98c` and `0x101b95200` are byte-identical in structure:
+
+    x19 = dest, x20 = src
+    x0 = <cache global>, x1 = <__TEXT,__const mangled-name pattern>
+    bl 0x10002d984                       ; instantiate concrete type from mangled name
+    x8 = metadata[-0x8]                  ; the VWT
+    x8 = VWT[0x20]                       ; initializeWithTake
+    blr x8  (dest, src, metadata) ; return dest
+
+Screened all 41 shared members for it (VWT fetched via `metadata[-0x8]`, an instantiation helper in
+the call set, <=40 instructions):
+
+| helper | instr | witness |
+|---|---|---|
+| `0x101abff3c` | 20 | `initWithCopy` |
+| `0x101b95200` | 20 | `initWithTake` |
+| `0x101b9bfb8` | 18 | `destroy` |
+| `0x101baf98c` | 20 | `initWithTake` |
+
+Disposition: **never write**.
+
+**Queue: 37 shared members + 14 UNSURE = 51 units.** 42 of the 117 callees are now HELPER.
