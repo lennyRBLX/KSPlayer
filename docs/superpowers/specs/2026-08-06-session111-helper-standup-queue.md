@@ -378,3 +378,40 @@ members — every name would be invented, and rule 1 forbids exactly that.
 
 **Final state: 49 units, all with a determined disposition of PIN.** Standing them up as named
 members requires evidence that does not exist in this binary.
+
+## Two further routes closed, with the negatives PROVEN rather than assumed
+
+**objc method-list IMP — 0 of 49, and it is a real negative.** The vtable check structurally
+misses `@objc` members (they get an objc IMP and no vtable slot), so this was the population that
+could still have been named by its selector. Scanned all 220 classes: 25 decode a method list
+(166 methods), 111 have no metadata accessor, 84 have none. **No unit is an IMP.**
+
+⚠️ The count initially looked untrustworthy: 80 classes reported `entsize=0xfeedfacf count=16777228`,
+which is the **Mach-O 64 magic and CPU_TYPE_ARM64** — i.e. a pointer resolving to the image header.
+That is not a pointer-form method list the decoder refuses; the raw field is simply zero
+(`RAW[ro+0x20] = 0x0` for `AbstractAVIOContext`, `Anime4KPipeline`), and
+`method_source_presence._chained_ptr` returns image-base+0 instead of None. A genuine NULL prints
+as garbage. `MetalSubtitleView`'s real list reads `0x103474da8` and decodes fine, which is the
+control. **The defect is cosmetic for this question but it makes a true negative look like a
+coverage gap** — worth fixing before someone reads it the other way.
+
+**`#line` extraction — applies to 2 of 49 and yields nothing.** Only `0x1019a26a8` and
+`0x101a3e510` carry a `#file` at all (both `KSPlayer/Utility.swift`). Their small immediates are
+`[2, 22]`; 2 is the `LogLevel` case index this tree already documents, and a real `#line` shows up
+as a large immediate (`READING_THE_BINARY` records `w6 = 0x398 = 920`). Neither call carries a line.
+
+### Routes now closed against this binary
+
+| route | result |
+|---|---|
+| export trie | absent by construction — these are the unnamed set |
+| `#function` literal | 0 of 49; the one high-confidence hit refuted as a KVC key |
+| objc selector (sent) | 0; no unit has the tail-call-to-selector shape |
+| objc IMP (defined) | **0 — proven negative, all 220 classes scanned** |
+| vtable / method-descriptor elimination | 1 candidate, unnameable (nothing left to eliminate against) |
+| `#file` + `#line` | 2 of 49 have a file, 0 have a line |
+
+What remains are inference routes against the upstream source tree (address ordering between named
+neighbours; unique string literals grepped upstream). Both name from UPSTREAM, and Forward is a
+fork that demonstrably renames — `IOSVideoPlayerView`'s UI layer shares not one method name with
+it. Under rule 1 a hit there is a hypothesis carried as a `⚑` pin, never a declaration.
