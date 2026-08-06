@@ -127,3 +127,35 @@ blind spot is narrow. (Screened rather than assumed, after the thunk over-genera
 
 Queue after this: **64 real bodies + 16 UNSURE = 80 units**. No ROW unblocked yet —
 `OutputStreamInfo.transcode` still carries 7 other unnamed callees.
+
+## A third unit RESOLVED: `0x101b94bcc` is a lazy witness-table cache accessor
+
+16 instructions, and it gated TWO rows (`CacheIOContext.close`, `HLSCacheIOContext.parseM3U8`):
+
+    ldr x0,[0x1044f3890] · cbz -> slow · ret            (cached)
+    slow: x0 = got 0x104111550, x1 = got 0x104111500 · bl _swift_getWitnessTable · stlr x0,[cache]
+
+`0x104111550` binds `_$sSSSysMc` and `0x104111500` binds `_$sSSN`, i.e. the conformance descriptor
+and nominal type descriptor for **`String: StringProtocol`**. Compiler-generated; the cache-load /
+`cbz` / `stlr` triple is the canonical lazy-conformance shape. Disposition: **never write**.
+
+Screened all 63 remaining bodies for it (only call is `swift_getWitnessTable`, plus a `cbz`/`stlr`
+cache): finds exactly this one.
+
+## What the remaining 63 actually are
+
+Profiled by call signature, so the next session does not re-derive it:
+
+| family | count |
+|---|---|
+| pure leaf, no calls at all | 2 (`0x101b8c114` 25 instr, `0x1019e1b6c` 26 instr) |
+| carries a `swift_once` (lazy global init) | 9 |
+| has >=1 in-module call | 56 |
+
+Size distribution (25-instruction buckets): 9 under 25 · 8 at 25-49 · 12 at 50-74 · 6 at 75-99 ·
+10 at 100-124 · then a thin tail to 439, plus one outlier at 2659.
+
+These are REAL bodies. Three compiler-artifact shapes have now been screened out exhaustively
+(outlined value witness -> already HELPER; type metadata accessor -> 2; lazy witness cache -> 1),
+and each screen was run over the whole set rather than inferred from a sample. **Queue: 63 real
+bodies + 16 UNSURE = 79 units.** The two pure leaves are the cheapest genuine reads left.
