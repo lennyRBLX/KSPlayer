@@ -600,3 +600,36 @@ binary does not have. **Both write code that is not in the binary**, so the row 
 `tmpURL` retype, whose own value is built at `0x101b8745c` inside the init's UNRESOLVED region.
 A row can be route-clean and still blocked by a TYPE, which is the fourth axis the ranker still
 does not measure.
+
+## State re-derived: `enterBackground` is CLOSED, `enterForeground` is next
+
+⚠️ The triage this document's queue was built from is STALE. `MetalPlayView.enterBackground` is now
+declared in Sources with the body this session derived — `isBackground = true`, the two early
+returns on `renderUseDispatchSourceTimer` and `isPaused`, then
+`backgroundTimer.schedule(deadline: .now(), repeating: 1 / Double(fps), leeway: .nanoseconds(0))` —
+and `pin_sweep` no longer flags it. All four of its fields are declared too, including
+`renderUseDispatchSourceTimer = options.renderUseDispatchSourceTimer` in `init(options:)`.
+
+**Re-derived counts: MEMBER_MISSING 68 · ACCESS 26 · NOT_IN_TRIE 23 · AMBIGUOUS_OVERLOAD 10 ·
+TYPE_DIVERGENCE 4.** Tree clean. Re-run `member_missing_triage.py` before using any address list
+above.
+
+### `MetalPlayView.enterForeground` @0x101a60ad0 — 156 instr, fingerprinted, not yet written
+
+It is the `enterBackground` mirror and every field it touches is now declared:
+
+  · `0x1044ea8f8` **isBackground**, `0x1044ea928` **renderUseDispatchSourceTimer**,
+    `0x1044ea908` **backgroundTimer**, and `0x1044ea8b8` **pixelBuffer** (the one named global —
+    its `vpWvd` reads `MetalPlayView.pixelBuffer : PixelBufferProtocol?`).
+  · the schedule call is a DIFFERENT overload from `enterBackground`'s:
+    `schedule(deadline:repeating:leeway:)` where **`repeating` is a `DispatchTimeInterval`**
+    (`AC0eJ8IntervalO`), not the `Double` the background path uses. `DispatchTime.distantFuture`
+    supplies the deadline, and `__got 0x104113320` is the interval case tag — the suspend shape.
+  · then an `isHidden` send, a `layer` send with
+    `swift_dynamicCastObjCClassUnconditional` (the same forced `CAMetalLayer` cast `init(options:)`
+    already documents), and a tail call to **0x101a61f60**, which this session identified as the
+    outlined `KSLog` body for `MetalPlayView.swift`.
+
+Not written here: the order and the branch conditions need the instruction read, and a body
+guessed from a call list is exactly what this project forbids. The fingerprint is banked so the
+next session starts from it rather than re-deriving.
