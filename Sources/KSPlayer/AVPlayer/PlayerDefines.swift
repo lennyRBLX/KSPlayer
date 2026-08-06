@@ -12,6 +12,30 @@ import FFmpegKit // Forward: AbstractAVIOContext's addSub/urlContext are FFmpeg-
 #if canImport(UIKit)
 import UIKit
 
+// ⚑ s112 — TWO divergences read here, both left UNAPPLIED because they belong to the isolation unit
+//   that gates `KSOptions.displayEnumVR`/`displayEnumVRBox` (see KSOptions.swift), and that unit is
+//   cross-cutting: `sceneSize` has five call sites. Recorded so it starts from evidence.
+//
+//   1. OWNER. `sceneSize` is not a `KSOptions` member in the binary. The only symbols carrying the
+//      name are `$sSo13UIApplicationC8KSPlayerE9sceneSizeSo6CGSizeVvgZ` @0x101a01d1c and its
+//      `vpZMV` — a KSPlayer extension on `__C.UIApplication`, public by the property descriptor.
+//      No `KSOptions`-owned `sceneSize` symbol exists.
+//      ⚑[tool=export_trie_oracle ref=UIApplication.sceneSize:0x101a01d1c result=owner-is-UIApplication]
+//
+//   2. ACCESS. `windowScene` has NO trie symbol at all — zero hits for the name — so it is not
+//      public, while this `public extension` makes it public. Its code is real and factored
+//      differently: the getter body is `UIApplication.shared` (classref 0x1044104f8) -> a private
+//      55-instruction body @0x101a02de0 that sends `windows` and takes `.first` -> `bounds`, and
+//      the `connectedScenes.first as? UIWindowScene` step is a further private body @0x101a02f64.
+//      So the two-property split below is right in substance; only the owner and the access are not.
+//      ⚑[tool=export_trie_oracle ref=KSOptions.windowScene:0x101a02f64 result=NOT_IN_TRIE]
+//
+//   ⚠️ The `@MainActor` on both is NOT settled by the above. The getter body shows no actor hop, but
+//      a `@MainActor` static's isolation is enforced at the CALLER, so an unhopped getter is weak
+//      evidence. The load-bearing test is whether `VRDisplayModel.init()` — which reads `sceneSize`
+//      — reaches it without a hop; that init has no trie symbol and is reached by `blr` from the
+//      once-init @0x1019bc664, so settling it means reading that chain. Do not delete `@MainActor`
+//      on the strength of the getter alone.
 public extension KSOptions {
     @MainActor
     static var windowScene: UIWindowScene? {
