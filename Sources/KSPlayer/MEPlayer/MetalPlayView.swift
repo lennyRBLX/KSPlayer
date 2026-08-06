@@ -232,6 +232,61 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         backgroundTimer.schedule(deadline: .now(), repeating: 1 / Double(fps), leeway: .nanoseconds(0))
     }
 
+    /// @0x101a60ad0, 156 instructions. NOT `enterBackground`'s mirror: the timer branch is an `if`,
+    /// not an early return — `ldrb` of 0x1044ea928 then `tbnz w8,#0` skips ONLY the schedule and
+    /// falls through to the rest of the body — and `isPaused` is never read here.
+    ///
+    /// Every field is named from its offset global by `recover_field_offsets --global`, never by
+    /// position, because this class is `metadata_init=1`:
+    ///   · 0x1044ea8f8 `isBackground`, `strb wzr` ⇒ `false`, unconditional and first;
+    ///   · 0x1044ea928 `renderUseDispatchSourceTimer`; 0x1044ea908 `backgroundTimer`;
+    ///   · 0x1044ea8a0 `metalView`, receiver of `objc_msgSend[isHidden]` whose `cbz w0` returns —
+    ///     so the guard passes when it IS hidden;
+    ///   · 0x1044ea8b8 `pixelBuffer`, read under `swift_beginAccess` as TWO words, which is the
+    ///     existential `PixelBufferProtocol?` (ref, witness table), not a bare CVPixelBuffer;
+    ///   · 0x1044ea8e0 `formatDescription`; 0x1044ea8a8 `displayView`.
+    /// ⚑[tool=recover_field_offsets ref=MetalPlayView.isBackground:0x1044ea8f8 result=isBackground]
+    /// ⚑[tool=recover_field_offsets ref=MetalPlayView.pixelBuffer:0x1044ea8b8 result=pixelBuffer]
+    ///
+    /// `.distantFuture` is the `DispatchTime` static getter at 0x103456814; `.never` is the case
+    /// tag in __got 0x104113320, injected through the DispatchTimeInterval VWT's
+    /// `destructiveInjectEnumTag` at offset 0x68 exactly as `enterBackground` does, and the leeway
+    /// temporary is zeroed before its own tag from 0x104113310 ⇒ `.nanoseconds(0)`.
+    /// ⚑[tool=bind_oracle ref=MetalPlayView.enterForeground:0x104113320 result=DispatchTimeInterval-never-case-tag]
+    ///
+    /// The second guard's witness is READ, not inferred from the source's shape: the call is
+    /// `blr [wt+0xc8]`, and slot 24 of the CVBuffer conformance table 0x1041d9f98 — decoded at
+    /// `wt+8*(slot+1)` and controlled against the slot-21 answer this file already records —
+    /// holds 0x101a88ef0, which the trie names `CVBufferRef.cvPixelBuffer.getter`.
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.enterForeground:0x101a88ef0 result=cvPixelBuffer-getter]
+    ///
+    /// The tail loads the `displayView` FIELD and inlines `layer as!` against classref 0x104410d18
+    /// (`_OBJC_CLASS_$_AVSampleBufferDisplayLayer`) rather than calling any getter; on this `final`
+    /// class `displayView.displayLayer` and `self.displayLayer` inline identically, and the field
+    /// load is what the binary shows.
+    /// ⚑ Access is NOT readable here: a `final` class emits no method descriptor, so `public`
+    ///   follows its sibling `enterBackground` rather than being derived. An ACCESS-bucket
+    ///   correction, if any, is a separate row.
+    ///   ⚑[tool=export_trie_oracle ref=MetalPlayView.enterForeground:0x101a60ad0 result=no-private-discriminator]
+    public func enterForeground() {
+        isBackground = false
+        if !renderUseDispatchSourceTimer {
+            backgroundTimer.schedule(deadline: .distantFuture, repeating: .never, leeway: .nanoseconds(0))
+        }
+        guard metalView.isHidden else {
+            return
+        }
+        guard let pixelBuffer else {
+            return
+        }
+        guard let imageBuffer = pixelBuffer.cvPixelBuffer else {
+            return
+        }
+        if let formatDescription {
+            displayView.displayLayer.enqueue(imageBuffer: imageBuffer, formatDescription: formatDescription)
+        }
+    }
+
     @available(*, unavailable)
     required init(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
