@@ -26,23 +26,39 @@ protocol MetalDrawable {}
 //     0x104112d00 (__swiftEmptyArrayStorage) and a Dictionary would get 0x104112d08 — the three
 //     singletons are adjacent and distinguishing them is the whole trick.
 //   · 0x5e0 -> playRatio: its init store is the immediate 0x3ff0000000000000, i.e. 1.0.
-// ⚠️ STILL OPEN: {0x5c0, 0x5c8, 0x5d8} -> {subtitleImages, pendingTexts, parts} in an order the
-//   binary has not yet been made to say. All three are `[…]` initialised from the same empty-array
-//   singleton, so nothing at the init distinguishes them, and neither the export trie nor the field
-//   records order the globals. `mtkView(_:drawableSizeWillChange:)` @0x101ac0a90 shows 0x5d8 is the
-//   INPUT to the private layout helper @0x101abc398 and that the helper's two returned words are
-//   stored to 0x5c0 and 0x5c8 — so 0x5d8 is the source list and the other two are derived — but
-//   0x101abc398 is not in the trie, so typing its parameters and return is the unit that closes
-//   this. Do NOT guess the three from field order.
+// ✅ CLOSED in s112: {0x5c0, 0x5c8, 0x5d8} -> {subtitleImages, pendingTexts, parts}. The note below
+//   was right that the ORDER OF THE GLOBALS says nothing — but the VALUE each global holds does, and
+//   that is a different reading. Each of these globals stores the field's byte offset, and the
+//   field-offset vector @0x1044230b8 assigns those offsets to fields in field-record order:
+//     0x5a8 -> 0x8  metalDrawable   0x5b8 -> 0x30 dynamicRange   0x5d0 -> 0x38 cancellables
+//     0x5c0 -> 0x40 subtitleImages  0x5c8 -> 0x48 pendingTexts   0x5d8 -> 0x50 parts
+//     0x5e0 -> 0x58 playRatio
+//   The method is validated ON THIS CLASS by the four anchors that were already known independently
+//   (metalDrawable, dynamicRange, cancellables, playRatio): all four land on the offset their own
+//   global holds, so the three unknowns are read the same way, not guessed.
+//   It also CORROBORATES the semantic reading recorded below: 0x5d8 is `parts`, and `parts` is what
+//   `mtkView(_:drawableSizeWillChange:)` feeds to the layout helper @0x101abc398, whose two returned
+//   words land in `subtitleImages` and `pendingTexts` — i.e. parts is the source list and the other
+//   two are derived from it. Two independent routes, same answer.
+//   ⚑[tool=field_offset_vector ref=MetalSubtitleView.subtitleImages:0x1044230b8 result=0x40]
+//   ⚑[tool=recover_field_offsets ref=MetalSubtitleView.parts:0x1044ef5d8 result=parts]
+//   Still unresolved and still not to be guessed: 0x1044ef5b0 holds offset 0x0, which is no field of
+//   this class — the vector has no 0x0 entry — so that global is not a MetalSubtitleView field at all.
+//   ⚑[tool=recover_field_offsets ref=MetalSubtitleView:0x1044ef5b0 result=NOT_RECOVERED]
+//
+//   The original note, kept because its warning is still correct:
+//   {0x5c0, 0x5c8, 0x5d8} are all `[…]` initialised from the same empty-array singleton, so nothing
+//   at the init distinguishes them, and neither the export trie nor the field records order the
+//   globals. Do NOT guess the three from field order.
 // ⚑[tool=bind_oracle ref=__got:0x104112d10 result=__swiftEmptySetSingleton]
 // ⚑[tool=field_offset_vector ref=MetalSubtitleView:0x1044230b8 result=offsets-0x8-0x30-0x38-0x40-0x48-0x50-0x58]
 class MetalSubtitleView: MTKView {
     public var metalDrawable: (any MetalDrawable)? // §8.6 — offset global 0x1044ef5a8 (vpWvd)
     public var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2; offset global 0x1044ef5b8 (vpWvd)
     private var cancellables: Set<AnyCancellable> = [] // offset global 0x1044ef5d0 (empty-set singleton)
-    private var subtitleImages: [SubtitleImageInfo] = [] // ⚑ offset global one of 0x5c0/0x5c8/0x5d8
-    private var pendingTexts: [SubtitleTextInfo] = [] // ⚑ offset global one of 0x5c0/0x5c8/0x5d8
-    private var parts: [SubtitlePart] = [] // ⚑ offset global one of 0x5c0/0x5c8/0x5d8
+    private var subtitleImages: [SubtitleImageInfo] = [] // offset global 0x1044ef5c0 -> field offset 0x40
+    private var pendingTexts: [SubtitleTextInfo] = [] // offset global 0x1044ef5c8 -> field offset 0x48
+    private var parts: [SubtitlePart] = [] // offset global 0x1044ef5d8 -> field offset 0x50
     private var playRatio: Double = 1 // offset global 0x1044ef5e0 (init stores 1.0)
     // ⚑ init shape inferred → M2 witness-verify (real init wires the Metal device + Combine subscriptions)
     override init(frame frameRect: CGRect, device: (any MTLDevice)?) {
