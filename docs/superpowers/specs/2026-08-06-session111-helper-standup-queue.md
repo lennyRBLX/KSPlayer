@@ -415,3 +415,47 @@ What remains are inference routes against the upstream source tree (address orde
 neighbours; unique string literals grepped upstream). Both name from UPSTREAM, and Forward is a
 fork that demonstrably renames — `IOSVideoPlayerView`'s UI layer shares not one method name with
 it. Under rule 1 a hit there is a hypothesis carried as a `⚑` pin, never a declaration.
+
+## Route C — caller-set evidence (27 of 50 have >=2 NAMED callers)
+
+Decoded every BL to each unit and named the enclosing function from the trie. This does not name a
+helper, but it constrains it far harder than any single string, because the caller SET is a
+signature. Recorded as pin evidence:
+
+| unit | named callers | what the set says |
+|---|---|---|
+| `0x101b91580` | 11 | `CacheIOContext` .init/.read/.seek/.close/.addEntry/.addNewEntry/.firstEntryContain/.firstEntryAfter/.firstEntryEqual/.firstEntryIndexContain/.cachedTimeRanges — i.e. essentially EVERY method of the class. A shared internal utility of `CacheIOContext`, not a feature helper. |
+| `0x101a3e510` | 5 | `KSMEPlayer` .reset/.seek/.play/.pause/.stop — and it sends `isMainThread` and materialises `ScM`/`ScP`. A main-thread dispatch helper. |
+| `0x1019a26a8` | 3 | `KSAVPlayer` .seek/.update(loadState:)/.replaceCurrentItem — same `isMainThread` + MainActor shape. The KSAVPlayer counterpart of the above. |
+| `0x1019b3b50` | 5 | `KSOptions` .init/.appendHeader/.appendAVPlayerHeader/.removeHeader/.setCookie — a shared HTTP-header-dictionary helper. |
+| `0x1019c9a68` | 3 | `KSPlayerLayer` .set(url:options:)/.replace(item:url:)/.replace(playerItem:) — shared item-swap setup. |
+| `0x101a86ea4` | 3 | `PlaneDisplayModel`/`DoviDisplayModel`/`SphereDisplayModel` .set(frame:encoder:), and its only selector is `setFragmentBuffer:offset:atIndex:` — a shared Metal encode step. |
+| `0x101b94fd4` | 3 | `CacheIOContext.cleanupOldCaches` + both `CacheFileEntry.init` overloads — a shared cache-file path helper. |
+| `0x101ab2540` | 4 | `KSPlayerLayer` .reset/.stop/.select(subtitleInfo:) + `SubtitleModel.rebindSelectionIfNeeded` — subtitle-selection teardown. |
+
+Every row above is a `⚑` pin with evidence, NOT a name. The caller set says what the helper is FOR;
+it does not say what Forward called it, and rule 1 governs the difference.
+
+## Route D — string literals grepped against the tree (16 of 50 carry one)
+
+Two results, one of them a reclassification:
+
+**`0x10245e7d8` and `0x10245f0e0` are libass, not Swift.** They carry `Event at %lld, +%lld: %s`
+and `Event format header missing` — libass event-parser messages. Both sit in a large unexported
+gap (nearest Swift symbols are `DanmakuKit` at 0x101c18244 and `SwiftyBeaver` at 0x1033952b0,
+megabytes away), which is what statically-linked C looks like in this image. They gate
+`AssIncrementImageRenderer.add / flush / updateTextStyle`. They are **not standable Swift members**;
+like `0x1030c0994` their unit is an FFmpeg/libass NAMING one.
+
+**`0x101a9f27c` confirmed as `FFmpegSubtitle.init(url:)`.** Its literal `can not judge stream`
+appears in exactly ONE file in the tree — `FFmpegSubtitle.swift:68`, `throw KSPlayerError(description:
+"can not judge stream")`. This corroborates s110 §4d independently, and note the file ALREADY
+exists with the init sketched and the throw site addressed at :66 — so §4d's "the type must be
+stood up" is stale.
+
+The other 14 string-carrying units reference only `#file` constants or generic text
+(`Fatal error`) with zero or non-unique tree hits.
+
+**Queue after C and D: 3 units are library-code naming problems (`0x1030c0994`, `0x10245e7d8`,
+`0x10245f0e0`), 1 is confirmed (`0x101a9f27c`), and the remaining ~46 carry caller-set evidence as
+pins.**
