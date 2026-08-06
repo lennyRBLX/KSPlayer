@@ -183,6 +183,29 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // source divides twice rather than by `1024 * 1024`. `scvtf` (signed) re-confirms Int64.
     // Level is case index 3 = `.warning`, KSLog's default, so it stays unspelled.
     // ⚑[tool=body_fingerprint ref=CacheIOContext.fetchedSize.didSet:0x101b863f0 result=warning-level-fetchedSize-MB]
+    //
+    // ⚠️ s112, for whoever takes `readComplete(buffer:size:isReadComplete:)` @0x101b8a0f8 (412
+    // instructions, MEMBER_MISSING): declaring the observer above removed its ONLY unnamed callee,
+    // so the CALL axis is now clear — every remaining callee is named or a low-range KSLog outline,
+    // and its own `#function` literal @0x103d3eff0 confirms the full signature. It is still NOT
+    // writable, and the reason is the FIELD axis that `rank_member_missing` cannot see:
+    //   · of its three field-offset globals, two resolve because they are exported —
+    //     0x104c63920 `stopOnLimitReached : Bool` and 0x104c63928 `fetchedSize : Int64` —
+    //   · and 0x104c63938 does NOT. It is absent from the export trie, so the field is non-public,
+    //     and it lives in `__DATA,__common`, which is ZERO-FILL: the offset value is not in the
+    //     image at all, which is why `recover_field_offsets` answers NOT RECOVERED rather than
+    //     guessing.
+    //   · The vector route is closed too, and by the class's own shape rather than by a tool limit:
+    //     `field_offset_vector --module PreLoadIOContext CacheIOContext` reports `metadata_init=1`,
+    //     so the static image holds no field offsets for this class and reading it would return 0x0
+    //     for every field while looking like a real map.
+    //     (Pass `--module PreLoadIOContext`. Without it the tool looks up
+    //     `$s8KSPlayer14CacheIOContextCN`, does not find it, and reports "no exported metadata
+    //     symbol" — which reads as a finding about the class and is really a wrong-module lookup.)
+    // Identifying 0x104c63938 needs anchor-site recovery across bodies and is its own unit. Two
+    // more of this method's operands are also unread: the dispatch offsets 0x1e0 and 0x398.
+    // ⚑[tool=recover_field_offsets ref=CacheIOContext:0x104c63938 result=NOT_RECOVERED]
+    // ⚑[tool=field_offset_vector ref=CacheIOContext:0x104c63938 result=metadata_init-1-no-static-offsets]
     public var fetchedSize: Int64 = 0 { // gate-confirmed (SIGNED)
         didSet {
             KSLog("fetchedSize \(Double(fetchedSize) / 1024 / 1024)M")
