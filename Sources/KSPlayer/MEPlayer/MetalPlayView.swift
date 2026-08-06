@@ -573,6 +573,90 @@ class AVSampleBufferDisplayView: UIView {
     }
 }
 
+/// `enqueue(imageBuffer:formatDescription:)` @0x101a61f60, 439 instructions, four call sites
+/// image-wide (0x101a5e46c, 0x101a5f410, 0x101a60d10 = `MetalPlayView.enterForeground`,
+/// 0x101a614c0). Forward carries this member on the LAYER, not on `AVSampleBufferDisplayView`, and
+/// with two labels rather than three: the receiver arrives in swiftself as the result of
+/// `swift_dynamicCastObjCClassUnconditional` against classref 0x104410d18, which binds
+/// `_OBJC_CLASS_$_AVSampleBufferDisplayLayer`. The `time:` argument is gone and nothing replaces
+/// it — the timing struct is built only from `kCMTimeInvalid` (__got 0x1041091c0) and `kCMTimeZero`
+/// (__got 0x1041091d8), and the not-ready message no longer interpolates it.
+///
+/// NOT_IN_TRIE here is expected and is NOT evidence of absence: no private KSPlayer method is
+/// exported at all — `checkFormatDescription` and `MetalPlayView.set` return zero trie hits by the
+/// same probe, while private STORED properties (`displayView`'s `vpfi`) do appear. The NAME is
+/// READ, not invented: the three KSLog sites pass their `#function` default argument as a
+/// 39-character literal at 0x103d36ca0, in argument position on the LogHandler witness, beside its
+/// 28-character `#file` companion at 0x103d36c80 and the line number in `w6`. That is precisely the
+/// discriminator the s111 KVC-key refutation demands — a logging ARGUMENT, not a string handed to a
+/// witness dispatch or a dynamic cast. (`name_exhaustion_gate` returns ROUTE-OPEN on this address,
+/// so rule 1 governs and an invented name would not have been permitted anyway.)
+/// ⚑[tool=decode_string_literal ref=AVSampleBufferDisplayLayer.enqueue:0x103d36ca0 result=enqueue-imageBuffer-formatDescription]
+/// ⚑[tool=bind_oracle ref=AVSampleBufferDisplayLayer.enqueue:0x104410d18 result=AVSampleBufferDisplayLayer]
+///
+/// The OSStatus is CHECKED, unlike upstream: `cbnz w0` and the optional's `cbz x8` both exit to the
+/// same epilogue, which is one `if … == noErr, let sampleBuffer`. `sampleTiming: [timing]` is read,
+/// not assumed — the pointer handed to CoreMedia is `x15 + 0x20`, the element offset of a
+/// stack-promoted Swift array literal, with the 72-byte timing struct written at that offset.
+///
+/// The iOS-17 split is read: `bl 0x10345b764` is `__isPlatformVersionAtLeast(2, 17, 0, 0)` and
+/// platform 2 is iOS. Its result is held in `w24` across the whole body and selects a receiver
+/// twice. `flush`, `isReadyForMoreMediaData` and `enqueueSampleBuffer:` all go to the SELECTED
+/// receiver, which is released with `swift_unknownObjectRelease` — a class-constrained existential,
+/// not a concrete class. `requiresFlushToResumeDecoding` and `status` are re-fetched inside their
+/// own branch instead, which is exactly the split `AVQueuedSampleBufferRendering` forces: neither is
+/// a member of that protocol.
+/// ⚑[tool=body_fingerprint ref=AVSampleBufferDisplayLayer.enqueue:0x101a61f60 result=ios17-availability-split]
+/// ⚑ The `#available` list carries iOS only. The image encodes ONE platform check; the minimum
+///   versions for the other three platforms are not recoverable from it.
+///   ⚑[tool=llvm-objdump ref=AVSampleBufferDisplayLayer.enqueue:0x101a6212c result=platform2-major17]
+///
+/// Log levels are case INDICES, not rawValues. The two `w0=#3` sites are `.warning`, which is
+/// `KSLog`'s default and therefore unspelled; the `w0=#2` site is `.error` and is spelled. Each
+/// site's gate is `cmp w8,#3` / `cmp w8,#2` against the `KSOptions.logLevel` tag, the folded form of
+/// `level.rawValue <= KSOptions.logLevel.rawValue` already recorded at KSOptions.swift:1582.
+/// ⚑[tool=decode_string_literal ref=AVSampleBufferDisplayLayer.enqueue:0x103d36cd0 result=status-failed-so-flush]
+extension AVSampleBufferDisplayLayer {
+    func enqueue(imageBuffer: CVPixelBuffer, formatDescription: CMVideoFormatDescription) {
+        let timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var sampleBuffer: CMSampleBuffer?
+        if CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: imageBuffer, formatDescription: formatDescription, sampleTiming: [timing], sampleBufferOut: &sampleBuffer) == noErr, let sampleBuffer {
+            if let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true) as? [NSMutableDictionary], let dic = attachmentsArray.first {
+                dic[kCMSampleAttachmentKey_DisplayImmediately] = true
+            }
+            let renderer: AVQueuedSampleBufferRendering
+            let requiresFlushToResumeDecoding: Bool
+            if #available(iOS 17.0, *) {
+                renderer = sampleBufferRenderer
+                requiresFlushToResumeDecoding = sampleBufferRenderer.requiresFlushToResumeDecoding
+            } else {
+                renderer = self
+                requiresFlushToResumeDecoding = self.requiresFlushToResumeDecoding
+            }
+            if requiresFlushToResumeDecoding {
+                KSLog("[video] AVSampleBufferDisplayLayer requiresFlushToResumeDecoding so flush")
+                renderer.flush()
+            }
+            if renderer.isReadyForMoreMediaData {
+                renderer.enqueue(sampleBuffer)
+            } else {
+                KSLog("[video] AVSampleBufferDisplayLayer not readyForMoreMediaData. controlTime \(timebase.time) ")
+                renderer.enqueue(sampleBuffer)
+            }
+            let status: AVQueuedSampleBufferRenderingStatus
+            if #available(iOS 17.0, *) {
+                status = sampleBufferRenderer.status
+            } else {
+                status = self.status
+            }
+            if status == .failed {
+                KSLog(level: .error, "[video] AVSampleBufferDisplayLayer status failed so flush")
+                renderer.flush()
+            }
+        }
+    }
+}
+
 #if os(macOS)
 import CoreVideo
 
