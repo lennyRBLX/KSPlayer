@@ -1,8 +1,14 @@
 # Session 113 work
 
-**The queue is no longer gated on naming.** s112 cleared the CALL axis twice and then screened every
-remaining reachable row to a wall. The wall is the FIELD axis, there is no tool for it, and building
-one is this session's job.
+**The queue is no longer gated on naming.** s112 cleared the CALL axis twice, screened every
+remaining reachable row to a wall, and then built the tool for that wall. The wall is the FIELD axis.
+
+The tool paid for itself before the session ended: `KSComplexPlayerLayer.playNextURL` @0x1019d27a8
+closed (**67 -> 66**) because two s112 fixes landed on the same row — the gate learned that its
+"blocker" `0x1019c835c` is an unspecialized stdlib `firstIndex(of:)` rather than a member to name,
+and `recover_field_by_access` DECIDED its one unnamed field global as `isPictureInPictureStoped`
+(UNIQUE, byte-class against three field records). That is the pattern to repeat: fix the classifier,
+then re-check which rows were only ever blocked by a misclassification.
 
 ---
 
@@ -22,12 +28,12 @@ python3 scripts/pin_sweep.py --every
 |---|---|
 | gate | `PASS 44   ANOMALY 6   FAIL 4` |
 | FAITHFUL FLOOR | 333 / 1035 |
-| MEMBER_MISSING | 67 |
+| MEMBER_MISSING | 66 |
 | ACCESS | 26 |
 | NOT_IN_TRIE | 23 |
 | AMBIGUOUS_OVERLOAD | 10 |
 | TYPE_DIVERGENCE | 4 |
-| total disagreements | 130 |
+| total disagreements | 129 |
 | build | 4/4 |
 | KSPlayer | branch `forward`, tree clean apart from 7 pre-existing untracked s98/s102/s104/s105 spec docs |
 | FFmpegKit | `12f0899` on `forward-recon-shim`, 1167 tracked dirty files UNSTAGED. **Never `git add -A` there.** |
