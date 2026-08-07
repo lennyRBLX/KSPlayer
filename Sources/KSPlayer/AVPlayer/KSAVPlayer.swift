@@ -400,6 +400,79 @@ open class KSAVPlayer {
     public func checkShouldResume() {
         shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
     }
+
+    /// @0x1019a402c, 130 instructions, vtable slot 93 (kind Method). It is NOT an override —
+    /// ⚑[tool=override_table ref=KSAVPlayer.readyToPlay:0x1019a402c result=NO-override-table]
+    /// — and it carries a vtable slot, which is why it is declared in the CLASS body and not in
+    /// the `extension KSAVPlayer` below: an extension member gets no slot.
+    ///
+    /// Two statements, both read end to end.
+    ///   · `ldr x21,[x8,#0x98]` resolves 0x104c63098 = `direct field offset for
+    ///     KSPlayer.KSAVPlayer.options`, read under a (0, 0) beginAccess; `ldr x22,[0x104c63468]`
+    ///     resolves `direct field offset for KSPlayer.KSOptions.readyTime : Swift.Double`, and its
+    ///     beginAccess passes `w2 = 1`, the WRITE flag. Between them sits `bl _CACurrentMediaTime`
+    ///     with its result moved to `d8` and stored by `str d8,[x21,x22]`. So the write targets a
+    ///     field on the KSOptions instance, not on self.
+    ///   · the tail is `runOnMainThread`, inlined. It is `@inline(__always)`, which is why no call
+    ///     survives: the body emits the `NSThread.isMainThread` fork directly, then
+    ///     `MainActor.assumeIsolated` @0x101a04674 on one arm and `swift_task_create` @0x101a03fd4
+    ///     on the other. Both are stdlib concurrency, not members to name.
+    ///
+    /// ⚑ THE BODY WRITES NO KSAVPlayer STATE. The complete non-stack store census is four
+    ///   instructions and not one targets x20 (swiftself); in particular `isReadyToPlay` is NOT
+    ///   set here, though it still exists as a field record.
+    ///
+    /// ⚑ CAPTURE LIST, derived (session-113 A3 requires this recorded explicitly): `[weak self]`.
+    ///   The caller allocates a 24-byte box and calls `swift_weakInit` at 0x1019a40fc to store
+    ///   self into it — not a retain. The closure body @0x1019a4234 (51 instructions) reads it
+    ///   back with `swift_weakLoadStrong` at 0x1019a4268 and `cbz`-returns on nil, which is
+    ///   `guard let self else { return }`. `delegate` is then loaded from 0x104c63068 with
+    ///   `swift_unknownObjectWeakLoadStrong` and `cbz`-skipped, which is the `?.`; the call passes
+    ///   `x1` = KSAVPlayer metadata and `x2` = 0x1041d3f78, the `KSAVPlayer : MediaPlayerProtocol`
+    ///   witness table, i.e. self as `some MediaPlayerProtocol`. The dispatched slot is witness
+    ///   table + 8 = requirement 0 of MediaPlayerDelegate = `readyToPlay(player:)`.
+    ///
+    /// ⚑ WHERE THIS CAME FROM, and what is NOT established: the same two statements sit in this
+    ///   file inside `isReadyToPlay`'s `didSet`. Whether Forward's `didSet` still holds them or
+    ///   now just calls this method CANNOT BE READ — the setter symbol
+    ///   `$s8KSPlayer10KSAVPlayerC13isReadyToPlaySbvs` resolves to 0x10198eb18, the
+    ///   swift_deletedMethodError fold, so its code is not in the binary, and no `vW` observer
+    ///   symbol exists either. The `didSet` above is therefore left exactly as it was rather than
+    ///   rewritten on a guess.
+    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer.isReadyToPlay.setter:0x10198eb18 result=DELETED-METHOD-FOLD]
+    ///
+    /// ⚑ ACCESS not independently proven: the method descriptor's flags encode kind and
+    ///   instance-ness, not access; the trie name carries no private discriminator, so it is not
+    ///   `private`; and `vtable_impl_oracle` proves access only on a `final` type or an actor,
+    ///   which KSAVPlayer is not. `internal` is the narrower of the two remaining spellings and is
+    ///   what a helper with no external call site needs — the same rule this reconstruction
+    ///   applies to `KSComplexPlayerLayer.removeRemoteControllEvent()`.
+    /// ⚑ THE MAIN-ACTOR HOP IS READ BUT CANNOT BE SPELLED YET, so it is pinned rather than
+    ///   approximated. The statement is
+    ///   `runOnMainThread { [weak self] in guard let self else { return }
+    ///    delegate?.readyToPlay(player: self) }`, every piece of it derived above. It does not
+    ///   compile against THIS tree because `runOnMainThread` is declared in Utility.swift with a
+    ///   plain `@escaping @Sendable () -> Void` block, so the closure is non-isolated and passing
+    ///   `any MediaPlayerDelegate` out of it is `error: sending value of non-Sendable type`.
+    ///
+    ///   The declaration is the thing that is wrong, and the trie says so outright: 0x101a03e88
+    ///   demangles to `KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()`
+    ///   — mangle `yyYbScMYcc`, carrying `Yb` (@Sendable) AND `ScMYc` (@MainActor). Utility.swift
+    ///   drops the `@MainActor`, which is also why its `Thread.isMainThread` arm is a bare
+    ///   `block()` where every inlined copy in the binary calls `MainActor.assumeIsolated`.
+    ///
+    ///   Correcting that declaration was measured, not guessed: of the 30+ call sites it breaks
+    ///   exactly ONE — AudioBaseOutput.swift:179, where a non-Sendable `AudioBaseOutput` would
+    ///   then have to cross into a @MainActor closure. Making that compile needs `AudioBaseOutput`
+    ///   declared Sendable, and Sendable is a MARKER protocol that emits no conformance
+    ///   descriptor anywhere in this image (0 in the whole KSPlayer module), so the binary can
+    ///   neither confirm nor deny it. Writing it would be inventing a type. The fix is therefore
+    ///   its own unit, and this statement waits for it rather than being half-written here.
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.runOnMainThread:0x101a03e88 result=block-is-MainActor-Sendable]
+    /// ⚑[tool=function_extents ref=KSAVPlayer.readyToPlay.closure:0x1019a4234 result=51-instr]
+    func readyToPlay() {
+        options.readyTime = CACurrentMediaTime()
+    }
 }
 
 extension KSAVPlayer {
