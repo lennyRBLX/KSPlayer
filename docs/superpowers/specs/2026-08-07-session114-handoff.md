@@ -231,12 +231,19 @@ The `seek` arguments for closures 9/10/11 are fully read:
 `currentPlaybackTime` is MediaPlayback requirement 4 reached through the inherited-witness-table
 rule above.
 
-**What is genuinely left — two things, both small:**
-  · closure 12 (`enableLanguageOption`) dispatches slots 0x158 / 0x160, which are NULL in
-    KSPlayerLayer's own descriptor. They are inherited accessors, so resolve them up the superclass
-    chain rather than in this class's vtable.
-  · the `completion:` closure argument the three `seek` handlers pass (the parameter is
-    `(@MainActor @Sendable (Bool) -> ())?`, so it may simply be nil — READ it, do not assume).
+✅ **BOTH of those are now READ.** `seek`'s third argument is **`completion: nil`** — the call site
+passes `x1 = 0` / `x2 = 0`, a null (function, context) pair, so the full statement is
+`seek(time: player.currentPlaybackTime + event.interval, autoPlay: options.isSeekedAutoPlay,
+completion: nil)`. And slots 0x158 / 0x160 are not inherited from anywhere: slot 15 is
+`KSPlayerLayer.options.getter`, so 16 and 17 are that property's **setter and _modify**. Closure 12
+therefore MUTATES `self.options` — it reads `languageOption` / `languageOptionType` off the cast
+event and writes the result back through the options `_modify` coroutine.
+
+**What is left is now only the five closures' exact statements, not their shapes:** the condition
+that makes `togglePlayPause` choose play over pause; what `changeRepeatMode` and
+`changePlaybackRate` do with the `repeatType` / `playbackRate` they read; which options field
+closure 12 writes; and `previousTrack`'s body, whose helper `0x1019d3518` has already CLEARED the
+A4 shape check and so needs an invented name under `approved=`.
 
 The command ORDER is pinned and matches the mirror method exactly.
 
