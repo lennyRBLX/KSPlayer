@@ -274,11 +274,25 @@ stores `.none` as 2 and every site seen so far compares against 1.
    a 14x understatement, and it is the same family of error as "the triage instruction count is the
    thunk" — the row's own extent says nothing about the bodies that fold into it.
 
-10. **Before picking ANY row, compute the transitive INLINE-INSTEAD closure of its cost.**
-    `rank_member_missing` does not, so its instruction column is a floor, not an estimate. Adding
-    that closure to the ranker is a small, deterministic change and probably worth doing first —
-    every row-selection decision this session, including two of mine, was made against a number that
-    can be an order of magnitude low.
+10. **The closure is now MEASURED for all 12 ready rows** — `reconstruction/inline_closure_cost_s112.json`,
+    in bytes. The result is narrower than the `draw` case suggested, and that matters for planning:
+    **eleven of the twelve have NO closure at all** (ranked cost == true cost). `draw` is the lone
+    outlier at 968 -> 16112 bytes, 17x, its three largest inlined bodies being `0x101ac1444` (2396),
+    `0x1019eba7c` (2172) and `0x1019eaf04` (2128).
+
+    So `rank_member_missing`'s instruction column is accurate for most rows and catastrophically low
+    for a few. Check the closure before picking a row; do NOT assume every row hides one. The walk is
+    cheap if done right: follow any callee that is absent from the export trie and has exactly ONE
+    call site image-wide, using `name_exhaustion_gate.call_sites`' counter built ONCE — calling
+    `evaluate()` per callee is far too slow and will time out.
+
+    Ranked by TRUE cost, the ready rows are: `AssIncrementImageRenderer.flush` 284 (libass-blocked),
+    `KSComplexPlayerLayer.change` 508 and `KSAVPlayer.readyToPlay` 520 (both Task-closure, s108
+    off-limits), `CacheIOContext.clearOtherCache` 700 (the TYPE trap), `ReadCacheIOContext.fileSize`
+    872 (the 2-way field tie), `CacheIOContext.close` 1136 (the 7-way field tie), then everything
+    else above 1500. **Every one of the cheap rows is blocked by something this handoff already
+    names** — which is the honest reason the count did not move further, stated as a measurement
+    rather than as a judgement.
 
 ---
 
