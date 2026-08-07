@@ -343,6 +343,42 @@ Do not spend the session re-discovering these.
 
 ---
 
+## The worklist your approval actually covers
+
+s112 searched the population nobody had enumerated: rows blocked ONLY by EXHAUSTED addresses that are
+approved-eligible (excluding the 5 Task-shaped ones), with no queued dependencies. **Thirteen rows**,
+by ranked cost:
+
+| instr | row | blocker(s) |
+|---|---|---|
+| 4 | `MetalSubtitleView.mtkView` | `101ac0a90` — but its own callee is a 809-instr INLINE-INSTEAD |
+| 108 | `Coordinator.isRecord` | `1019d8d28` — **412 instr** |
+| 132 | `KSComplexPlayerLayer.stop` | `1019c7410` — 17 instr; this is the KVC-key sibling from §8 |
+| 133 | `KSPlayerLayer.select` | `101ab2540`, `101ab2de4` |
+| 158 | `AssIncrementImageRenderer.add` | `1019ad650` |
+| 184 | `AssIncrementImageRenderer.updateTextStyle` | `101a9364c`, `101a960dc` |
+| 204 | `DynamicInfo.update` | `1019ac164` — only 5 instr |
+| 324 | `KSOptions.firstTimeLog` | `1019c1ca4` |
+| 350 | `KSOptions.removeHeader` | `1019ac888`, `1019b3b50` |
+| 789 | `CacheIOContext.cleanupOldCaches` | four blockers |
+| 798 | `HLSCacheIOContext.parseM3U8` | `101b945b0` |
+| 1638 | `CacheIOContext.seek` | `1019b1080`, `101b94b98` |
+| 1663 | `PlayerView.buildMenusForButtons` | `1019afab0`, `101a0133c` |
+
+⚠️ **Screen each one on the FIELD axis before starting — the blocker size is not the cost.** s112
+checked the two most promising and both failed there, not on naming:
+- `DynamicInfo.update` looked ideal (204 instr, a 5-instruction blocker). That blocker `0x1019ac164`
+  is a metadata-setup TAIL-CALL THUNK — `adrp`/`add` of an objc classref and a global into x2/x3,
+  then `b 0x1000e97c8` — i.e. an artifact, not a member to name. But the row also touches
+  `0x1044e4690`, which is NOT_IN_TRIE and NOT RECOVERED: another unresolvable field global.
+- `MetalSubtitleView.mtkView` is 4 instructions over an ~870-instruction INLINE-INSTEAD chain.
+
+So the approval is real and this is its worklist, but naming is the *last* gate on these rows rather
+than the first. Run `recover_field_by_access --module M --class C` on each candidate before
+committing to it.
+
+---
+
 ## Tool notes s112 paid for
 
 15. `field_offset_vector.py` needs `--module PreLoadIOContext` for that module's classes. Without it
