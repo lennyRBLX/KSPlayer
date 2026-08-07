@@ -105,7 +105,7 @@ static routes are closed and `recover_field_offsets` correctly answers `NOT RECO
 unresolved global to the set of type-compatible fields that are not already bound by an exported
 global, and report UNIQUE or refuse as AMBIGUOUS.
 
-**s112 BUILT THE FIRST CUT.** `scripts/recover_field_by_access.py` exists, `--selfcheck` reports 8
+**s112 BUILT THE FIRST CUT.** `scripts/recover_field_by_access.py` exists, `--selfcheck` reports 13
 checks, and it is goldened on two KNOWN answers recovered from access shape alone with the trie
 names withheld: `CacheIOContext.stopOnLimitReached` as a byte access (`ldrb` + `cmp #1`) and
 `fetchedSize` as a SIGNED dword (`ldr x` + `adds` + `b.vs`). It also carries two honest negatives —
@@ -120,12 +120,14 @@ which fails under backreference compression (`CacheIOContext` in `PreLoadIOConte
 slots written from a register provably holding this field's offset, so an unrelated slot cannot leak
 in. `0x104c63938` in `readComplete` is now reachable: spilled at 0x101b8a154, reloaded at 0x101b8a37c,
 used one instruction later by `ldrb w8, [x21, x8]`. Hand-verified before the golden was changed —
-slot `[sp,#0x20]` is written exactly once and read exactly once in that body. Selfcheck is 10 checks.
+slot `[sp,#0x20]` is written exactly once and read exactly once in that body.
 
 4. **What is left on `0x104c63938` is a DISCRIMINATOR, not reachability.** It is provably byte-class
    and four independent bodies agree — `readComplete` @0x101b8a0f8 (through the spill), `close`
-   @0x101b8c83c, `fileSize` @0x101b8c178, `seek` @0x101b8a77c — every one of them `ldrb` + `cmp #1`,
-   i.e. a READ. The tool refuses because 7 candidates survive after excluding `stopOnLimitReached`:
+   @0x101b8c83c, `fileSize` @0x101b8c178, `seek` @0x101b8a77c. Three of them READ it (`ldrb` +
+   `cmp #1`); `fileSize` WRITES it — see the table below, which the all-accesses mode uncovered and
+   the first-access-only scan could not. The tool still refuses, because 7 candidates survive after
+   excluding `stopOnLimitReached`:
    `isJudgeEOF`, `saveFile`, `isReadComplete`, `eof`, `_isClosed`, `isInterleaved`, `isFirstFileSize`.
 
 5. Routes for that discriminator, with the cheap one already eliminated:
@@ -135,16 +137,29 @@ slot `[sp,#0x20]` is written exactly once and read exactly once in that body. Se
      `CacheIOContext` symbol at all, which is itself a finding — both are designated-init PARAMETERS
      (they appear as init labels on the sibling classes), so they carry no declaration default.
    - The three private ones share the file-private discriminator `33_D69EFE1402863CA716A3171C7DB6DFB9`.
-   - ✅ **Still open:** find the WRITE sites. Every site read so far is a read; a `strb` of `#1` inside
-     `close` would settle `_isClosed`. Extend the tool to report ALL accesses rather than the first.
-     ⚠️ **Keep the clobber tracking when you do.** s112 tried this as a quick ad-hoc scan that matched
-     `[xBase, <reg>]` anywhere in the body once `<reg>` had held the offset, and the result was
-     unusable: the offset lands in `x8`, `x8` is scratch, and it is immediately reused for OTHER
-     field offsets — so the scan reported `strb`/`ldr`/`ldr d` "accesses" to this field that belong to
-     different fields entirely, and three unrelated bodies came back with identical hit lists. The
-     shipped scanner is right to stop a holder at the first `mov|ldr|adrp|add|sub` that redefines its
-     register; an all-accesses mode must re-establish a fresh holder after each clobber rather than
-     drop the check. A false WRITE site here would name the wrong field.
+   - ✅ **DONE — `all_accesses()` shipped.** A single linear pass with a LIVE-REGISTER SET. Keep that
+     set: s112 first tried it as a quick ad-hoc scan matching `[xBase, <reg>]` anywhere after `<reg>`
+     had held the offset, and it was unusable — the offset lands in `x8`, `x8` is scratch and is
+     immediately reused for OTHER field offsets, so it attributed other fields' accesses to this one
+     and three unrelated bodies returned identical hit lists. With clobber tracking each body has
+     exactly ONE access (7 -> 1 on `fileSize`), and that is what the table below rests on.
+     A false WRITE site would name the wrong field.
+
+**The constraint set on `0x104c63938`, as tight as deterministic evidence gets today:**
+
+| body | access |
+|---|---|
+| `readComplete` @0x101b8a0f8 | `ldrb` (read, reached through the spill) |
+| `close` @0x101b8c83c | `ldrb` (read) |
+| `seek` @0x101b8a77c | `ldrb` (read) |
+| **`fileSize` @0x101b8c178** | **`strb` @0x101b8c44c — the WRITE** |
+
+A byte-class field WRITTEN by `fileSize` and read by `close`, `seek` and `readComplete` is heavily
+constrained. ⚠️ The last step from that to ONE name is NOT yet a derivation — do not close it by
+picking the candidate whose name reads best against that table. Two routes remain: read what `w9`
+carries at 0x101b8c44c and the branch it sits under, and check whether any site compares against 2,
+which would settle the `Bool?` `isInterleaved`, since `Optional<Bool>` stores `.none` as 2 and every
+site seen so far compares against 1.
    - ✅ **Still open:** a 3-valued tag compare would settle the `Bool?` `isInterleaved`, since an
      `Optional<Bool>` stores `.none` as 2 — every site seen so far compares against 1 only.
 
