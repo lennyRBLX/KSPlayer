@@ -178,6 +178,43 @@ than named. 4 + 63 + 809 = **~876 instructions**, which is exactly the "~870-ins
 INLINE-INSTEAD chain" s112 recorded. Closing the row also requires an invented name for
 `0x101ac0a90`, which the shape check clears.
 
+### `registerRemoteControllEvent` is HALF DERIVED — finish it, do not restart it
+
+s113 started the grind and got the structure plus 7 of the 12 handler payloads. The row is
+`KSComplexPlayerLayer.registerRemoteControllEvent()` @0x1019d0508, 648 instructions, field axis
+touching ZERO stored properties. `MPRemoteCommandCenter.shared()` is sent ONCE and hoisted into x19
+(the mirror `removeRemoteControllEvent` re-sends it twelve times — the two differ here). All twelve
+`addTargetWithHandler:` return values are DISCARDED, bridged to `Any` and destroyed, never stored as
+a token. All twelve blocks share the ObjC signature `q16@?0@"MPRemoteCommandEvent"8`, i.e.
+`(MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus`, and each captures `self` WEAKLY into a
+24-byte box via `swift_unknownObjectWeakInit`.
+
+Each closure's shape is: MainActor executor precondition (`MainActor.shared` + `unownedExecutor` +
+`swift_task_isCurrentExecutor`, failing to `swift_task_reportUnexpectedExecutor`), then
+`swift_beginAccess` + `swift_unknownObjectWeakLoadStrong` — the `guard let self` — then the payload.
+
+**The payloads, from each closure's vtable DISPATCH OFFSET.** `KSPlayerLayer`'s vtable base is 0xd8
+(VTableOffset 27 words), `KSComplexPlayerLayer`'s is 0x380 (112 words):
+
+| # | command | closure | dispatch | payload |
+|---|---|---|---|---|
+| 1 | play | 0x1019d3690 | 0x2b8 | `KSPlayerLayer.play()` (slot 60) |
+| 2 | pause | 0x1019d37ec | 0x2c0 | `KSPlayerLayer.pause()` (slot 61) |
+| 3 | togglePlayPause | 0x1019d38f8 | 0x2b8 + 0x2c0 | BOTH play and pause — the toggle |
+| 4 | stop | 0x1019d3a68 | none | ⚑ no vtable dispatch — still to read |
+| 5 | nextTrack | 0x1019d3ba8 | 0x3e0 | `KSComplexPlayerLayer.playNextURL()` (slot 12) |
+| 6 | previousTrack | 0x1019d3cb4 | none | ⚑ still to read |
+| 7 | changeRepeatMode | 0x1019d3da8 | none | ⚑ still to read |
+| 8 | changePlaybackRate | 0x1019d3f24 | none | ⚑ still to read |
+| 9 | skipForward | 0x1019d40b8 | 0x2e0 | `KSPlayerLayer.seek(time:autoPlay:completion:)` (slot 65) |
+| 10 | skipBackward | 0x1019d42cc | 0x2e0 | same `seek` |
+| 11 | changePlaybackPosition | 0x1019d44e0 | 0x2e0 | same `seek` |
+| 12 | enableLanguageOption | 0x1019d4684 | 0x158 + 0x160 | slots 16/17 are NULL in the descriptor (inherited accessors) — needs a different route |
+
+**What is left**: the four no-dispatch closures (4, 6, 7, 8), closure 12's two accessor slots, the
+`seek` arguments for 9/10/11, and each closure's returned `MPRemoteCommandHandlerStatus`. The
+command ORDER is already pinned and matches the mirror method exactly.
+
 ### ⚠️ The single most transferable thing s113 learned
 
 **A row three sessions recorded as blocked had an unprobed escape.** `displayEnumVR` /
