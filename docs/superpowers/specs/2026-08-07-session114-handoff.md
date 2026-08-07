@@ -228,10 +228,17 @@ Each closure's shape is: MainActor executor precondition (`MainActor.shared` + `
     `objc_msgSend` @0x103463ae0. Immediately after, it takes a `swift_beginAccess` on
     `self.options` (offset global 0x104c634e0) and reads a Bool at the CONSTANT offset +0x72
     (`ldrb w0, [x20, #0x72]` @0x1019d4244), which is positioned to be the `autoPlay:` argument.
-    ⚠️ NOT established, and deliberately not guessed: the selector behind 0x103463ae0, the
-    identity of the options Bool at +0x72, and how the body reaches the player's time — the
-    `ldp x24, x20, [x20]` / `ldr x26,[x20,#8]` / `ldr x27,[x26,#0x28]` chain at
-    0x1019d41c0-0x1019d41d4 does not read as a plain witness dispatch and needs a careful pass.
+    ✅ THE PLAYER-TIME CHAIN IS NOW RESOLVED, and the thing that made it look wrong is a general
+    fact worth carrying: **on a class existential whose protocol INHERITS another, witness-table
+    word 1 is the INHERITED protocol's table, not requirement 0.** `MediaPlayerProtocol: MediaPlayback`,
+    so in `ldp x24, x20, [x20]` / `ldr x26,[x20,#8]` / `ldr x27,[x26,#0x28]` the pair is
+    (instance, MediaPlayerProtocol wt), x26 is the **MediaPlayback** wt, and x27 is its requirement
+    (0x28-8)/8 = **4**. MediaPlayback declares duration, fileSize, naturalSize, chapters,
+    currentPlaybackTime — so req4 is `currentPlaybackTime`. The seek time is therefore
+    `player.currentPlaybackTime + <the event's Double>`.
+    ⚠️ Still NOT established: the selector behind 0x103463ae0 (the event's Double — for
+    skipForward/skipBackward it is positioned to be `MPSkipIntervalCommandEvent.interval`, but that
+    is NOT read), and the identity of the options Bool at +0x72.
   · each closure's returned `MPRemoteCommandHandlerStatus`.
 The command ORDER is pinned and matches the mirror method exactly.
 
