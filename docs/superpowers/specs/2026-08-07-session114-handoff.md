@@ -239,18 +239,32 @@ completion: nil)`. And slots 0x158 / 0x160 are not inherited from anywhere: slot
 therefore MUTATES `self.options` — it reads `languageOption` / `languageOptionType` off the cast
 event and writes the result back through the options `_modify` coroutine.
 
-**What is left is now only the five closures' exact statements, not their shapes.** On the first of
-them s113 got one step further: `togglePlayPause`'s condition is a **`@Published` read**, not a
-plain field load. It calls `swift_getKeyPath` TWICE (descriptors 0x1035677b0 and 0x1035677d8 — the
-`wrapped` and `storage` keypaths) and hands both to
-`Combine.Published._enclosingInstance(_:wrapped:storage:)`'s **getter** @0x1034532ec, taking the
-result indirectly into `[sp,#7]` and then `ldrb`-ing that one byte at 0x1019d39fc. One byte is
-consistent with `KSPlayerState`'s case tag rather than a Bool, so the likely source is a test on
-`state` — but the comparison AFTER the `ldrb` was not read, so which test it is stays open. The
-remaining four: what `changeRepeatMode` and
-`changePlaybackRate` do with the `repeatType` / `playbackRate` they read; which options field
-closure 12 writes; and `previousTrack`'s body, whose helper `0x1019d3518` has already CLEARED the
-A4 shape check and so needs an invented name under `approved=`.
+**TEN of the twelve handler bodies are now fully derived**, statement for statement:
+
+| command | statement |
+|---|---|
+| play | `play()` |
+| pause | `pause()` |
+| togglePlayPause | `if state.isPlaying { pause() } else { play() }` — the test is `sub w9,w8,#3` / `cmp w9,#2` / `b.hs` on the `@Published` `state`'s case tag, i.e. tag ∈ {3,4} = `.buffering`/`.bufferFinished`, which is exactly the source's `isPlaying` |
+| stop | `player.shutdown()` — the NAMED `MediaPlayerProtocol` extension method @0x1019de8e4 |
+| nextTrack | `playNextURL()` |
+| changeRepeatMode | `options.isLoopPlay = event.repeatType != .off` — `cset w19,ne` then `strb` into KSOptions +0x70, which `recover_field_offsets` names `isLoopPlay` |
+| changePlaybackRate | `player.playbackRate = event.playbackRate` — MediaPlayback **req6**, whose impl the trie names `KSAVPlayer.playbackRate.setter` |
+| skipForward / skipBackward / changePlaybackPosition | `seek(time: player.currentPlaybackTime + event.interval, autoPlay: options.isSeekedAutoPlay, completion: nil)` |
+
+⚠️ **MediaPlayback has FIFTEEN requirements in the binary**, not the seven this tree's source
+declares, so requirement indices CANNOT be counted off the source. Decode the witness table:
+`decode_witness_table --wt 0x1041d40e8` (KSAVPlayer : MediaPlayback). req4 is
+`currentPlaybackTime.getter`, req5 `playbackRate.getter`, req6 `playbackRate.setter` — and req4
+independently confirms the seek-time derivation reached earlier by the inherited-table rule.
+
+**Only two bodies are still open:**
+  · `previousTrack` — its payload `0x1019d3518` has CLEARED the A4 shape check (it reads `urls` and
+    `url`, inlines `firstIndex(of:)`, calls the named `set(url:options:)`), so it needs an invented
+    name under `approved=` plus its own body written.
+  · `enableLanguageOption` — reads `languageOption` / `languageOptionType` off the cast event and
+    writes back through `options`'s `_modify` (slots 0x158/0x160 = `options` setter/modify). WHICH
+    options field it writes is not yet read.
 
 The command ORDER is pinned and matches the mirror method exactly.
 
