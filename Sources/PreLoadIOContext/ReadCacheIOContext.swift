@@ -58,6 +58,45 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     //   does not fire there and it stays a 2-way candidate.
     // ⚑[tool=recover_field_by_access ref=ReadCacheIOContext.eof:0x1044f6918 result=UNIQUE-byte-mutability]
     // ⚑[tool=fieldrec ref=ReadCacheIOContext.onlyCache:flags result=0-let]
+    //
+    // ── s113: THE WHOLE OFFSET-GLOBAL MAP FOR THIS CLASS, and what is still open ──────────────
+    // The eliminating frame is the DECLARATION-DEFAULT axis, which is a closed set on both sides:
+    // the trie lists exactly FIVE `vpfi` fields (end, entryCache, eof, logicalPos, urlPos), and
+    // the designated init 0x101baf0cc opens with exactly FIVE default stores, at 0x101baf604,
+    // 0x101baf614, 0x101baf620, 0x101baf62c and 0x101baf638. So the five defaulted fields map onto
+    // {0x1044f6910, 0x1044f6918, 0x1044f6920, 0x1044f6930, 0x104c639e0}, and the three fields with
+    // NO default (download, tmpURL, onlyCache) map onto everything else.
+    //
+    //   0x104c639e0 = logicalPos   trie-named outright (its own vpWvd), Swift.UInt64.
+    //   0x1044f6918 = eof          the mutability axis, above.
+    //   0x1044f6930 = entryCache   PROVEN, and not by elimination: `firstEntryContain` loads it at
+    //                              0x101bad8a4, `cbz`-checks it (so it is Optional), and then
+    //                              indexes the loaded value with `CacheFileEntry.position`'s OWN
+    //                              offset global 0x104c63948 — a value indexed by another class's
+    //                              field offset is an instance of that class.
+    //   0x1044f6938 = tmpURL       by elimination on the no-default axis: only tmpURL and
+    //   0x1044f6940 = onlyCache    onlyCache lack a `vpfi` (download is at CONSTANT offset +0x18,
+    //                              not through a global at all), and 0x1044f6940 is byte-class
+    //                              (`strb` @0x101baf760) while tmpURL is a `Foundation.URL`.
+    // ⚑[tool=export_trie_oracle ref=ReadCacheIOContext:vpfi result=5-end-entryCache-eof-logicalPos-urlPos]
+    // ⚑[tool=body_fingerprint ref=ReadCacheIOContext.firstEntryContain:0x101bad8a4 result=indexed-by-CacheFileEntry.position]
+    //
+    // ⚠️ STILL OPEN: 0x1044f6910 and 0x1044f6920 are `end` and `urlPos` in SOME order. Both are
+    //   `var`, both `UInt64`, both defaulted, so neither width, mutability nor the default axis
+    //   separates them. What IS established about 0x1044f6910, and is worth not re-deriving:
+    //   it is a scalar and NOT a reference — `seek` traps on bit 63 at 0x101bad080 and then does
+    //   `adds`/`b.vs` at 0x101bad084, which is arithmetic on a UInt64, and `fileSize` does an
+    //   UNSIGNED max into it (`csel …, hi` @0x101bad4f8).
+    //
+    //   A HYPOTHESIS, recorded as one and NOT written into any body: the init's five default
+    //   stores appear to run in FIELD-DECLARATION order, which would give 0x1044f6910 = `end` and
+    //   0x1044f6920 = `urlPos`. Three of the five slots are independently bound above — eof (1st),
+    //   logicalPos (3rd) and entryCache (5th) — and all three land exactly where declaration order
+    //   predicts. That is suggestive, not decisive, and it is a claim about compiler behaviour
+    //   rather than a read, so it needs a golden on a class whose bindings are ALL known before
+    //   anything is written from it. Do not confuse it with MEMORY's "offset globals are not in
+    //   field-record order", which is about the globals' ADDRESSES and still holds here: 0x910
+    //   through 0x940 ascend while the fields they carry do not.
     private var eof: Bool = false
     // end: logical end offset of the cached stream.
     private var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
