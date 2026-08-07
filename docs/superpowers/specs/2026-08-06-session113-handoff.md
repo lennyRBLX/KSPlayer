@@ -365,20 +365,28 @@ by ranked cost:
 | 1638 | `CacheIOContext.seek` | `1019b1080`, `101b94b98` |
 | 1663 | `PlayerView.buildMenusForButtons` | `1019afab0`, `101a0133c` |
 
-**START WITH `KSComplexPlayerLayer.stop` @0x1019d2594, and expect a FOURTH false EXHAUSTED.** Its one
-blocker `0x1019c7410` is 17 instructions and s112 read them: it moves the caller's args aside, loads a
-witness from `[x2+0x10]`, builds the SMALL STRING `"delegate"` in registers (`0x6564`/`0x656c`/`0x6167`/
-`0x6574` = `de`/`le`/`ga`/`te`, discriminator `0xE8` = `0xE0|8`, count 8), calls the witness with it,
-and tail-calls `0x1019c78a4`. That is a KVC-style lookup BY STRING KEY — structurally identical to
-`0x1019c7454`, which §8 of the s112 handoff already refuted as a name source, and whose sibling this
-is. A body that hardcodes a KVC key and forwards is a thunk, not a member to name; it reached
-EXHAUSTED anyway. Verify the call-site count and the shape, then extend `is_compiler_artifact` the way
-s112 extended it for the VWT-stride walk, and re-check whether `stop` was only ever blocked by the
-misclassification. That is exactly how `playNextURL` closed.
+**`KSComplexPlayerLayer.stop` @0x1019d2594 is the best-conditioned row in this table, but ⚠️ an
+earlier draft of this section predicted it was a fourth false EXHAUSTED and THAT PREDICTION IS
+WITHDRAWN — s112 tested it and the evidence does not support it.**
 
-Also in its favour: `KSComplexPlayerLayer`'s FIELD axis is fully mapped — `urls` is trie-named,
-`isPictureInPictureStoped` was bound by `recover_field_by_access` in s112, and `enterBackgroundTask`
-is the only other field. So this row has no field-axis debt, which is rare in what is left.
+What is established. Its one blocker `0x1019c7410` is 17 instructions: move the caller's args aside,
+load a witness from `[x2+0x10]`, build the SMALL STRING `"delegate"` in registers
+(`0x6564`/`0x656c`/`0x6167`/`0x6574` = `de`/`le`/`ga`/`te`, discriminator `0xE8` = `0xE0|8`, count 8),
+call the witness with it, then tail-call `0x1019c78a4`.
+
+What refutes the artifact prediction:
+- it has **4 call sites**, so it is SHARED — not INLINE-INSTEAD, and not a single caller's outlined code;
+- it **tail-calls `0x1019c78a4`, a further 72-instruction NOT_IN_TRIE body**, so naming it would pull
+  in a second unnamed unit rather than closing the chain;
+- §8 refuted the KVC key as a NAME SOURCE — "do not call this body `delegate`" — which is a different
+  claim from "this body has no source counterpart". Extending `is_compiler_artifact` on this evidence
+  would be weakening the gate to pass a row, which MEMORY forbids outright.
+
+So `stop` is NOT unblocked. What it still has going for it, and why it is worth starting here anyway:
+`KSComplexPlayerLayer`'s FIELD axis is fully mapped — `urls` is trie-named, `isPictureInPictureStoped`
+was bound by `recover_field_by_access` in s112, `enterBackgroundTask` is the only other field — so it
+carries no field-axis debt, which is rare in what remains. The open question is a NAMING one about
+`0x1019c7410` + `0x1019c78a4` as a pair, and it is a real question, not a misclassification.
 
 ⚠️ **Screen each one on the FIELD axis before starting — the blocker size is not the cost.** s112
 checked the two most promising and both failed there, not on naming:
