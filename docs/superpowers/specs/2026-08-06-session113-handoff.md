@@ -305,7 +305,21 @@ Do not spend the session re-discovering these.
 11. `KSAVPlayer.readyToPlay` @0x1019a402c and `KSComplexPlayerLayer.change` @0x1019d1890 — both read
     "ready" only because `0x101a04674` verdicts ARTIFACT on a fan-in-only signal. It is a Task-closure
     standup, off-limits per s108.
-12. `AssIncrementImageRenderer.*` — cleared only by `0x10245f0e0`, which is libass. ARTIFACT is right
+12. `AssIncrementImageRenderer.*` — cleared only by `0x10245f0e0`, which is libass. **The libass
+    naming unit is TRACTABLE and s112 established how**, which the earlier note did not know:
+    libass ships as a STATIC ARCHIVE with a full symbol table — **192 defined text symbols** — at
+    `FFmpegKit/Sources/libass.xcframework/ios-arm64/libass.framework/libass`. Thin it with
+    `lipo -thin arm64`, then `ar x`, giving 20 `.o` files with real names. So this is a MATCHING
+    problem against a named corpus, not an unnameable one.
+    ⚠️ It is not a solved one. `ffmpeg_name_oracle --addr 0x10245f0e0 --resolve` returns UNKNOWN with
+    `in_ffmpeg_band: false` — its index is FFmpeg only and does not cover libass; extending it is the
+    unit. A whole-corpus MNEMONIC-SEQUENCE match of `0x10245f0e0` (38 instructions) against all 192
+    functions found NO exact hit, so the linked build differs from the shipped one and the match must
+    be structural rather than literal.
+    Lead, explicitly NOT a binding: `0x10245f0e0` calls `_free` five times inside a loop, which is the
+    shape of `_ass_flush_events` (a same-sized function in the shipped archive), and the row it blocks
+    is `AssIncrementImageRenderer.flush`. Suggestive on three counts and confirmed on none — do not
+    write it without the structural match. ARTIFACT is right
     for "may I invent a Swift name" and WRONG as "no source counterpart": this is C you must call by
     name. Screen every ARTIFACT on the address range (`>= 0x102000000` is library code) before
     feeding it to `rank_member_missing --helpers`.
