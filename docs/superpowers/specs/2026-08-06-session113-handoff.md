@@ -116,18 +116,29 @@ into several registers, so the first cut reported SPILLED for two fields whose a
 there); parsing `fieldrec`'s bytes-repr type as literal text; and hand-building the class mangle,
 which fails under backreference compression (`CacheIOContext` in `PreLoadIOContext` is `05CacheC0`).
 
-4. Extend it with SPILL TRACKING. That is the one thing standing between it and
-   `CacheIOContext` @0x104c63938: in `readComplete` the offset is loaded and immediately
-   `str x8, [sp, #0x20]` at 0x101b8a150, so the direct-use scan cannot see the access.
+**SPILL TRACKING IS DONE TOO** (s112). The scanner follows the offset through a stack slot, and only
+slots written from a register provably holding this field's offset, so an unrelated slot cannot leak
+in. `0x104c63938` in `readComplete` is now reachable: spilled at 0x101b8a154, reloaded at 0x101b8a37c,
+used one instruction later by `ldrb w8, [x21, x8]`. Hand-verified before the golden was changed —
+slot `[sp,#0x20]` is written exactly once and read exactly once in that body. Selfcheck is 10 checks.
 
-5. Add a second discriminator so it can decide, not just narrow. Run today, 0x104c63938 is
-   **provably a byte-class field** — three independent bodies agree (`close` @0x101b8c83c,
-   `fileSize` @0x101b8c178, `seek` @0x101b8a77c all read it with `ldrb`) — and the tool correctly
-   REFUSES, because 7 candidates remain after excluding `stopOnLimitReached`: `isJudgeEOF`,
-   `saveFile`, `isReadComplete`, `eof`, `_isClosed`, `isInterleaved`, `isFirstFileSize`. Candidate
-   discriminators, cheapest first: which body WRITES it (`strb` of `#1` in `close` would settle
-   `_isClosed`); whether the access is a 3-valued tag compare, which would settle the
-   `Bool?` `isInterleaved`; and the `swift_beginAccess` flag, where 1 is a modify and 0 a read.
+4. **What is left on `0x104c63938` is a DISCRIMINATOR, not reachability.** It is provably byte-class
+   and four independent bodies agree — `readComplete` @0x101b8a0f8 (through the spill), `close`
+   @0x101b8c83c, `fileSize` @0x101b8c178, `seek` @0x101b8a77c — every one of them `ldrb` + `cmp #1`,
+   i.e. a READ. The tool refuses because 7 candidates survive after excluding `stopOnLimitReached`:
+   `isJudgeEOF`, `saveFile`, `isReadComplete`, `eof`, `_isClosed`, `isInterleaved`, `isFirstFileSize`.
+
+5. Routes for that discriminator, with the cheap one already eliminated:
+   - ❌ **Accessors — CLOSED.** None of the 7 has an exported getter/setter on `CacheIOContext`. The
+     only symbols are `vpfi` default-initializers, and only for 5 of them: `isJudgeEOF`, `eof`,
+     `_isClosed`, `isInterleaved`, `isFirstFileSize`. `saveFile` and `isReadComplete` have no
+     `CacheIOContext` symbol at all, which is itself a finding — both are designated-init PARAMETERS
+     (they appear as init labels on the sibling classes), so they carry no declaration default.
+   - The three private ones share the file-private discriminator `33_D69EFE1402863CA716A3171C7DB6DFB9`.
+   - ✅ **Still open:** find the WRITE sites. Every site read so far is a read; a `strb` of `#1` inside
+     `close` would settle `_isClosed`. Extend the tool to report ALL accesses rather than the first.
+   - ✅ **Still open:** a 3-valued tag compare would settle the `Bool?` `isInterleaved`, since an
+     `Optional<Bool>` stores `.none` as 2 — every site seen so far compares against 1 only.
 
 6. Run the extended tool over EVERY reconstructed class before trusting one result (MEMORY rule 10).
    The s112 sweep over `CacheIOContext`, `MetalSubtitleView`, `MetalPlayView` and
