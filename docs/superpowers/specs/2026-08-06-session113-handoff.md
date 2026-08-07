@@ -154,12 +154,29 @@ slot `[sp,#0x20]` is written exactly once and read exactly once in that body.
 | `seek` @0x101b8a77c | `ldrb` (read) |
 | **`fileSize` @0x101b8c178** | **`strb` @0x101b8c44c — the WRITE** |
 
-A byte-class field WRITTEN by `fileSize` and read by `close`, `seek` and `readComplete` is heavily
-constrained. ⚠️ The last step from that to ONE name is NOT yet a derivation — do not close it by
-picking the candidate whose name reads best against that table. Two routes remain: read what `w9`
-carries at 0x101b8c44c and the branch it sits under, and check whether any site compares against 2,
-which would settle the `Bool?` `isInterleaved`, since `Optional<Bool>` stores `.none` as 2 and every
-site seen so far compares against 1.
+The write is read in full at 0x101b8c418-0x101b8c45c, and it is a plain `= true` under a guard:
+
+```
+ldr  x8, [x20, #0x48] / cmp x22, x8 / csel hi / str      ; field@+0x48 = max(x22, field@+0x48)
+ldrb w8, [x20, <global 0x104c63930>] / cmp w8, #1 / b.ne ; if <field@0x930> {
+mov  w9, #0x1 / strb w9, [x20, <global 0x104c63938>]     ;     <field@0x938> = true
+ldrb w8, [x20, <global 0x1044f3870>] / tbnz w8, #0       ;     if !<inherited field> {
+```
+
+⚠️ **0x104c63930 is a SECOND unnamed byte-class global on this class** and it is the guard. Naming
+either one probably names both.
+
+⚠️ **Adjacency is NOT a route, and this run proves it.** The four globals 0x920/0x928/0x930/0x938 sit
+at stride 8, and the first two are `stopOnLimitReached` (field record 22) and `fetchedSize` (23). If
+the run continued in field-record order, 0x930 and 0x938 would be `firstSeekTime` (24, a Double) and
+`seekOffsets` (25, an Array) — but both are read with `ldrb`, so they are Bools and the ordering does
+NOT hold. That is MEMORY's "offset globals are not in field-record order" demonstrated on this exact
+run; do not reach for it as a shortcut.
+
+⚠️ The last step from all of this to ONE name is still NOT a derivation — do not close it by picking
+the candidate whose name reads best against a `fileSize` write. One route remains untried: look for a
+site comparing against 2, which would settle the `Bool?` `isInterleaved`, since `Optional<Bool>`
+stores `.none` as 2 and every site seen so far compares against 1.
    - ✅ **Still open:** a 3-valued tag compare would settle the `Bool?` `isInterleaved`, since an
      `Optional<Bool>` stores `.none` as 2 — every site seen so far compares against 1 only.
 
