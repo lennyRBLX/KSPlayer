@@ -173,6 +173,27 @@ the run continued in field-record order, 0x930 and 0x938 would be `firstSeekTime
 NOT hold. That is MEMORY's "offset globals are not in field-record order" demonstrated on this exact
 run; do not reach for it as a shortcut.
 
+**s112 also mapped the class's METHOD surface, which is the productive route from here.** The trie
+carries 65 addressed `CacheIOContext` symbols (search for `16PreLoadIOContext05CacheC0C` — the class
+mangles as `05CacheC0` under backreference compression, so the plain spelling finds nothing). Small
+trie-NAMED methods that touch exactly one field bind that field's global by their own name:
+
+- **`enableReadComplete()` @0x101b8a768 is five instructions and does one thing:** `strb #1` into the
+  field behind global **0x1044f3878**. The method's name comes from the trie, so that global is
+  `isReadComplete` — and it is NOT 0x104c63938, which ELIMINATES `isReadComplete` from the candidate
+  list. Treat this as strong name-anchored evidence rather than a settled binding: a differently
+  named flag could in principle gate read-completion.
+- **`shouldContinueRead()` @0x101b8a0e0** returns `!field@0x1044f3848` (`ldrb` / `mov w9,#1` /
+  `bic w0, w9, w8`), so 0x1044f3848 is a Bool whose negation gates continued reading.
+- `canReadFromNetwork()` @0x101b885ac is a vtable thunk (`ldr x0,[x8,#0x388]; br x0`) — an override
+  point, no field access. `resetSpeedSample()` @0x101b86038 writes CONSTANT offsets +0x58/+0x60/+0x68,
+  which is worth knowing structurally: not every stored property on this class goes through a global.
+
+⚠️ **This class's offset globals span TWO regions** — `0x1044f3xxx` and `0x104c63xxx` — and both are
+runtime-initialised. The first reads as 0x0 in the file, the second is not backed by file content at
+all, so `recover_field_offsets` refuses both and is right to. Do not treat a global's region as
+evidence about which field it is.
+
 ⚠️ The last step from all of this to ONE name is still NOT a derivation — do not close it by picking
 the candidate whose name reads best against a `fileSize` write. One route remains untried: look for a
 site comparing against 2, which would settle the `Bool?` `isInterleaved`, since `Optional<Bool>`
