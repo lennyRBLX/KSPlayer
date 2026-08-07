@@ -353,7 +353,7 @@ by ranked cost:
 |---|---|---|
 | 4 | `MetalSubtitleView.mtkView` | `101ac0a90` — but its own callee is a 809-instr INLINE-INSTEAD |
 | 108 | `Coordinator.isRecord` | `1019d8d28` — **412 instr** |
-| 132 | `KSComplexPlayerLayer.stop` | `1019c7410` — 17 instr; this is the KVC-key sibling from §8 |
+| 132 | `KSComplexPlayerLayer.stop` @0x1019d2594 | `1019c7410` — **start here, see below** |
 | 133 | `KSPlayerLayer.select` | `101ab2540`, `101ab2de4` |
 | 158 | `AssIncrementImageRenderer.add` | `1019ad650` |
 | 184 | `AssIncrementImageRenderer.updateTextStyle` | `101a9364c`, `101a960dc` |
@@ -364,6 +364,21 @@ by ranked cost:
 | 798 | `HLSCacheIOContext.parseM3U8` | `101b945b0` |
 | 1638 | `CacheIOContext.seek` | `1019b1080`, `101b94b98` |
 | 1663 | `PlayerView.buildMenusForButtons` | `1019afab0`, `101a0133c` |
+
+**START WITH `KSComplexPlayerLayer.stop` @0x1019d2594, and expect a FOURTH false EXHAUSTED.** Its one
+blocker `0x1019c7410` is 17 instructions and s112 read them: it moves the caller's args aside, loads a
+witness from `[x2+0x10]`, builds the SMALL STRING `"delegate"` in registers (`0x6564`/`0x656c`/`0x6167`/
+`0x6574` = `de`/`le`/`ga`/`te`, discriminator `0xE8` = `0xE0|8`, count 8), calls the witness with it,
+and tail-calls `0x1019c78a4`. That is a KVC-style lookup BY STRING KEY — structurally identical to
+`0x1019c7454`, which §8 of the s112 handoff already refuted as a name source, and whose sibling this
+is. A body that hardcodes a KVC key and forwards is a thunk, not a member to name; it reached
+EXHAUSTED anyway. Verify the call-site count and the shape, then extend `is_compiler_artifact` the way
+s112 extended it for the VWT-stride walk, and re-check whether `stop` was only ever blocked by the
+misclassification. That is exactly how `playNextURL` closed.
+
+Also in its favour: `KSComplexPlayerLayer`'s FIELD axis is fully mapped — `urls` is trie-named,
+`isPictureInPictureStoped` was bound by `recover_field_by_access` in s112, and `enterBackgroundTask`
+is the only other field. So this row has no field-axis debt, which is rare in what is left.
 
 ⚠️ **Screen each one on the FIELD axis before starting — the blocker size is not the cost.** s112
 checked the two most promising and both failed there, not on naming:
