@@ -443,8 +443,24 @@ are one of its FIVE bodies.** s112 read the small ones:
 
 `isRecord` is not declared anywhere in `KSVideoPlayer.swift`. So this row is not "a Bool plus a
 blocker" — it is **stand up a property-wrapped property**, and the wrapper TYPE has to be identified
-first, from those two `__const` descriptors. Neither is in the trie; both are 24-byte structures of
-relative pointers, so decoding them is the first step and it is unstarted.
+first, from those two `__const` descriptors. Neither is in the trie. s112 recorded their RAW SHAPE
+rather than a guess — both are 24 bytes of
+`<u32> 00000000 <u32> <u32> 00000000 <u32 with the high bit set>`:
+
+    0x103567be0:  20270a01 00000000 256e6c00 c35d6c00 00000000 10000080
+    0x103567c08:  00270a01 00000000 fd6d6c00 ff6d6c00 00000000 08000080
+
+The trailing `0x80000010` / `0x80000008` — high bit set over a small payload — is the shape of a
+keypath/descriptor flags word.
+
+⚠️ **`name_type_at_addr --addr` does NOT decode these.** It reads them as a type-mangled-name table
+and returns `length 0`, `category none`. That is a clean negative rather than a crash, so the tool is
+behaving correctly and these simply are not that structure. Identifying the wrapper therefore needs a
+reader this tree does not have yet.
+
+So the real scope of `Coordinator.isRecord` is: write a decoder for these descriptors, then stand up a
+property-wrapped property, then name and write the 412-instruction blocker. It is not "declare a Bool
+and name one helper", and it should not be picked up again off its 32-instruction ranking.
 
 That makes `KSPlayerLayer.select` (762, field-clean, two ordinary EXHAUSTED blockers) the simpler of
 the two despite being the larger number.
