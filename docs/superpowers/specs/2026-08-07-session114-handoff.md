@@ -161,6 +161,23 @@ measured at 67/67/92/80/67/61/95/101/133/133/105/257 = **1,258** more instructio
 touches ZERO stored properties) and `MetalSubtitleView.draw` (242 + a 16,112-byte closure). Those
 are the two to spend a session on.
 
+### One approved-batch address that DOES pass the shape check
+
+Not everything in the A4 batch is glue, and the counter-example is worth having: **`0x101ac0a90`**
+(63 instr) sends `drawableSize`, `currentTraitCollection`, `displayScale` and `setNeedsDisplay`,
+touches four instance fields and calls a KSPlayer body. It is method-shaped, and its FIELD axis is
+already clean — MetalSubtitleView.swift names all four globals it uses (`subtitleImages` 0x1044ef5c0,
+`pendingTexts` 0x1044ef5c8, `parts` 0x1044ef5d8, `playRatio` 0x1044ef5e0). It has THREE call sites:
+`mtkView(_:drawableSizeWillChange:)` @0x101ac0d48 plus two unnamed bodies (0x101ac0810, 0x101ac0d58).
+
+✅ **s112's cost estimate for `MetalSubtitleView.mtkView` is CONFIRMED, not overstated.** s113
+initially misread it as an overstatement. It is not: `mtkView` is 4 instructions that forward
+`(width, height, false)` to `0x101ac0a90`, and `0x101ac0a90` calls **`0x101abc398`, which is 809
+instructions and INLINE-INSTEAD at a single call site** — so it must be written INTO the body rather
+than named. 4 + 63 + 809 = **~876 instructions**, which is exactly the "~870-instruction
+INLINE-INSTEAD chain" s112 recorded. Closing the row also requires an invented name for
+`0x101ac0a90`, which the shape check clears.
+
 ### ⚠️ The single most transferable thing s113 learned
 
 **A row three sessions recorded as blocked had an unprobed escape.** `displayEnumVR` /
