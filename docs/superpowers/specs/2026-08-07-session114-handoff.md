@@ -258,13 +258,32 @@ declares, so requirement indices CANNOT be counted off the source. Decode the wi
 `currentPlaybackTime.getter`, req5 `playbackRate.getter`, req6 `playbackRate.setter` — and req4
 independently confirms the seek-time derivation reached earlier by the inherited-table rule.
 
-**Only two bodies are still open:**
-  · `previousTrack` — its payload `0x1019d3518` has CLEARED the A4 shape check (it reads `urls` and
-    `url`, inlines `firstIndex(of:)`, calls the named `set(url:options:)`), so it needs an invented
-    name under `approved=` plus its own body written.
-  · `enableLanguageOption` — reads `languageOption` / `languageOptionType` off the cast event and
-    writes back through `options`'s `_modify` (slots 0x158/0x160 = `options` setter/modify). WHICH
-    options field it writes is not yet read.
+✅ **`previousTrack`'s payload is now DERIVED IN FULL.** `0x1019d3518` is the exact mirror of
+`playNextURL()`, which this file already carries — same four statements, differing only in the
+bound and the step:
+
+```
+guard urls.count >= 2 else { return }
+guard let index = urls.firstIndex(of: url), index >= 1 else { return }
+isPictureInPictureStoped = true
+set(url: urls[index - 1], options: nil)
+```
+
+read as: `cmp x8,#2` / `b.lo` on `urls.count` @0x1019d3594; `firstIndex(of:)` @0x1019c835c returning
+(index, found-flag) with `cmp w27,#1` / `ccmp x23,#1,#8,ne` / `b.lt` — i.e. found AND `index >= 1`,
+where `playNextURL` instead bounds `index < urls.count - 1`; `strb #1` into
+`isPictureInPictureStoped` (0x104c63520) AFTER both guards; then `set(url:options:)`.
+It has CLEARED the A4 shape check, so it needs an invented name under `approved=` — the mirror
+spelling `playPreviousURL()` is the obvious candidate, and it is an INVENTION, not a read.
+
+⚠️ **ONE body is still open, and an earlier note about it was WRONG.** `enableLanguageOption`
+@0x1019d4684 (257 instr, by far the largest) does NOT simply "write an options field". It reads
+`languageOption` then `languageOptionType` off the cast `MPChangeLanguageOptionCommandEvent`, then
+`cbz x0` @0x1019d478c branches on the TYPE — and the type-0 arm reads **`player`**
+(offset global 0x104c634f0), not `options`. The `options` setter/modify slots (0x158/0x160) are
+reached somewhere else in the body. This is an audible-vs-legible split — audio-track versus
+subtitle selection — and it needs its own careful pass rather than the one-line summary it was
+given.
 
 The command ORDER is pinned and matches the mirror method exactly.
 
