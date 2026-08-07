@@ -1164,6 +1164,40 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         player.contentMode = .scaleAspectFit
     }
 
+    /// @0x1019d27a8, 96 instructions. Every operand is read, and the one that looked like a blocker
+    /// was not a member at all.
+    ///
+    /// `bl 0x1019c835c` is NOT a private helper to be named: it reads the element STRIDE
+    /// (`[vwt+0x48]`) and ALIGNMENT (`[vwt+0x50]`) out of the value-witness table, walks `urls` by
+    /// that stride comparing through the generic `Equatable.==` witness thunk, and returns
+    /// `(index, isNil)` — an unspecialized `firstIndex(of:)` over `[URL]`. It reached EXHAUSTED under
+    /// the s112 invented-name authorisation and would have had a name invented for the Swift standard
+    /// library; `name_exhaustion_gate` now refuses the shape.
+    /// ⚑[tool=name_exhaustion_gate ref=KSComplexPlayerLayer.playNextURL:0x1019c835c result=ARTIFACT-stdlib-firstIndex]
+    ///
+    /// The one unnamed field global is DECIDED, not guessed: 0x104c63520 is written with `strb`, so
+    /// it is byte-class, and of this class's three field records only `isPictureInPictureStoped` is
+    /// byte-class (`urls` is an Array, `enterBackgroundTask` a Task?) — which is the same reasoning
+    /// `pictureInPictureControllerWillStartPictureInPicture` above already records, reached here by
+    /// tool rather than by hand.
+    /// ⚑[tool=recover_field_by_access ref=KSComplexPlayerLayer.isPictureInPictureStoped:0x104c63520 result=UNIQUE-byte-class]
+    ///
+    /// Control flow, read in order: `ldr x8,[urls+0x10]` / `cmp #2` / `b.lo` is the count guard;
+    /// the `firstIndex` result's `w1` is the nil flag, tested by `cmp w27,#1` / `b.eq`; then
+    /// `x9 = count - 1` and `cmp x23,x9` / `b.ge` bounds the successor. The store of `#1` to
+    /// `isPictureInPictureStoped` sits AFTER both guards and BEFORE the `set`, and `set(url:options:)`
+    /// @0x1019cb674 is called with `x1 = #0`, i.e. `options: nil`.
+    public func playNextURL() {
+        guard urls.count >= 2 else {
+            return
+        }
+        guard let index = urls.firstIndex(of: url), index < urls.count - 1 else {
+            return
+        }
+        isPictureInPictureStoped = true
+        set(url: urls[index + 1], options: nil)
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStopPictureInPicture:0x1019d2b98 result=1-instr-thunk]
     /// ⚑ The trie address is a THUNK (`b 0x1019d61b8`); the real body is the 77 instructions there.
     ///
