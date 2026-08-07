@@ -239,8 +239,15 @@ completion: nil)`. And slots 0x158 / 0x160 are not inherited from anywhere: slot
 therefore MUTATES `self.options` — it reads `languageOption` / `languageOptionType` off the cast
 event and writes the result back through the options `_modify` coroutine.
 
-**What is left is now only the five closures' exact statements, not their shapes:** the condition
-that makes `togglePlayPause` choose play over pause; what `changeRepeatMode` and
+**What is left is now only the five closures' exact statements, not their shapes.** On the first of
+them s113 got one step further: `togglePlayPause`'s condition is a **`@Published` read**, not a
+plain field load. It calls `swift_getKeyPath` TWICE (descriptors 0x1035677b0 and 0x1035677d8 — the
+`wrapped` and `storage` keypaths) and hands both to
+`Combine.Published._enclosingInstance(_:wrapped:storage:)`'s **getter** @0x1034532ec, taking the
+result indirectly into `[sp,#7]` and then `ldrb`-ing that one byte at 0x1019d39fc. One byte is
+consistent with `KSPlayerState`'s case tag rather than a Bool, so the likely source is a test on
+`state` — but the comparison AFTER the `ldrb` was not read, so which test it is stays open. The
+remaining four: what `changeRepeatMode` and
 `changePlaybackRate` do with the `repeatType` / `playbackRate` they read; which options field
 closure 12 writes; and `previousTrack`'s body, whose helper `0x1019d3518` has already CLEARED the
 A4 shape check and so needs an invented name under `approved=`.
