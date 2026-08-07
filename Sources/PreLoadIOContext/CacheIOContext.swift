@@ -721,6 +721,82 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         return exists && isDirectory.boolValue
     }
 
+    /// @0x101b8e85c, 413 instructions. The trailing `Z` on the mangle makes it `static`, and the
+    /// signature — labels and all three parameter types — is read, not inferred:
+    /// ⚑[tool=export_trie_oracle ref=CacheIOContext.copyPreloadCache(md5:from:to:):0x101b8e85c result=static-3-String-returns-Bool]
+    /// No parameter carries a trailing `Sg`, so all three are plain `String`, never optional.
+    /// Like `cacheExists` above it has NO method-descriptor (`Tq`) symbol, so it occupies no
+    /// vtable slot.
+    ///
+    /// ⚑ It touches NO instance state, which is what `static` predicts and what the binary
+    ///   confirms independently: the body references no `0x1044f3xxx`/`0x104c63xxx` offset global
+    ///   at all, and the `self` metatype in x20 is overwritten at 0x101b8e894 before any use.
+    ///
+    /// Statements, in body order:
+    ///   · the three URLs are built exactly as `cacheExists` builds its one — `NSTemporaryDirectory()`
+    ///     bridged to String and handed to `URL.init(fileURLWithPath:)`, then two
+    ///     `appendingPathComponent` calls. `from` gives the source directory and `to` the
+    ///     destination, both then joined with `md5`.
+    ///   · the first guard is TWO conditions, and dropping either inverts the answer for a plain
+    ///     file — the same trap `cacheExists` records: `cbz w20` on the send's result, then
+    ///     `ldurb w8,[x29,#-0xe1]` / `cmp w8,#1` / `b.ne` on the `isDirectory` out-byte, which
+    ///     `sturb wzr` zeroed beforehand. Both failures branch to the single `return false`.
+    ///   · the early-success return is read from the branch target, not guessed: `cbnz w20`
+    ///     at 0x101b8eaec jumps to 0x101b8ecb8, which destroys the three live URLs and does
+    ///     `mov w0, #0x1`. It destroys THREE, not four, which is why the destination-directory URL
+    ///     is built only after this point.
+    ///   · `createDirectory` passes `w3 = 1` (withIntermediateDirectories) and `x4 = 0`
+    ///     (attributes), with its `&NSError` slot pre-nulled.
+    ///   · the copy is a real do/catch: `cbz w24` at 0x101b8eca0 splits `return true` from the
+    ///     catch at 0x101b8ece8.
+    /// ⚑[tool=decode_objc_selector ref=0x10440b498 result='fileExistsAtPath:isDirectory:']
+    ///
+    /// ⚑ `try?` vs `do { … } catch {}` is NOT decidable for the createDirectory call: both lower
+    ///   to the identical convert / `swift_willThrow` / `swift_errorRelease` / fall-through shape
+    ///   at 0x101b8ec20-0x101b8ec48, with no catch body. `try?` is the shorter of two spellings the
+    ///   binary cannot separate. Same for `attributes:` — a defaulted argument and an explicit
+    ///   `nil` both emit `x4 = 0`, so the argument is omitted here rather than invented.
+    ///
+    /// ⚑ The log line is fully read. The three literals are the `#file`, `#function` and message
+    ///   prefix, and each length matches its count word exactly (0x25 = 37, 0x1e = 30, 0x2a = 42):
+    ///   'PreLoadIOContext/CacheIOContext.swift', 'copyPreloadCache(md5:from:to:)' and
+    ///   '[CacheIOContext] copyPreloadCache failed: '. The level argument is `mov w0, #0x3`, and 3
+    ///   is the CASE INDEX — LogLevel's cases are panic/fatal/error/warning/…, so index 3 is
+    ///   `.warning`, which is exactly `KSLog`'s default level, so no level is written at the call.
+    ///   The gate `cmp w8,#3` / `b.hs` is that default folded against `KSOptions.logLevel`.
+    ///   The `#file` literal names THIS file, which is what places the member here.
+    /// ⚑[tool=decode_string_literal ref=CacheIOContext.copyPreloadCache:0x103d3eef0 result='[CacheIOContext] copyPreloadCache failed: ']
+    /// ⚑ The line number the call passes is 752 — Forward's line, not this tree's, so it is
+    ///   recorded and not reproduced.
+    ///
+    /// ⚑ ACCESS not independently proven — a method descriptor encodes kind, not access, and
+    ///   `vtable_impl_oracle` proves access only on a `final` type or an actor. `public` matches
+    ///   the two sibling statics directly above, which is the spelling this file already applies
+    ///   to this exact situation.
+    public static func copyPreloadCache(md5: String, from: String, to: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        let tmpDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+        let sourceURL = tmpDirectory.appendingPathComponent(from).appendingPathComponent(md5)
+        let destinationURL = tmpDirectory.appendingPathComponent(to).appendingPathComponent(md5)
+        guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return false
+        }
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            return true
+        }
+        let destinationDirectory = tmpDirectory.appendingPathComponent(to)
+        if !FileManager.default.fileExists(atPath: destinationDirectory.path) {
+            try? FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        }
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            return true
+        } catch {
+            KSLog("[CacheIOContext] copyPreloadCache failed: \(error)")
+            return false
+        }
+    }
+
     // ⚑[tool=export_trie_oracle ref=CacheIOContext.clearOtherCache:0x101b8d948 result=LOCATED]
     // P43 existence check: this deferral is LOCATED, not a failed search. The member exists in the
     // trie at a known address, its body is read end to end below, and the single thing standing
