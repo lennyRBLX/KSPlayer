@@ -137,6 +137,30 @@ it, and then tail-calls, is an adapter. Golden it positive on `0x1019ac888` and 
 is a real member. s113 verified the shape by reading all five bodies but did NOT add the clause,
 because rule 10 requires a full 116-address re-sweep before trusting it and two were already spent.
 
+### Rows checked and MEASURED this session, so they are not re-hoped
+
+`KSOptions.makeDecode(packet:)` @0x1019b604c looks like a 52-instruction row and is not one. Its
+body is `autoreleasepool { … }`: the pool push/pop bracket a single call to `0x1019b611c`, which is
+**362 instructions and INLINE-INSTEAD (1 call site)**, so it must be written INTO the source rather
+than named — true cost **414**. Its FIELD axis is clean (every global is trie-named:
+`KSOptions.hardwareDecode`, `asynchronousDecompression`, `decodeType`, plus the `DecodeProtocol`
+witness tables for `FFmpegDecode` / `VideoToolboxDecode` / `SubtitleDecode`, which is what makes the
+return a three-way choice). But its CALL axis is not: the inlined body has **seven** unnamed
+KSPlayer-band callees — `0x101a6f3bc`, `0x101a6ed88` (twice), `0x10199b78c`, `0x101a0ce98`,
+`0x101a0be50`, `0x101a0c470`. That is why the ranker excludes it.
+
+`KSPlayerLayer.reset()` @0x1019ccbc0 is blocked on `0x101ab2540` (507 instr, EXHAUSTED) and uses
+`swift_getKeyPath` twice plus `Published._enclosingInstance`, so it is a property-wrapper-aware body.
+
+`HLSCacheIOContext.read` @0x101b97480 is blocked on `parseM3U8`, which is itself a queued row, and
+calls two FFmpeg addresses in the library band that must be spelled by name.
+
+**The genuinely unblocked large rows** — nothing to name, nothing to adjudicate, just reading — are
+`KSComplexPlayerLayer.registerRemoteControllEvent` (648 + twelve `[weak self]` handler closures
+measured at 67/67/92/80/67/61/95/101/133/133/105/257 = **1,258** more instructions, field axis
+touches ZERO stored properties) and `MetalSubtitleView.draw` (242 + a 16,112-byte closure). Those
+are the two to spend a session on.
+
 ### ⚠️ The single most transferable thing s113 learned
 
 **A row three sessions recorded as blocked had an unprobed escape.** `displayEnumVR` /
