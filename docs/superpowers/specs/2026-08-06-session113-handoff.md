@@ -251,10 +251,18 @@ stores `.none` as 2 and every site seen so far compares against 1.
    write their fields through CONSTANT offsets, not through offset globals, so the init route cannot
    bind `onlyCache` to a global either.
 
-9. `MetalSubtitleView.draw` @0x101ac0e24, 242 instructions plus the INLINE-INSTEAD `0x101ac11ec`
-   (101 instructions) that must be inlined into it. Its three list fields are now named (`f1483d3`);
-   `0x1044ef5b0` and `0x1044ed178` are still unresolved, and `0x101a83a6c` is an unnamed function
-   reference taken as a global.
+9. `MetalSubtitleView.draw` @0x101ac0e24 — **the best-conditioned row left, and the one to start on.**
+   Its FIELD AXIS IS CLEAN, which s112 established and nobody knew before: run over every global the
+   body touches, `0x1044ef5b0`, `0x1044ed178` and `0x104c63708` take **zero** indexed field accesses
+   (so they are not stored-property uses in this body at all), and the only two that are indexed are
+   `0x1044ef5c0` -> `subtitleImages` and `0x1044ef5c8` -> `pendingTexts`, both already named in
+   `f1483d3`. No FIELD-axis work is left on this row.
+
+   What remains is reading, not resolving: 242 instructions, plus `0x101ac11ec` (101 instructions,
+   INLINE-INSTEAD — one call site, so it must be inlined into the body rather than named), plus
+   `0x101a83a6c` (26 instructions, NOT_IN_TRIE, taken as a global i.e. used as a function VALUE —
+   read it before assuming it is a callee). Roughly 370 instructions in total with every field
+   already known.
 
 ---
 
