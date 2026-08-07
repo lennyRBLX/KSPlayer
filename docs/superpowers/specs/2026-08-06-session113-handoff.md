@@ -105,28 +105,34 @@ static routes are closed and `recover_field_offsets` correctly answers `NOT RECO
 unresolved global to the set of type-compatible fields that are not already bound by an exported
 global, and report UNIQUE or refuse as AMBIGUOUS.
 
-4. Write a NEW tool `scripts/recover_field_by_access` (does not exist yet), taking `--module M --class C [--global G]`. It must:
-   - enumerate the class's offset globals and mark those the export trie already names;
-   - find each unbound global's use sites and classify the access shape per the table above;
-   - intersect with `fieldrec`'s unbound fields of compatible type;
-   - print UNIQUE with the evidence, or **refuse** with the candidate set. Never emit a best guess —
-     a wrong field name propagates exactly like a wrong method name.
-   - handle the spilled case: at `0x101b8a150` the offset is loaded and immediately
-     `str x8, [sp, #0x20]`, so a use-site scan that only tracks registers must report UNKNOWN there
-     rather than silently missing the access.
+**s112 BUILT THE FIRST CUT.** `scripts/recover_field_by_access.py` exists, `--selfcheck` reports 8
+checks, and it is goldened on two KNOWN answers recovered from access shape alone with the trie
+names withheld: `CacheIOContext.stopOnLimitReached` as a byte access (`ldrb` + `cmp #1`) and
+`fetchedSize` as a SIGNED dword (`ldr x` + `adds` + `b.vs`). It also carries two honest negatives —
+SPILLED (distinct from ABSENT) and a global the body never touches. It is documented in the durable
+inventory. Three bugs were caught by its own goldens while building it and are worth not
+reintroducing: taking only the FIRST materialisation of an offset (a body re-loads the same offset
+into several registers, so the first cut reported SPILLED for two fields whose access is plainly
+there); parsing `fieldrec`'s bytes-repr type as literal text; and hand-building the class mangle,
+which fails under backreference compression (`CacheIOContext` in `PreLoadIOContext` is `05CacheC0`).
 
-5. Golden it on KNOWN answers before trusting one result (MEMORY rule 11). Two are available:
-   - **`MetalSubtitleView`** — the full map is already proven in source and re-derivable:
-     `0x1044ef5a8`→0x8 `metalDrawable`, `0x1044ef5b8`→0x30 `dynamicRange`, `0x1044ef5d0`→0x38
-     `cancellables`, `0x1044ef5c0`→0x40 `subtitleImages`, `0x1044ef5c8`→0x48 `pendingTexts`,
-     `0x1044ef5d8`→0x50 `parts`, `0x1044ef5e0`→0x58 `playRatio`. Negative control: `0x1044ef5b0`
-     holds offset 0x0, which is no field of that class, and the tool must refuse it.
-   - **`CacheIOContext`** — `0x104c63920` `stopOnLimitReached : Bool` (accessed with `ldrb` +
-     `cmp #1`) and `0x104c63928` `fetchedSize : Int64` (accessed with `ldr x` + `adds` + `b.vs`,
-     signed). The tool must reproduce both from the access shape alone, with the trie names withheld.
+4. Extend it with SPILL TRACKING. That is the one thing standing between it and
+   `CacheIOContext` @0x104c63938: in `readComplete` the offset is loaded and immediately
+   `str x8, [sp, #0x20]` at 0x101b8a150, so the direct-use scan cannot see the access.
 
-6. Run the finished tool over EVERY reconstructed class before trusting one result (MEMORY rule 10),
-   not just the two above.
+5. Add a second discriminator so it can decide, not just narrow. Run today, 0x104c63938 is
+   **provably a byte-class field** — three independent bodies agree (`close` @0x101b8c83c,
+   `fileSize` @0x101b8c178, `seek` @0x101b8a77c all read it with `ldrb`) — and the tool correctly
+   REFUSES, because 7 candidates remain after excluding `stopOnLimitReached`: `isJudgeEOF`,
+   `saveFile`, `isReadComplete`, `eof`, `_isClosed`, `isInterleaved`, `isFirstFileSize`. Candidate
+   discriminators, cheapest first: which body WRITES it (`strb` of `#1` in `close` would settle
+   `_isClosed`); whether the access is a 3-valued tag compare, which would settle the
+   `Bool?` `isInterleaved`; and the `swift_beginAccess` flag, where 1 is a modify and 0 a read.
+
+6. Run the extended tool over EVERY reconstructed class before trusting one result (MEMORY rule 10).
+   The s112 sweep over `CacheIOContext`, `MetalSubtitleView`, `MetalPlayView` and
+   `ReadCacheIOContext` returned sane maps; `MetalSubtitleView`'s independently matches the map
+   proven in `f1483d3`, which is a useful ongoing control.
 
 ---
 
