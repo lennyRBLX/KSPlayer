@@ -137,6 +137,14 @@ slot `[sp,#0x20]` is written exactly once and read exactly once in that body. Se
    - The three private ones share the file-private discriminator `33_D69EFE1402863CA716A3171C7DB6DFB9`.
    - ✅ **Still open:** find the WRITE sites. Every site read so far is a read; a `strb` of `#1` inside
      `close` would settle `_isClosed`. Extend the tool to report ALL accesses rather than the first.
+     ⚠️ **Keep the clobber tracking when you do.** s112 tried this as a quick ad-hoc scan that matched
+     `[xBase, <reg>]` anywhere in the body once `<reg>` had held the offset, and the result was
+     unusable: the offset lands in `x8`, `x8` is scratch, and it is immediately reused for OTHER
+     field offsets — so the scan reported `strb`/`ldr`/`ldr d` "accesses" to this field that belong to
+     different fields entirely, and three unrelated bodies came back with identical hit lists. The
+     shipped scanner is right to stop a holder at the first `mov|ldr|adrp|add|sub` that redefines its
+     register; an all-accesses mode must re-establish a fresh holder after each clobber rather than
+     drop the check. A false WRITE site here would name the wrong field.
    - ✅ **Still open:** a 3-valued tag compare would settle the `Bool?` `isInterleaved`, since an
      `Optional<Bool>` stores `.none` as 2 — every site seen so far compares against 1 only.
 
