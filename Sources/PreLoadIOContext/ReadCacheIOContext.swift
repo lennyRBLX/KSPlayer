@@ -37,6 +37,27 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     // onlyCache: serve strictly from cache (no network). v4 concrete.
     let onlyCache: Bool = false
     // eof: whether the cached stream is at end. v4 concrete.
+    //
+    // ⚑ OFFSET GLOBAL 0x1044f6918 IS `eof`. Sessions 112 and 113 both recorded this as an
+    //   unbreakable 2-way tie against `onlyCache` — the s113 handoff says in terms that the two
+    //   SEMANTIC readings point in opposite directions (`read()` consulting a cache-only policy
+    //   flag argues onlyCache; `fileSize()` setting a flag when a probe hits the end argues eof)
+    //   and that it must therefore STAY OPEN. Semantics never had to enter it, and the axis that
+    //   decides it is MUTABILITY:
+    //     · `fileSize()` @0x101bad320 STORES through this global — `mov w9,#1` /
+    //       `strb w9,[x21,x8]` at 0x101bad50c, x21 = swiftself — and the trie names that address
+    //       `ReadCacheIOContext.fileSize() -> Swift.Int64`, so it is a METHOD, not an initialiser.
+    //     · the field records give `onlyCache` flags=0 and `eof` flags=2; flags 0x2 is IsVar.
+    //   Swift does not permit assigning a `let` stored property outside an initialiser, so the
+    //   mutated global cannot be `onlyCache`. This is a derivation, not a reading of which name
+    //   fits better, and it survives the objection the handoff raised.
+    //
+    //   ⚠️ The sibling byte global 0x1044f6940 is NOT settled by this and must not be assumed to
+    //   be `onlyCache` by elimination from one body: its only store is `strb w9,#1` at 0x101baf760
+    //   INSIDE the initialiser 0x101baf0cc, where a `let` is perfectly assignable, so the axis
+    //   does not fire there and it stays a 2-way candidate.
+    // ⚑[tool=recover_field_by_access ref=ReadCacheIOContext.eof:0x1044f6918 result=UNIQUE-byte-mutability]
+    // ⚑[tool=fieldrec ref=ReadCacheIOContext.onlyCache:flags result=0-let]
     private var eof: Bool = false
     // end: logical end offset of the cached stream.
     private var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
