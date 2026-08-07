@@ -170,9 +170,31 @@ programme had been carrying:
 | # | unit | why |
 |---|---|---|
 | 1 | Adjudicate the two drained waves into `wave_exclusions.json` | small, fully specified, clears ANOMALY 2 → 0 |
-| 2 | `classify_compiler_helpers.is_vwt_base` | §1c root cause; a false VWT poisons every callee through W2 |
+| 2 | `classify_compiler_helpers.is_vwt_base` | §1c root cause; a false VWT poisons every callee through W2. **The discriminator is found — see below** |
 | 3 | `ReadCacheIOContext` 0x1044f6910 | 5 → 3 after the mutability axis: `end`, `urlPos`, `entryCache`. Closing it opens `fileSize`, `read` AND `seek`, three rows at once |
 | 4 | `CacheIOContext` 0x104c63938 | 7 → 6. `isReadComplete` is separately eliminable — `enableReadComplete()` @0x101b8a768 writes 0x1044f3878, a DIFFERENT global |
+
+### Unit 2's discriminator is already found — it needs the POSITIVE anchor, not the idea
+
+`is_vwt_base` accepts any base whose first 8 words point into `__text` and whose +0x40/+0x48
+satisfy `0 < size <= stride`. The **ValueWitnessFlags word at +0x50** rejects the false ones and
+s113 measured it on the exact failing case:
+
+| base | size | stride | flags | alignment mask | verdict |
+|---|---|---|---|---|---|
+| `0x1044f41f8` (inside CacheOnlyIOContext's metadata) | 0x18 | 0x28 | `0x00000038` | **56** | must REJECT — 56 is not `2ⁿ−1` |
+
+A real value-witness table always carries a valid alignment mask in the low 8 bits of +0x50, so
+requiring `((align + 1) & align) == 0` is sound and only ever rejects non-VWTs. Those two "pointers"
+at +0x40/+0x48 are just the first two entries of that class's FIELD-OFFSET VECTOR.
+
+⚠️ **Do NOT land it on that alone.** Tightening this predicate makes FEWER things classify as
+compiler helpers, which is the direction that lets a real artifact through, so it needs a POSITIVE
+golden — a known-good VWT that still passes — and s113 could not anchor one: reading a class's VWT
+pointer at `metadata − 8` returns `KeyError: 'data'` from the Ghidra reader for both classes tried,
+and the `is_value_witness` search from the selfcheck's own anchor `0x101baf98c` finds no VWT base at
+all. Get a real VWT in hand FIRST, then tighten, then rule-10 re-sweep. The payoff is
+`0x101b9089c`, whose ARTIFACT is false and which gates the fully-derived `CacheOnlyIOContext.read`.
 
 ⚠️ **`rank_member_missing --ready` is the readiness oracle. Do NOT sort the triage by raw
 instruction count and pick the top row.** s113 did exactly that and burned a cycle on
