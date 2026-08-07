@@ -94,7 +94,27 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     //   logicalPos (3rd) and entryCache (5th) — and all three land exactly where declaration order
     //   predicts. That is suggestive, not decisive, and it is a claim about compiler behaviour
     //   rather than a read, so it needs a golden on a class whose bindings are ALL known before
-    //   anything is written from it. Do not confuse it with MEMORY's "offset globals are not in
+    //   anything is written from it.
+    //
+    //   ❌ THAT GOLDEN WAS RUN, ON KSPlayerLayer, AND THE HYPOTHESIS FAILED IT. DO NOT USE IT.
+    //   KSPlayerLayer is the ideal control — 11 `vpfi` fields, with `delegate` and
+    //   `isAutoReplaceAndConstrainPlayerView` both trie-bound at known declaration positions — and
+    //   its designated init 0x1019ca41c does NOT lay the defaults down as one contiguous run in
+    //   declaration order. `delegate`'s global 0x1044e6138 is touched at 0x1019ca578, far ahead of
+    //   the run at 0x1019ca650-0x1019ca688, and that run then CONTINUES past the defaulted fields
+    //   into ordinary init-body assignments — 0x104c634f8 is `url`, which carries no `vpfi` at all,
+    //   and 0x104c63508 takes `strb w9` with w9 = 1. So a store's POSITION in an init does not
+    //   identify its field: defaults and body assignments interleave, and the run has no readable
+    //   boundary. ReadCacheIOContext's init merely happens to look tidy.
+    //   ⚑[tool=function_extents ref=KSPlayerLayer.init:0x1019ca41c result=416-instr-no-contiguous-default-run]
+    //
+    //   ⚠️ A SEPARATE FINDING fell out of that control and is NOT this class's business, but should
+    //   not be lost: KSPlayerLayer's init stores **1** into 0x104c63508 at 0x1019ca698, and
+    //   `recover_field_offsets` binds that global to `isAutoReplaceAndConstrainPlayerView`, which
+    //   KSPlayerLayer.swift declares `= false`. That is either an init-body assignment or a
+    //   divergent declaration default, and it needs its own row.
+    //
+    //   Do not confuse any of this with MEMORY's "offset globals are not in
     //   field-record order", which is about the globals' ADDRESSES and still holds here: 0x910
     //   through 0x940 ascend while the fields they carry do not.
     private var eof: Bool = false
