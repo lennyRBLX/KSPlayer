@@ -316,10 +316,20 @@ Do not spend the session re-discovering these.
     unit. A whole-corpus MNEMONIC-SEQUENCE match of `0x10245f0e0` (38 instructions) against all 192
     functions found NO exact hit, so the linked build differs from the shipped one and the match must
     be structural rather than literal.
-    Lead, explicitly NOT a binding: `0x10245f0e0` calls `_free` five times inside a loop, which is the
-    shape of `_ass_flush_events` (a same-sized function in the shipped archive), and the row it blocks
-    is `AssIncrementImageRenderer.flush`. Suggestive on three counts and confirmed on none — do not
-    write it without the structural match. ARTIFACT is right
+    **Two matching routes were tried and BOTH came back negative. Do not repeat them:**
+    - *Exact mnemonic sequence.* `0x10245f0e0`'s 38-mnemonic sequence matched NO libass function.
+    - *Call profile.* Forward's body calls `_free` x5 and nothing else. Exactly two libass functions
+      call `_free` five times: `_ass_renderer_done` (72 instr, but 12 other calls — not the profile)
+      and `_text_info_done` (22 instr, `_free` x5 only — the profile matches exactly). That looked
+      like a unique hit and it is REFUTED: `nm` shows `_text_info_done` as lowercase **`t`**, a
+      file-local static in `ass_render.o`, absent from the 192 external symbols. Swift in another
+      translation unit cannot call it, so it cannot be `0x10245f0e0`.
+
+    The `_ass_flush_events` guess is also unsupported — it was suggestive only because the blocked row
+    is named `.flush` and the sizes were close, and neither test backs it.
+
+    So the shipped archive genuinely differs from the linked build, and the unit needs a matcher that
+    survives that: normalise for inlining, or match on string/constant operands rather than shape. ARTIFACT is right
     for "may I invent a Swift name" and WRONG as "no source counterpart": this is C you must call by
     name. Screen every ARTIFACT on the address range (`>= 0x102000000` is library code) before
     feeding it to `rank_member_missing --helpers`.
