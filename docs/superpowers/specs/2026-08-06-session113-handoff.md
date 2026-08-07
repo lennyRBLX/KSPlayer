@@ -424,13 +424,30 @@ BLOCKER, not the row. s112 sized them, and this is the whole cost of each unit:
 
 | unit | row | blocker(s) | TOTAL to read |
 |---|---|---|---|
-| `Coordinator.isRecord` | 32 | `1019d8d28` **412** (EXHAUSTED, 4 sites) | **444** |
+| `Coordinator.isRecord` | 32 is ONE of FIVE bodies — see below | `1019d8d28` **412** (EXHAUSTED, 4 sites) | **>444** |
 | `KSPlayerLayer.select` | 133 | `101ab2540` **507** + `101ab2de4` **122** (both EXHAUSTED, 7 sites) | **762** |
 
 Both blockers are EXHAUSTED with several call sites, so each needs an approved INVENTED name AND its
 full body stood up — the row's own instruction count is about 7% of the work in the first case and
 17% in the second. That is the shape of every row left: **the cheap-looking ones are cheap only in the
 row, never in the unit.** Do not pick from the `instr` column.
+
+⚠️ **`Coordinator.isRecord` is a PROPERTY-WRAPPER-backed `Bool`, and the ranking's 32 instructions
+are one of its FIVE bodies.** s112 read the small ones:
+- `0x100090184` carries BOTH "property wrapper backing initializer" and "property wrapped field init
+  accessor" (ICF-folded onto one address) and is a 1-instruction thunk `b 0x10004e02c`;
+- the getter `0x1019d9398` is five instructions that load two `__TEXT,__const` descriptors
+  (`0x103567be0`, `0x103567c08`) and tail-call a shared generic accessor `0x1000065e8`, itself
+  NOT_IN_TRIE — i.e. the accessors route through wrapper machinery, not through a stored field;
+- the setter is `0x1019d9488` (49) and the modify `0x1019d954c` (32, the number the ranking shows).
+
+`isRecord` is not declared anywhere in `KSVideoPlayer.swift`. So this row is not "a Bool plus a
+blocker" — it is **stand up a property-wrapped property**, and the wrapper TYPE has to be identified
+first, from those two `__const` descriptors. Neither is in the trie; both are 24-byte structures of
+relative pointers, so decoding them is the first step and it is unstarted.
+
+That makes `KSPlayerLayer.select` (762, field-clean, two ordinary EXHAUSTED blockers) the simpler of
+the two despite being the larger number.
 
 Marker form for those names, since this is the first place in the tree they will appear:
 `⚑[invented=<name> addr=<0xADDR> exhaustion=name_exhaustion_gate approved=<who>]` — `invented=`, never
