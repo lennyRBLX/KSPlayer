@@ -222,8 +222,17 @@ Each closure's shape is: MainActor executor precondition (`MainActor.shared` + `
     which is this class's vtable slot 12. Only the second address all session to pass the check.
   · closure 12's slots 0x158 / 0x160, which are NULL in KSPlayerLayer's descriptor — inherited
     accessors, so they need the superclass chain rather than this class's vtable.
-  · the `seek` arguments for closures 9/10/11, and each closure's returned
-    `MPRemoteCommandHandlerStatus`.
+  · the `seek` arguments for closures 9/10/11. PARTIALLY read in s113, and only the solid part is
+    recorded here: the time argument is a SUM — `fadd d8, d8, d0` @0x1019d420c — of a Double the
+    body gets from `self.player` and a Double it gets from the cast event via
+    `objc_msgSend` @0x103463ae0. Immediately after, it takes a `swift_beginAccess` on
+    `self.options` (offset global 0x104c634e0) and reads a Bool at the CONSTANT offset +0x72
+    (`ldrb w0, [x20, #0x72]` @0x1019d4244), which is positioned to be the `autoPlay:` argument.
+    ⚠️ NOT established, and deliberately not guessed: the selector behind 0x103463ae0, the
+    identity of the options Bool at +0x72, and how the body reaches the player's time — the
+    `ldp x24, x20, [x20]` / `ldr x26,[x20,#8]` / `ldr x27,[x26,#0x28]` chain at
+    0x1019d41c0-0x1019d41d4 does not read as a plain witness dispatch and needs a careful pass.
+  · each closure's returned `MPRemoteCommandHandlerStatus`.
 The command ORDER is pinned and matches the mirror method exactly.
 
 ### ⚠️ The single most transferable thing s113 learned
