@@ -117,6 +117,29 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   the init's own unit. Do NOT spell it `URL!` — a field mangle without `Sg` is plain `T`,
     //   and IUO is not reflection-visible either way.
     //   ⚑[tool=export_trie_oracle ref=CacheIOContext.tmpURL:0x104c63908 result=vpWvd-URL-no-Sg]
+    //
+    // ⚑ s113 PARTIALLY READ THE CONSTRUCTION, which the note above called "the very Foundation
+    //   cache-directory region that init records as UNRESOLVED". It is no longer unresolved, only
+    //   unfinished, and three facts are banked so the next attempt starts from here:
+    //     · `tmpURL` carries NO `vpfi` and NO setter — the trie holds exactly three symbols for it
+    //       (getter, property descriptor, offset global), so it is `public let tmpURL: URL` with no
+    //       declaration default, assigned in the designated init. There is no default-value escape
+    //       from the "not initialized at super.init call" error; the init must be reconstructed.
+    //     · the chain STARTS exactly as `cacheExists` and `copyPreloadCache` do:
+    //       `bl _NSTemporaryDirectory` @0x101b86fa4, bridged to String, then
+    //       `URL.init(fileURLWithPath:)` @0x101b86fd0 with the indirect return in x27.
+    //     · the FIRST path component is the literal **"videoCaches"**, built in registers rather
+    //       than loaded: x0/x1 at 0x101b86fdc-0x101b86ff4 carry the bytes
+    //       `76 69 64 65 6f 43 61 63 | 68 65 73` under discriminator 0xEB, which is 0xE0|11 — an
+    //       all-ASCII small string of count 11. `URL.appendingPathComponent` follows at
+    //       0x101b87000, and a SECOND `appendingPathComponent` at 0x101b87038.
+    //   ⚠️ WHAT IS NOT SETTLED is which URL reaches the field. The component chain accumulates in
+    //     x23, while the store at 0x101b8747c is `initializeWithCopy(&self.tmpURL, x27, URL)` —
+    //     source x27 — and x27 is REASSIGNED at 0x101b87158 by `ldr x27,[x20,#0x10]`, which the
+    //     surrounding `cbz`/`sub #1`/`cmp` make an integer, not a URL. Those cannot both be live on
+    //     one path, so resolving it needs the 836-instruction init's control flow, not another peek.
+    //     Do NOT write `tmpURL` from the fragment above.
+    // ⚑[tool=decode_string_literal ref=CacheIOContext.init.tmpURL_component:0x101b86fdc result='videoCaches']
     public var tmpURL: URL? // ⚑ DIVERGENT: binary says non-optional URL (see above)
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
     //    defaults it true. field-record.
