@@ -1272,6 +1272,46 @@ public extension KSOptions {
     /// `PlaneDisplayModel` (and unlike the two `SphereDisplayModel` subclasses) it does not trip
     /// the main-actor-isolated-default-value rule that still blocks `displayEnumVR`/`displayEnumVRBox`.
     nonisolated(unsafe) static var displayEnumDovi = DoviDisplayModel()
+    /// ⚑ s113: NOW DECLARED. Everything the long note above establishes about these two still
+    /// stands — the types, the storages (0x104c632b0 / 0x104c632b8), the `swift_once` addressors
+    /// @0x1019bc684 / @0x1019bc74c and the no-argument construction through the shared tail
+    /// @0x1019bc700 into `VRDisplayModel.init` @0x101a8c5b4. What changed is only the SPELLING of
+    /// the declaration.
+    ///
+    /// Each carries exactly four symbols — addressor, static getter, the storage, and a property
+    /// descriptor — and NO `vsZ`. No setter is `let`, and the property descriptor is the `vpMV`
+    /// that makes them public; they sit in `public extension KSOptions`, so both stay unmarked,
+    /// exactly like the three siblings above.
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.displayEnumVR:0x104c632b0 result=4-symbols-no-vsZ]
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.displayEnumVRBox:0x104c632b8 result=4-symbols-no-vsZ]
+    ///
+    /// ⚑ THE `@MainActor` IS NOT BINARY-DERIVED, and this is the one thing to carry forward.
+    ///   Actor isolation leaves no reflection record, so NO spelling of it here is derived —
+    ///   including the `nonisolated(unsafe)` the three siblings carry. What decided it is which
+    ///   un-derived spelling costs least elsewhere:
+    ///     · `nonisolated(unsafe) var` and `nonisolated(unsafe) let` were both measured (s109,
+    ///       s112) and both fail identically — "main actor-isolated default value in a
+    ///       nonisolated(unsafe) context" — because these two types, unlike PlaneDisplayModel and
+    ///       DoviDisplayModel, declare `override required init()` and inherit isolation from the
+    ///       `DisplayEnum` protocol.
+    ///     · Unpicking that chain was also measured (s112) and needs three further isolation edits
+    ///       — on `DisplayEnum`, `sceneSize` and `SphereDisplayModel` — none of them derived.
+    ///     · `@MainActor` on the static itself was NOT probed by any of those sessions. It builds
+    ///       4/4 and it changes NOTHING else in the tree: zero edits to any other declaration.
+    ///   It is therefore the minimum, and it is consistent with the isolation model this tree
+    ///   already carries, since `DisplayEnum` is `@MainActor` here.
+    ///
+    /// ⚠️ COUNTER-EVIDENCE, recorded so it is not lost: the binary argues the other way. The
+    ///   once-init tail and both inits (`VRDisplayModel.init` @0x101a8c5b4, `SphereDisplayModel.init`
+    ///   @0x101a8bf3c) carry NO actor machinery — no `ScMMa`, no `swift_task_isCurrentExecutor`,
+    ///   no `swift_task_reportUnexpectedExecutor` — and that absence is evidence rather than a gap,
+    ///   because `MetalPlayView.set` @0x101a60fc8 in this same image emits all three. So Forward's
+    ///   `DisplayEnum` is probably NOT main-actor isolated at all. A session that takes the
+    ///   isolation unit and unpicks that chain should revisit these two annotations first — they
+    ///   are the cheapest thing to remove once `DisplayEnum` stops being `@MainActor`.
+    /// ⚑[tool=body_fingerprint ref=VRDisplayModel.init:0x101a8c5b4 result=no-actor-machinery]
+    @MainActor static let displayEnumVR = VRDisplayModel()
+    @MainActor static let displayEnumVRBox = VRBoxDisplayModel()
     // ── s109, four more lazily-initialised statics ───────────────────────────────────────────
     // All four share one addressor shape: `__swift_instantiateConcreteTypeFromMangledName` (or a
     // direct metadata accessor) for the property's type, then the generic value-buffer pair
