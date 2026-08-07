@@ -43,9 +43,17 @@ Three selfchecks must print `SELFCHECK PASS`. All live only in `play/scripts/`, 
 python3 scripts/rank_member_missing.py --selfcheck && python3 scripts/name_exhaustion_gate.py --selfcheck && python3 scripts/helper_fingerprint.py --selfcheck
 ```
 
-`name_exhaustion_gate` must report **12** checks, not 9. s112 added three: the CSE'd-length
-`#function` route, the arithmetic path itself, and a negative control. If it reports 9 the tool has
-been rolled back and the fix below is gone.
+`name_exhaustion_gate` must report **14** checks, not 9. s112 added five: the CSE'd-length
+`#function` route, the arithmetic path, a negative control, and the two that matter most — the
+FALSE EXHAUSTED at `0x1019c835c` and its reason. If it reports 9 the tool has been rolled back.
+
+⚠️ **BEFORE INVENTING ANY APPROVED NAME, READ THE BODY FOR GENERIC-ALGORITHM SHAPE.** `0x1019c835c`
+reached EXHAUSTED and sat inside the approved batch, and it is Swift's `firstIndex(of:)` over
+`[URL]` — it reads the element STRIDE (`[vwt+0x48]`) and ALIGNMENT (`[vwt+0x50]`) from the
+value-witness table and drives the generic `Equatable.==` witness thunk in a loop. Naming it would
+have named the standard library. The gate now refuses that shape and the re-sweep reclassified
+exactly that one address, but the general lesson stands: a body that computes its own element stride
+is stdlib whatever the routes say, and only the disassembly shows it.
 
 1. Read `reconstruction/blocker_classification_s112.json` before any planning. It holds the
    `name_exhaustion_gate` verdict for all 116 distinct unnamed callees, the sweep method, the
@@ -57,8 +65,8 @@ been rolled back and the fix below is gone.
 
 ## Why naming is not the bottleneck
 
-The population is **48 ARTIFACT · 13 INLINE-INSTEAD · 46 EXHAUSTED · 9 ROUTE-OPEN**. The human
-approved inventing names for the EXHAUSTED set in s112; s112 screened it and **41 are eligible**
+The population is **49 ARTIFACT · 13 INLINE-INSTEAD · 45 EXHAUSTED · 9 ROUTE-OPEN**. The human
+approved inventing names for the EXHAUSTED set in s112; s112 screened it and **40 are eligible**
 (all inside KSPlayer `__text`; 5 are Task/actor-shaped and off-limits per s108: `0x1019a26a8`,
 `0x1019c80fc`, `0x1019d2bb0`, `0x101a3e510`, `0x101a47ae0`).
 
