@@ -44,7 +44,7 @@ python3 scripts/rank_member_missing.py --selfcheck && python3 scripts/name_exhau
 ```
 
 Counts changed in s113: `recover_field_by_access` **35** checks (was 13), `name_exhaustion_gate`
-**16** (was 14). Fewer means a fix was rolled back — stop and report before doing anything else.
+**20** (was 14). Fewer means a fix was rolled back — stop and report before doing anything else.
 
 ---
 
@@ -61,6 +61,37 @@ Four commits, each alone on `forward`, build 4/4 at every one. **MEMBER_MISSING 
 | `91cc415` | `KSOptions.displayEnumVR` + `displayEnumVRBox` — TWO rows |
 | `a096c0f` | `CacheIOContext.clearOtherCache` — plus `tmpURL` retyped to the non-optional `let` |
 | `fb879df` | no member — the `0x104c63938` tie cut from SEVEN candidates to two |
+
+### 🚨 A SECOND FALSE EXHAUSTED WAS FOUND INSIDE THE A4 PRE-APPROVED BATCH
+
+s112 found one (`0x1019c835c`, Swift's `firstIndex(of:)`). s113 found **TWO more**, so the
+eligible batch is **45 → 43**: `0x1019ac164` and `0x1019ac5b4`.
+
+The first is five instructions — `adrp/add x2` to the ObjC classref `_OBJC_CLASS_$_AVPlayerItemAccessLogEvent`,
+`adrp/add x3` to a `__DATA` global, then `b 0x1000e97c8` — and **seven** sibling thunks in the same
+run tail-call that one shared body, each binding a different classref (the next one over binds a
+register-built `"CTRunRef"`). None of the seven is in the trie. It is one arm of a compiler outline,
+and naming it would have fabricated an identifier for glue.
+
+It was reached by working the handoff's own 13-row worklist: `DynamicInfo.update` is field-clean and
+its only blocker is this address, which made it look like the cheapest remaining row in the tree.
+
+The gate now carries the discriminator as clause (c2): a body of ≤8 instructions that only loads
+constants and tail-calls a shared target, where ≥3 sibling bodies tail-call that same target, is
+ARTIFACT. It makes MORE things artifacts, which suppresses invention — the safe direction — and it
+cannot swallow a real member because `route_trie` runs first (a trie-named one-instruction thunk
+like `KSComplexPlayerLayer.removeRemoteControllEvent` @0x1019d27a4 is ROUTE-OPEN before it is
+reached). Both are goldened; selfcheck 16 → 20.
+
+The rule-10 re-sweep over all 116 addresses in one process CHANGED exactly two, both
+EXHAUSTED → ARTIFACT: `0x1019ac164` (7 siblings on 0x1000e97c8) and `0x1019ac5b4` (3 siblings on
+0x1000853e8, binding a `__TEXT` pointer and a register-built `"Anime4K"` string). Nothing else
+moved. `reconstruction/blocker_classification_s112.json` now carries a `gate_fix_s113` block and
+its tally is ARTIFACT 51 / EXHAUSTED 43 / INLINE-INSTEAD 13 / ROUTE-OPEN 9.
+
+⚠️ **The lesson for A4 generally: the EXHAUSTED batch is not pre-cleared, it is pre-APPROVED.** Two
+of its 45 addresses have now turned out to be un-nameable on inspection. Run the shape check on
+every one before writing a name, as A4 says — it is not a formality.
 
 ### ⚠️ The single most transferable thing s113 learned
 
