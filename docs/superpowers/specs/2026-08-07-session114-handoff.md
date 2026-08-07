@@ -201,19 +201,25 @@ Each closure's shape is: MainActor executor precondition (`MainActor.shared` + `
 | 1 | play | 0x1019d3690 | 0x2b8 | `KSPlayerLayer.play()` (slot 60) |
 | 2 | pause | 0x1019d37ec | 0x2c0 | `KSPlayerLayer.pause()` (slot 61) |
 | 3 | togglePlayPause | 0x1019d38f8 | 0x2b8 + 0x2c0 | BOTH play and pause — the toggle |
-| 4 | stop | 0x1019d3a68 | none | ⚑ no vtable dispatch — still to read |
+| 4 | stop | 0x1019d3a68 | none | `MediaPlayerProtocol.shutdown()` @0x1019de8e4 — a NAMED extension method, on the `player` existential |
 | 5 | nextTrack | 0x1019d3ba8 | 0x3e0 | `KSComplexPlayerLayer.playNextURL()` (slot 12) |
-| 6 | previousTrack | 0x1019d3cb4 | none | ⚑ still to read |
-| 7 | changeRepeatMode | 0x1019d3da8 | none | ⚑ still to read |
-| 8 | changePlaybackRate | 0x1019d3f24 | none | ⚑ still to read |
+| 6 | previousTrack | 0x1019d3cb4 | none | calls `0x1019d3518` — 94 instr, NOT_IN_TRIE, **EXHAUSTED**, the row's ONLY naming blocker |
+| 7 | changeRepeatMode | 0x1019d3da8 | none | `dynamicCastObjCClass` the event, then `objc_msgSend[repeatType]` |
+| 8 | changePlaybackRate | 0x1019d3f24 | none | `dynamicCastObjCClass` the event, then `objc_msgSend[playbackRate]`, applied to the `player` existential |
 | 9 | skipForward | 0x1019d40b8 | 0x2e0 | `KSPlayerLayer.seek(time:autoPlay:completion:)` (slot 65) |
 | 10 | skipBackward | 0x1019d42cc | 0x2e0 | same `seek` |
 | 11 | changePlaybackPosition | 0x1019d44e0 | 0x2e0 | same `seek` |
-| 12 | enableLanguageOption | 0x1019d4684 | 0x158 + 0x160 | slots 16/17 are NULL in the descriptor (inherited accessors) — needs a different route |
+| 12 | enableLanguageOption | 0x1019d4684 | 0x158 + 0x160 | `dynamicCastObjCClass` the event, then `objc_msgSend[languageOption]` and `[languageOptionType]`; slots 16/17 are NULL in the descriptor (inherited accessors) and still need a route |
 
-**What is left**: the four no-dispatch closures (4, 6, 7, 8), closure 12's two accessor slots, the
-`seek` arguments for 9/10/11, and each closure's returned `MPRemoteCommandHandlerStatus`. The
-command ORDER is already pinned and matches the mirror method exactly.
+**ELEVEN of the twelve payloads are now identified.** What is left is small and enumerated:
+  · `0x1019d3518` (94 instr, NOT_IN_TRIE, EXHAUSTED) — `previousTrack`'s payload and the row's ONLY
+    naming blocker. Run the A4 shape check on it FIRST; three of this session's four batch
+    inspections found glue, so do not assume it is nameable.
+  · closure 12's slots 0x158 / 0x160, which are NULL in KSPlayerLayer's descriptor — inherited
+    accessors, so they need the superclass chain rather than this class's vtable.
+  · the `seek` arguments for closures 9/10/11, and each closure's returned
+    `MPRemoteCommandHandlerStatus`.
+The command ORDER is pinned and matches the mirror method exactly.
 
 ### ⚠️ The single most transferable thing s113 learned
 
