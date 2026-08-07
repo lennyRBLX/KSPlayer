@@ -13,9 +13,9 @@ python3 scripts/pin_sweep.py --every
 |---|---|
 | gate | `PASS 48   ANOMALY 2   FAIL 4` |
 | FAITHFUL FLOOR | **356 / 1035** |
-| MEMBER_MISSING | **63** |
+| MEMBER_MISSING | **61** |
 | ACCESS · NOT_IN_TRIE · AMBIGUOUS_OVERLOAD · TYPE_DIVERGENCE | 26 · 23 · 10 · 4 |
-| total disagreements | 126 |
+| total disagreements | 124 |
 | build | 4/4 |
 | KSPlayer | `forward` @ `62e18ce`, tree clean apart from the pre-existing untracked spec docs |
 | FFmpegKit | `12f0899` on `forward-recon-shim`, 1167 tracked dirty UNSTAGED, 0 staged. **Never `git add -A` there.** |
@@ -43,7 +43,7 @@ Four selfchecks must print `SELFCHECK PASS`. All live only in `play/scripts/`, w
 python3 scripts/rank_member_missing.py --selfcheck && python3 scripts/name_exhaustion_gate.py --selfcheck && python3 scripts/helper_fingerprint.py --selfcheck && python3 scripts/recover_field_by_access.py --selfcheck
 ```
 
-Counts changed in s113: `recover_field_by_access` **32** checks (was 13), `name_exhaustion_gate`
+Counts changed in s113: `recover_field_by_access` **35** checks (was 13), `name_exhaustion_gate`
 **16** (was 14). Fewer means a fix was rolled back — stop and report before doing anything else.
 
 ---
@@ -58,6 +58,18 @@ Four commits, each alone on `forward`, build 4/4 at every one. **MEMBER_MISSING 
 | `3901d2c` | `KSAVPlayer.readyToPlay()` @0x1019a402c |
 | `be3d87b` | `CacheIOContext.copyPreloadCache(md5:from:to:)` @0x101b8e85c |
 | `62e18ce` | no member — the derivation that `ReadCacheIOContext` 0x1044f6918 is `eof` |
+| `91cc415` | `KSOptions.displayEnumVR` + `displayEnumVRBox` — TWO rows |
+
+### ⚠️ The single most transferable thing s113 learned
+
+**A row three sessions recorded as blocked had an unprobed escape.** `displayEnumVR` /
+`displayEnumVRBox` were written off by s106, s109 and s112, each of which measured a DIFFERENT
+spelling and recorded the negative honestly — `nonisolated(unsafe) var`, `nonisolated(unsafe) let`,
+`nonisolated` inits, and deleting `@MainActor` from `SphereDisplayModel`. None of them tried
+`@MainActor` **on the static itself**. It builds 4/4 and touches nothing else in the tree.
+
+Read the recorded negatives as *the set of spellings already eliminated*, not as *this is
+impossible*. The note was excellent and still incomplete.
 
 `change(state:)` is the superclass's 115-instruction `change` INLINED plus one
 `MPNowPlayingInfoCenter.default().nowPlayingInfo = nil`. There is **no `bl 0x1019cc0ac`**, so
@@ -161,6 +173,18 @@ programme had been carrying:
 | 2 | `classify_compiler_helpers.is_vwt_base` | §1c root cause; a false VWT poisons every callee through W2 |
 | 3 | `ReadCacheIOContext` 0x1044f6910 | 5 → 3 after the mutability axis: `end`, `urlPos`, `entryCache`. Closing it opens `fileSize`, `read` AND `seek`, three rows at once |
 | 4 | `CacheIOContext` 0x104c63938 | 7 → 6. `isReadComplete` is separately eliminable — `enableReadComplete()` @0x101b8a768 writes 0x1044f3878, a DIFFERENT global |
+
+⚠️ **`rank_member_missing --ready` is the readiness oracle. Do NOT sort the triage by raw
+instruction count and pick the top row.** s113 did exactly that and burned a cycle on
+`LimitCountPreLoadIOContext.preloadCount` — 18 instructions, body read end to end, both field
+globals resolved (0x1044f4ac0 = `moreCount`, 0x1044f4ac8 = `maxMoreCount`, by the mutability axis;
+both `UInt16`, __got 0x104112ad8 binds `_$ss6UInt16VMn`). It does not compile, because
+`preloadCount` is not declared anywhere on the superclass chain: the override table puts its base
+method on `PreLoadIOContext`, and `LimitPreLoadIOContext.preloadCount` @0x101ba1cdc is itself a
+591-instruction MEMBER_MISSING row. The ranker already knew — its own selfcheck uses this exact row
+as its "a callee that is itself a queued row is a DEPENDENCY" anchor. **The 18-instruction body is
+ready to paste the moment the 591-instruction base lands**, and that derivation is banked in this
+paragraph so it is not redone.
 
 ⚠️ **Pick from the UNIT cost, never a row's `instr` column.** Two live examples from s113:
 `registerRemoteControllEvent` is ranked 648 instructions and is really 648 **plus twelve
