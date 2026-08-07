@@ -419,9 +419,22 @@ ACCESSES, never on the global list**, or you will invent blockers that are not t
 is the one row where a genuine unnamed field remains (`0x1044e61e8`), so it is NOT the cheapest start
 despite its clean call axis.
 
-**Start with `Coordinator.isRecord` (32 instr, clean) or `KSPlayerLayer.select` (133 instr, clean),
-not with `stop`.** Both still need their blockers named — `1019d8d28` (412 instr) for the first,
-`101ab2540` + `101ab2de4` for the second — but neither carries field-axis debt.
+**Start with `Coordinator.isRecord` or `KSPlayerLayer.select`, not with `stop`** — but budget the
+BLOCKER, not the row. s112 sized them, and this is the whole cost of each unit:
+
+| unit | row | blocker(s) | TOTAL to read |
+|---|---|---|---|
+| `Coordinator.isRecord` | 32 | `1019d8d28` **412** (EXHAUSTED, 4 sites) | **444** |
+| `KSPlayerLayer.select` | 133 | `101ab2540` **507** + `101ab2de4` **122** (both EXHAUSTED, 7 sites) | **762** |
+
+Both blockers are EXHAUSTED with several call sites, so each needs an approved INVENTED name AND its
+full body stood up — the row's own instruction count is about 7% of the work in the first case and
+17% in the second. That is the shape of every row left: **the cheap-looking ones are cheap only in the
+row, never in the unit.** Do not pick from the `instr` column.
+
+Marker form for those names, since this is the first place in the tree they will appear:
+`⚑[invented=<name> addr=<0xADDR> exhaustion=name_exhaustion_gate approved=<who>]` — `invented=`, never
+`tool=`, so one grep separates every fabricated identifier from every derived fact.
 
 
 ---
