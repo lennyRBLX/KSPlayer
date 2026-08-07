@@ -251,18 +251,34 @@ stores `.none` as 2 and every site seen so far compares against 1.
    write their fields through CONSTANT offsets, not through offset globals, so the init route cannot
    bind `onlyCache` to a global either.
 
-9. `MetalSubtitleView.draw` @0x101ac0e24 — **the best-conditioned row left, and the one to start on.**
-   Its FIELD AXIS IS CLEAN, which s112 established and nobody knew before: run over every global the
-   body touches, `0x1044ef5b0`, `0x1044ed178` and `0x104c63708` take **zero** indexed field accesses
-   (so they are not stored-property uses in this body at all), and the only two that are indexed are
-   `0x1044ef5c0` -> `subtitleImages` and `0x1044ef5c8` -> `pendingTexts`, both already named in
-   `f1483d3`. No FIELD-axis work is left on this row.
+9. `MetalSubtitleView.draw` @0x101ac0e24 — ⚠️ **NOT the row to start on. An earlier paragraph in this
+   same handoff said it was; that was wrong and this replaces it.**
 
-   What remains is reading, not resolving: 242 instructions, plus `0x101ac11ec` (101 instructions,
-   INLINE-INSTEAD — one call site, so it must be inlined into the body rather than named), plus
-   `0x101a83a6c` (26 instructions, NOT_IN_TRIE, taken as a global i.e. used as a function VALUE —
-   read it before assuming it is a callee). Roughly 370 instructions in total with every field
-   already known.
+   Its FIELD AXIS genuinely is clean, and that part stands: `0x1044ef5b0`, `0x1044ed178` and
+   `0x104c63708` take ZERO indexed field accesses in the body, and the only two indexed globals are
+   `0x1044ef5c0` -> `subtitleImages` and `0x1044ef5c8` -> `pendingTexts`, both named in `f1483d3`.
+
+   But the COST is not 242 instructions, because **INLINE-INSTEAD IS TRANSITIVE** and nothing in the
+   ranking shows that. `draw` calls `0x101ac11ec` (101 instr, INLINE-INSTEAD, so it must be inlined
+   rather than named); that body calls three more, and every one of them is INLINE-INSTEAD too:
+
+   | address | instructions | verdict |
+   |---|---|---|
+   | `0x101ac0e24` `draw` | 242 | the row |
+   | `0x101ac11ec` | 101 | INLINE-INSTEAD |
+   | `0x101ac1444` | **2396** | INLINE-INSTEAD |
+   | `0x101ac23b4` | 508 | INLINE-INSTEAD |
+   | `0x101ac25b0` | 244 | INLINE-INSTEAD |
+
+   **~3,500 instructions that must all be read and expressed as ONE inlined body**, not 242. That is
+   a 14x understatement, and it is the same family of error as "the triage instruction count is the
+   thunk" — the row's own extent says nothing about the bodies that fold into it.
+
+10. **Before picking ANY row, compute the transitive INLINE-INSTEAD closure of its cost.**
+    `rank_member_missing` does not, so its instruction column is a floor, not an estimate. Adding
+    that closure to the ranker is a small, deterministic change and probably worth doing first —
+    every row-selection decision this session, including two of mine, was made against a number that
+    can be an order of magnitude low.
 
 ---
 
