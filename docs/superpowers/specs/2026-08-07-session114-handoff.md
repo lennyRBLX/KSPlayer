@@ -109,6 +109,34 @@ across two sessions, and every one of them was found only by reading the body. R
 on every address before writing a name, as A4 says: it is not a formality, it is the step that has
 caught something four times out of four attempts to use the batch.
 
+### 🚨 THE A4 WORKLIST IS MOSTLY NOT AVAILABLE — its blockers are glue, not names
+
+This is the conclusion the three false EXHAUSTED above build to, and it is the most decision-relevant
+thing in this handoff. s112's "the worklist your approval actually covers" lists 13 rows and says
+eight of them are field-clean, so **"the ONLY remaining gate is naming — which is what the approval
+covers."** s113 tested that claim by running the hardened gate over every blocker on the field-clean
+rows and then READING each one. They are all still EXHAUSTED, and they are all adapters:
+
+| row | blocker | what it actually is |
+|---|---|---|
+| `KSOptions.firstTimeLog` | `0x1019c1ca4` | `Dictionary<String,_>` specialization — now ARTIFACT |
+| `DynamicInfo.update` | `0x1019ac164` | 1 of 7 outlined-glue thunks — now ARTIFACT |
+| `KSOptions.removeHeader` | `0x1019ac888` (3 instr) | binds `_swift_bridgeObjectRelease` as an ARGUMENT, then `b 0x1019b02b0` — itself NOT_IN_TRIE, 69 instr |
+| `HLSCacheIOContext.parseM3U8` | `0x101b945b0` (9 instr) | binds a data global, a `__TEXT` const, `Foundation.URL`'s metadata accessor and `_swift_bridgeObjectRelease`, then `b 0x100084f38` — NOT_IN_TRIE, 97 instr, and BELOW 0x101000000 |
+| `PlayerView.buildMenusForButtons` | `0x1019afab0` (11 instr) | loads `[x20]`, binds two constants, calls `0x1019b0834` (NOT_IN_TRIE, 80 instr), stores the result back |
+
+Swift source cannot pass `_swift_bridgeObjectRelease` as a value — it has no Swift spelling. A body
+whose whole job is to bind a runtime entry point plus a metadata accessor and tail-call a shared
+unnamed implementation is a generic-specialization adapter. **Naming it would not make the row
+writable anyway**: its target is unnamed too, so the chain just moves one hop.
+
+⚠️ **NEXT TOOL UNIT, specified:** encode this as gate clause (b3) — a body that loads a `__got` slot
+binding a `_swift_*` runtime entry point into an ARGUMENT register (x0-x7) **without** ever `blr`-ing
+it, and then tail-calls, is an adapter. Golden it positive on `0x1019ac888` and negative on
+`CacheIOContext.copyPreloadCache` @0x101b8e85c, which CALLS `swift_bridgeObjectRelease` normally and
+is a real member. s113 verified the shape by reading all five bodies but did NOT add the clause,
+because rule 10 requires a full 116-address re-sweep before trusting it and two were already spent.
+
 ### ⚠️ The single most transferable thing s113 learned
 
 **A row three sessions recorded as blocked had an unprobed escape.** `displayEnumVR` /
