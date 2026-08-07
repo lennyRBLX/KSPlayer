@@ -1,5 +1,100 @@
 # Session 113 work
 
+## AUTHORISATIONS — pre-approved 2026-08-07, do not re-ask
+
+The human reviewed the three blockers s112 surfaced and pre-approved the recommended handling. Work
+continues until MEMBER_MISSING reaches its FLOOR. Use `approved=jweaver` in every marker that needs an
+approver, so one grep finds them all.
+
+**⚠️ THE TARGET IS 2, NOT 0.** `IOSVideoPlayerView.toggleBottomSlimProgress` and `updateTitle` both
+fold onto `0x10198eb18`, the `swift_deletedMethodError` stub: their names are in the trie and **their
+code is not in the binary** (s112 handoff §6). Closing those two means writing bodies with no source
+of truth, which rule 1 forbids. Drive the queue to **2** and stop there; going below 2 needs a
+separate, explicit human decision and is not authorised by this document.
+
+### A1 — Field-offset globals: naming rule. **APPROVED.**
+
+`name_exhaustion_gate` has no verdict for a field global, which is why s112 could not proceed. The
+rule now is:
+
+> `recover_field_by_access` reporting **UNIQUE** — a single type-compatible field remaining after
+> excluding every field already bound to an exported `vpWvd` — is a **DERIVATION**, not an invention.
+> Write the name, with an ordinary `⚑[tool=recover_field_by_access ref=<Class>.<field>:<0xGLOBAL>
+> result=UNIQUE-<width>-class]` marker. It is **not** an `invented=` marker: the name is read from the
+> access shape against the field records, nothing is fabricated.
+>
+> Anything **not** UNIQUE stays open, with
+> `⚑[tool=recover_field_by_access ref=<Class>:<0xGLOBAL> result=AMBIGUOUS-<n>]`. Never pick from a
+> candidate set by which name reads best.
+
+This is exactly what decided `isPictureInPictureStoped` and closed `playNextURL`, and it correctly
+REFUSES both ties in A2 — which is the behaviour that makes it safe to pre-approve.
+
+### A2 — The two ambiguous ties: **the ROUTE is approved, a guessed name is NOT.**
+
+`CacheIOContext 0x104c63938` (7 candidates) and `ReadCacheIOContext 0x1044f6918` (`onlyCache` vs
+`eof`) are **not** to be closed by picking the better-fitting name. Their semantic readings point in
+OPPOSITE directions — `read()` consulting a cache-only policy flag argues `onlyCache`; `fileSize()`
+setting a flag when a probe hits the end argues `eof` — so "it obviously means X" is worth nothing
+here, and that is precisely the shape of the eight errors s112 had to retract.
+
+**Approved route, in priority order:**
+1. **Constant-offset correspondence.** Bodies MIX the two access forms — `readComplete` uses
+   `add x0, x21, #0x18` (a constant offset) for `bytesRead` in the same body where it reaches
+   `stopOnLimitReached` and `fetchedSize` through globals. Recover each class's field->offset map from
+   the CONSTANT-offset sites (the initialisers use constant offsets throughout), then find any field
+   reachable BOTH ways. Every such field pins one global, and pinning enough of them resolves the
+   rest by elimination. This is a derivation and its output may be written under A1.
+2. If (1) does not close a tie, the tie STAYS OPEN. Mark the row and move on — do not spend a session
+   on it, and do not let it block the other rows in its class.
+
+### A3 — s108 Task-closure restriction: **LIFTED, with two exclusions.**
+
+Task-closure standups are authorised where the closure body reads end to end and the capture list is
+derivable from the binary. Each such row must record the capture derivation explicitly in its
+provenance comment — a captured `self` is `swift_unknownObjectWeakLoadStrong` for `[weak self]` and a
+plain retain otherwise; say which was seen and where.
+
+**Still excluded, by the human's standing directive and NOT lifted here:** the
+`KSAVPlayer.changePlaybackTime` chain, and the `SubtitleModel` Task closure.
+
+This opens `KSAVPlayer.readyToPlay` (~130 instr) and `KSComplexPlayerLayer.change` (~127 instr) —
+two of the cheapest rows left — plus the five Task-shaped addresses s112 removed from the eligible
+set, taking the invented-name batch back to **45 eligible**.
+
+### A4 — The invented-name batch (from s112). **Still in force.**
+
+45 EXHAUSTED addresses are eligible after A3 restores the five Task-shaped ones. Marker form:
+`⚑[invented=<name> addr=<0xADDR> exhaustion=name_exhaustion_gate approved=jweaver]` — `invented=`,
+never `tool=`. ⚠️ Before inventing ANY of them, read the body for generic-algorithm shape: a body that
+computes its own element stride from a value-witness table is stdlib whatever the routes say. That
+check is what caught `0x1019c835c` (`firstIndex(of:)`) sitting inside the approved batch.
+
+### Work order under these authorisations
+
+A3 changes which rows are cheapest, so do not work the old ordering. Re-derive the ranking first
+(`member_missing_triage` -> `rank_member_missing --helpers`, helpers built from the ARTIFACT +
+INLINE-INSTEAD verdicts in `reconstruction/blocker_classification_s112.json`), then:
+
+| # | row | ~instr | why now |
+|---|---|---|---|
+| 1 | `KSComplexPlayerLayer.change` @0x1019d1890 | 127 | unblocked by A3; field axis of this class is fully mapped |
+| 2 | `KSAVPlayer.readyToPlay` @0x1019a402c | 130 | unblocked by A3 |
+| 3 | — | — | run the A2 constant-offset correspondence; it may close `0x1044f6918` and `0x104c63938` at once |
+| 4 | `ReadCacheIOContext.fileSize` @0x101bad320 | 218 | opens iff A2 closes its tie |
+| 5 | `CacheIOContext.close` @0x101b8c83c | 284 | opens iff A2 closes its tie |
+| 6 | `KSPlayerLayer.select` @0x1019ceb00 | 762 total | field-clean today; blockers `101ab2540` + `101ab2de4` under A4 |
+
+Rows 1 and 2 are the two Task-closure standups. Read the capture list, record the derivation, and
+build 4/4 before staging — they are the first exercise of A3 and set the pattern for the other five.
+
+⚠️ **Pick from the UNIT cost, never the row's `instr` column.** s112 was misled three times:
+`mtkView` is 4 instructions over an ~870-instruction INLINE-INSTEAD chain, `draw` is 242 over a
+16112-byte closure, and `Coordinator.isRecord`'s 32 is one of FIVE bodies of a property-wrapper
+standup. `reconstruction/inline_closure_cost_s112.json` has the measured closure for the ready set.
+
+---
+
 **The queue is no longer gated on naming.** s112 cleared the CALL axis twice, screened every
 remaining reachable row to a wall, and then built the tool for that wall. The wall is the FIELD axis.
 
