@@ -150,14 +150,32 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //     i.e. `if !FileManager.default.fileExists(atPath: u.path) { try? …createDirectory(at: u,
     //     withIntermediateDirectories: true) }` followed unconditionally by `self.tmpURL = u`.
     //
-    //   ⚠️ WHAT IS STILL NOT SETTLED is only how the candidate `u` is chosen. It is reached
-    //     through a LOOP whose count is `[x20+0x10]` @0x101b87158 and whose back-edges are the two
-    //     reload sites above, so the remaining work is that loop and nothing else. Do NOT write
-    //     `tmpURL` until it is read — the prefix
-    //     `URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("videoCaches")` is
-    //     established, the selection is not.
+    //   ✅ AND THE VALUE IS NOW READ IN FULL, so this field is neither optional nor divergent any
+    //     more. There is NO loop in the selection — an earlier draft said the candidate came out of
+    //     one, and that was wrong: the loop at 0x101b87158 is a LATER, separate
+    //     `contentsOfDirectory` enumeration. The URL is built straight through, by two
+    //     value-witness `assignWithTake` calls (VWT+0x28) into the same stack buffer x27:
+    //       · `URL.init(fileURLWithPath:)` @0x101b86fd0 on `NSTemporaryDirectory()` -> x27
+    //       · `appendingPathComponent("videoCaches")` @0x101b87000 -> x23, then
+    //         assignWithTake(x27 <- x23) @0x101b8701c
+    //       · `appendingPathComponent(<String>)` @0x101b87038 -> x23, then
+    //         assignWithTake(x27 <- x23) @0x101b87058
+    //     and that `<String>` is the `md5` PARAMETER, read from the prologue's own spill slots
+    //     rather than guessed: the prologue stores x1 to [x29-0x130] @0x101b86d8c and x2 to
+    //     [x29-0x120] @0x101b86d84, and 0x101b87028/0x101b87030 reload exactly those two slots as
+    //     the String's two words. x1/x2 is `md5` in this init's register map.
+    //   ⚠️ The literal is "videoCaches", ELEVEN characters — discriminator 0xEB = 0xE0|11, bytes
+    //     `76 69 64 65 6f 43 61 63 | 68 65 73`. An older comment in this file said "videoCache"
+    //     (ten); that was wrong and is corrected here.
+    //
+    // ⚑ `let`, not `var`, and that RESOLVES the session-61 binding refusal recorded above rather
+    //   than working around it. The FieldRecord flags word is 0x00000000, which is `let`; s61 could
+    //   not spell it only because the value was believed to arrive after `super.init()`. It does
+    //   not — it is built from the parameters alone — so it is assigned BEFORE `super.init` and
+    //   `let` compiles. The fileExists/createDirectory guard stays after it, where the binary has
+    //   it; only the store moves, and it stores the same value either way.
     // ⚑[tool=decode_string_literal ref=CacheIOContext.init.tmpURL_component:0x101b86fdc result='videoCaches']
-    public var tmpURL: URL? // ⚑ DIVERGENT: binary says non-optional URL (see above)
+    public let tmpURL: URL
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
     //    defaults it true. field-record.
     var isJudgeEOF: Bool = true
@@ -284,8 +302,18 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         self.download = download
         self.saveFile = saveFile          // binary: explicit (char)param_5 store
         self.isReadComplete = isReadComplete // binary: explicit param_6 store
+        // Read in full: NSTemporaryDirectory() -> URL(fileURLWithPath:) @0x101b86fd0, then two
+        // appendingPathComponent calls, each landing back in the same buffer via a value-witness
+        // assignWithTake. Assigned BEFORE super.init so the field can carry its binary `let`.
+        tmpURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("videoCaches")
+            .appendingPathComponent(md5)
         super.init(bufferSize: bufferSize) // binary: *(self+0x14) = param_4
-        _ = md5
+        // The guard the binary runs before it stores the field: fileExists @0x101b873e4, and on
+        // the false edge createDirectory with withIntermediateDirectories = 1 @0x101b87434.
+        if !FileManager.default.fileExists(atPath: tmpURL.path) {
+            try? FileManager.default.createDirectory(at: tmpURL, withIntermediateDirectories: true)
+        }
         // UNRESOLVED → P8 (IO-completion): the Foundation cache-directory scan in FUN_101b86d38 —  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
         //   NSTemporaryDirectory()/appendingPathComponent("videoCache")/<md5>,
         //   fileExists + createDirectory, contentsOfDirectory enumeration building
@@ -873,4 +901,21 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // ⚑[tool=override_table ref=CacheIOContext.clearOtherCache:0x101b8d948 result=NO-not-an-override]
     // ⚑[tool=decode_objc_selector ref=0x10440ca38 result=removeItemAtURL:error:]
     // ⚑[tool=bind_oracle ref=__got:0x104109a88 result=Foundation.URL.deletingLastPathComponent]
+    //
+    // ⚑ s113: NOW DECLARED. The transcription above is unchanged — it was already read end to end
+    //   and its ONLY blocker was `tmpURL`'s optionality, which is resolved at the field: the value
+    //   is `NSTemporaryDirectory()/videoCaches/<md5>`, built from the parameters alone, so the
+    //   field is the non-optional `let` the binary's FieldRecord always said it was and this body
+    //   transcribes verbatim.
+    // ⚑[tool=override_table ref=CacheIOContext.clearOtherCache:0x101b8d948 result=NO-not-an-override]
+    // ⚑[tool=export_trie_oracle ref=CacheIOContext.clearOtherCache:0x101b8d948 result=LOCATED]
+    func clearOtherCache() {
+        let parent = tmpURL.deletingLastPathComponent()
+        let keep = tmpURL.lastPathComponent
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: parent.path)
+        else { return }
+        for name in names where name != keep {
+            try? FileManager.default.removeItem(at: parent.appendingPathComponent(name))
+        }
+    }
 }
