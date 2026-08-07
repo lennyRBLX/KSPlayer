@@ -133,12 +133,29 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //       `76 69 64 65 6f 43 61 63 | 68 65 73` under discriminator 0xEB, which is 0xE0|11 — an
     //       all-ASCII small string of count 11. `URL.appendingPathComponent` follows at
     //       0x101b87000, and a SECOND `appendingPathComponent` at 0x101b87038.
-    //   ⚠️ WHAT IS NOT SETTLED is which URL reaches the field. The component chain accumulates in
-    //     x23, while the store at 0x101b8747c is `initializeWithCopy(&self.tmpURL, x27, URL)` —
-    //     source x27 — and x27 is REASSIGNED at 0x101b87158 by `ldr x27,[x20,#0x10]`, which the
-    //     surrounding `cbz`/`sub #1`/`cmp` make an integer, not a URL. Those cannot both be live on
-    //     one path, so resolving it needs the 836-instruction init's control flow, not another peek.
-    //     Do NOT write `tmpURL` from the fragment above.
+    //   ✅ THE x27 CONTRADICTION IS RESOLVED — an earlier draft of this note said x27 could not be
+    //     both the URL and the integer that `ldr x27,[x20,#0x10]` @0x101b87158 makes it. It is
+    //     both, at different times, and the spill is what reconciles them: x27 is saved to the
+    //     frame slot `[x29-0x120]` by `stur x27` @0x101b8712c BEFORE being reused as an array
+    //     count, and it is RELOADED by `ldur x27` @0x101b8778c and @0x101b878c4, each immediately
+    //     before a `b 0x101b873ac`. So every path that reaches the store has the URL back in x27.
+    //     It is a URL there and that is read, not assumed: 0x101b873c0 does `mov x20, x27` and
+    //     calls `URL.path.getter` @0x1034523ec on it.
+    //
+    //   The assignment is GUARDED, and the guard is the whole tail:
+    //     · `FileManager.default.fileExists(atPath: <candidate>.path)` @0x101b873e4;
+    //     · `tbnz w20,#0` @0x101b873f4 — when it EXISTS, jump straight to the store;
+    //     · otherwise fall through to `createDirectory(at:withIntermediateDirectories:)` with
+    //       `w3 = 1` and `x4 = 0` @0x101b87434, then fall into the same store.
+    //     i.e. `if !FileManager.default.fileExists(atPath: u.path) { try? …createDirectory(at: u,
+    //     withIntermediateDirectories: true) }` followed unconditionally by `self.tmpURL = u`.
+    //
+    //   ⚠️ WHAT IS STILL NOT SETTLED is only how the candidate `u` is chosen. It is reached
+    //     through a LOOP whose count is `[x20+0x10]` @0x101b87158 and whose back-edges are the two
+    //     reload sites above, so the remaining work is that loop and nothing else. Do NOT write
+    //     `tmpURL` until it is read — the prefix
+    //     `URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("videoCaches")` is
+    //     established, the selection is not.
     // ⚑[tool=decode_string_literal ref=CacheIOContext.init.tmpURL_component:0x101b86fdc result='videoCaches']
     public var tmpURL: URL? // ⚑ DIVERGENT: binary says non-optional URL (see above)
     // 12 isJudgeEOF: whether EOF is decided by the judge path. Designated init
