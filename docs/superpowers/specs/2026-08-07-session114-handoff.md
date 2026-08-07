@@ -213,8 +213,13 @@ Each closure's shape is: MainActor executor precondition (`MainActor.shared` + `
 
 **ELEVEN of the twelve payloads are now identified.** What is left is small and enumerated:
   · `0x1019d3518` (94 instr, NOT_IN_TRIE, EXHAUSTED) — `previousTrack`'s payload and the row's ONLY
-    naming blocker. Run the A4 shape check on it FIRST; three of this session's four batch
-    inspections found glue, so do not assume it is nameable.
+    naming blocker. ✅ **THE A4 SHAPE CHECK IS DONE AND IT PASSES.** It is method-shaped, not glue:
+    it reads `KSComplexPlayerLayer.urls` (0x104c63528) and `KSPlayerLayer.url` (0x104c634f8) — both
+    trie-named, so its field axis is clean — calls `0x1019c835c`, which is s112's known
+    `firstIndex(of:)` over `[URL]` and therefore INLINES rather than needing a name, and then calls
+    the NAMED `KSPlayerLayer.set(url:options:)` @0x1019cb674. In other words it finds the current
+    url's index in `urls`, steps back, and sets that url: it is the mirror of `playNextURL()`,
+    which is this class's vtable slot 12. Only the second address all session to pass the check.
   · closure 12's slots 0x158 / 0x160, which are NULL in KSPlayerLayer's descriptor — inherited
     accessors, so they need the superclass chain rather than this class's vtable.
   · the `seek` arguments for closures 9/10/11, and each closure's returned
