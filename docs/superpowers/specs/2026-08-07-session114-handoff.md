@@ -13,9 +13,9 @@ python3 scripts/pin_sweep.py --every
 |---|---|
 | gate | `PASS 48   ANOMALY 2   FAIL 4` |
 | FAITHFUL FLOOR | **356 / 1035** |
-| MEMBER_MISSING | **61** |
+| MEMBER_MISSING | **60** |
 | ACCESS · NOT_IN_TRIE · AMBIGUOUS_OVERLOAD · TYPE_DIVERGENCE | 26 · 23 · 10 · 4 |
-| total disagreements | 124 |
+| total disagreements | 123 |
 | build | 4/4 |
 | KSPlayer | `forward` @ `62e18ce`, tree clean apart from the pre-existing untracked spec docs |
 | FFmpegKit | `12f0899` on `forward-recon-shim`, 1167 tracked dirty UNSTAGED, 0 staged. **Never `git add -A` there.** |
@@ -59,6 +59,8 @@ Four commits, each alone on `forward`, build 4/4 at every one. **MEMBER_MISSING 
 | `be3d87b` | `CacheIOContext.copyPreloadCache(md5:from:to:)` @0x101b8e85c |
 | `62e18ce` | no member — the derivation that `ReadCacheIOContext` 0x1044f6918 is `eof` |
 | `91cc415` | `KSOptions.displayEnumVR` + `displayEnumVRBox` — TWO rows |
+| `a096c0f` | `CacheIOContext.clearOtherCache` — plus `tmpURL` retyped to the non-optional `let` |
+| `fb879df` | no member — the `0x104c63938` tie cut from SEVEN candidates to two |
 
 ### ⚠️ The single most transferable thing s113 learned
 
@@ -172,7 +174,7 @@ programme had been carrying:
 | 1 | Adjudicate the two drained waves into `wave_exclusions.json` | small, fully specified, clears ANOMALY 2 → 0 |
 | 2 | `classify_compiler_helpers.is_vwt_base` | §1c root cause; a false VWT poisons every callee through W2. **The discriminator is found — see below** |
 | 3 | `ReadCacheIOContext` 0x1044f6910 | 5 → 3 after the mutability axis: `end`, `urlPos`, `entryCache`. Closing it opens `fileSize`, `read` AND `seek`, three rows at once |
-| 4 | `CacheIOContext` 0x104c63938 | 7 → 6. `isReadComplete` is separately eliminable — `enableReadComplete()` @0x101b8a768 writes 0x1044f3878, a DIFFERENT global |
+| 4 | `CacheIOContext` 0x104c63938 | **now TWO: `eof` or `_isClosed`** — see `fb879df`. Both Bool, both var, both default false; width, mutability and the default axis are all spent, and the file-private cross-file test came back negative (all nine accesses are in CacheIOContext.swift). Neither has an accessor. |
 
 ### Unit 2's discriminator is already found — it needs the POSITIVE anchor, not the idea
 
