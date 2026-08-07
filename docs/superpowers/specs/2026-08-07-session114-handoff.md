@@ -211,35 +211,33 @@ Each closure's shape is: MainActor executor precondition (`MainActor.shared` + `
 | 11 | changePlaybackPosition | 0x1019d44e0 | 0x2e0 | same `seek` |
 | 12 | enableLanguageOption | 0x1019d4684 | 0x158 + 0x160 | `dynamicCastObjCClass` the event, then `objc_msgSend[languageOption]` and `[languageOptionType]`; slots 16/17 are NULL in the descriptor (inherited accessors) and still need a route |
 
-**ELEVEN of the twelve payloads are now identified.** What is left is small and enumerated:
-  · `0x1019d3518` (94 instr, NOT_IN_TRIE, EXHAUSTED) — `previousTrack`'s payload and the row's ONLY
-    naming blocker. ✅ **THE A4 SHAPE CHECK IS DONE AND IT PASSES.** It is method-shaped, not glue:
-    it reads `KSComplexPlayerLayer.urls` (0x104c63528) and `KSPlayerLayer.url` (0x104c634f8) — both
-    trie-named, so its field axis is clean — calls `0x1019c835c`, which is s112's known
-    `firstIndex(of:)` over `[URL]` and therefore INLINES rather than needing a name, and then calls
-    the NAMED `KSPlayerLayer.set(url:options:)` @0x1019cb674. In other words it finds the current
-    url's index in `urls`, steps back, and sets that url: it is the mirror of `playNextURL()`,
-    which is this class's vtable slot 12. Only the second address all session to pass the check.
-  · closure 12's slots 0x158 / 0x160, which are NULL in KSPlayerLayer's descriptor — inherited
-    accessors, so they need the superclass chain rather than this class's vtable.
-  · the `seek` arguments for closures 9/10/11. PARTIALLY read in s113, and only the solid part is
-    recorded here: the time argument is a SUM — `fadd d8, d8, d0` @0x1019d420c — of a Double the
-    body gets from `self.player` and a Double it gets from the cast event via
-    `objc_msgSend` @0x103463ae0. Immediately after, it takes a `swift_beginAccess` on
-    `self.options` (offset global 0x104c634e0) and reads a Bool at the CONSTANT offset +0x72
-    (`ldrb w0, [x20, #0x72]` @0x1019d4244), which is positioned to be the `autoPlay:` argument.
-    ✅ THE PLAYER-TIME CHAIN IS NOW RESOLVED, and the thing that made it look wrong is a general
-    fact worth carrying: **on a class existential whose protocol INHERITS another, witness-table
-    word 1 is the INHERITED protocol's table, not requirement 0.** `MediaPlayerProtocol: MediaPlayback`,
-    so in `ldp x24, x20, [x20]` / `ldr x26,[x20,#8]` / `ldr x27,[x26,#0x28]` the pair is
-    (instance, MediaPlayerProtocol wt), x26 is the **MediaPlayback** wt, and x27 is its requirement
-    (0x28-8)/8 = **4**. MediaPlayback declares duration, fileSize, naturalSize, chapters,
-    currentPlaybackTime — so req4 is `currentPlaybackTime`. The seek time is therefore
-    `player.currentPlaybackTime + <the event's Double>`.
-    ⚠️ Still NOT established: the selector behind 0x103463ae0 (the event's Double — for
-    skipForward/skipBackward it is positioned to be `MPSkipIntervalCommandEvent.interval`, but that
-    is NOT read), and the identity of the options Bool at +0x72.
-  · each closure's returned `MPRemoteCommandHandlerStatus`.
+**THE ROW IS ~95% DERIVED.** Every handler has the SAME frame, now read end to end:
+
+```
+{ [weak self] _ in
+    guard let self else { return .commandFailed }   // mov w0,#0xc8 on the guard edge
+    <payload>
+    return .success                                 // mov x0,#0 on the payload edge
+}
+```
+
+`.commandFailed` = 200 appears as `mov w0,#0xc8` in all twelve; `.success` = 0 appears as
+`mov x0,#0x0` — note the **x0** form, which a `mov w0,#…` scan misses.
+
+The `seek` arguments for closures 9/10/11 are fully read:
+`seek(time: player.currentPlaybackTime + event.interval, autoPlay: options.isSeekedAutoPlay)`.
+`interval` is selref 0x10440bc80 off `objc_msgSend` @0x103463ae0; `isSeekedAutoPlay` is
+`KSOptions` at CONSTANT offset +0x72 (`recover_field_offsets --offset 0x72`); and
+`currentPlaybackTime` is MediaPlayback requirement 4 reached through the inherited-witness-table
+rule above.
+
+**What is genuinely left — two things, both small:**
+  · closure 12 (`enableLanguageOption`) dispatches slots 0x158 / 0x160, which are NULL in
+    KSPlayerLayer's own descriptor. They are inherited accessors, so resolve them up the superclass
+    chain rather than in this class's vtable.
+  · the `completion:` closure argument the three `seek` handlers pass (the parameter is
+    `(@MainActor @Sendable (Bool) -> ())?`, so it may simply be nil — READ it, do not assume).
+
 The command ORDER is pinned and matches the mirror method exactly.
 
 ### ⚠️ The single most transferable thing s113 learned
