@@ -276,14 +276,25 @@ where `playNextURL` instead bounds `index < urls.count - 1`; `strb #1` into
 It has CLEARED the A4 shape check, so it needs an invented name under `approved=` — the mirror
 spelling `playPreviousURL()` is the obvious candidate, and it is an INVENTION, not a read.
 
-⚠️ **ONE body is still open, and an earlier note about it was WRONG.** `enableLanguageOption`
-@0x1019d4684 (257 instr, by far the largest) does NOT simply "write an options field". It reads
-`languageOption` then `languageOptionType` off the cast `MPChangeLanguageOptionCommandEvent`, then
-`cbz x0` @0x1019d478c branches on the TYPE — and the type-0 arm reads **`player`**
-(offset global 0x104c634f0), not `options`. The `options` setter/modify slots (0x158/0x160) are
-reached somewhere else in the body. This is an audible-vs-legible split — audio-track versus
-subtitle selection — and it needs its own careful pass rather than the one-line summary it was
-given.
+⚠️ **ONE body is still open, and TWO earlier notes about it were WRONG. The second error is the
+one to learn from.**
+
+`enableLanguageOption` @0x1019d4684 (257 instr, by far the largest) reads `languageOption` then
+`languageOptionType` off the cast `MPChangeLanguageOptionCommandEvent`, and `cbz x0` @0x1019d478c
+branches on the TYPE. `MPNowPlayingInfoLanguageOptionType.audible` is 0, so the type-0 arm is the
+AUDIO one — and it reads `player` (offset global 0x104c634f0), then calls the witness at
+**wt+0x158** with `_AVMediaTypeAudio` (`__got` 0x104108730) and loops over the returned array's
+elements from +0x28 with the count at +0x10. That is `player.tracks(mediaType: .audio)` followed by
+a track scan.
+
+🚨 **`body_fingerprint`'s "DISPATCH OFFSETS" does NOT distinguish a VTABLE offset from a
+WITNESS-TABLE offset, and s113 mapped 0x158/0x160 to the wrong table.** They were read as
+`KSPlayerLayer` vtable slots 16/17 (`options`'s setter and `_modify`, since slot 15 is
+`options.getter`) — the arithmetic works and the answer is wrong. They are offsets into
+`MediaPlayerProtocol`'s witness table, reached through the `player` existential's second word.
+Before turning any DISPATCH OFFSET into a slot, establish WHICH table the base register holds:
+a vtable offset comes off the isa-masked metadata, a witness offset off an existential's second
+word. Two separate readings in this session went wrong this way.
 
 The command ORDER is pinned and matches the mirror method exactly.
 
