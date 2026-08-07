@@ -212,9 +212,31 @@ stores `.none` as 2 and every site seen so far compares against 1.
 
 7. `CacheIOContext.readComplete(buffer:size:isReadComplete:)` @0x101b8a0f8, 412 instructions. CALL
    axis already clear. Needs `0x104c63938` named, plus the dispatch offsets `0x1e0` and `0x398` read.
-8. `ReadCacheIOContext.fileSize` @0x101bad320, 218 instructions. Three globals unresolved —
-   `0x1044f6910`, `0x1044f6918`, `0x1044f6928` — and all three are absent from the trie, so the
-   `vpWvd` route is closed too.
+8. `ReadCacheIOContext.fileSize` @0x101bad320, 218 instructions. s112 took this one furthest — it is
+   an 8-field class, so the candidate set is small enough to be worth finishing.
+   - `logicalPos` binds to **0x104c639e0** from its own getter @0x101bacad4 (a single-field accessor
+     binds its global outright — the cheapest binding route there is, and it works on any class with
+     an exported accessor).
+   - **0x1044f6910** is dword-class: read in `read` and `seek`, read-modify-written in `fileSize`.
+   - **0x1044f6918** is byte-class and is the ONLY byte global touched anywhere in `read`, `seek` or
+     `fileSize`: `ldrb` in the first two, `strb` in `fileSize`.
+   - 0x1044f6928 shows no global-indexed access in any of them.
+   - The class has exactly TWO byte-class fields, `onlyCache` (record 2) and `eof` (record 3), so
+     0x1044f6918 is one of those two — and **that is where it stops.**
+
+   ⚠️ **Do not finish this one semantically. The two readings point in OPPOSITE directions**, which is
+   why it is still open rather than merely unfinished:
+   - `read()` would surely consult a "serve strictly from cache, no network" flag ⇒ argues `onlyCache`.
+   - `fileSize()` overwriting a caller-supplied policy flag is odd; a private `var` with a `false`
+     default being set when a size probe hits the end is natural ⇒ argues `eof`.
+
+   Hard facts that do NOT break the tie, recorded so they are not re-derived: `onlyCache` has ZERO
+   trie symbols on this class and appears as an init LABEL
+   (`init(download:md5:bufferSize:onlyCache:)` @0x101bacd64), so it is an init parameter with no
+   declaration default; `eof` has a `vpfi` @0x10002dab0, so it does have one. All three initialisers
+   write their fields through CONSTANT offsets, not through offset globals, so the init route cannot
+   bind `onlyCache` to a global either.
+
 9. `MetalSubtitleView.draw` @0x101ac0e24, 242 instructions plus the INLINE-INSTEAD `0x101ac11ec`
    (101 instructions) that must be inlined into it. Its three list fields are now named (`f1483d3`);
    `0x1044ef5b0` and `0x1044ed178` are still unresolved, and `0x101a83a6c` is an unnamed function
