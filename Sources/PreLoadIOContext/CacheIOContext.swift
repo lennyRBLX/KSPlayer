@@ -190,6 +190,32 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     var eof: Bool = false
     // 16 _isClosed: whether close() has run. Designated init defaults it false; s64
     //    returns !_isClosed. field-record.
+    //
+    // ⚑ s113: OFFSET GLOBAL 0x104c63938 IS EITHER `eof` OR `_isClosed`, AND NOTHING ELSE. The
+    //   handoffs carry this as a SEVEN-way tie — isJudgeEOF, saveFile, isReadComplete, eof,
+    //   _isClosed, isInterleaved, isFirstFileSize — and it is two, by two deterministic axes:
+    //     · MUTABILITY. `fileSize()` @0x101b8c178 STORES through the global and is a method, not an
+    //       initialiser, so a `let` cannot be it. That drops `saveFile` (flags 0).
+    //     · THE DEFAULT VALUE, which nothing had read. The designated init writes this global at
+    //       0x101b86e7c and the instruction is **`strb wzr`** — the default is FALSE. That drops
+    //       every candidate whose declaration default is true (`isJudgeEOF`, `isFirstFileSize`),
+    //       and it drops `isInterleaved` too: that one is `Bool?`, whose `.none` is stored as the
+    //       tag byte 2, so its default store would be `mov w9,#2` / `strb w9`, never `wzr`.
+    //       `isReadComplete` is param-fed (no `vpfi` on this class at all), so a constant default
+    //       store cannot be it either — which independently reproduces the `enableReadComplete()`
+    //       elimination the handoff reached by a different route.
+    // ⚑[tool=fieldrec ref=CacheIOContext.init.default:0x101b86e7c result=strb-wzr-default-false]
+    //
+    //   ⚠️ AND THERE IT STOPS. `eof` and `_isClosed` are both `Bool`, both `var`, both default
+    //     false, so width, mutability and the default axis are all exhausted. One route was tried
+    //     and came back NEGATIVE rather than untried: `_isClosed` is FILE-PRIVATE (its `vpfi`
+    //     carries the discriminator `_D69EFE1402863CA716A3171C7DB6DFB9`) while `eof` is not, so an
+    //     access from another file would have decided it — but all NINE accesses to this global
+    //     live in seven CacheIOContext methods (init, read, readComplete, seek, fileSize, close,
+    //     cachedTimeRanges), every one of them in THIS file. Neither field has an accessor, so the
+    //     accessor route is closed too.
+    //     Do NOT finish it on which name reads better against the `fileSize` write — that is
+    //     exactly the shape of the eight retractions session 112 had to make.
     private var _isClosed: Bool = false
     // 17 downloadLock: serializes the download/cache mutation. NON-optional — the designated init
     //    allocs NSRecursiveLock() unconditionally (allocWithZone + init, no nil-branch), and l2 reads
