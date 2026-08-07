@@ -388,17 +388,41 @@ was bound by `recover_field_by_access` in s112, `enterBackgroundTask` is the onl
 carries no field-axis debt, which is rare in what remains. The open question is a NAMING one about
 `0x1019c7410` + `0x1019c78a4` as a pair, and it is a real question, not a misclassification.
 
-⚠️ **Screen each one on the FIELD axis before starting — the blocker size is not the cost.** s112
-checked the two most promising and both failed there, not on naming:
-- `DynamicInfo.update` looked ideal (204 instr, a 5-instruction blocker). That blocker `0x1019ac164`
-  is a metadata-setup TAIL-CALL THUNK — `adrp`/`add` of an objc classref and a global into x2/x3,
-  then `b 0x1000e97c8` — i.e. an artifact, not a member to name. But the row also touches
-  `0x1044e4690`, which is NOT_IN_TRIE and NOT RECOVERED: another unresolvable field global.
-- `MetalSubtitleView.mtkView` is 4 instructions over an ~870-instruction INLINE-INSTEAD chain.
+**FIELD-AXIS SCREEN — all 13 rows, done.** `reconstruction/approval_worklist_fieldaxis_s112.json`.
+A global counts only if it takes an ACTUAL indexed access in the body; merely appearing in the
+disassembly is not a field use.
 
-So the approval is real and this is its worklist, but naming is the *last* gate on these rows rather
-than the first. Run `recover_field_by_access --module M --class C` on each candidate before
-committing to it.
+| instr | row | field axis |
+|---|---|---|
+| 4 | `MetalSubtitleView.mtkView` | CLEAN — but ~870-instr INLINE-INSTEAD chain |
+| 32 | `Coordinator.isRecord` | **CLEAN** |
+| 132 | `KSComplexPlayerLayer.stop` | 1 unnamed: `0x1044e61e8` |
+| 133 | `KSPlayerLayer.select` | **CLEAN** (2 fields) |
+| 158 | `AssIncrementImageRenderer.add` | 3 unnamed |
+| 184 | `AssIncrementImageRenderer.updateTextStyle` | 4 unnamed |
+| 204 | `DynamicInfo.update` | **CLEAN** (1 field) |
+| 324 | `KSOptions.firstTimeLog` | **CLEAN** (12 fields) |
+| 350 | `KSOptions.removeHeader` | **CLEAN** (1 field) |
+| 789 | `CacheIOContext.cleanupOldCaches` | **CLEAN** |
+| 798 | `HLSCacheIOContext.parseM3U8` | 1 unnamed |
+| 1638 | `CacheIOContext.seek` | 7 unnamed |
+| 1663 | `PlayerView.buildMenusForButtons` | **CLEAN** (1 field) |
+
+**Eight of thirteen are field-clean**, so on those the ONLY remaining gate is naming — which is what
+the approval covers. That reverses the impression the rest of this handoff gives, and it is the most
+actionable thing in it.
+
+⚠️ It also CORRECTS an earlier s112 claim recorded above: `DynamicInfo.update` was said to carry "its
+own unresolvable field global" `0x1044e4690`. It does not. That global appears in the body but takes
+no indexed access, so it is not a stored-property use at all. The lesson generalises — **screen on
+ACCESSES, never on the global list**, or you will invent blockers that are not there. `KSComplexPlayerLayer.stop`
+is the one row where a genuine unnamed field remains (`0x1044e61e8`), so it is NOT the cheapest start
+despite its clean call axis.
+
+**Start with `Coordinator.isRecord` (32 instr, clean) or `KSPlayerLayer.select` (133 instr, clean),
+not with `stop`.** Both still need their blockers named — `1019d8d28` (412 instr) for the first,
+`101ab2540` + `101ab2de4` for the second — but neither carries field-axis debt.
+
 
 ---
 
