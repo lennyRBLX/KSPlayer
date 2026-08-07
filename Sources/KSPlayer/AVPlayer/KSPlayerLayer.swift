@@ -1074,6 +1074,59 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         KSOptions.pictureInPictureType.play(layer: self)
     }
 
+    /// @0x1019d1890, 127 instructions. `override` is read, not inferred from the superclass having
+    /// a `change(state:)`: ⚑[tool=override_table ref=KSComplexPlayerLayer.change:0x1019d1890 result=YES-index-2]
+    ///
+    /// THE BODY IS THE SUPERCLASS'S 115-INSTRUCTION `change(state:)` FOLLOWED BY ONE STATEMENT.
+    /// Instruction for instruction, 0x1019d1890+0 .. +0x1b4 is `KSPlayerLayer.change(state:)`
+    /// @0x1019cc0ac: the same `str xzr` through offset global 0x1044e6190, the same
+    /// `NSThread.isMainThread` fork, the same two arms (`MainActor.assumeIsolated` @0x101a04674 and
+    /// `swift_task_create` @0x101a03fd4), the SAME closure body @0x1019cc278, and the same weak
+    /// `delegate` load and witness dispatch. The subclass then adds 12 instructions the superclass
+    /// does not have. Nothing else differs.
+    ///
+    /// ⚑ THE SUPER CALL IS INLINED, NOT EMITTED — there is no `bl 0x1019cc0ac` here, so this is a
+    ///   READING and not a direct observation, and it is recorded as such. `play()` above proves a
+    ///   `super.` call CAN survive as a direct `bl`, but the superclass's `play()` is 186
+    ///   instructions against `change(state:)`'s 115, so an inliner threshold between the two is
+    ///   consistent with both. What decides it is that the alternative — the author re-writing all
+    ///   four of the superclass's statements here — would put four statements in THIS file that
+    ///   nothing in the binary distinguishes from the superclass's own. `super.change(state:)` adds
+    ///   none. That is the spelling with no invented content, so it is the one written.
+    /// ⚑[tool=function_extents ref=KSPlayerLayer.change:0x1019cc0ac result=115-instr]
+    /// ⚑[tool=body_fingerprint ref=KSComplexPlayerLayer.change:0x1019d1890 result=superclass-prefix-plus-12]
+    ///
+    /// ⚑ The superclass's interior is NOT reproduced here and is NOT this row's debt: the
+    ///   `str xzr` at 0x1019cc114 goes through offset global 0x1044e6190, which is a genuine
+    ///   2-way tie on KSPlayerLayer and stays OPEN under the session-113 A1 rule — it is
+    ///   `double`-class (`str d8` in `seek(time:autoPlay:completion:)` @0x1019cd038, `ldr d8` in
+    ///   `readyToPlay(player:)` @0x1019cda08), and the only two Double fields on the class are
+    ///   `shouldSeekTo` and `bufferingStartTime`, NEITHER of which carries a vpWvd.
+    /// ⚑[tool=recover_field_by_access ref=KSPlayerLayer:0x1044e6190 result=AMBIGUOUS-2]
+    ///
+    /// The one added statement, read in full at 0x1019d1a44-0x1019d1a70:
+    ///   · `tst w19, #0xff` / `b.ne` — the same guard the body opens with, on the low byte of
+    ///     `state`. KSPlayerState's case 0 is `.initialized`, so this arm runs on `.initialized`.
+    ///     ⚠️ It is a SECOND, separate test: the delegate notification at the join is reached from
+    ///     both edges of the first one, so it is unconditional and this guard covers only the
+    ///     statement below it.
+    ///   · classref 0x104410a10 is `MPNowPlayingInfoCenter` — the same classref `pause()` and
+    ///     `play()` above already use — then `defaultCenter`, i.e. `.default()`.
+    ///   · the send is `setNowPlayingInfo:` with `x2 = #0x0`, so the assigned value is **nil**.
+    /// ⚑[tool=bind_oracle ref=0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
+    /// ⚑[tool=decode_objc_selector ref=0x10440d808 result=setNowPlayingInfo:]
+    /// ⚑[tool=decode_objc_selector ref=0x10440b040 result=defaultCenter]
+    /// ⚑ ACCESS is not independently provable for a method — see the note on
+    ///   `removeRemoteControllEvent()` below. `public` is what the two overrides above this one
+    ///   use for the same situation (an override of an `open` superclass method), and this file
+    ///   does not let each override pick its own spelling.
+    override public func change(state: KSPlayerState) {
+        super.change(state: state)
+        if state == .initialized {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+    }
+
     /// The trie address 0x1019d27a4 is a ONE-instruction thunk (`b 0x1019d5d38`); the body is the
     /// 181 instructions there. ⚑[tool=function_extents ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=181-instr]
     ///
