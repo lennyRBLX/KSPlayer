@@ -310,9 +310,18 @@ open class KSPlayerLayer: NSObject {
         self.isAutoPlay = isAutoPlay
         super.init()
         player.playbackRate = options.startPlayRate
-        if options.registerRemoteControll {
-            registerRemoteControllEvent()
-        }
+        // ⚑ The `if options.registerRemoteControll { registerRemoteControllEvent() }` statement that
+        //   upstream puts HERE is not in this class in Forward. `registerRemoteControllEvent()` is
+        //   declared on KSComplexPlayerLayer (below), and an image-wide BL/B scan finds its address
+        //   0x1019d0508 called from exactly TWO sites — 0x1019d0374 and 0x1019d11c0 — which
+        //   function_extents places inside KSComplexPlayerLayer's two designated initialisers, NOT
+        //   inside this init (0x1019ca41c-0x1019caa9c, 416 instr, which contains neither site).
+        //   Both call sites are guarded by `ldrb w26,[options,#0x44]` / `cmp #1` / `b.ne`, and
+        //   recover_field_offsets names KSOptions +0x44 `registerRemoteControll` — so the guarded
+        //   call survives in the Forward source, one level down. It is NOT reconstructed here
+        //   because those two initialisers are not yet declared; that is their unit, not this one.
+        //   ⚑[tool=function_extents ref=KSComplexPlayerLayer.registerRemoteControllEvent:0x1019d0508 result=2-callers-both-subclass-inits]
+        //   ⚑[tool=recover_field_offsets ref=KSOptions.registerRemoteControll:0x44 result=registerRemoteControll]
         player.delegate = self
         player.contentMode = .scaleAspectFit
         if isAutoPlay {
@@ -843,108 +852,6 @@ extension KSPlayerLayer {
         delegate?.playerDidEOF(layer: self)
     }
 
-    public func registerRemoteControllEvent() {
-        let remoteCommand = MPRemoteCommandCenter.shared()
-        remoteCommand.playCommand.addTarget { [weak self] _ in
-            guard let self else {
-                return .commandFailed
-            }
-            self.play()
-            return .success
-        }
-        remoteCommand.pauseCommand.addTarget { [weak self] _ in
-            guard let self else {
-                return .commandFailed
-            }
-            self.pause()
-            return .success
-        }
-        remoteCommand.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self else {
-                return .commandFailed
-            }
-            if self.state.isPlaying {
-                self.pause()
-            } else {
-                self.play()
-            }
-            return .success
-        }
-        remoteCommand.stopCommand.addTarget { [weak self] _ in
-            guard let self else {
-                return .commandFailed
-            }
-            self.player.stop()
-            return .success
-        }
-        remoteCommand.nextTrackCommand.addTarget { [weak self] _ in
-            guard let self else {
-                return .commandFailed
-            }
-            self.nextPlayer()
-            return .success
-        }
-        remoteCommand.previousTrackCommand.addTarget { [weak self] _ in
-            guard let self else {
-                return .commandFailed
-            }
-            self.previousPlayer()
-            return .success
-        }
-        remoteCommand.changeRepeatModeCommand.addTarget { [weak self] event in
-            guard let self, let event = event as? MPChangeRepeatModeCommandEvent else {
-                return .commandFailed
-            }
-            self.options.isLoopPlay = event.repeatType != .off
-            return .success
-        }
-        remoteCommand.changeShuffleModeCommand.isEnabled = false
-        // remoteCommand.changeShuffleModeCommand.addTarget {})
-        remoteCommand.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 1, 1.5, 2]
-        remoteCommand.changePlaybackRateCommand.addTarget { [weak self] event in
-            guard let self, let event = event as? MPChangePlaybackRateCommandEvent else {
-                return .commandFailed
-            }
-            self.player.playbackRate = event.playbackRate
-            return .success
-        }
-        remoteCommand.skipForwardCommand.preferredIntervals = [15]
-        remoteCommand.skipForwardCommand.addTarget { [weak self] event in
-            guard let self, let event = event as? MPSkipIntervalCommandEvent else {
-                return .commandFailed
-            }
-            self.seek(time: self.player.currentPlaybackTime + event.interval)
-            return .success
-        }
-        remoteCommand.skipBackwardCommand.preferredIntervals = [15]
-        remoteCommand.skipBackwardCommand.addTarget { [weak self] event in
-            guard let self, let event = event as? MPSkipIntervalCommandEvent else {
-                return .commandFailed
-            }
-            self.seek(time: self.player.currentPlaybackTime - event.interval)
-            return .success
-        }
-        remoteCommand.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let self, let event = event as? MPChangePlaybackPositionCommandEvent else {
-                return .commandFailed
-            }
-            self.seek(time: event.positionTime)
-            return .success
-        }
-        remoteCommand.enableLanguageOptionCommand.addTarget { [weak self] event in
-            guard let self, let event = event as? MPChangeLanguageOptionCommandEvent else {
-                return .commandFailed
-            }
-            let selectLang = event.languageOption
-            if selectLang.languageOptionType == .audible,
-               let trackToSelect = self.player.tracks(mediaType: .audio).first(where: { $0.name == selectLang.displayName })
-            {
-                self.player.select(track: trackToSelect)
-            }
-            return .success
-        }
-    }
-
     @objc private func enterBackground() {
         guard state.isPlaying, !player.isExternalPlaybackActive else {
             return
@@ -1240,6 +1147,209 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
     /// `x9 = count - 1` and `cmp x23,x9` / `b.ge` bounds the successor. The store of `#1` to
     /// `isPictureInPictureStoped` sits AFTER both guards and BEFORE the `set`, and `set(url:options:)`
     /// @0x1019cb674 is called with `x1 = #0`, i.e. `options: nil`.
+    /// @0x1019d0508, 648 instructions. THE OWNER IS READ, NOT INHERITED: the trie names this
+    /// address `KSPlayer.KSComplexPlayerLayer.registerRemoteControllEvent() -> ()`, and the same
+    /// name under `KSPlayerLayer` is a real trie negative — so upstream's copy on the superclass is
+    /// not in this build, which is why it was removed from that class rather than overridden here.
+    /// `override_table --impl 0x1019d0508` answers NO, confirming a fresh declaration, and the
+    /// address is in no vtable slot (the class's vtable is 13 slots, ending at `playNextURL`), so
+    /// it is directly dispatched — consistent with the exported symbol being `public`.
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.registerRemoteControllEvent:0x1019d0508 result=OWNER_MATCH]
+    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.registerRemoteControllEvent:0x1019d0508 result=NO]
+    ///
+    /// STATEMENT ORDER IS READ, not assumed: decoding every `objc_msgSend` stub in the body in
+    /// address order gives sharedCommandCenter, then play/pause/togglePlayPause/stop/nextTrack/
+    /// previousTrack/changeRepeatMode each + addTargetWithHandler:, then changeShuffleModeCommand
+    /// + setEnabled:, changePlaybackRateCommand + setSupportedPlaybackRates: then + addTarget,
+    /// skipForward + setPreferredIntervals: then + addTarget, skipBackward likewise, then
+    /// changePlaybackPosition and enableLanguageOption. `MPRemoteCommandCenter.shared()` is sent
+    /// ONCE and hoisted into x19 (the mirror `removeRemoteControllEvent` re-sends it twelve times).
+    /// All twelve `addTargetWithHandler:` results are discarded, never stored as a token.
+    /// ⚑[tool=decode_objc_selector ref=KSComplexPlayerLayer.registerRemoteControllEvent:0x1019d0508 result=18-selectors-in-order]
+    ///
+    /// Every handler shares one frame: a MainActor executor precondition, then
+    /// `swift_unknownObjectWeakLoadStrong` (the `[weak self]` `guard let self`) failing to
+    /// `mov w0,#0xc8` = `.commandFailed` (200), and succeeding to `mov x0,#0x0` = `.success`.
+    /// Note the **x0** form — a `mov w0,#…` scan misses it.
+    ///
+    /// The four payloads that differ from upstream are each read from the binary:
+    ///   · stop — `bl 0x1019de8e4`, which the trie names
+    ///     `(extension in KSPlayer):KSPlayer.MediaPlayerProtocol.shutdown()`, NOT `player.stop()`.
+    ///   · nextTrack — `ldr x8,[x8,#0x3e0]` / `blr x8`; vtable_walk resolves +0x3e0 to slot 12,
+    ///     impl 0x1019d27a8 = `playNextURL()`, NOT `nextPlayer()`.
+    ///   · previousTrack — `bl 0x1019d3518`, the invented-name member below, NOT `previousPlayer()`.
+    ///   · the three seeks call slot 65 (metadata +0x2e0, impl 0x1019cd038), which the trie names
+    ///     `seek(time:autoPlay:completion:)` — the THREE-argument form. The call passes the time in
+    ///     d0, `ldrb w0,[options,#0x72]` (`recover_field_offsets`: `isSeekedAutoPlay`) as `autoPlay`,
+    ///     and `x1 = 0` / `x2 = 0`, a null (function, context) pair, as `completion: nil`.
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.shutdown:0x1019de8e4 result=extension-method]
+    /// ⚑[tool=vtable_walk ref=KSPlayerLayer.seek:0x1019cd038 result=slot65-time-autoPlay-completion]
+    ///
+    /// ⚑ skipForward and skipBackward are NOT the same statement, and a prior note that said they
+    ///   were is corrected here by reading the arithmetic: skipForward has `fadd d8,d8,d0`
+    ///   @0x1019d420c and skipBackward `fsub d8,d8,d0` @0x1019d4420. changePlaybackPosition has
+    ///   NEITHER, and never calls the `currentPlaybackTime` witness — it sends `positionTime`
+    ///   (selref 0x10440c700) and passes that value straight through.
+    ///
+    /// ⚑ enableLanguageOption (@0x1019d4684, 257 instr) is ONE-armed. `cbz x0` @0x1019d478c
+    ///   branches on the type: `.audible` is 0, and the ZERO arm does the work while the non-zero
+    ///   (legible) arm falls straight to the `.success` return. Inside it, the witness is loaded
+    ///   from `[x22,#0x158]` where `ldp x19,x22,[x21]` took x22 from the SECOND WORD of the `player`
+    ///   existential — a WITNESS-table offset, not a vtable one. decode_witness_table on KSAVPlayer
+    ///   : MediaPlayerProtocol (0x1041d3f78, 45 requirements) resolves +0x158 to req42
+    ///   `tracks(mediaType:)` and +0x160 to req43 `select(track:)`. The element property at
+    ///   element-witness +0x18 is req2, which BOTH conformers agree is `name.getter : Swift.String`.
+    ///   The array walk (count at +0x10, elements from +0x20, stride 0x10) with an inner MainActor
+    ///   precondition is `first(where:)` inlined.
+    /// ⚑[tool=decode_witness_table ref=KSAVPlayer:MediaPlayerProtocol:0x1041d3f78 result=req42-tracks-req43-select]
+    /// ⚑[tool=decode_witness_table ref=FFmpegAssetTrack:MediaPlayerTrack:0x1041d78b8 result=req2-name-getter]
+    ///
+    /// ⚑ PLACEMENT is confirmed by a `#fileID`, not inherited: the executor precondition at
+    ///   0x1019d4710 materialises length 28 with line 1102, and the 28-byte literal at 0x103d34a00
+    ///   is 'KSPlayer/KSPlayerLayer.swift' — this file. The inner `first(where:)` closure carries
+    ///   line 1108, a 6-line gap that this reconstruction reproduces exactly.
+    /// ⚑[tool=decode_string_literal ref=KSComplexPlayerLayer.registerRemoteControllEvent:0x103d34a00 result='KSPlayer/KSPlayerLayer.swift']
+    public func registerRemoteControllEvent() {
+        let remoteCommand = MPRemoteCommandCenter.shared()
+        remoteCommand.playCommand.addTarget { [weak self] _ in
+            guard let self else {
+                return .commandFailed
+            }
+            self.play()
+            return .success
+        }
+        remoteCommand.pauseCommand.addTarget { [weak self] _ in
+            guard let self else {
+                return .commandFailed
+            }
+            self.pause()
+            return .success
+        }
+        remoteCommand.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self else {
+                return .commandFailed
+            }
+            if self.state.isPlaying {
+                self.pause()
+            } else {
+                self.play()
+            }
+            return .success
+        }
+        remoteCommand.stopCommand.addTarget { [weak self] _ in
+            guard let self else {
+                return .commandFailed
+            }
+            self.player.shutdown()
+            return .success
+        }
+        remoteCommand.nextTrackCommand.addTarget { [weak self] _ in
+            guard let self else {
+                return .commandFailed
+            }
+            self.playNextURL()
+            return .success
+        }
+        remoteCommand.previousTrackCommand.addTarget { [weak self] _ in
+            guard let self else {
+                return .commandFailed
+            }
+            self.playPreviousURL()
+            return .success
+        }
+        remoteCommand.changeRepeatModeCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPChangeRepeatModeCommandEvent else {
+                return .commandFailed
+            }
+            self.options.isLoopPlay = event.repeatType != .off
+            return .success
+        }
+        remoteCommand.changeShuffleModeCommand.isEnabled = false
+        remoteCommand.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 1, 1.5, 2]
+        remoteCommand.changePlaybackRateCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPChangePlaybackRateCommandEvent else {
+                return .commandFailed
+            }
+            self.player.playbackRate = event.playbackRate
+            return .success
+        }
+        remoteCommand.skipForwardCommand.preferredIntervals = [15]
+        remoteCommand.skipForwardCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPSkipIntervalCommandEvent else {
+                return .commandFailed
+            }
+            self.seek(time: self.player.currentPlaybackTime + event.interval, autoPlay: self.options.isSeekedAutoPlay, completion: nil)
+            return .success
+        }
+        remoteCommand.skipBackwardCommand.preferredIntervals = [15]
+        remoteCommand.skipBackwardCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPSkipIntervalCommandEvent else {
+                return .commandFailed
+            }
+            self.seek(time: self.player.currentPlaybackTime - event.interval, autoPlay: self.options.isSeekedAutoPlay, completion: nil)
+            return .success
+        }
+        remoteCommand.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            self.seek(time: event.positionTime, autoPlay: self.options.isSeekedAutoPlay, completion: nil)
+            return .success
+        }
+        remoteCommand.enableLanguageOptionCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPChangeLanguageOptionCommandEvent else {
+                return .commandFailed
+            }
+            let selectLang = event.languageOption
+            if selectLang.languageOptionType == .audible,
+               let trackToSelect = self.player.tracks(mediaType: .audio).first(where: { $0.name == selectLang.displayName })
+            {
+                self.player.select(track: trackToSelect)
+            }
+            return .success
+        }
+    }
+
+    /// @0x1019d3518, 94 instructions. The exact MIRROR of `playNextURL()` above — same four
+    /// statements, differing only in the bound and the step — read end to end:
+    ///   · `ldr x22,[self,0x104c63528]` then `ldr x8,[x22,#0x10]` / `cmp x8,#2` / `b.lo` is the
+    ///     count guard. `recover_field_offsets` names 0x104c63528 `urls`.
+    ///   · `bl 0x1019c835c` is the unspecialized stdlib `firstIndex(of:)` over `[URL]` that
+    ///     `playNextURL` also calls, returning `(index, isNil)` in (x0, w1). The guard is
+    ///     `cmp w27,#1` / `ccmp x23,#1,#8,ne` / `b.lt` — found AND `index >= 1`, where
+    ///     `playNextURL` instead bounds `index < urls.count - 1`.
+    ///   · `strb #1` into 0x104c63520 (`isPictureInPictureStoped`) sits AFTER both guards.
+    ///   · `sub x9,x23,#0x1` is the step — `index - 1`, against `playNextURL`'s `index + 1` — and
+    ///     `set(url:options:)` @0x1019cb674 is called with `x1 = #0`, i.e. `options: nil`.
+    ///
+    /// ⚑ THE NAME IS INVENTED, and this is the whole basis for it. The address is a real trie
+    ///   negative, carries no `#function`/`#file`/`#line`/string literal, is an IMP in none of the
+    ///   220 ObjC method lists, and sits in no vtable — every route closed, so the gate verdicts
+    ///   EXHAUSTED. It is not stdlib and not glue: it reads THREE of this class's own field-offset
+    ///   globals and calls a KSPlayerLayer member, and at 94 instructions with 3 call sites it is
+    ///   neither the outlined-glue shape nor INLINE-INSTEAD.
+    ///   The name comes from the CALLER SET, not from what reads well: of its three call sites, one
+    ///   is `KSVideoPlayerModel.previous()` @0x101accdb0, whose mirror `KSVideoPlayerModel.next()`
+    ///   @0x101acccfc has the identical shape and calls `playNextURL()` through vtable +0x3e0
+    ///   (slot 12). `next -> playNextURL` is therefore read; `previous -> playPreviousURL` is the
+    ///   spelling that pairing implies, and it is a FABRICATED IDENTIFIER, not a recovered one.
+    ///   ⚑[invented=playPreviousURL addr=0x1019d3518 exhaustion=name_exhaustion_gate approved=jweaver]
+    ///
+    /// ⚑ Access is `internal`, not `public`: the address is absent from the export trie (so not
+    ///   public) and absent from the class's 13-slot vtable, yet it is called from another file
+    ///   (KSVideoPlayerModel), which rules out `private`/`fileprivate`.
+    ///   ⚑[tool=vtable_walk ref=KSComplexPlayerLayer:0x1039ed208 result=13-slots-no-such-impl]
+    func playPreviousURL() {
+        guard urls.count >= 2 else {
+            return
+        }
+        guard let index = urls.firstIndex(of: url), index >= 1 else {
+            return
+        }
+        isPictureInPictureStoped = true
+        set(url: urls[index - 1], options: nil)
+    }
+
     public func playNextURL() {
         guard urls.count >= 2 else {
             return
