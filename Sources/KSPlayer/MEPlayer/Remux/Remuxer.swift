@@ -46,9 +46,32 @@ public final class Remuxer {
     }
 
     // ── write (slot7 @0x101a65df0, 94 instr) — FAITHFUL (DTS-clamp + lock + → slot13) ─────────────
-    // ⚑ name `write` INFERRED (devirt; inferred from role). Header-verified AVPacket offsets:
-    //   pts@+0x08, dts@+0x10, stream_index@+0x24.
-    func write(_ packet: UnsafeMutablePointer<AVPacket>) {              // ⚑ name inferred
+    // NAME IS INVENTED AND IS NOW MARKED AS SUCH. `name_exhaustion_gate` closes ALL SEVEN routes on
+    //   0x101a65df0 — no trie symbol at the address; the trie carries NO symbol for class
+    //   KSPlayer.Remuxer at all (its only Remuxer-bearing symbols are MEPlayerItem's `remuxer` field
+    //   and two unrelated ProAVPlayer protocol descriptors); no `#function`/`#file` literal (the body
+    //   has ZERO string literals); not an objc selector or IMP; and `masked_twin --scan` finds no twin
+    //   anywhere in the image, so it is real source, not emitted-library code. Two call sites, so it
+    //   is not INLINE-INSTEAD. Exactly one data pointer references it image-wide: Remuxer's metadata
+    //   vtable slot 7 (0x1044eae58 = meta 0x1044eada8 + 0x78 + 0x38) — no witness table, no objc
+    //   method list, so the witness-anchoring route is closed too.
+    // ⚠️ THE VTABLE-ELIMINATION ROUTE IS CLOSED ON THE MERITS, NOT ON THE GATE'S SAY-SO. The gate
+    //   reported "3 slots are unnamed" for this class; that is a TOOL BUG (its regex
+    //   `0x([0-9a-f]{9})` also matches the two header addresses `desc=0x1039f01e8` and
+    //   `@0x1039f0214` that vtable_walk prints, so it counted headers as impls — the true Impl count
+    //   is 1). Corrected, the route would print OPEN, and that OPEN would be VACUOUS: elimination
+    //   needs N-1 NAMED siblings and the trie names zero Remuxer methods. Closed either way.
+    // ⚠️ THE NAME IS KEPT, NOT CHANGED. `transcode(packet:)` is the binary's convention for this exact
+    //   AVPacket-ingest signature (FFmpegAssetTrack and OutputStreamInfo both use it; no trie-named
+    //   KSPlayer member with an AVPacket parameter is called `write`). But that is a convention
+    //   argument at a DIFFERENT abstraction level — this is the Remuxer's entry point, and the actual
+    //   output write happens downstream in the transcode contexts — and swapping one invented name
+    //   for another invented name buys
+    //   no binary evidence. What was actually wrong here is that a fabricated identifier carried
+    //   prose instead of the marker grammar, so no grep could find it. That is fixed.
+    //   Header-verified AVPacket offsets: pts@+0x08, dts@+0x10, stream_index@+0x24.
+    // ⚑[invented=write addr=0x101a65df0 exhaustion=name_exhaustion_gate approved=jweaver]
+    func write(_ packet: UnsafeMutablePointer<AVPacket>) {
         // Guard [A]: the OSI must have stream mappings. *(*(*(self+0x18)+0x40)+0x10) != 0 →
         // outputStreamInfo.streamMapping (OSI+0x40), NOT transcodeMap (OSI+0x18). [orchestrator re-walk fix]
         guard !outputStreamInfo.streamMapping.isEmpty else { return }
