@@ -425,6 +425,35 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         true
     }
 
+    // ⚑ `fileSize()` IS NOT DECLARED HERE, AND THIS IS THE PIN THAT SAYS WHY — it is a blocked
+    // unit, not an oversight. The body is at 0x101b8c178, 1732 B / 433 instructions, one trie
+    // symbol, no ICF fold, and it is override-table index 2 against AbstractAVIOContext's base
+    // descriptor 0x1039edc78 (so the declaration, when it lands, carries `override`). It occupies
+    // NO vtable slot of this class. Its own `#fileID` names this file, with KSLog lines 511/516.
+    // ⚑[tool=override_table ref=CacheIOContext.fileSize:0x101b8c178 result=entry2-base-0x1039edc78]
+    //
+    // It was read END TO END in s117: eleven statements — the `isFirstFileSize` guard that clears
+    // its own flag, `downloadLock.lock()`, the `_isClosed` early return of `Int64(end)`,
+    // `download.fileSize()` through DownloadProtocol witness +0x38, a `.verbose` KSLog, the
+    // `size <= 0` fallback to `download.seek(offset: -1, whence: 2)` at witness +0x30, a
+    // `.warning` KSLog on a negative seek, `end = max(end, UInt64(size))`, the
+    // `isJudgeEOF`/`!saveFile` arm that empties `entryList`, the tmpURL directory sweep with
+    // `try? removeItem`, `onCacheUpdated?()`, and `downloadLock.unlock()`. All eleven fields it
+    // touches are named and all eleven are already declared in this file. No callee is undeclared.
+    //
+    // EXACTLY ONE THING BLOCKS IT, and it is not solvable inside this member: `download` is
+    // declared `(any DownloadProtocol)?` at :53 while the binary's field record is `_p` with NO
+    // trailing `Sg`, and the body projects the existential and calls through it with no nil test
+    // (0x101b8c268 load → 0x101b8c288 blr, no `cbz`/`cmp` between). Every spelling that compiles
+    // adds something the binary does not have: `download?.fileSize()` emits a nil branch,
+    // `download!.fileSize()` emits a force-unwrap trap.
+    // ⚑[tool=fieldrec ref=CacheIOContext.download:0x1039f5670 result=_p-non-optional-no-Sg]
+    //
+    // Dropping the `?` is COUPLED and must land as one unit with the two call sites that pass
+    // `download: nil` — CacheIOContext.swift:390 and LimitSeparatePreLoadIOContext.swift:394 —
+    // both of which are self-declared reconstruction placeholders, and one of whose convenience
+    // inits is already pinned DIVERGENT for an unrelated arity divergence at :385.
+
     // ⚑ 0x10002d9d4 — `mov x0, #0` / `ret`. Unconditional nil: the body reads no field, takes no
     // branch, and never touches either parameter. That address is the image's canonical
     // `return nil` and is the most-folded in the whole binary (605 symbols share it), so it
