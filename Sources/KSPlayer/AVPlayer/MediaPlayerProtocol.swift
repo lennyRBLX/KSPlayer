@@ -195,6 +195,74 @@ public class DynamicInfo: ObservableObject {
         self.accessLogEvent = accessLogEvent
         self.displayFPSBlock = displayFPSBlock
     }
+
+    /// @0x1019df7d8, 204 instructions — the "slot-36 updater" the field notes above already refer to.
+    /// The trie gives the signature: `KSPlayer.DynamicInfo.update() -> ()`, one symbol, no ICF fold,
+    /// with a method descriptor, so it is a vtable member declared in the class body.
+    /// ⚑[tool=export_trie_oracle ref=DynamicInfo.update:0x1019df7d8 result=updateyyF]
+    ///
+    /// Read in order: `CACurrentMediaTime()` (__got 0x10410a7f8) into d8; `interval = time -
+    /// lastMediaTime` (self+0x80); `fmov d0,#1.5` / `fcmp` / `b.le` @0x1019df814-81c is the gate,
+    /// and it skips the whole body including the two trailing stores. Then the `accessLogEvent`
+    /// optional closure (self+0x50/+0x58), an array walk summing the ObjC
+    /// `numberOfDroppedVideoFrames` (selref 0x10440c450) into a UInt32 accumulator that clamps
+    /// negatives (`asr`/`bic` @0x1019df924-928) and traps on overflow, stored to
+    /// `droppedVideoFrameCount` through offset global 0x104c63580. Then the `displayFPSBlock`
+    /// if/else, `videoDisplayCount = 0` (`strb wzr` @0x1019dfa3c), `bytesReadBlock()`, and the
+    /// clamped `networkSpeed`. Both Published writes go through `swift_getKeyPath` ×2 and
+    /// `Combine.Published._enclosingInstance:wrapped:storage:`, with the keypath pairs pinned by
+    /// their computed-component id words to `displayFPS`/`_displayFPS` and
+    /// `networkSpeed`/`_networkSpeed`.
+    ///
+    /// ⚑ `@MainActor` IS DERIVED, not stylistic, and the argument does not rest on the executor
+    ///   assertion. `displayFPSBlock` is `(@MainActor @Sendable () -> Float)?` — field record 5,
+    ///   mangling `SfyYbScMYccSg` — and @0x1019df994 this body calls it with a bare `blr` after only
+    ///   the `?.` nil check and a retain: no thunk, no executor check, no async hop. A compiled probe
+    ///   settles what that means: calling such a value from a synchronous NONISOLATED context is a
+    ///   hard error ("call to main actor-isolated function in a synchronous nonisolated context"),
+    ///   and the same file compiles clean once the caller is `@MainActor`. So the enclosing context
+    ///   is main-actor isolated.
+    ///   ⚑[tool=fieldrec ref=DynamicInfo.displayFPSBlock:0x103cba814 result=SfyYbScMYccSg]
+    ///
+    /// ⚑ WHICH DECLARATION carries the isolation is NOT recoverable: `@MainActor` on the method and
+    ///   `@MainActor` on the class compile to byte-identical assembly. It is written on the method as
+    ///   the minimal claim. Note also that the ABSENCE of an entry-level executor check proves
+    ///   nothing here — this image emits none for any isolated synchronous function (six SwiftUI
+    ///   `View.body` getters, isolated by the protocol, carry zero), so
+    ///   `-enable-actor-data-race-checks` is refuted for this build.
+    ///
+    /// ⚑ The in-loop assertion at 0x1019df8fc carries `#fileID` 'KSPlayer/MediaPlayerProtocol.swift'
+    ///   (length 34) and `#line` 138 — THIS file. Five sibling `MediaPlayerProtocol` extension
+    ///   getters in it each emit the same construct at their own lines (265, 277, 289, 295, 301).
+    ///   ⚑[tool=decode_string_literal ref=DynamicInfo.update:0x103d34c50 result='KSPlayer/MediaPlayerProtocol.swift']
+    ///
+    /// ⚑ Four spellings the binary does not decide, written as the plainer of each pair: `reduce`
+    ///   vs a `for` loop over a local, `guard` vs `if` on the 1.5 s gate, `max(0,·)` vs a ternary for
+    ///   the two clamps, and every local identifier (local names survive nowhere in a stripped
+    ///   binary).
+    @MainActor
+    public func update() {
+        let time = CACurrentMediaTime()
+        let interval = time - lastMediaTime
+        guard interval > 1.5 else {
+            return
+        }
+        if let accessLogEvent {
+            droppedVideoFrameCount = accessLogEvent().reduce(0) {
+                $0 + UInt32(max(0, $1.numberOfDroppedVideoFrames))
+            }
+        }
+        if let displayFPSBlock {
+            displayFPS = displayFPSBlock()
+        } else {
+            displayFPS = Float(videoDisplayCount) / Float(interval)
+        }
+        videoDisplayCount = 0
+        let bytesRead = bytesReadBlock()
+        networkSpeed = max(0, Float(bytesRead - lastBytesRead) / Float(interval))
+        lastBytesRead = bytesRead
+        lastMediaTime = time
+    }
 }
 
 public struct Chapter {
