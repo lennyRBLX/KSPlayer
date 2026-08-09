@@ -2,6 +2,7 @@ import Foundation
 import KSPlayer
 import FFmpegKit   // URLContext (FFmpeg private libavformat type) is declared in FFmpegKit's avformat_shim.h
 import Libavformat
+import QuartzCore // CACurrentMediaTime — the init's open-cost timer; the binary calls _CACurrentMediaTime (QuartzCore) at 0x103459d54
 
 // URLContextDownload — an AbstractAVIOContext that downloads through an FFmpeg
 // URLContext (libavformat protocol handler), used to populate the cache.
@@ -11,10 +12,10 @@ import Libavformat
 //            `context`/`keepAlive`/`isReadComplete` are v4 concrete (transcribed
 //            verbatim); `url` is ⚑ best-effort (confirmed via l2_field_gate).
 //   init   — real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (cached;  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
-//            7-arg, also reused by CacheIOContext/ReadCacheIOContext to build their
-//            `download`). Opens an FFmpeg URLContext (deep IO; stripped calls named
-//            only by the P2 oracle) → UNRESOLVED→P8 (IO-completion); inherited init(bufferSize:) is
-//            the compilable spine.
+//            also reused by CacheIOContext/ReadCacheIOContext to build their `download`).
+//            ⚑ THE INIT IS WRITTEN BELOW, all 264 instructions of it. The old note here called
+//            this body deep IO whose stripped calls only the P2 oracle could name; that was wrong.
+//            It makes ONE FFmpeg open call, named by argument shape against url.h:143.
 //
 // UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
 //   the binary (no readable body) → inherited, NOT reconstructed. — P2
@@ -30,25 +31,87 @@ public class URLContextDownload: AbstractAVIOContext {
     // context: the FFmpeg URLContext driving the download. v4 concrete.
     var context: UnsafeMutablePointer<URLContext>?
     // keepAlive: whether the connection is kept open after a read. v4 concrete.
-    let keepAlive: Bool = false
+    // ⚑ THE `= false` DEFAULTS ARE GONE, on the binary's evidence. The real init assigns both:
+    //   self+0x20 takes a COMPUTED value (the "multiple_requests" dictionary probe below) and
+    //   self+0x21 takes the `isReadComplete` PARAMETER. A stored constant would have neither store.
+    let keepAlive: Bool
     // isReadComplete: whether the download has reached completion. v4 concrete.
-    let isReadComplete: Bool = false
+    let isReadComplete: Bool
     // url: the source URL of the download. Inner init copies it via Foundation::URL
     //   type-metadata + value-witness (dispositive → URL, not String).
-    // ⚑[tool=binding_gate ref=URLContextDownload:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • url — assigned after super.init(); a `let` must be set before it
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    var url: URL? // type URL; optionality inferred — ⚑
+    // ⚑ THE s61 BINDING PIN IS DISCHARGED, AND THE OPTIONALITY WAS WRONG TOO. The pin said `let`
+    //   was impossible because `url` is "assigned after super.init()". It is not: the real init
+    //   below assigns every own field BEFORE the open, and `super.init` is inlined afterwards, so
+    //   `let` compiles. And the field record's typeref is a bare symref to `_$s10Foundation3URLVMn`
+    //   with tail `b''` — NO trailing `Sg` — so the type is `URL`, not `URL?`.
+    // ⚑[tool=fieldrec ref=URLContextDownload.url:0x1039f5a64 result=URL-no-Sg-flags-0-let]
+    let url: URL
 
-    // UNRESOLVED: real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (7 args; also reused by  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
-    //   CacheIOContext/ReadCacheIOContext to build their `download`). Opens an FFmpeg URLContext
-    //   (multiple_requests option, avio open) — deep FFmpeg IO whose stripped calls only the P2 oracle names.
-    //   Not reconstructed; inherited init(bufferSize:) is the compilable spine. — P2
-    public override init(bufferSize: Int32 = 32 * 1024) {
-        super.init(bufferSize: bufferSize)
+    /// @0x101b90c58, extent 0x101b90c58-0x101b91078, 264 instructions, one trie symbol, not
+    /// ICF-folded. 0x101b90bc0 is the allocating `cfC` entry and 0x101b90c44 the metadata accessor,
+    /// which is why the three looked adjacent and confusing. It genuinely throws: x21 is spilled at
+    /// entry, the error goes into x21, and both exits converge on `mov x21, x23`.
+    ///
+    /// ABI: x20 = self, x0 = &url (INDIRECT and OWNED — `URL` is resilient, so it arrives by
+    /// address and its value-witness `destroy` runs on both exits), w1 = flags, x2 = options,
+    /// x3+x4 = the 16-byte `AVIOInterruptCB` reassembled into a stack temporary at fp-0x70 whose
+    /// ADDRESS is what reaches the open, x5 = isReadComplete.
+    ///
+    /// Store order is the binary's: `context`, `url`, `isReadComplete`, `keepAlive`, then the open,
+    /// then the guard, and only then the superclass pair — every own field is initialized before the
+    /// throw, which is what lets the failure path end in `swift_deallocPartialClassInstance`.
+    ///
+    /// `keepAlive` is a dictionary probe, and its three branches are read, not guessed:
+    ///   · `cbz x25` @0x101b90cf8 — the `options` parameter is optional-chained.
+    ///   · `cbz x0` @0x101b90d1c — the entry pointer is nil-TESTED, i.e. `if let`, not force-unwrapped.
+    ///   · `cbz x0` @0x101b90d24 → `brk #0x1` @0x101b91074 — only `.value` traps, which is the
+    ///     implicit unwrap of an IUO `char *`.
+    /// "multiple_requests" is the ONLY dictionary key in the whole extent, and no dictionary WRITE
+    /// call appears anywhere in it — the probe is read-only.
+    /// ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]
+    ///
+    /// ⚑ The 8-argument open at 0x1030c03e4 is named by ARGUMENT SHAPE, not by the oracle:
+    ///   `ffmpeg_name_oracle --resolve` returns UNKNOWN with zero survivors there (14-member
+    ///   fingerprint class). The operands are (x0=&self.context, x1=the utf8CString buffer,
+    ///   w2=flags, x3=&interrupt, x4=options, x5=0, x6=0, x7=0), which matches url.h:143's
+    ///   `ffurl_open_whitelist(URLContext **, const char *, int, const AVIOInterruptCB *,
+    ///   AVDictionary **, const char *, const char *, URLContext *)` position for position with
+    ///   whitelist/blacklist/parent all NULL.
+    /// ⚑[tool=ffmpeg_name_oracle ref=0x1030c03e4 result=UNKNOWN-named-by-argument-shape]
+    ///
+    /// ⚑ FILE PLACEMENT DIVERGES AND IS NOT FIXED HERE. The `#fileID` literal reachable from this
+    ///   body decodes to "PreLoadIOContext/CacheIOContext.swift" and the `#line` immediate is 1043,
+    ///   so Forward declares this init in CacheIOContext.swift — where this class evidently also
+    ///   lived. Our CacheIOContext.swift is 1001 lines, so that line does not exist yet. A
+    ///   designated init cannot be declared outside its class's own file, so moving it is a
+    ///   file-placement unit of its own; it is recorded, not half-applied.
+    /// ⚑[tool=decode_string_literal ref=URLContextDownload.init.fileID:0x101b90c58 result=CacheIOContext.swift-line-1043]
+    ///
+    /// ⚑ The old `init(bufferSize:)` override that stood here was a compilable placeholder, not a
+    ///   binary member. It cannot survive `url` becoming a non-optional `let` — it initialized
+    ///   nothing — and with the real designated init written it has no reason to.
+    public init(url: URL, flags: Int32, options: UnsafeMutablePointer<OpaquePointer?>?, interrupt: AVIOInterruptCB, isReadComplete: Bool) throws {
+        context = nil
+        self.url = url
+        self.isReadComplete = isReadComplete
+        if let entry = av_dict_get(options?.pointee, "multiple_requests", nil, 0) {
+            keepAlive = String(cString: entry.pointee.value) == "1"
+        } else {
+            keepAlive = false
+        }
+        var interrupt = interrupt
+        let start = CACurrentMediaTime()
+        let ret = ffurl_open_whitelist(&context, url.ffmpegString, flags, &interrupt, options, nil, nil, nil)
+        // The bare form is deliberate: `KSLog(level: LogLevel = .warning, …)`, and the binary gates
+        // on `KSOptions.logLevel` tag >= 3 then dispatches at tag 3, which is `.warning`.
+        KSLog("url open cost time=\(CACurrentMediaTime() - start) result=\(ret)")
+        guard ret == 0 else {
+            throw KSPlayerError(errorCode: .formatOpenInput, avErrorCode: ret)
+        }
+        // ⚑ `super.init` is NOT called — it is inlined to a single 8-byte constant store of the
+        //   (readLimit, bufferSize) pair at self+0x10/+0x14, i.e. readLimit keeps its -1 default and
+        //   bufferSize is 262144. AbstractAVIOContext has exactly those two Int32 stored fields.
+        super.init(bufferSize: 256 * 1024)
     }
 
     // urlContext (base slot +0xa8) — io_open's terminal URLContext accessor.
