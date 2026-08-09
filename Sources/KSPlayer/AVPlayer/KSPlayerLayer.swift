@@ -558,7 +558,50 @@ open class KSPlayerLayer: NSObject {
         player.prepareToPlay()
     }
 
+    /// THE PROLOGUE BELOW RUNS BEFORE `state = .readyToPlay`, and it had no source counterpart at
+    /// all. Statement order is the binary's own, @0x1019cda08 (356 instr):
+    ///   1019cda80  ldr x8,[x22,#0x28] / blr   MediaPlayback req4 = player.view.getter
+    ///   1019cda9c  bl 0x1019cf5d8             addSubtitle(to:)
+    ///   1019cdaa4  ldr x8,[…#0x188] / str xzr bufferedCount = 0
+    ///   1019cdae4  ldr s0,[x20,#0x40]         options.startPlayRate
+    ///   1019cdaf0  ldr x8,[x1,#0x38] / blr    → player.playbackRate.setter
+    ///   1019cdb5c  bl 0x1034532ec             Published subscript GETTER on subtitleModel
+    ///   1019cdc68  bl swift_conformsToProtocol against 0x1039f1964 = AudioRecognize
+    ///   1019cdd50  str x8,[x21,x20]           options.audioRecognizes = <the new array>
+    ///
+    /// `bufferedCount` is offset global 0x1044e6188, and it is pinned by TYPE rather than by
+    /// adjacency: both candidate getters ICF-fold into the 371-symbol mega-fold at 0x10198eb18, so
+    /// the usual "prove it from its own accessor" route is unavailable. `changeLoadState`
+    /// @0x1019ce4ec reads that same global with `ldr x8,[x19,x28]` / `cbnz x8` — a 64-bit INTEGER
+    /// test — and of this class's 17 fields `bufferedCount` (`Si`) is the only integer value-field;
+    /// the two `Sd` candidates would need `fcmp` and the three Bools would use `ldrb`.
+    ///
+    /// The `audioRecognizes` statement is a WHOLE-ARRAY STORE, not an append: a fresh
+    /// `__swiftEmptyArrayStorage`-seeded local is built and then written into the field under a
+    /// modify access, with the old value released. The loop appends the PAIR
+    /// `(instance, witness-table)` — `stp x19, x26, [x9,#0x20]` with x26 the conformsToProtocol
+    /// result — which is `as?`, not `is`; a filter would have kept the SubtitleInfo witness.
+    /// The array being iterated is `subtitleModel.subtitleInfos` read through its property
+    /// wrapper: 0x1034532ec is Combine's `Published._enclosingInstance:wrapped:storage:` getter and
+    /// the two globals handed to it are KEYPATH PATTERNS (0x10345cdd8 is `swift_getKeyPath`), both
+    /// rooted at `SubtitleModel`, valued `[any SubtitleInfo]` and `Published<[any SubtitleInfo]>`.
+    /// ⚑[tool=export_trie_oracle ref=AudioRecognize.protocolDescriptor:0x1039f1964 result=OWNER_MATCH]
+    /// ⚑[tool=recover_field_offsets ref=KSOptions.audioRecognizes:0x104c63370 result=audioRecognizes]
+    ///
+    /// ⚑ STATEMENT 5 IS NOT WRITTEN. After the store the binary reads
+    ///   `subtitleModel.selectedSubtitleInfo` (global 0x104c637f0) and branches AWAY when it is
+    ///   non-nil, then fetches `player.subtitleDataSource` (witness byte 0xe8 = index 28, typed
+    ///   `(any ConstantSubtitleDataSource)?`) and launches a Task with a 0x38-byte box holding
+    ///   MainActor.shared, the MainActor:Actor witness table, the dataSource's two existential
+    ///   words and `self`, at nil priority. The Task's async function pointer resolves to
+    ///   0x1019d5b58, which is NOT_IN_TRIE — its body is unread, so the statement is omitted rather
+    ///   than stubbed.
+    /// ⚑[tool=export_trie_oracle ref=readyToPlay.taskBody:0x1019d5b58 result=NOT_IN_TRIE]
     public func readyToPlay(player: some MediaPlayerProtocol) {
+        addSubtitle(to: player.view)
+        bufferedCount = 0
+        player.playbackRate = options.startPlayRate
+        options.audioRecognizes = subtitleModel.subtitleInfos.compactMap { $0 as? AudioRecognize }
         state = .readyToPlay
         #if os(macOS)
         runOnMainThread { [weak self] in
@@ -577,14 +620,27 @@ open class KSPlayerLayer: NSObject {
             }
         }
         #endif
-        #if !os(macOS) && !os(tvOS)
-        if #available(iOS 14.2, *) {
-            if options.canStartPictureInPictureAutomaticallyFromInline {
-                (player.pipController as? KSPictureInPictureController)?.canStartPictureInPictureAutomaticallyFromInline = true
-            }
-        }
-        #endif
-        updateNowPlayingInfo()
+        // ⚠️ THE iOS 14.2 PiP BLOCK IS REMOVED, and the verdict's reason for keeping it was wrong.
+        // D3 grouped it with the macOS window block above as "correctly absent from an iOS image —
+        // platform-gated". That holds for the macOS block, which is `#if os(macOS)` and so is not
+        // compiled here at all. It does NOT hold for this one: `#if !os(macOS) && !os(tvOS)` is
+        // ACTIVE on iOS, so platform gating cannot explain its absence — the block simply has no
+        // counterpart, which makes it a real divergence rather than a non-finding.
+        // The absence is exhaustive, not inferred: over the whole extent 0x1019cda08-0x1019cdf98
+        // there is NO read of witness byte 0xf8 (`pipController.getter`, the only way to reach a
+        // pipController) and NO call to the dynamic-cast stub 0x10345cc88 that `as?` would need.
+        // ⚑[tool=function_extents ref=KSPlayerLayer.readyToPlay:0x1019cda08 result=no-0xf8-witness-no-dynamicCast]
+        // `updateNowPlayingInfo()` REMOVED — it has no counterpart, and the extent's callee set is
+        // small enough to say so exhaustively rather than by absence-of-evidence. Over
+        // 0x1019cda08-0x1019cdf98 there are 29 distinct call targets; 23 are libswiftCore/libobjc
+        // stubs, and the remaining six are all identified: 0x100006158 (lazy witness-table cache),
+        // 0x10002d984 (mangled-name type instantiation), 0x1019ace70 (array-buffer grow),
+        // 0x1019c9cd4 (the Published `state` setter path), 0x1019cf5d8 (addSubtitle(to:)) and
+        // 0x101a03fd4 (the Task creator). None of them touches MPNowPlayingInfoCenter, and there is
+        // no seventh candidate for the call to hide in.
+        // ⚑[tool=function_extents ref=KSPlayerLayer.readyToPlay:0x1019cda08 result=29-callees-six-non-runtime-all-named]
+        // The method itself is KEPT: it is `private` so it exports no symbol either way, and other
+        // callers of it are outside this unit.
         if isAutoPlay {
             if shouldSeekTo > 0 {
                 seek(time: shouldSeekTo, autoPlay: true) { [weak self] _ in
