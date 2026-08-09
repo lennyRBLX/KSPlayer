@@ -368,8 +368,32 @@ with at least two loop back-edges (0x101ba5490 and 0x101ba54a8, entered from `b.
 (301 instr, which needed a full derivation pass plus independent verification), not like a
 constraint-setter.
 
-`canContinuePreload(at:)` is a private member our source does not declare — it has `canPreload(_:)`
-at :524, a different symbol. That reconciliation is its own unit and it gates D2.
+✅ **D2 IS CLOSED (commit `0e3f556`).** The verdict recorded `canContinuePreload(at:)` as absent. It
+was present all along at 0x101ba5a5c, declared as `canPreload(_ position:)` and explicitly marked
+"name inferred (devirt)" — an INVENTED name that was wrong on the name, the argument label and the
+access level. The trie gives all three:
+`LimitSeparatePreLoadIOContext.(canContinuePreload in _D3E0B2D6…)(at: Swift.UInt64) -> Swift.Bool`,
+where the `(… in _<discriminator>)` form is the mangling for a **private** member. Renamed and
+re-scoped; body unchanged; build 4/4. It had also collided with
+`LimitPreLoadIOContext.canPreload`, a STORED `Bool` on a different class — two unrelated members
+sharing a name purely because one was guessed.
+
+**THE `moreDownload` WITNESS OFFSETS ARE MAPPED.** `DownloadProtocol` has 8 requirements
+(PlayerDefines.swift:773). Witness word 0 is the conformance descriptor, so requirement *i* sits at
+word *i+1* = offset `8*(i+1)`:
+
+    +0x28 = word 5 = requirement 4 = read(buffer:size:)
+    +0x30 = word 6 = requirement 5 = seek(offset:whence:)
+
+Both corroborate independently from the call shapes rather than merely fitting: the +0x28 site is
+called with `(loadMoreBuffer, size)` and the +0x30 site with `(pos, 0)`.
+
+⚠️ **AND A CORRECTION TO THIS FILE'S OWN EARLIER CLAIM.** It said "0x88 is `cacheList`, not
+`entryList`". For *writing source* that is misleading: `cacheList` is a COMPUTED property
+(LimitSeparatePreLoadIOContext.swift:634, PreLoadIOContext.swift:465) that forwards to the STORED
+`entryList` (CacheIOContext.swift:97). `recover_field_offsets.py` credits an offset to whichever
+ACCESSOR touches it, so its answer means "an accessor that reads this offset", not "the stored field
+at this offset". The binary search in `more()` walks **`entryList`**.
 
 D3's two KSLog message strings were never decoded; the verdict says so explicitly
 (`result=not-attempted`). Decode them rather than carrying the source comment's 34-char prefix.
