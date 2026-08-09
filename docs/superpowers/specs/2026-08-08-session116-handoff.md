@@ -1126,6 +1126,110 @@ returned by the `blr x8` at 0x101b2ace8) which gates the arm, and the ~40 instru
 at VideoPlayerView.swift:157 does not exist. Four source consumers must move together —
 VideoPlayerView.swift:157 and :170, KSVideoPlayerView.swift:509, KSPlayerLayer.swift:810.
 
+## `structural_placement` D2 is a MOVE, and BOTH its method bodies are wrong as written
+
+D2 says `AVPictureInPictureControllerDelegate` is declared on `KSPlayerLayer` in source but is
+not among the binary's conformances for that class. **Confirmed, and the destination is
+identifiable**: all six delegate callbacks are implemented on `KSComplexPlayerLayer` —
+
+    KSComplexPlayerLayer.pictureInPictureControllerDidStartPictureInPicture(_:)
+    KSComplexPlayerLayer.pictureInPictureControllerDidStopPictureInPicture(_:)      0x1019d2bac
+    KSComplexPlayerLayer.pictureInPictureControllerWillStartPictureInPicture(_:)
+    KSComplexPlayerLayer.pictureInPictureControllerWillStopPictureInPicture(_:)
+    KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:)
+    KSComplexPlayerLayer.pictureInPictureController(_:restoreUserInterfaceForPictureInPictureStopWithCompletionHandler:)  0x1019d3220
+
+— which is the same "belongs on the subclass" shape as `urls`. The source declares the
+conformance at KSPlayerLayer.swift:804 with only two of the six. Note the file ALREADY says at
+:982-988 that these six belong to `KSComplexPlayerLayer` and are "DECLARED NOWHERE YET".
+
+**The move is not sufficient — both implemented bodies are wrong, and in opposite ways.**
+
+`pictureInPictureController(_:restoreUserInterfaceForPictureInPictureStopWithCompletionHandler:)`
+@0x1019d3220, 45 instr, read in full. It takes a read access on `self.player` (offset global
+0x104c634f0), loads the two-word existential, calls witness `[wtable+0x48]` with `w0 = 1`, and
+the whole thing is guarded by `cbz x20` — optional chaining. Witness slot +0x48 is **req8** of
+the 10-requirement `KSPictureInPictureController : KSPictureInPictureProtocol` table
+(wt 0x1041d45a0), and req8 = 0x1019c7648 =
+`KSPictureInPictureController.stop(restoreUserInterface: Swift.Bool)`. So the body is
+
+    player.pipController?.stop(restoreUserInterface: true)
+
+The source instead has `isPipActive = false` here. And the source puts
+`stop(restoreUserInterface: false)` in the OTHER method — so the two bodies are effectively
+swapped **and** the Bool is inverted. `w0 = 1` is read, not inferred.
+⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req8-stop-restoreUserInterface]
+
+`pictureInPictureControllerDidStopPictureInPicture` @0x1019d2bac is **one instruction** — a
+`b 0x1019d62ec` into an 81-instruction NOT_IN_TRIE body. That body calls
+`KSPlayerLayer.(addSubtitle in _B3181…)(to: UIView)` @0x1019cf5d8 — the same private method
+`readyToPlay`'s missing prologue calls. So stopping PiP re-attaches the subtitle view. **That
+body has not been read instruction by instruction; do not write it from this callee list.**
+
+Standing up `addSubtitle(to:)` (191 instr) therefore unblocks TWO units at once — this one and
+`readyToPlay` D1. It is the highest-leverage single member in the KSPlayerLayer cluster.
+
+## `download: nil` WAS NEVER TRUE — the whole optionality blocker is refuted
+
+`PreLoadIOContext_download_existential_s78` (1 MED, and the same premise blocks
+`LimitSeparatePreLoadIOContext_more_idx30` D1) has been carried on this justification:
+
+> Dropping the `?` is BLOCKED … CacheIOContext.swift:211 and LimitSeparatePreLoadIOContext.swift:346
+> delegate with `download: nil` … the real argument there is built by the deep-FFmpeg URLContext
+> open inside 0x101b90c58, which is unreconstructed. Removing the optional would force that
+> construction to be invented.
+
+**Both halves are false.** The two convenience inits construct real `URLContextDownload` objects
+and pass them as fully-populated NON-NIL existentials. Verified directly, not just via the agent:
+
+    101b867b8  stp x19, x8, [x29, #-0x68]   existential type = URLContextDownload metadata,
+                                            wtable = 0x1041d5330
+    101b867bc  stur x28, [x29, #-0x80]      buffer[0] = the just-allocated object
+    101b867c0  mov x0, x28 / bl swift_retain
+    101b867f4  sub x0, x29, #0x80           → passed indirectly as `download:`
+
+and `decode_witness_table --wt 0x1041d5330` is `AbstractAVIOContext : DownloadProtocol`. There is
+no null store anywhere on that path. `LimitSeparatePreLoadIOContext` builds **two distinct**
+objects — `download` and `moreDownload` are separate allocations, neither nil, neither shared.
+
+Nor is the deep init the obstacle it was recorded as. Neither convenience init calls the
+allocating thunk 0x101b868d4; each inlines `swift_allocObject` and calls the initializing entry
+0x101b90c58 directly, with `flags: 1` (`AVIO_FLAG_READ`) and `isReadComplete: false` — the
+incoming `isReadComplete` is NOT forwarded to the download build.
+
+**Everything else these two bodies do is now read, and most of it contradicts the source:**
+
+- `md5:` is not a parameter. It is `url.sortQueryString.md5()`, computed in the body. Both
+  helpers are trie-named: `(extension in PreLoadIOContext):Foundation.URL.sortQueryString.getter`
+  @0x101b86a2c and `(extension in KSPlayer):Swift.String.md5()` @0x1019f0d98. So
+  LimitSeparate's `let cacheKey = ""` placeholder has a real derivation now.
+- `bufferSize:` is the hard-coded constant 0x40000 = 262144 in both (`mov w3/w4, #0x40000`),
+  which is why the trie signature carries no `bufferSize:` label at all.
+- `LimitSeparate` mutates the dictionary between its two builds — key `"rw_timeout"`, boxed
+  `Swift.Int` 100000 (0x186a0) — then re-derives `avOptions` for the second build.
+- Delegation goes through the metatype vtable, not a direct call: CacheIOContext metadata +0x380 =
+  slot 61 (Init) → 0x101b86cb8; LimitSeparate metadata +0x530 = slot 22 (Init) → 0x101ba4650.
+  Both targets mangle every download parameter as a bare `…_p` with no `Sg`.
+- Both throw, purely by propagating a callee's error through x21; neither constructs one.
+
+**What actually remains before the `?` can drop.** Only two members, and one of them is small:
+
+1. `extension URL { var sortQueryString: String }` — @0x101b86a2c, NOT declared anywhere in
+   source (it is cited in a marker at HLSCacheIOContext.swift:200 but never defined).
+2. `URLContextDownload.init(url:flags:options:interrupt:isReadComplete:)` @0x101b90c58, 264
+   instr — still the real work.
+
+The other three helpers the rewrite needs ALREADY EXIST: `String.md5()` at Utility.swift:102,
+and `Dictionary where Key == String { var avOptions: OpaquePointer? }` at
+AVFFmpegExtension.swift:447 — which is exactly the binary's
+`(extension in KSPlayer):Swift.Dictionary<where A == String>.avOptions.getter`.
+
+Two things that could NOT be established, recorded so nobody re-derives them by guessing:
+`CacheIOContext`'s two post-delegation offset-globals 0x1044f3828 and 0x1044f3830 (the resolver
+returns "NOT RECOVERED — do not guess it"; they receive the incoming `formatContextOptions` word
+and the two `interrupt` words), and `URLContextDownload`'s field offsets — that class is
+`metadata_init=1` and `field_offset_vector.py` correctly REFUSES it rather than returning zeros.
+
 ## A gate was right and I was wrong — worth the 10 minutes it costs to check
 
 `l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as
