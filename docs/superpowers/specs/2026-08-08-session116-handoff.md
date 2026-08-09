@@ -78,9 +78,21 @@ So the faithful fix is a DELETION, not a move: drop `urls`, `set(urls:options:)`
 — `set(urls:options:)` is `public` API, and `nextPlayer()` has an in-file caller (the
 `if error == nil { nextPlayer() }` tail noted at :728). Check both before cutting.
 
-`_isPipActive` is the harder half: it is `@Published` (VideoPlayerView binds `$isPipActive` at :157)
-and its `didSet` drives pipController start/stop, so removing it deletes working behaviour. The
-file's own comment already calls it "source-only scaffolding (zero trie hits)".
+✅ **`urls` IS DONE** (commit ea199e0) — the field and its three zero-call-site consumers were
+deleted, and `l2_field_gate` on KSPlayerLayer went REAL_FLAG **2 -> 1**.
+
+`_isPipActive` is the one left, and it is NOT a deletion. Confirmed absent: zero `isPipActive`
+symbols image-wide, and `l2_field_gate` reports it absent from the reflection field records (which
+rule 3 makes authoritative for fields). But Forward clearly does track PiP state — just differently:
+`KSComplexPlayerLayer` carries `isPictureInPictureStoped` (a PASSing field), and
+`KSPlayerLayer.pipStop(restoreUserInterface:)` is trie-named at vtable slot 77. So the binary models
+"stopped", driven by explicit pipStart/pipStop calls; the source models "active", driven by a
+`@Published` property whose `didSet` calls `pipController.start`/`.stop`.
+
+Removing it therefore requires REWIRING, not cutting: `VideoPlayerView` binds `$isPipActive` to the
+pip button's `isSelected` at :157 and toggles it at :170, so the button's state and action both have
+to move onto the real mechanism. That needs VideoPlayerView's pip-button code derived first. A unit,
+not a tidy-up.
 
 **`openFormatContext` D2 — ITS BLOCKER IS A TOOL MISMATCH, and the field IS nameable.** The
 in-source note says the `.right` AVIO install's swift_once-guarded store cannot be written because
