@@ -216,14 +216,23 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     ///   "// name inferred (devirt)", which is not the marker grammar — one grep must separate every
     ///   fabricated identifier from every derived fact, so it now carries the real thing. The base
     ///   name `write` rests on NO binary evidence; the ARGUMENT LABELS do:
-    ///   this is vtable slot 13 (impl 0x101b906c8), and its only two callers are the trie-named
+    ///   this is vtable slot 13 (impl 0x101b906c8), reached from THREE call sites in TWO caller
+    ///   functions (addEntry calls it twice, at 0x101b8cdb4 and 0x101b8ce4c; addNewEntry once at
+    ///   0x101b8d494) — an earlier note here said "only two callers", conflating sites with functions.
+    ///   Those callers are the trie-named
     ///   `CacheIOContext.addEntry(logicalPos:buffer:size:)` @0x101b8ccac and
     ///   `addNewEntry(logicalPos:buffer:size:)` @0x101b8d2c8, which pass their three parameters
     ///   STRAIGHT THROUGH (`mov x0,x24` / `ldur x1,[x29,#-0xe0]` / `ldur w2,[x29,#-0xc8]` /
     ///   `bl 0x101b906c8` at 0x101b8d488-0x101b8d494). This class's own trie-named
     ///   `isOut(size:)` independently confirms `size:` as this module's label for a byte count.
     ///   ⚑[invented=write addr=0x101b906c8 exhaustion=name_exhaustion_gate approved=jweaver]
-    func write(logicalPos: UInt64, buffer: UnsafePointer<UInt8>, size: Int32) throws {
+    // ⚑ `buffer` IS MUTABLE, and that is read from the callers, not chosen. Both trie-named callers
+    //   pass their own parameter straight through (`mov x0,x25 / mov x1,x24 / mov x2,x23 / bl`), and
+    //   the trie types theirs `buffer: Swift.UnsafeMutablePointer<Swift.UInt8>` —
+    //   `CacheIOContext.addEntry(logicalPos:buffer:size:)` @0x101b8ccac and
+    //   `addNewEntry(logicalPos:buffer:size:)` @0x101b8d2c8. It was declared `UnsafePointer<UInt8>`;
+    //   the compiler surfaced the mismatch when the Data builder below was corrected.
+    func write(logicalPos: UInt64, buffer: UnsafeMutablePointer<UInt8>, size: Int32) throws {
         let offset = logicalPos
         let length = size
         // ⚑ s114: the `guard let file` that stood here is GONE because `file` is a non-optional
@@ -233,7 +242,15 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
         if try file.offset() != target {
             try file.seek(toOffset: target)
         }
-        let data = Data(bytes: buffer, count: Int(length)) // UNRESOLVED: exact Data builder (FUN_100395fc0) unseen
+        // THE BUILDER IS NO LONGER UNRESOLVED, AND THE OLD SPELLING WAS WRONG. It was
+        //   `Data(bytes: buffer, count: Int(length))`, a two-argument COPYING initializer. The binary
+        //   passes THREE arguments to 0x100395fc0 — `mov x0,x23` (buffer), `mov x1,x27` (count),
+        //   `mov x2,x25` (a third value) — and x25 is built from __got 0x104109b70 =
+        //   `_$s10Foundation4DataV11DeallocatorO4noneyA2EmFWC`, i.e. `Data.Deallocator.none`.
+        //   `Data(bytes:count:)` takes no deallocator; the only Data initializer with this shape is
+        //   `Data(bytesNoCopy:count:deallocator:)`. The difference is semantic, not cosmetic: the old
+        //   spelling COPIES the caller's buffer, the binary does not.
+        let data = Data(bytesNoCopy: buffer, count: Int(length), deallocator: .none)
         try file.write(contentsOf: data)
         // ⚑ `self.` is REQUIRED here, not stylistic: the `size:` parameter label recovered from the
         //   callers shadows this class's `size` field, and without the qualifier this reads the
