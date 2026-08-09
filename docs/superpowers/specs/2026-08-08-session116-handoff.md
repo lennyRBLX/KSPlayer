@@ -107,7 +107,31 @@ function pointer), so they are written as `@convention(c)` closure literals at t
 `seek(offset:whence:)` (PlayerDefines.swift:680/684/693), so each closure is an
 `Unmanaged.fromOpaque(...).takeUnretainedValue()` plus one method call.
 
-⛔ **D2'S ONE REMAINING BLOCKER IS AN INVENTED NAME, and it needs sign-off.** The `AVClass` itself is
+⚠️ **RE-SCOPED AGAIN — D2 IS A MISSING MEMBER, NOT INLINE WIRING.** The AVIO sequence at
+0x101a39800-0x101a39864 is not openFormatContext's own code; it is
+`AbstractAVIOContext.getContext(writable:)` INLINED. That member is trie-named —
+
+    $s8KSPlayer19AbstractAVIOContextC10getContext8writableSpySo0C0VGSgSb_tF
+    -> KSPlayer.AbstractAVIOContext.getContext(writable: Swift.Bool)
+         -> Swift.UnsafeMutablePointer<__C.AVIOContext>?      @0x1019e258c
+
+— and its 39-instruction body (0x1019e258c-0x1019e2628) contains exactly the wiring: `bl 0x103253d30`
+(av_malloc), `bl 0x1030c1250` (avio_alloc_context), `bl 0x10345cfa0` (swift_once) and three
+references to the 0x104c63/0x1044e6 pair, i.e. the AVClass static and its once token. The three C
+callbacks (0x1019e2628 / 0x1019e2684 / 0x1019e26e0) sit immediately after it, and the AVClass
+once-init (0x1019e22c0) and `child_next` (0x1019e237c) are in the same 0x1019e2xxx block — the whole
+cluster belongs to `AbstractAVIOContext`, not to `openFormatContext`.
+
+**`getContext(writable:)` is ABSENT from source.** The only `getContext` in the tree is
+`MEPlayerItem.getContext(writable:)` (MEPlayerItem.swift:901) — a different type. So D2's real
+requirement is: stand up `AbstractAVIOContext.getContext(writable:)` (NAME READ FROM THE TRIE, not
+invented) and write `formatCtx.pointee.pb = context.getContext(writable:)` at the call site.
+
+That also relocates the remaining approval question: the AVClass static lives inside
+`getContext`'s body, so the identifier needed is a private static on `AbstractAVIOContext`, not
+anything in `FormatContext.swift`.
+
+⛔ **THE ONLY THING STILL NEEDING SIGN-OFF IS THAT STATIC'S NAME.** The `AVClass` itself is
 a `swift_once`-guarded STATIC at 0x104c63590. Swift cannot express that as a local — `av_class` must
 point at storage that outlives the call — so writing it requires declaring a global/static, and that
 global needs a NAME. 0x104c63590 is a DATA address and NOT_IN_TRIE, so no naming route reaches it,
