@@ -378,14 +378,66 @@ open class KSPlayerLayer: NSObject {
     //   old value and stores the new one (`str x24,[x22,x21]` @0x1019cb71c) — i.e. `self.options =
     //   options`. The nil arm REJOINS at 0x1019cb760 rather than returning, and the non-nil block
     //   falls through to that same address, so only the assignment is guarded.
-    // ⚑ BODY STILL DIVERGENT — divergence 2 of the same verdict is unaddressed here. The binary body
-    //   is 251 instr (0x1019cb674-0x1019cba60) and does far more than these statements.
+    // BODY NOW READ IN FULL — all 251 instructions of 0x1019cb674-0x1019cba60, only 6 branches.
+    //
+    // ⚠️ THE VERDICT'S D3 IS FALSE and is discharged here rather than carried. It claimed the two
+    // KSOptions byte offsets "could not be tool-read … KSOptions emits no vpWvd globals". KSOptions
+    // emits dozens, and both resolve immediately once the module is passed:
+    //   recover_field_offsets --class KSOptions --module KSPlayer --offset 0x45 -> isAutoPlay
+    //   recover_field_offsets --class KSOptions --module KSPlayer --offset 0x58 -> playerTypes
+    // ⚑[tool=recover_field_offsets ref=KSOptions+0x45 result=isAutoPlay]
+    // ⚑[tool=recover_field_offsets ref=KSOptions+0x58 result=playerTypes]
+    //
+    // Statement order is the binary's:
+    //   1019cb6fc  cbz x24              the `if let options` guard (the Optional nil test)
+    //   1019cb71c  str x24,[x22,x21]    self.options = options        (x21 = *0x104c634e0 options)
+    //   1019cb748  ldrb w21,[x24,#0x45] options.isAutoPlay
+    //   1019cb75c  strb w21,[x22,x8]    self.isAutoPlay = …           (x8  = *0x104c63520)
+    //   1019cb7c8  ldr x8,[x24,#0x58]   options.playerTypes
+    //   1019cb7d0  cbz x9               .count == 0 -> the fallback arm
+    //   1019cb7e0  bl 0x1019b20bc       type metadata accessor for KSPlayer.KSAVPlayer
+    //   1019cb814  bl swift_getObjectType   type(of: self.player)     (player = *0x104c634f0)
+    //   1019cb81c  b.eq                 same type -> skip construction
+    //   1019cb870  bl 0x1019d5978       the outlined `player = …` (see below)
+    //   1019cb8ec  bl 0x1034523a4       URL.==   (self.url vs the parameter; url = *0x104c634f8)
+    //   1019cb8f0  tbz w0,#0            URLs DIFFER -> assign + replace
+    //   1019cb920  metadata +0x2b8      vtable slot 60 = KSPlayerLayer.play()
+    //   1019cb9cc  bl 0x1019de7f8       MediaPlayerProtocol.replace(url:options:)
+    //   1019cba00  metadata +0x2f8      vtable slot 68 = KSPlayerLayer.prepareToPlay()
+    // ⚑[tool=vtable_walk ref=KSPlayerLayer.play:0x1019cc5f8 result=slot60-metadata+0x2b8]
+    // ⚑[tool=vtable_walk ref=KSPlayerLayer.prepareToPlay:0x1019cd5e0 result=slot68-metadata+0x2f8]
+    // ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.replace(url:options:):0x1019de7f8 result=OWNER_MATCH]
+    //
+    // THE THREE "UNNAMED CALLEES" OF D4 NEED NO NAMES — they are the emitted forms of ordinary
+    // Swift, not members. 0x1019d5978 is 32 instructions that take a MODIFY access, `ldp` the old
+    // two-word existential out of the field, `stp` the new one in, retain the new, call the didSet
+    // with the OLD value, and release it — i.e. exactly what `player = …` compiles to for a
+    // property carrying a `didSet`. 0x1019c9a68 / 0x1019c9cd4 are likewise the `url` observer's
+    // body. Writing the plain assignments re-emits them.
+    // ⚑[tool=name_exhaustion_gate ref=player_store:0x1019d5978 result=outlined-didSet-assignment]
+    //
+    // `runOnMainThread` is GONE: the extent contains no dispatch, no Task and no MainActor symbol —
+    // its whole callee set is the metadata accessor, the two observers, URL value witnesses,
+    // replace, and runtime retain/release/exclusivity.
     public func set(url: URL, options: KSOptions?) {
         if let options {
             self.options = options
+            isAutoPlay = options.isAutoPlay
         }
-        runOnMainThread {
+        let playerType = self.options.playerTypes.first ?? KSAVPlayer.self
+        if type(of: player) != playerType {
+            player = playerType.init(url: url, options: self.options)
+        }
+        if self.url == url {
+            if isAutoPlay {
+                play()
+            }
+        } else {
             self.url = url
+            player.replace(url: url, options: self.options)
+            if isAutoPlay {
+                prepareToPlay()
+            }
         }
     }
 
