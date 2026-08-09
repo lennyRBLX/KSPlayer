@@ -1096,6 +1096,36 @@ are "correctly absent from an iOS image — platform-gated". The macOS half is r
 half is guarded by `#if !os(macOS) && !os(tvOS)`, which is **active on iOS**, so its absence is
 either a real divergence or the source's PiP block diverges. Do not close D3 as written.
 
+## `_isPipActive` — the rewiring target is now known, and it is NOT a toggle
+
+`KSPlayerLayer_structural_placement_s76` D1 is down to a single REAL_FLAG — re-measured, not
+recalled: `l2_field_gate` on KSPlayerLayer now reads `PASS 4 · UNCHECKED 13 · REAL_FLAG 1`, and
+the one flag is `_isPipActive`. (`urls`, the other one, was removed earlier this session.)
+
+Forward's actual PiP surface is two methods and no flag:
+
+    KSPlayer.KSComplexPlayerLayer.pipStart()                        0x1019d1424
+    KSPlayer.KSPlayerLayer.pipStop(restoreUserInterface: Swift.Bool) 0x1019ced14
+
+`isPipActive` has zero symbols image-wide. `KSComplexPlayerLayer.isPictureInPictureStoped` is
+real but is a **plain stored Bool** — getter, setter and modify, and NO projected-value symbol —
+so it is not `@Published` and cannot be the source of a Combine binding.
+
+**The consumer body says the button is one-way.** `VideoPlayerView.onButtonPressed(type:button:)`
+@0x101b2abe4 (113 instr): `cmp w22, #0x9` selects the pictureInPicture arm, the arm takes the
+`KSComplexPlayerLayer` metadata accessor (0x1019d5d24) and a dynamic cast with `cbz x0` bailout,
+and then calls **`pipStart()` at 0x101b2ad6c**. Grepping the whole extent for pipStop's address
+returns **zero** occurrences. So the source's `playerLayer?.isPipActive.toggle()` at
+VideoPlayerView.swift:170 has no counterpart shape — Forward starts PiP and never stops it from
+this button.
+
+Still to decode before writing: the predicate at 0x101b2acf8 (`tbz w24,#0x0` on the Bool
+returned by the `blr x8` at 0x101b2ace8) which gates the arm, and the ~40 instructions
+0x101b2ac68-0x101b2ad68 around it. Also unresolved: what, if anything, drives
+`toolBar.pipButton.isSelected` in Forward, since the `$isPipActive` publisher the source binds
+at VideoPlayerView.swift:157 does not exist. Four source consumers must move together —
+VideoPlayerView.swift:157 and :170, KSVideoPlayerView.swift:509, KSPlayerLayer.swift:810.
+
 ## A gate was right and I was wrong — worth the 10 minutes it costs to check
 
 `l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as
