@@ -519,14 +519,30 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
     case let .right(context):
         url = nil                       // ⚑ the url C-string is NULL on this arm (@0x101a39858-5c stores 0/0)
         ioContext = context             // ⚑ x27 = *(enum payload) @0x101a397e8
-        // ⚑ UNRESOLVED (unchanged) — the `.right` AVIO install: `av_malloc(ctx.<Int32 @+0x14>)` @0x101a39800,
-        //   `avio_alloc_context(buf, size, 0, ctx, 0x1019e2628, 0x1019e2684, 0x1019e26e0)` @0x101a39828, a
-        //   a swift_once-guarded class-pointer store @0x101a3984c, then `formatCtx.pb = avio` @0x101a39864.
-        //   (The store's target field is identified in the verdict, not here: naming it would assert an
-        //   FFmpeg symbol this unit cannot provenance with ffmpeg_name_oracle, which fingerprints
-        //   FUNCTIONS and can never CONFIRM a struct field.)
-        //   ⚑[tool=ffmpeg_name_oracle ref=avio_alloc_context:0x1030c1250 result=CONFIRMED]
-        //   ⚑[tool=ffmpeg_name_oracle ref=av_malloc:0x103253d30 result=CONFIRMED]
+        // THE `.right` AVIO INSTALL — written. It was deferred as "the AVIO wiring inside the arm",
+        // but the sequence at 0x101a39800-0x101a39864 is not this function's own code: it is
+        // `AbstractAVIOContext.getContext(writable:)` INLINED at the call site. The trie names it
+        // (`$s8KSPlayer19AbstractAVIOContextC10getContext8writableSpySo0C0VGSgSb_tF` @0x1019e258c) and
+        // its 39-instruction body carries exactly the deferred steps — the buffer allocation, then
+        // `avio_alloc_context(buf, size, write_flag, self, read, write, seek)`, the swift_once-guarded
+        // store into the AVIOContext's class field (offset 0, Libavformat/avio.h — a struct FIELD, so
+        // ffmpeg_name_oracle cannot mark it; it confirms call addresses, not layout), and the
+        // nil-return on a failed alloc.
+        // ⚑[tool=ffmpeg_name_oracle ref=av_malloc:0x103253d30 result=CONFIRMED]
+        // ⚑[tool=ffmpeg_name_oracle ref=avio_alloc_context:0x1030c1250 result=CONFIRMED]
+        // ⚑[tool=export_trie_oracle ref=KSPlayer.AbstractAVIOContext.getContext(writable:):0x1019e258c result=OWNER_MATCH]
+        //
+        // That member ALREADY EXISTS in the reconstruction — `extension AbstractAVIOContext` at
+        // MEPlayerItem.swift:867, with the three `@convention(c)` callbacks and the class-field store
+        // through its own `Self.avClass` static — so nothing had to be stood up and no name had to be
+        // invented. The whole deferral was a scoping error:
+        // the wiring belongs to `AbstractAVIOContext`, and the 0x1019e2xxx cluster it lives in
+        // (callbacks 0x1019e2628 / 0x1019e2684 / 0x1019e26e0, the AVClass once-init 0x1019e22c0 and
+        // its `child_next` 0x1019e237c) sits with that class, not with openFormatContext at 0x101a39xxx.
+        //
+        // `writable` is false here: the inlined call passes `mov w2, #0x0` @0x101a39820 as
+        // avio_alloc_context's write_flag.
+        formatCtx.pointee.pb = context.getContext(writable: false)
     }
 
     // ⚑ UNRESOLVED — the `url` custom-AVIOContext arm. Disasm @0x101a39720-0x101a39798: `x21 = options.vtable[0x5b0]`
