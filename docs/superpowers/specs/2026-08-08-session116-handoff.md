@@ -1320,6 +1320,59 @@ derivation: either the FFmpeg distribution grows the internal headers (or a shim
 read. Everything ELSE in the chain is now derived and writable — which is worth knowing before
 anyone spends another session reading around it.
 
+## `readyToPlay` statements 4-5 are DECODED now — and my first reading of them was wrong
+
+The earlier entry above called 0x1019cdb44-0x1019cdc40 "an sret call returning an ARRAY followed
+by a loop" and repeated s84's description of "a `swift_conformsToProtocol` walk". The walk is
+real, but the two globals I leaned on were misidentified, so record the correction with the
+result:
+
+**0x10345cdd8 is `swift_getKeyPath`, not a protocol-descriptor accessor.** So 0x103567810 and
+0x103567838 are **keypath patterns**, and they are the `wrapped:`/`storage:` pair of ONE property:
+both have root `KSPlayer.SubtitleModel`, with values `[any SubtitleInfo]` and
+`Combine.Published<[any SubtitleInfo]>`. And **0x1034532ec is Combine's
+`Published._enclosingInstance:wrapped:storage:` GETTER**. So the sret call is simply reading
+`subtitleModel.subtitleInfos` through its property wrapper — there was never a mystery array.
+
+With that, the two statements read:
+
+```swift
+options.audioRecognizes = subtitleModel.subtitleInfos.compactMap { $0 as? AudioRecognize }
+if subtitleModel.selectedSubtitleInfo == nil, let dataSource = player.subtitleDataSource {
+    Task { @MainActor in … }        // async fn 0x1019d5b58, 0x38-byte box
+}
+```
+
+Each half is anchored:
+
+- The loop appends the PAIR `(instance, witness-table)` — `stp x19, x26, [x9, #0x20]` where x26 is
+  the `swift_conformsToProtocol` result — so the element type is `any AudioRecognize` and the
+  shape is `as?`/compactMap, NOT `is`/filter (a filter would have kept the SubtitleInfo witness).
+  The protocol is confirmed: 0x1039f1964 is `protocol descriptor for KSPlayer.AudioRecognize`.
+- The destination is a **whole-array STORE**, not an append: a fresh
+  `__swiftEmptyArrayStorage`-seeded local at x29-0xd8 is built, then written into
+  `options.audioRecognizes` (offset global 0x104c63370, off `self.options` 0x104c634e0) at
+  0x1019cdd50 under a modify `swift_beginAccess`, with the old value `swift_bridgeObjectRelease`d.
+  The field record confirms the type: `[any KSPlayer.AudioRecognize]`.
+- The Task is **guarded**: `selectedSubtitleInfo` (SubtitleModel global 0x104c637f0) is read and
+  `cbnz` branches AWAY when it is non-nil — so the Task only runs when no subtitle is selected.
+- `player.subtitleDataSource` is witness byte 0xe8 = index 28, and its type is
+  **`(any ConstantSubtitleDataSource)?`**, not `SubtitleDataSource?` — worth knowing before
+  declaring it.
+- The 0x38-byte box holds exactly five words: `MainActor.shared`, the `MainActor : Actor` witness
+  table, the dataSource existential's two words, and `self`. Task priority is `nil`, set through
+  `storeEnumTagSinglePayload(buf, 1, 1)` on `Optional<TaskPriority>`.
+- The async function pointer record at 0x103567860 is `{ fn = 0x1019d5b58, contextSize = 0x20 }`,
+  and **0x1019d5b58 is NOT_IN_TRIE** — the Task's body is its own unit and is not written.
+
+**Two facts that settle open questions elsewhere in this file.** `state` is genuinely a
+`@Published` property of KSPlayerLayer — the `state = .readyToPlay` store at 0x1019cdebc goes
+through Combine's `Published` subscript SETTER with keypaths rooted at `KSPlayerLayer` and valued
+`KSPlayerState`. And `readyToPlay` is **not** `@MainActor`: there is exactly ONE executor check in
+all 356 instructions (0x1019cdc34) and it is inside the loop, not at entry, so it belongs to an
+inlined isolated callee. Its `reportUnexpectedExecutor` gives a hard `#fileID` anchor —
+`'KSPlayer/KSPlayerLayer.swift'` line **465**.
+
 ## A gate was right and I was wrong — worth the 10 minutes it costs to check
 
 `l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as
