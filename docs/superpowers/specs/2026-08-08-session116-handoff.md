@@ -70,11 +70,43 @@ Memory: `concurrent-sessions-race-on-one-repo`.
   looks redundant and must be confirmed, not assumed.
 
 **`IOSVideoPlayerView.updateUI(isLandscape:)` @0x101b08f3c** (2 HIGH + 1 LOW) — best-positioned
-remaining target. 0x101b08f3c-0x101b09494, 1368 B, 342 instr. **All eight constraint properties
-already exist** at IOSVideoPlayerView.swift:144-151, so nothing is blocked on a stand-up. Structure
-mapped: 23 sends to the `setConstant:` stub 0x103468ea0, each guarded by its own `cbz x0` (the
-constraints are Optional); two arms split at `tbz w0,#0` @0x101b08f7c and `tbz w19,#0` @0x101b091b4
-(w19 = isLandscape). What remains is reading the 23 constants and pairing each with its constraint.
+remaining target, and **the expensive half is now done**. 0x101b08f3c-0x101b09494, 1368 B, 342 instr.
+**All eight constraint properties already exist** at IOSVideoPlayerView.swift:144-151, so nothing is
+blocked on a stand-up.
+
+All 23 `setConstant:` sends (stub 0x103468ea0) are resolved, each guarded by its own `cbz x0`
+because the constraints are Optional. Field names come from `field_offset_vector IOSVideoPlayerView`
+joined against the offset each `0x1044f0fXX` global holds — **not** guessed from the access site:
+
+    global      offset  field
+    0x1044f0f30 0x2d8   topLeftBackgroundLeadingConstraint
+    0x1044f0f38 0x2e0   topRightBackgroundTrailingConstraint
+    0x1044f0f40 0x2e8   leftBackgroundViewLeadingConstraint
+    0x1044f0f48 0x2f0   bottomBackgroundLeadingConstraint
+    0x1044f0f50 0x2f8   bottomBackgroundTrailingConstraint
+    0x1044f0f58 0x2c8   topStatusLeadingConstraint
+    0x1044f0f60 0x2d0   topStatusTrailingConstraint
+    0x1044f0f68 0x300   bottomBackgroundHeightConstraint
+
+THREE blocks, and A and C are identical:
+
+    A  0x101b090f4-0x101b091a8   8 sends   15 · -15 · 33 · 15 · -15 · 25 · -25 · 100
+    B  0x101b0925c-0x101b092f4   7 sends   20 · -20 · 33 · 20 · -20 · 30 · -30   (NO height send)
+    C  0x101b09334-0x101b093e8   8 sends   15 · -15 · 33 · 15 · -15 · 25 · -25 · 100
+
+in the field order listed above (topLeft, topRight, leftBackground, bottomLeading, bottomTrailing,
+topStatusLeading, topStatusTrailing, height). ⚠️ The verdict's "15/-15/20/-20/25/-25/30/-30" is
+WRONG — there is no 20/-20 in block A at all, `leftBackgroundViewLeadingConstraint` is always 33,
+and the height is 100. Two constants are raw doubles, not `fmov` immediates, and must be decoded
+rather than read: `mov x8,#0x800000000000 / movk x8,#0x4040,lsl #48` = **33.0** and
+`mov x8,#0x4059000000000000` = **100.0**.
+
+WHAT REMAINS: only the branch semantics. `mov x19, x0` @0x101b08f5c makes x19 = `isLandscape`, and
+`tbz w19,#0` @0x101b091b4 selects on it. Block A is gated by `cbz x22` @0x101b090dc, where x22 comes
+from a UIDevice chain — `ldr x0,[x8,#0x510]` @0x101b090b8 is the `__objc_classrefs` UIDevice entry,
+then 0x10345c2e0 → 0x1034604c0 → 0x10345c3dc → 0x10346e920. Decode those selectors
+(`decode_objc_selector`) and the `cbnz x0` @0x101b09304 to finish. Do NOT write the body until they
+are read — the constants are worthless if the arms are attached to the wrong conditions.
 
 **The UNRESOLVED verdict's premise is dead.** `VideoSwresample_DVbodies_deferral_p3a` defers on
 "unverifiable with current tools … NOT protocol witness tables". `decode_witness_table.py` was
