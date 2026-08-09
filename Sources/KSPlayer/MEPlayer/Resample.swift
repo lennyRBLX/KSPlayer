@@ -430,6 +430,40 @@ public class AudioDescriptor: Equatable {
         return lhs.sampleFormat == AVSampleFormat(rawValue: rhs.format) && lhs.sampleRate == sampleRate && lhs.channel == rhs.ch_layout
     }
 
+    // ⚠️ DIVERGENT, and it is the ROOT of two divergences previously attributed to
+    // `updateAudioFormat()`. Body @0x101a68c44, extent 0x101a68c44-0x101a68f3c, 190 instructions.
+    //
+    // Forward's helper DOES NOT SWITCH ON `sampleFormat`. Read from the binary:
+    //   · no register-indirect dispatch anywhere in the extent (`br x` count 0), so no jump table
+    //     and no switch;
+    //   · its eight compares are cmp w2,w8 / cmp x8,x23 / cmp x8,x23 / cmp x8,x9 / cmp w8,#0x3 /
+    //     cmn x8,#0x1 / cmn x8,#0x1 / cmp x23,x22 — none a multi-way dispatch on an AVSampleFormat;
+    //   · the AVAudioFormat construction takes `commonFormat` UNCONDITIONALLY —
+    //       101a68ea0: cmp   x23, x22
+    //       101a68ea4: cset  w21, eq     <- `interleaved`, one equality test
+    //       101a68ea8: scvtf d8, w19     <- Double(sampleRate)
+    //       101a68eb8: mov   w2, #0x1    <- commonFormat = 1; no branch reaches this instruction
+    //       101a68ec0: mov   x3, x21
+    //       101a68ec4: mov   x4, x20     <- channelLayout
+    //       101a68ec8: bl    0x103462d60
+    //     so the eight-case switch below and the `if !(A || B) { commonFormat = ... }` after it
+    //     have no counterpart in Forward at all.
+    //
+    // CONSEQUENCE, and why this matters beyond this one body: with the switch gone, `sampleFormat`
+    // becomes unused, the optimizer dead-argument-eliminates it, and the emitted call takes three
+    // registers (x0=sampleRate, x1=&outChannel, x2=channelCount) instead of four. That is what made
+    // `updateAudioFormat()` look like it called a three-parameter helper and look like it never read
+    // `self.sampleFormat`. Both were artifacts of THIS body, and the s84 verdict attributed them to
+    // the caller. The DECLARATION is not in question: this callee materializes its own `#function`
+    // literal as `audioFormat(sampleFormat:sampleRate:outChannel:channelCount:)` — 61 chars at
+    // 0x103d36df0, four labels, with its `#file` companion — so Forward declares four parameters
+    // exactly as we do.
+    //
+    // NOT REWRITTEN HERE: the two `cmp x8,x23` metatype comparisons and the `layoutTag` derivation
+    // were not read instruction by instruction, so the replacement body is not written rather than
+    // guessed. Its own unit.
+    // ⚑[tool=recover_swift_function_name ref=AudioDescriptor.audioFormat:0x101a68c44 result=4-label-#function]
+    // ⚑[tool=function_extents ref=AudioDescriptor.audioFormat:0x101a68c44 result=190-instr-no-switch]
     static func audioFormat(sampleFormat: AVSampleFormat, sampleRate: Int32, outChannel: inout AVChannelLayout, channelCount: AVAudioChannelCount) -> AVAudioFormat {
         if channelCount != AVAudioChannelCount(outChannel.nb_channels) {
             av_channel_layout_default(&outChannel, Int32(channelCount))
