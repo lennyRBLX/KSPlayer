@@ -164,18 +164,43 @@ So the statement is
 twice over: PlayerView's reflection records carry no `srtControl` at all (PlayerView D3 above), so
 the source's `srtControl.subtitleInfos` is wrong on BOTH halves of the path.
 
-⚠️ AND IT IS NOT `subtitleInfos`. This tree already records keypath pairs per property in
-KSSubtitle.swift — `parts` = d1e8/d210, `subtitleInfos` = d140/168, `flag` = d240/d268, all on page
-0x10356d. **This body's pair is 0x10356fd18/0x10356fd40**, a different page, with the same 0x28
-stride, so it is a fourth, unattributed property. Do not write `subtitleInfos`.
+THE PROPERTY IS `subtitleInfos`. ⚠️ **An earlier revision of this file said it was NOT, and that was
+wrong — the reasoning was unsound and is corrected here.** The bad inference: this tree records
+keypath pairs per property in KSSubtitle.swift (`parts` = d1e8/d210, `subtitleInfos` = d140/168,
+`flag` = d240/d268, all on page 0x10356d), and this body's pair is 0x10356fd18/0x10356fd40 on a
+different page, which I read as "a fourth, unattributed property."
 
-THE ONE REMAINING READ: name the `@Published` property that fd18/fd40 projects. `field_offset_vector
-SubtitleModel` cannot help — the class has `metadata_init=1`, so its metadata is initialized at
-RUNTIME and the static image holds no field offsets (it returns 0x0 for every field, which looks
-like a real map and is not). Use the vpWvd symbolic route or anchor sites across bodies. The two
-keypath component words are 0x80000010 (fd18) and 0x80000008 (fd40).
+**A keypath PATTERN is emitted per USE SITE, not per property.** The same property referenced from
+two files gets two pattern addresses. Address difference proves nothing; you must compare what the
+patterns resolve to. Doing that:
 
-Everything else in this body is read.
+    kp 0x10356fd18  root -> 0x103c2e927   value -> 0x103c2e92d
+    kp 0x10356d140  root -> 0x103c2e927   value -> 0x103c2e92d    <- IDENTICAL, both fields
+    kp 0x10356d1e8  root -> 0x103c2e927   value -> 0x103c2f075    <- `parts`, different value type
+
+(the words at pattern+0x08 / +0x0c are relative pointers; resolve as `addr + offset + word`.) The
+shared value descriptor's mangled bytes begin `Say` + a symbolic reference + `_pG`, i.e.
+`Array<any Protocol>` — matching `subtitleInfos: [any SubtitleInfo]`, and NOT
+`searchedSubtitleInfos: [URLSubtitleInfo]` or `parts: [SubtitlePart]`. The storage keypaths are
+byte-identical across all three (`08000080 fdffff03`), which is the generic `_x` backing projection.
+
+So the statement is:
+
+    toolBar.srtButton.isHidden = playerLayer.subtitleModel.subtitleInfos.isEmpty
+
+The source's `srtControl.subtitleInfos.isEmpty` has the right PROPERTY and the wrong PATH — the
+binary reaches it through `playerLayer.subtitleModel`, and PlayerView carries no `srtControl` field
+at all.
+
+Corroboration, not part of the proof: the only other user of this keypath pair is
+`IOSVideoPlayerView.(createSubtitleSubMenu in _99D4461AEE15ECA71DEBF361B80F60DD)(title:isSecondary:)`
+@0x101b0e6a4 — a subtitle menu builder, which is what you would expect to read the subtitle list.
+
+Note `field_offset_vector SubtitleModel` cannot help here: the class has `metadata_init=1`, so its
+metadata is initialized at RUNTIME and the static image holds no field offsets — it returns 0x0 for
+every field, which looks like a real map and is not.
+
+This body is now fully read.
 
 **The UNRESOLVED verdict's premise is dead.** `VideoSwresample_DVbodies_deferral_p3a` defers on
 "unverifiable with current tools … NOT protocol witness tables". `decode_witness_table.py` was
