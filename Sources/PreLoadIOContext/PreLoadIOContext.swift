@@ -130,7 +130,12 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     //   (UInt64), param_3=total (UInt64) — both reinterpreted from the double regs in
     //   the binary. Helper bodies are unnamed FUN_ with no readable signature → spine
     //   only, NOT fabricated.
-    func interpolateTime(_ time: Double, position: UInt64, total: UInt64) -> Double { // name inferred (devirt)
+    // 🚨 NAME AND LABELS WERE FABRICATED; the trie names this outright, and the correct spelling
+    //   was ALREADY QUOTED two lines below by resolve_fun_pins:
+    //   `positionToTime(position: Swift.UInt64, fileSize: Swift.UInt64, duration: Swift.Double)`.
+    //   The old `interpolateTime(_:position:total:)` also had the parameters in the WRONG ORDER —
+    //   `duration` was the leading unlabelled argument and `fileSize` was spelled `total`.
+    func positionToTime(position: UInt64, fileSize: UInt64, duration: Double) -> Double {
         var result = 0.0
         // Binary gate (FUN_101ba80e8): total != 0 && finite && time > 0. The decompile  ⚑[tool=resolve_fun_pins ref=FUN_101ba80e8:0x101ba80e8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.positionToTime(position: Swift.UInt64, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.Double
         // enters the lock body only when `-1 < (long)param_1` (sign bit clear = non-negative)
@@ -139,7 +144,7 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         // the orchestrator re-walk of the M1C audit. NB the audit itself FALSE-PASSED this unit
         // (rationalized the sign term as isFinite inlining — the same trap s31's compare agent
         // hit). Counterexample time=-1.0,total=10,pos=5: binary -> 0.0 (gate fails); pre-fix -> -1.0.
-        guard total != 0, !(time.isNaN || time.isInfinite), time > 0 else { return result }
+        guard fileSize != 0, !(duration.isNaN || duration.isInfinite), duration > 0 else { return result }
         _timeIndexLock.lock()
         // UNRESOLVED → P8 (IO-completion): lVar1 = FUN_101bac458(time, _timeIndex, total) — an unnamed
         //   time-index lookup over _timeIndex returning a found-entry marker (0 == miss).
@@ -152,10 +157,10 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         _timeIndexLock.unlock()
         // binary (miss): dVar2 = time; if position < total and
         //   (time * Double(position)) / Double(total) <= time → take the interpolation.
-        result = time
-        if position < total {
-            let interp = (time * Double(position)) / Double(total)
-            if interp <= time { result = interp }
+        result = duration
+        if position < fileSize {
+            let interp = (duration * Double(position)) / Double(fileSize)
+            if interp <= duration { result = interp }
         }
         return result
     }
@@ -237,9 +242,10 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     //   0x101ba86c8 / 0x101ba87f8) rather than held in a register across the call, so the
     //   source really does spell the property three times — a `let` local would have pinned it.
     // ⚑[tool=prefetch_decompiles ref=PreLoadIOContext.slot49:0x101ba862c result=body full; NAME inferred]
-    func bufferedSeconds() -> Double { // name inferred (devirt)
+    // 🚨 NAME WAS FABRICATED. Trie: `PreLoadIOContext.availableBufferSeconds() -> Swift.Double`.
+    func availableBufferSeconds() -> Double {
         guard eof, end != 0, videoDuration > 0 else { return 0 }
-        let startTime = interpolateTime(videoDuration, position: logicalPos, total: end)
+        let startTime = positionToTime(position: logicalPos, fileSize: end, duration: videoDuration)
         guard !entryList.isEmpty else { return 0 }
         var low = 0
         var high = entryList.count - 1
@@ -260,7 +266,7 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
                     cursor = max(cursor, next.position + UInt64(next.size))
                     index += 1
                 }
-                let endTime = interpolateTime(videoDuration, position: cursor, total: end)
+                let endTime = positionToTime(position: cursor, fileSize: end, duration: videoDuration)
                 return endTime - startTime
             } else {
                 low = mid + 1
@@ -375,26 +381,16 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         return UInt32(bufferSize)
     }
 
-    // s52 @101ba9e44 — `var bufferedBytes: Int` (name inferred, devirt). FAITHFUL (full).
-    //   Distinct from bufferedBytesAvailable() above: that one reads +0x14/+0x48/+0x50,
-    //   this one reads ONLY `fakeUrlPos` (this class's own field, its exclusivity check
-    //   elided) and the inherited `logicalPos`. logicalPos@+0x80 is source-pinned, not
-    //   guessed: CacheIOContext.swift documents entryList at self+0x88 and logicalPos as
-    //   the field immediately before it, and CacheIOContext#slot24 @0x101b86138 is
-    //   logicalPos' own generated getter reading that same +0x80.
-    //   Shape: `fakeUrlPos == .max` (the binary's 0xffffffffffffffff sentinel) → 0;
-    //   `logicalPos > fakeUrlPos` → 0; otherwise the difference, clamped. The clamp is
-    //   the tell for `Int(clamping:)` — an unsigned compare of the UInt64 difference
-    //   against 0x8000000000000000 selecting 0x7fffffffffffffff (== Int.max) on the high
-    //   side. (`Int(exactly:) ?? .max` emits the same select; `Int(clamping:)` is the
-    //   idiomatic spelling and is what is written.)
-    // ⚑[tool=prefetch_decompiles ref=PreLoadIOContext.bufferedBytes.getter:0x101ba9e44 result=body full; NAME inferred]
-    var bufferedBytes: Int { // name inferred (devirt)
-        guard fakeUrlPos != .max, logicalPos <= fakeUrlPos else {
-            return 0
-        }
-        return Int(clamping: fakeUrlPos - logicalPos)
-    }
+    // 🚨 A FABRICATED DUPLICATE WAS DELETED HERE — `var bufferedBytes: Int`, tagged
+    //   "name inferred (devirt)" at s52 @0x101ba9e44. The trie names that address
+    //   `PreLoadIOContext.PreLoadIOContext.loadedSize.getter : Swift.Int64`, and this class
+    //   ALREADY declares `public var loadedSize: Int64` further down with the same guard
+    //   (`fakeUrlPos != .max`, the ordering compare against logicalPos) and the same clamped
+    //   difference. One binary getter had been reconstructed TWICE — once under its real name and
+    //   once under an invented one — and the invented copy also had the wrong type (`Int`).
+    //   The compiler is what surfaced it: renaming the duplicate to its true name produced
+    //   "invalid redeclaration of 'loadedSize'". The surviving declaration is the public one that
+    //   satisfies PreLoadProtocol; nothing referenced `bufferedBytes`.
 
     // ⚑[tool=vtable_walk ref=PreLoadIOContext.slot1.getter:0x101ba41f4 result=pinned]
     //   A get-only computed property declared BEFORE the stored fields (slots 0 and 1 are
