@@ -449,12 +449,27 @@ with `w1 = 0`, same `logLevel >= 3` gate before the log. The two differ only in 
 That identity is exactly why the Ghidra cache folded them into one, and why a source written from the
 cache would carry one seek-and-log instead of two.
 
-⛔ **WHAT IS STILL NOT ESTABLISHED, and it is the last thing standing between this and a written
-body: the RETURN-VALUE dataflow.** `w24` carries the result and is written on several paths —
-`mov w24, #0x1` @0x101ba56b0, `mov w24, #-0x1` @0x101ba5708, the `0xdfb9b0bb` EOF constant, and the
-byte count from the read. Those individual writes are read, but I did NOT trace `w24` through every
-edge to the epilogue, so which path returns what is not proven. Trace it before writing — the
-returns are the part a reader cannot check against behaviour, and getting them wrong is invisible.
+✅ **THE RETURN DATAFLOW IS TRACED — and it contains a trap that would corrupt a naive read.**
+
+There is exactly ONE return: `mov x0, x24` @0x101ba59fc into the epilogue `ret` @0x101ba5a1c. But
+**x24 serves two disjoint roles**, and only some of its writes are return values:
+
+    101ba5478  mov x24, #0x0        SEARCH state — the running "best entry", initialised nil
+    101ba5504  mov x24, x26         SEARCH state — best = this entry
+    101ba54fc  mov x0, x24          NOT a return: the argument to swift_release(oldBest)
+    101ba571c  mov x0, x24          NOT a return: swift_release again
+    101ba56b0  mov w24, #0x1        RETURN 1     — the seek-and-log path
+    101ba5708  mov w24, #-0x1       RETURN -1    — canContinuePreload was false
+    101ba57a4  mov x24, x0          the seek result
+    101ba593c  mov x24, x0          the read result
+    101ba59cc  mov w24, #0xb0bb / movk #0xdfb9,lsl#16   RETURN 0xdfb9b0bb — the EOF constant
+
+⚠️ The two `mov x0, x24` sites at 0x101ba54fc and 0x101ba571c look exactly like returns and are
+`swift_release` arguments for the search's entry pointer. Reading them as returns — or assuming a
+single live range for x24 — produces a body that returns an object pointer. Disjoint live ranges
+sharing a register is the whole hazard here.
+
+With this, every instruction AND the return plumbing of `more()` are established.
 
 ✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
