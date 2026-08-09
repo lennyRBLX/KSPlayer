@@ -91,6 +91,77 @@ One member of `KSVideoPlayerModel` is still missing from source: `init(playerLay
 `convenience init`. Zero members of this class are trie negatives, and it carries no ObjC method
 list, so nothing here needs the exhaustion gate.
 
+## `FFmpegDecode.decodeFrame` — 0x101a2220c, 677 instr
+
+D1 and D2 are **already closed in source**: `FFmpegDecode.swift:55` declares
+`from packet: UnsafeMutablePointer<AVPacket>`, mangling identically to the trie; the CC guard at
+:88 tests `self.isVideo` (field offset 0x61) and reaches `self.assetTrack` (0x68).
+
+The CRITICAL's own sentence "every later use is a DIRECT AVPacket field read" is **refuted**: of
+11 x24 uses only 3 are dereferences, and all three read `AVPacket.flags` — masked with
+`AV_PKT_FLAG_KEY` and `AV_PKT_FLAG_DISCARD`. Offsets were proven by compiling `_Static_assert`s
+against this build's own ios-arm64 install tree rather than assumed, which is the method to copy.
+The same technique refutes a "non-stock AVCodecContext" reading elsewhere in D8: 0x154 is `slices`
+and 0xa4 is `field_order` in this tree.
+
+D4 is **mis-scoped, not live**: the source's four-level fallback now lives inside the
+`filter.filter` closure at :246-257, outside this extent.
+
+**D3's coupling is CONFIRMED across all three legs and must not be fixed alone.** 0x101a67274 is
+the relocated side-data loop (reads `nb_side_data` 0x110 and `side_data` 0x108, dispatches on the
+same nine `AVFrameSideDataType` values) and is VideoSwresample vtable slot 32; it writes the
+VideoSwresample instance at +0xc20…+0xc68; slot 28 (0x101a660dc) reads those back and stores them
+into `VideoVTBFrame+0x50`, which `field_offset_vector` names `edrMetaData`. Independently checked:
+`FFmpegDecode.swift:225` is the **only** writer of `edrMetaData` in the whole tree —
+`Resample.swift:101` and `Model.swift:528` are declarations. Deleting the inline loop before
+landing `change()` regresses the field.
+
+## `Coordinator.player(layer:currentTime:totalTime:)` — 0x1019db8e8, 261 instr
+
+Lines premise refuted: 283-302 → the method is at 297-315.
+
+Two divergences collapse on inspection. **D3's blocker is refuted** — `bufferTime` is already
+declared at `KSVideoPlayer.swift:384`, so nothing must be added first — and **D3's field-order
+claim is refuted too**: the binary's record order is `_currentTime, _totalTime, _bufferTime,
+fileSize`, which matches source exactly. **D7 is refuted**: the keypath identities are readable,
+not merely inferable — each pattern's computed-component ID at +0x1c resolves to the property's
+method descriptor, naming all three outright. Root and value alone cannot discriminate them, which
+is presumably why they were called unreadable.
+
+Still live and now better grounded: D1, D2, D4, D5, D6, D8, D9. One real field divergence —
+`subtitleModel` is declared in the source Coordinator and is **absent from the Coordinator's 15
+binary field records**, with the records otherwise in source order across the gap.
+
+New control-flow fact stated in none of the nine: a `playableTime` outside Int range aborts the
+whole method before any timemodel write, sharing the epilogue with the currentTime/totalTime check.
+
+## `KSPlayerLayer.readyToPlay(player:)` — 0x1019cda08, 356 instr
+
+**The address appears in none of its four fix-queue JSONs**; it had to be recovered from the
+decompile header. Lines premise refuted: 457-495 → the method is at 615-670.
+
+**The CRITICAL is largely already applied.** Four of its five "binary-only" prologue statements are
+present at :616-619 in the binary's own order — `addSubtitle(to: player.view)`, `bufferedCount = 0`,
+`player.playbackRate = options.startPlayRate`, and the `compactMap` into `options.audioRecognizes`.
+The fifth — the MainActor `Task` around `subtitleDataSource` / `selectedSubtitleInfo` — is still
+unwritten, and its guard order is the **reverse** of the CRITICAL's wording: `subtitleDataSource`
+is fetched first and branches away when nil, then `selectedSubtitleInfo` branches away when
+non-nil. The Task's async body 0x1019d5b58 is a trie negative.
+
+**The HIGH is stale.** `updateNowPlayingInfo()` is no longer called from this method; the extent
+never touches the `MPNowPlayingInfoCenter` classref page. The private method survives at :996.
+
+Two field names remain unrecoverable and must not be guessed: globals 0x1044e6188 (the
+`bufferedCount` store) and 0x104c63520 / 0x1044e6190 (the `isAutoPlay` / `shouldSeekTo` guards).
+The offset resolver answers `NOT RECOVERED` for all three.
+
+## Tool defect found, deferred because the wave was live
+
+`decode_string_literal.py --addr <body>` dies with
+`RuntimeError: read at 0x104c634b0 failed` — it tries to decode a field-offset global as a string
+and aborts before printing any non-SMALL literal. Rule 7 froze the tool layer while agents were
+running; fix it before the next wave.
+
 ## Verdict hygiene
 
 `reconstruction/verdicts/KSVideoPlayerView_openURL_101ac99ac.json` still has `recheck: null` and
