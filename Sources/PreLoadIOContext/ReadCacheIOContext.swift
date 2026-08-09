@@ -182,6 +182,69 @@ public class ReadCacheIOContext: AbstractAVIOContext {
         download?.close()
     }
 
+    /// @0x101bad320, 218 instructions. `override_table.py --impl` answers YES at index 2, over the
+    /// same base class descriptor as `close()` at index 3 — so this overrides
+    /// `AbstractAVIOContext.fileSize()`. The trie gives the return type outright:
+    /// `PreLoadIOContext.ReadCacheIOContext.fileSize() -> Swift.Int64`, one symbol, no ICF fold.
+    /// ⚑[tool=override_table ref=ReadCacheIOContext.fileSize():0x101bad320 result=YES-index-2]
+    ///
+    ///   · the `guard let download` is a read, not an inference: 0x10002e588 is a generic outlined
+    ///     COPY that instantiates the field's type from the mangled-name record at 0x103572200 —
+    ///     whose 9 bytes decode to `DownloadProtocol` + a `_pSg` tail, i.e. `(any DownloadProtocol)?`
+    ///     — and copies self+0x18 into a 40-byte existential container. `cbz [sp+0xa8]`
+    ///     @0x101bad364 is the nil test on that container's metadata word. (Same divergence the
+    ///     `close()` note above records: this file still declares the field `URLContextDownload?`.)
+    ///     ⚑[tool=name_type_at_addr ref=ReadCacheIOContext.download:0x103c384f2 result=DownloadProtocol_pSg]
+    ///   · `[witness + 0x38]` is req6, called with no formal argument and returning Int64;
+    ///     `[witness + 0x30]` is req5, called with `x0 = -1` / `w1 = 2` and returning Int64. Two is
+    ///     `SEEK_END`, which PlayerDefines.swift quotes from the C header. `close()` above already
+    ///     pins `[witness + 0x40]` as req7, so the neighbouring indices agree.
+    ///   · both logs are `KSLog` INLINED at its DEFAULT level: the guard reads the LogLevel tag byte
+    ///     through `KSOptions.logLevel.unsafeMutableAddressor` @0x1019b4074 and skips on `b.lo #3`,
+    ///     and 3 is also the level handed to the handler reached through
+    ///     `KSOptions.logger.unsafeMutableAddressor` @0x1019c0094. Case index 3 is `.warning`.
+    ///     ⚑[tool=export_trie_oracle ref=KSOptions.logLevel:0x1019b4074 result=unsafeMutableAddressor]
+    ///   · the two field writes use the bindings closed this session: `end` (offset global
+    ///     0x1044f6910) takes an UNSIGNED max (`cmp` / `csel …, hi` @0x101bad4f4), and `eof`
+    ///     (0x1044f6918) is set with `strb #1` @0x101bad50c. Both happen only on the `size > 0` join.
+    ///
+    /// ⚑ The `#fileID` literal is 41 chars, `'PreLoadIOContext/ReadCacheIOContext.swift'` — the
+    ///   MODULE-qualified form. This tree's `KSLog` declares `file: String = #file`, which would
+    ///   materialise an absolute path instead, so that default is itself divergent; it is a separate
+    ///   unit and does not change what this body does. `#function` reads `fileSize()` and the two
+    ///   `#line` values are 169 and 174.
+    ///   ⚑[tool=decode_string_literal ref=ReadCacheIOContext.fileSize():0x103d3fe40 result='PreLoadIOContext/ReadCacheIOContext.swift']
+    ///
+    /// ⚑ NO AVERROR constant appears in this body — the complete immediate inventory is
+    ///   -1, 2, 3, 35, 41, 58, 169, 174 plus the String discriminators. `ffurl_seek2` occurs only as
+    ///   LABEL TEXT inside the log message, not as a call; FFmpeg's own `ffurl_seek2` is never
+    ///   invoked here.
+    ///
+    /// ⚑ Two spellings are NOT decided by the binary and are written as the plainer of the pair:
+    ///   `csel` cannot separate `max(end, UInt64(size))` from an if-converted
+    ///   `if UInt64(size) > end { … }`, and `#line` 169 -> 174 leaves a five-line gap where only
+    ///   four statement lines are grounded.
+    ///   ⚑[tool=decode_string_literal ref=ReadCacheIOContext.fileSize():0x101bad320 result=line-169-and-174]
+    override public func fileSize() -> Int64 {
+        guard let download else {
+            return Int64(end)
+        }
+        var size = download.fileSize()
+        KSLog("[ReadCacheIOContext] ffurl_seek2 \(size)")
+        if size <= 0 {
+            size = download.seek(offset: -1, whence: SEEK_END)
+            if size < 0 {
+                KSLog("[ReadCacheIOContext] Inner protocol failed to seekback end")
+                return size
+            }
+        }
+        if size > 0 {
+            end = max(end, UInt64(size))
+            eof = true
+        }
+        return size
+    }
+
     // UNRESOLVED: slot 18 @101bad730 — the 576-instr cache-read engine (the lone
     //   AbstractAVIOContext override; deep IO calling stripped FFmpeg/Foundation) →
     //   NOT reconstructed; named only by the P2 oracle. — P2
