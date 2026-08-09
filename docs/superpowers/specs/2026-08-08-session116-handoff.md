@@ -1298,6 +1298,28 @@ const char *blacklist, URLContext *parent)` from url.h exactly. **Do not write a
 for it** — the pre-commit FFmpeg gate demands literally `result=CONFIRMED`, so writing this body
 will need either a better discriminator or a named deferral, exactly as `avcodec_send_packet` did.
 
+### …and the real wall is the BUILD, not the oracle
+
+Chasing a better discriminator for 0x1030c03e4 would be wasted effort, because the body cannot
+be written against that name regardless of what the oracle eventually says. `libavformat/url.h`
+is **not shipped** in the reconstruction's include path — that directory carries `avformat.h`
+and `avio.h` only — so `ffurl_open_whitelist` and the `URLContext` type are invisible to Swift
+here. Forward plainly built against full FFmpeg sources: its own field record types
+`URLContextDownload.context` as `UnsafeMutablePointer<__C.URLContext>?`, a type this
+distribution cannot even name.
+
+`URLContextDownload.swift:75-79` already hit the same wall from the other direction and wrote it
+down for `ffurl_seek`: the oracle "cannot narrow 0x1030c07ac (59 band candidates, and
+`ffurl_seek` is not among them)" because `ffurl_seek` is a `static inline` wrapper that cannot
+survive as a call target, the exported function being `ffurl_seek2`.
+
+So this is a **build-configuration divergence, not a reconstruction one**, and it is the true
+bottom of the `download:` optionality chain. Closing that chain needs a decision that is not a
+derivation: either the FFmpeg distribution grows the internal headers (or a shim exposing
+`ffurl_open_whitelist`/`URLContext`), or these bodies stay pinned no matter how much of them is
+read. Everything ELSE in the chain is now derived and writable — which is worth knowing before
+anyone spends another session reading around it.
+
 ## A gate was right and I was wrong — worth the 10 minutes it costs to check
 
 `l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as
