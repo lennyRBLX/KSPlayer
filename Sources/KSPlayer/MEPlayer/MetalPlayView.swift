@@ -218,10 +218,29 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.forcedFrameRetryScheduled:0x10002dab0 result=false]
     private var forcedFrameRetryScheduled: Bool = false
 //    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
-    // displayLayerDelegate is a source-only construct — zero-hit across the whole demangled trie,
-    // and MetalPlayView's field descriptor does not list it. Its REMOVAL is derived and ready. The
-    // KSMEPlayer block that held it up is gone (unit 6 landed), so it is now just its own unit:
-    // dropping it touches this protocol, this field, the displayView didSet and two KSMEPlayer sites.
+    // displayLayerDelegate is a source-only construct. The evidence is stronger than the trie
+    // scan this comment used to cite: over the whole 76 MB image the byte sequences
+    // `displayLayerDelegate` and `DisplayLayerDelegate` occur ZERO times, against 3 for the
+    // control `flickerDetector` — so the absence is the image's, not a search artifact. This
+    // class's field descriptor lists 17 records ending at `forcedFrameRetryScheduled` and none
+    // is this one, and removing it shifts no offset because it is the last stored property
+    // (InstanceSize 0xca, last field at 0xc9).
+    // ⚑[tool=fieldrec ref=MetalPlayView:0x1039efd08 result=17-fields-no-displayLayerDelegate]
+    //
+    // ⚠️ THE REMOVAL IS **NOT** "DERIVED AND READY", WHICH IS WHAT THIS COMMENT SAID BEFORE.
+    // It was scoped as a 7-site delete: this protocol, this field, the `VideoOutput` requirement,
+    // the displayView didSet call, two `videoOutput?.displayLayerDelegate = self` sites in
+    // KSMEPlayer, and `extension KSMEPlayer: DisplayLayerDelegate` with its
+    // `change(displayLayer:)`. The first five are safe — every name in them is a zero-hit.
+    // The last two are NOT, and deleting them would delete behaviour the binary HAS:
+    // `change(displayLayer:)`'s body is what builds the PiP controller, and `pipController`
+    // occurs 3 times image-wide as a PUBLIC field of KSMEPlayer, with `ContentSource` likewise
+    // at 3. So the binary reaches that setup by SOME route; it simply is not this protocol.
+    // ⚑[tool=export_trie_oracle ref=KSMEPlayer.pipController result=public-field-present]
+    //
+    // Scope it as: (a) drop the five source-only sites, and (b) a SEPARATE unit that derives how
+    // the binary invokes the PiP setup and re-homes the body there. Doing (a) without (b) leaves
+    // an orphan method with no caller, which is its own divergence.
     public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
