@@ -253,6 +253,46 @@ private extension KSMEPlayer {
 }
 
 extension KSMEPlayer: MEPlayerDelegate {
+    /// @0x101a3bd64, 1524 B / 381 instructions, one trie symbol, no ICF fold. Synchronous, not
+    /// async — the mangle ends `yyF`, the frame is an ordinary callee-save prologue and there is no
+    /// `swift_task_alloc`. Its own `#fileID`/`#function` literals place it in this file under this
+    /// name, with an isolation check at line 300 and the KSLog at 305.
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.sourceDidOpenedSync:0x101a3bd64 result=OWNER_MATCH]
+    ///
+    /// It is NOT `sourceDidOpened()` renamed. That one takes `tracks(mediaType: .video)`, nils
+    /// `videoOutput`, marshals through `runOnMainThread` and calls `delegate?.readyToPlay(player:)`
+    /// — none of which appear in this extent — and this one adds the `seekable` assignment and the
+    /// `startRecord` branch. The two coexist in the binary; 0x101a40420 is the other.
+    ///
+    /// Statement order is the binary's. The `seekable` source is `playerItem.seekable`, not an
+    /// inline predicate: `MEPlayerItem.formatContext` is fileprivate to MEPlayerItem.swift and
+    /// cannot be read from here at all, which is why the four-arm predicate lives in that file's
+    /// own `seekable` accessor. Writing it inline here would not compile.
+    ///
+    /// ⚑ PLACEMENT UNPROVEN. The access level is not derivable — the mangled symbol carries none
+    ///   and no method descriptor exists — and nothing establishes that this belongs to the
+    ///   MEPlayerDelegate conformance rather than a plain extension. It is `internal` because its
+    ///   two callers, `KSPlayerLayer.init(item:url:delegate:)` @0x1019caaf4 and
+    ///   `KSPlayerLayer.replace(item:url:)` @0x1019cba60, are in another file of the same module,
+    ///   which is a lower bound, not a reading. Sited next to `sourceDidOpened()` for adjacency.
+    func sourceDidOpenedSync() {
+        isReadyToPlay = true
+        seekable = playerItem.seekable
+        options.readyTime = CACurrentMediaTime()
+        if let outputURL = options.outputURL {
+            playerItem.startRecord(url: outputURL, mediaType: options.outputMediaType)
+        }
+        let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
+            $0 as? FFmpegAssetTrack
+        }?.audioDescriptor
+        guard let audioDescriptor else {
+            return
+        }
+        audioDescriptor.updateAudioFormat()
+        KSLog("[audio] audio type=\(audioOutput) prepare audioFormat (sync)")
+        audioOutput.prepare(audioFormat: audioDescriptor.audioFormat)
+    }
+
     public func sourceDidOpened() {
         isReadyToPlay = true
         options.readyTime = CACurrentMediaTime()
