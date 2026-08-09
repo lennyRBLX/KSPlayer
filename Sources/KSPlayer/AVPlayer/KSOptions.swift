@@ -324,6 +324,71 @@ open class KSOptions {
         resetTimeLog()
     }
 
+    /// @0x1019c0938, 324 instructions. The trie gives the whole signature, return type included:
+    /// `KSPlayer.KSOptions.firstTimeLog() -> [Swift.String : Swift.Double]`, mangled
+    /// `$s8KSPlayer9KSOptionsC12firstTimeLogSDySSSdGyF`. A method descriptor exists at 0x1039ecdc8
+    /// (`…yFTq`), so it is a vtable member declared in the class body, not an extension and not
+    /// `final`; KSOptions has no override table, so it is an own entry rather than an override.
+    /// ⚑[tool=export_trie_oracle ref=KSOptions.firstTimeLog:0x1019c0938 result=SDySSSdGyF]
+    ///
+    /// Every one of the twelve fields it reads is named by the offset resolver, not inferred:
+    /// 0x104c63438 prepareTime · 0x440 dnsStartTime · 0x448 tcpStartTime · 0x450 tcpConnectedTime ·
+    /// 0x458 openTime · 0x460 findTime · 0x468 readyTime · 0x470 readAudioTime · 0x478
+    /// readVideoTime · 0x480 decodeAudioTime · 0x488 decodeVideoTime · 0x490 firstPlayableTime.
+    /// Each is read as a direct `ldr d,[x19, <global>]` — no accessor call anywhere in the body.
+    /// ⚑[tool=recover_field_offsets ref=KSOptions.firstPlayableTime:0x104c63490 result=firstPlayableTime]
+    ///
+    /// Structure, read in order: the body stack-promotes a ONE-element `[(String, Double)]` literal
+    /// (the 16-byte header at 0x10347bd30 is count=1, capacityAndFlags=2), converts it to a
+    /// Dictionary, then performs TEN subscript sets — matching the ten `bl 0x1019c1ca4`, which is
+    /// the `Dictionary<String,Double>` subscript SETTER, not a lookup, and whose inout target is a
+    /// LOCAL stack slot reloaded after each call, never a stored property.
+    ///
+    /// The single branch is `fcmp d0,#0.0` / `b.le` at 0x1019c0a50 on tcpConnectedTime. The
+    /// `"openTime"` set is tail-merged at 0x1019c0b98: the then-arm loads openTime − tcpConnectedTime,
+    /// the else-arm reloads openTime − prepareTime, and both fall into one `fsub`. Written per-branch
+    /// here; a single set with a ternary subtrahend lowers identically, so the binary does not
+    /// distinguish the two spellings.
+    ///
+    /// ⚑ The last key is built by CSE and a `mov`/`movk` scan misses it: x21 holds the trailing word
+    ///   of `"decodeVideoTime"` and `add x1,x21,#0x400` at 0x1019c0e14 rewrites one byte, turning
+    ///   `…deoTime` into `…dioTime` to spell `"decodeAudioTime"`. The literal never appears whole.
+    ///
+    /// ⚑ NOT a logging method despite the name: the complete `adrp` census over all 324 instructions
+    ///   is four pages — the field-offset globals, the array header, two mangled-name records and the
+    ///   metadata caches. There is no `__cstring` page, no KSLog call, and no `#file`/`#line`/
+    ///   `#function` triple, which is also why this member's FILE placement is not decided by a
+    ///   `#fileID` and rests on its owning class instead.
+    ///   ⚑[tool=decode_string_literal ref=KSOptions.firstTimeLog:0x1019c0938 result=no-file-no-function]
+    ///
+    /// ⚑ ACCESS is not binary-determinable: the mangling carries no module-hash discriminator, so it
+    ///   is not private, but nothing distinguishes internal from public. Spelled to match its sibling
+    ///   `resetTimeLog()`, which is the same telemetry family on the same class.
+    ///   ⚑[tool=export_trie_oracle ref=KSOptions.firstTimeLog:0x1039ecdc8 result=method-descriptor-no-discriminator]
+    ///
+    /// ⚑ The local's IDENTIFIER is unobservable — local names survive nowhere in a stripped binary,
+    ///   so this spelling is arbitrary and carries no evidence. Only its type and its ten mutations
+    ///   are read.
+    ///   ⚑[tool=function_extents ref=KSOptions.firstTimeLog:0x1019c0938 result=local-name-unobservable]
+    func firstTimeLog() -> [String: Double] {
+        var log = ["firstTime": firstPlayableTime - prepareTime]
+        if tcpConnectedTime > 0 {
+            log["initTime"] = dnsStartTime - prepareTime
+            log["dnsTime"] = tcpStartTime - dnsStartTime
+            log["tcpTime"] = tcpConnectedTime - tcpStartTime
+            log["openTime"] = openTime - tcpConnectedTime
+        } else {
+            log["openTime"] = openTime - prepareTime
+        }
+        log["findTime"] = findTime - openTime
+        log["readyTime"] = readyTime - findTime
+        log["readVideoTime"] = readVideoTime - readyTime
+        log["readAudioTime"] = readAudioTime - readyTime
+        log["decodeVideoTime"] = decodeVideoTime - readVideoTime
+        log["decodeAudioTime"] = decodeAudioTime - readAudioTime
+        return log
+    }
+
     func resetTimeLog() {
         prepareTime = 0
         dnsStartTime = 0
