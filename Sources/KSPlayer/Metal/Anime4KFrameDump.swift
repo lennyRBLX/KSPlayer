@@ -56,12 +56,40 @@ public enum Anime4KFrameDump {
     }()
 
     /// Serializes `frameCounter`. Lazy = NSLock() (once-init @0x101a77598). Storage DAT_1044ebce8.
-    /// ⚑ name INFERRED (absent from the trie, as expected for a non-public static).
+    /// THE ABSENCE IS NOW MEASURED, NOT PREDICTED. The note here used to read "absent from the trie,
+    /// as expected for a non-public static" — a prediction, and this session has found four such
+    /// notes to be false. Measured in BOTH directions and BOTH mangling shapes: 0x101a77598 exports
+    /// no symbol; the class's full trie subtree is 32 symbols covering only dumpDecoded, dumpRendered,
+    /// outputDirectory, enabled, maxFrames, reset() and configure(...); and a raw scan of all 57138
+    /// trie symbols finds no `Anime4KFrameDump…33_<32hex>LL…` of any kind.
+    /// TWO POSITIVE CONTROLS make that a real negative rather than a blind spot: the five public
+    /// statics' storage globals DO resolve by address (0x1044ebcc8 → …dumpDecodedSbvpZ etc.), and the
+    /// sibling `Anime4KPipeline` carries 20 file-private `33_DF46…LL` symbols — so this image DOES
+    /// emit the private mangling when the member exists. Storage 0x1044ebce8 and token 0x1044ebce0
+    /// both resolve to nothing.
+    /// ⚑[invented=stateLock addr=0x101a77598 exhaustion=name_exhaustion_gate approved=jweaver]
     static let stateLock = NSLock()
 
     /// Serial queue for the export work. Lazy (once-init @0x101a773cc: label "Anime4KFrameDump",
-    /// default qos, empty attributes → serial). Storage DAT_1044ebd00. ⚑ name INFERRED (absent from trie).
+    /// default qos, empty attributes → serial). Storage DAT_1044ebd00, token 0x1044ebcf8.
+    /// Absence from the trie measured exactly as for `stateLock` above, same controls.
+    /// ⚠️ `recover_swift_function_name` reports `#function: Anime4KFrameDump (confidence=high)` for
+    /// 0x101a773cc. THAT IS A FALSE ANCHOR: the literal is the `label:` ARGUMENT consumed by
+    /// `DispatchQueue.init(label:qos:attributes:autoreleaseFrequency:target:)`, not a `#function`
+    /// default — the same (x0,x1) pair is passed straight into the initializer, and there is no
+    /// `#file` companion. A bare `#function` candidate with no `#file` is data, not a name.
+    /// The label's true bytes are at 0x10356be90 (count 16); the `sub x19, x8, #0x20` is the
+    /// nativeBias trap, and reading the biased 0x10356be70 yields garbage.
+    /// ⚑[invented=queue addr=0x101a773cc exhaustion=name_exhaustion_gate approved=jweaver]
     static let queue = DispatchQueue(label: "Anime4KFrameDump")
+
+    // 🚨 DO NOT ACT ON `name_exhaustion_gate`'s INLINE-INSTEAD VERDICT FOR EITHER OF THE TWO ABOVE.
+    //   It reports "0 call site(s) image-wide → inline the expression at the call site rather than
+    //   naming it". Both are `swift_once` ONE-TIME-INIT bodies: they are never `bl`-called, they are
+    //   passed BY ADDRESS to `swift_once` (0x101a77598 at three sites, 0x101a773cc at two —
+    //   e.g. `adrp x1, 0x101a77000 / add x1, x1, #0x598 / bl 0x10345cfa0` where 0x10345cfa0 binds
+    //   `_swift_once`). The gate's single-call-site route counts only `bl` targets, so its zero is an
+    //   ARTIFACT of the scan, and acting on the verdict would DELETE a real member.
 
     /// ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.reset():0x101a7783c result=23-instr]
     /// The decompile unit the previous marker here asked for. Nothing is guessed:
