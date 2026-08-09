@@ -212,7 +212,20 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     // UNRESOLVED: the exact Data construction/deallocator dance and the unnamed
     //   helpers (FUN_100395fc0 build-Data, FUN_101b95a8c, FUN_10000627c) are not
     //   resolvable from the cached decompile — spine preserved, helper detail TODO.
-    func write(offset: UInt64, buffer: UnsafePointer<UInt8>, length: Int32) throws { // name inferred (devirt)
+    /// ⚑ s114: THE NAME IS INVENTED AND WAS PREVIOUSLY UNMARKED. It carried only
+    ///   "// name inferred (devirt)", which is not the marker grammar — one grep must separate every
+    ///   fabricated identifier from every derived fact, so it now carries the real thing. The base
+    ///   name `write` rests on NO binary evidence; the ARGUMENT LABELS do:
+    ///   this is vtable slot 13 (impl 0x101b906c8), and its only two callers are the trie-named
+    ///   `CacheIOContext.addEntry(logicalPos:buffer:size:)` @0x101b8ccac and
+    ///   `addNewEntry(logicalPos:buffer:size:)` @0x101b8d2c8, which pass their three parameters
+    ///   STRAIGHT THROUGH (`mov x0,x24` / `ldur x1,[x29,#-0xe0]` / `ldur w2,[x29,#-0xc8]` /
+    ///   `bl 0x101b906c8` at 0x101b8d488-0x101b8d494). This class's own trie-named
+    ///   `isOut(size:)` independently confirms `size:` as this module's label for a byte count.
+    ///   ⚑[invented=write addr=0x101b906c8 exhaustion=name_exhaustion_gate approved=jweaver]
+    func write(logicalPos: UInt64, buffer: UnsafePointer<UInt8>, size: Int32) throws {
+        let offset = logicalPos
+        let length = size
         // ⚑ s114: the `guard let file` that stood here is GONE because `file` is a non-optional
         //   `let` (field-record flags 0, no `Sg`, and the init emits no implicit-nil default).
         //   A non-optional cannot be conditionally bound, and the binary has no nil test for it.
@@ -222,7 +235,10 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
         }
         let data = Data(bytes: buffer, count: Int(length)) // UNRESOLVED: exact Data builder (FUN_100395fc0) unseen
         try file.write(contentsOf: data)
-        size += UInt32(length) // binary: CARRY4 unsigned-overflow trap on size + length
+        // ⚑ `self.` is REQUIRED here, not stylistic: the `size:` parameter label recovered from the
+        //   callers shadows this class's `size` field, and without the qualifier this reads the
+        //   Int32 parameter instead of the UInt32 field. The compiler caught it.
+        self.size += UInt32(length) // binary: CARRY4 unsigned-overflow trap on size + length
     }
 
     // s14 @101b9089c — `func read(offset:length:) throws -> Data?` (name inferred).
@@ -231,7 +247,33 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     //   seekToOffset:error: (throws), then NSFileHandle::_read of `length` bytes.
     // UNRESOLVED: the decompile shows the _read call but the returned-Data
     //   marshalling is obscured — return shape is a best-effort spine.
-    func read(offset: UInt64, length: Int32) throws -> Data? { // name inferred (devirt)
+    /// ⚑ s114: THE NAME IS INVENTED AND WAS PREVIOUSLY UNMARKED — same defect as `write` above.
+    ///   All six naming routes are closed: no trie symbol (992 well-formed candidate manglings on
+    ///   this class, across both plain and `33_D69EFE14…` fileprivate forms, resolve to ZERO trie
+    ///   hits, and the trie is NOT access-filtered — it carries this module's `private` symbols, so
+    ///   the absence is real); no `#function`; no `#file`/`#line`; no string literal at all; the
+    ///   class publishes no ObjC method list; and the vtable route cannot eliminate because this
+    ///   class has TWO unnamed Method impls (slots 13 and 14).
+    ///   ⚑[invented=read addr=0x101b9089c exhaustion=name_exhaustion_gate approved=jweaver]
+    ///
+    /// ⚑ THE LABELS, unlike the base name, ARE evidence-backed. At the `ReadCacheIOContext.read`
+    ///   call site the value passed as the first argument is literally the stored field
+    ///   `ReadCacheIOContext.logicalPos` (offset global 0x104c639e0), and the SAME value is handed
+    ///   one instruction earlier to the trie-named `firstEntryContain(logicalPos:)` — so the
+    ///   module's own label for that value, in that position, is `logicalPos:`. Every exported
+    ///   `(UInt64, Int32)` method in this module labels the Int32 `size:`.
+    ///
+    /// ⚑ 🚨 `name_exhaustion_gate` ROUTE 5 IS BLIND TO THIS MODULE and must not be trusted here.
+    ///   It printed "not a vtable Impl in any class" for this address, which is FALSE: it is
+    ///   `CacheFileEntry` vtable slot 14. Its classmap holds 220 classes and contains NO
+    ///   `CacheFileEntry`, `CacheIOContext` or `CacheOnlyIOContext`, so the vtable route silently
+    ///   reports CLOSED for every PreLoadIOContext address. Route 5 closes here on the merits
+    ///   (two unnamed Method slots leave nothing to eliminate against) — but that had to be
+    ///   established by hand, not read off the gate.
+    ///   ⚑[tool=vtable_walk ref=CacheFileEntry.slot14:0x101b9089c result=slot14-Method-impl]
+    func read(logicalPos: UInt64, size: Int32) throws -> Data? {
+        let offset = logicalPos
+        let length = size
         // ⚑ s114: same as `write` above — `file` is a non-optional `let`, so there is no binding
         //   guard here and none in the binary.
         let target = offset - position // binary: traps if offset < position
