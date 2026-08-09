@@ -101,12 +101,36 @@ and the height is 100. Two constants are raw doubles, not `fmov` immediates, and
 rather than read: `mov x8,#0x800000000000 / movk x8,#0x4040,lsl #48` = **33.0** and
 `mov x8,#0x4059000000000000` = **100.0**.
 
-WHAT REMAINS: only the branch semantics. `mov x19, x0` @0x101b08f5c makes x19 = `isLandscape`, and
-`tbz w19,#0` @0x101b091b4 selects on it. Block A is gated by `cbz x22` @0x101b090dc, where x22 comes
-from a UIDevice chain — `ldr x0,[x8,#0x510]` @0x101b090b8 is the `__objc_classrefs` UIDevice entry,
-then 0x10345c2e0 → 0x1034604c0 → 0x10345c3dc → 0x10346e920. Decode those selectors
-(`decode_objc_selector`) and the `cbnz x0` @0x101b09304 to finish. Do NOT write the body until they
-are read — the constants are worthless if the arms are attached to the wrong conditions.
+THE ARM CONDITIONS ARE ALSO RESOLVED. `mov x19, x0` @0x101b08f5c makes x19 = `isLandscape`. Block A
+is gated by `cbz x22` @0x101b090dc, and x22 is `UIDevice.current.userInterfaceIdiom` — the selectors
+decode as 0x1034604c0 = `'currentDevice'` and 0x10346e920 = `'userInterfaceIdiom'`, reached from the
+`__objc_classrefs` UIDevice entry at 0x104410510. `UIUserInterfaceIdiom.phone` is 0, so `cbz x22`
+means **phone takes the non-A path**:
+
+    NOT phone              -> block A   (15 -15 33 15 -15 25 -25 100)
+    phone AND isLandscape  -> block C   (identical values to A)
+    phone AND portrait     -> block B   (20 -20 33 20 -20 30 -30) then falls into the shared
+                                        height send at 0x101b093e8 via `cbnz x0` @0x101b09304
+
+Because A and C are identical this collapses to one rule: **portrait-on-phone gets the 20/30
+spacing, everything else gets 15/25, and the height is 100 in all three.** Note the height send on
+the B path is reached by `cbnz x0` + `brk #0x1` rather than the `cbz x0, <skip>` used everywhere
+else — on that path a nil height constraint TRAPS, i.e. it is force-unwrapped there and optional
+everywhere else. That asymmetry is real and must survive into the source.
+
+0x103469d20 decodes as `'setHidden:'`, and its receiver x21 is `topMaskView` — field offset 0x80,
+which belongs to **VideoPlayerView**, not IOSVideoPlayerView (whose own fields start at 0xf0). The
+phone/portrait arm passes w2 = 1 literally; the phone/landscape arm computes w2 from a count == 0
+test (`ldr x22,[x0,#0x10]` / `cmp x22,#0` / `cset w2,eq`).
+
+D2 IS CONFIRMED against the field vector: `maskImageView` (0x168), `landscapeButton` (0x170) and
+`lockButton` (VideoPlayerView 0xe0) exist as fields but **no offset global in this extent resolves to
+any of them** — the body only ever loads 0x1044f0f30-f68 (the eight constraints) and 0x1044f18a0
+(topMaskView @0x80). The source's phone block at :322-337 genuinely has no counterpart.
+
+STILL UNREAD, and the reason the body is not written: x21 is RELOADED at 0x101b091b0 as
+`ldr x21,[x25,x28]` from a different base and offset than the 0x80 load, so the later `setHidden:`
+receiver is NOT proven to be topMaskView. Resolve x25/x28 first. Everything else above is read.
 
 **The UNRESOLVED verdict's premise is dead.** `VideoSwresample_DVbodies_deferral_p3a` defers on
 "unverifiable with current tools … NOT protocol witness tables". `decode_witness_table.py` was
