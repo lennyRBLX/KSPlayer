@@ -101,7 +101,14 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         // binary init: 4 zero words + `strh #0x100` at +32 ⇒ nil (implicit here).
     // 11 cachedDistributionLogicalPos: logical position the distribution covers. ⚑
     //    Int64; init -1 (binary const 0xffffffffffffffff).
-    private var cachedDistributionLogicalPos: Int64 = -1 // ⚑ (composite/width-inferred; gate UNCHECKED)
+    //    TYPE AND DEFAULT ARE READ. Field record 11 is `symref->__got 0x104112b58` =
+    //    `_$ss6UInt64VMn` with an EMPTY tail — `UInt64`, not `Int64`, and with `Int64` the
+    //    `cachedDistributionLogicalPos == logicalPos` compare in preloadCount() would not even
+    //    compile. The default comes from the vpfi at 0x10047dae8, `mov x0,#-0x1 / ret`, which the
+    //    compiler SHARES with `cachedDistributionEntryCount` below — one body, all bits set,
+    //    read as -1 for Int and UInt64.max for UInt64.
+    //    ⟨spelling: the VALUE 0xFFFFFFFFFFFFFFFF is read; `UInt64.max` vs `~0` is not decidable.⟩
+    private var cachedDistributionLogicalPos: UInt64 = UInt64.max
     // 12 cachedDistributionEntryCount: entries in the distribution. field-record Int;
     //    init -1 (binary const 0xffffffffffffffff).
     private var cachedDistributionEntryCount: Int = -1
@@ -428,9 +435,14 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //       ivar-offset global as a `uint` and widened to 64 bits.
     //   Every `-` below is a checked UInt64 subtraction in the binary too (the
     //   `if (end < lower) SoftwareBreakpoint` guards are that trap, not source branches).
-    // ⚑[tool=vtable_walk ref=LimitPreLoadIOContext.slot44:0x101b9f684 result=Method, last slot; NAME inferred]
-    func calculateCachedDistribution() -> (readed: UInt64, contiguousPreload: UInt64,
-                                           disconnected: UInt64, disconnectedStartIndex: Int?) {
+    // 🚨 THE NAME WAS FABRICATED AND IS NOW READ — note the missing "d". The trie carries
+    //   `$s16PreLoadIOContext05LimitabC0C26calculateCacheDistribution33_54C5BFE79C74C4F124A8D6AC1061ABF8LL…`
+    //   = `LimitPreLoadIOContext.(calculateCacheDistribution in _54C5BFE79C74C4F124A8D6AC1061ABF8)()`.
+    //   `calculateCachedDistribution` was never in the binary. The `LL` discriminator makes it
+    //   file-private, hence `private`. It had no caller in the tree, so the rename is free.
+    // ⚑[tool=vtable_walk ref=LimitPreLoadIOContext.slot44:0x101b9f684 result=Method-last-slot]
+    private func calculateCacheDistribution() -> (readed: UInt64, contiguousPreload: UInt64,
+                                                  disconnected: UInt64, disconnectedStartIndex: Int?) {
         var readed: UInt64 = 0
         var contiguousPreload: UInt64 = 0
         var disconnected: UInt64 = 0
