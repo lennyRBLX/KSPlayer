@@ -125,32 +125,25 @@ open class KSPlayerLayer: NSObject {
     public var bufferingProgress: UInt8 = 0
     @Published
     public var loopCount: Int = 0
-    @Published
-    public var isPipActive = false {
-        didSet {
-            if #available(tvOS 14.0, *) {
-                guard let pipController = player.pipController else {
-                    return
-                }
-
-                if isPipActive {
-                    // 一定要async才不会pip之后就暂停播放
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        // `start(layer:)` IS a protocol requirement, so no cast is needed — but it takes a
-                        // KSComplexPlayerLayer, the only PiP-start entry the binary has. A plain KSPlayerLayer
-                        // cannot be passed. `isPipActive` is itself source-only scaffolding (zero trie hits),
-                        // so narrowing here is OURS, not a claim about Forward.
-                        if let layer = self as? KSComplexPlayerLayer {
-                            pipController.start(layer: layer)
-                        }
-                    }
-                } else {
-                    pipController.stop(restoreUserInterface: true)
-                }
-            }
-        }
-    }
+    // `isPipActive` IS REMOVED — it was the last l2_field_gate REAL_FLAG on this class, and it was
+    // scaffolding end to end: zero symbols across all 57,138 trie names, and absent from the
+    // reflection field records. Forward tracks PiP with methods, not a published flag —
+    // `KSComplexPlayerLayer.pipStart()` @0x1019d1424 and
+    // `KSPlayerLayer.pipStop(restoreUserInterface:)` @0x1019ced14 — and the one Bool it does keep,
+    // `KSComplexPlayerLayer.isPictureInPictureStoped`, is a plain stored property with getter,
+    // setter and modify but NO projected-value symbol, so it is not `@Published` and could never
+    // have backed the binding this property fed.
+    //
+    // All four consumers moved onto the real mechanism rather than being deleted:
+    //   · the `restoreUserInterface…` delegate callback (this file) → pipController?.stop(true),
+    //     which is what 0x1019d3220 actually does;
+    //   · VideoPlayerView.onButtonPressed → the isPictureInPictureActive / pipStart / stop toggle
+    //     read in full from 0x101b2abe4, which also sets the button via `setSelected:`;
+    //   · VideoPlayerView.init(frame:) → the Combine binding deleted, because 0x101b2e948 never
+    //     calls `pipButton.getter` at all;
+    //   · KSVideoPlayerView's pipButton → the same mechanism, marked OURS at the site since that
+    //     particular body has not been located.
+    // ⚑[tool=l2_field_gate ref=KSPlayerLayer:_isPipActive result=REAL_FLAG-was-1-of-1]
 
     public private(set) var options: KSOptions
     // Binary field 5, between options and player. `KSPlayerLayer.subtitleView.getter :
@@ -1283,6 +1276,34 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
         MPRemoteCommandCenter.shared().changePlaybackPositionCommand.removeTarget(nil)
         MPRemoteCommandCenter.shared().enableLanguageOptionCommand.removeTarget(nil)
+    }
+
+    /// @0x1019d1424, 128 instructions. This is Forward's PiP-start entry — there is no
+    /// `isPipActive` flag anywhere in the image, and this method plus
+    /// `KSPlayerLayer.pipStop(restoreUserInterface:)` @0x1019ced14 are the whole mechanism.
+    /// Its one caller read so far is `VideoPlayerView.onButtonPressed` @0x101b2ad6c.
+    ///
+    /// The branch written below is read:
+    ///   1019d1480  ldr x8,[0x104c634f0] / beginAccess   &self.player, read access
+    ///   1019d14b0  ldr x26,[x23,#0xf8] / blr            witness +0xf8 = req30 = pipController.getter
+    ///   1019d14dc  cbz x20                              the Optional test
+    ///   1019d14ec  ldr x8,[x23,#0x38] / x0 = x21 = self / blr
+    /// Witness +0x38 is req6 of `KSPictureInPictureController : KSPictureInPictureProtocol`, and
+    /// req6 is `start(layer: KSComplexPlayerLayer)` — so `self` is passed as `layer:`, which is
+    /// also why this member sits on the SUBCLASS: the requirement's parameter type is the subclass.
+    /// ⚑[tool=export_trie_oracle ref=KSPictureInPictureProtocol.req6:0x1019c75cc result=start(layer:)]
+    ///
+    /// ⚑ THE `else` BRANCH IS NOT WRITTEN. 0x1019d1508-0x1019d1608 is the nil-pipController path:
+    ///   it reloads `player`, calls the unnamed 0x1019d1d70 with the player's metadata and witness
+    ///   table, then a metadata accessor and a value-witness call with two `#1` immediates — i.e.
+    ///   it CONSTRUCTS a controller. Both helpers are real trie negatives, so writing that arm needs
+    ///   0x1019d1d70 as its own unit. Leaving it out is deliberate; guessing a constructor here
+    ///   would be invention.
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pipStart.elseArm:0x1019d1d70 result=NOT_IN_TRIE]
+    public func pipStart() {
+        if let pipController = player.pipController {
+            pipController.start(layer: self)
+        }
     }
 
     /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]

@@ -174,14 +174,14 @@ open class VideoPlayerView: PlayerView {
     override public init(frame: CGRect) {
         super.init(frame: frame)
         setupUIComponents()
-        // ⚑ SOURCE-ONLY, and knowingly so — kept for behaviour, not claimed of Forward. The binary
-        //   never writes `cancellables` at all (see the declaration's note), and neither
-        //   `assign(to:on:)` nor `$isPipActive` exists anywhere in the image. The `.append` spelling
-        //   is therefore OURS; it is written this way only because the FIELD's type is read from the
-        //   binary and is an Array.
-        if let c = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton) {
-            cancellables.append(c)
-        }
+        // THE BINDING IS GONE, and it is now clear WHY it never existed. Forward does not publish
+        // pip state at all — it sets the button imperatively at the point of action, in
+        // `onButtonPressed` below (`objc_msgSend$setSelected:` at 0x101b2ad78, with w2 = 1 on the
+        // start arm and 0 on the stop arm). Measured here rather than argued: this initialiser is
+        // `VideoPlayerView.init(frame:)` @0x101b2e948, 193 instructions, and over its whole extent
+        // there are ZERO calls to `PlayerToolBar.pipButton.getter` (0x1019fb090) — so it never
+        // touches the button, let alone subscribes to it.
+        // ⚑[tool=function_extents ref=VideoPlayerView.init(frame:):0x101b2e948 result=193-instr-no-pipButton-getter]
         toolBar.onFocusUpdate = { [weak self] _ in
             self?.autoFadeOutViewWithAnimation()
         }
@@ -192,9 +192,37 @@ open class VideoPlayerView: PlayerView {
     override open func onButtonPressed(type: PlayerButtonType, button: UIButton) {
         autoFadeOutViewWithAnimation()
         super.onButtonPressed(type: type, button: button)
+        // THE PIP ARM, read in full from 0x101b2abe4 (`cmp w22,#0x9` selects it). The old spelling
+        // was `playerLayer?.isPipActive.toggle()`, and `isPipActive` has zero symbols image-wide.
+        // Forward toggles against the real mechanism instead, and sets the button itself:
+        //   101b2ac48  ldr x20,[x20,x21] / cbz      self.playerLayer, the `if let`
+        //   101b2ac54  bl 0x1019d5d24 / 0x10345cc88 KSComplexPlayerLayer metadata + dynamic cast
+        //   101b2ac64  cbz x0                       the `as?` guard
+        //   101b2aca0  ldr x27,[x24,#0xf8] / blr    witness +0xf8 = req30 = pipController.getter
+        //   101b2acd4  cbz x20                      the Optional chain on pipController
+        //   101b2ace0  ldr x8,[x24,#0x8] / blr      wtable +0x8 = req0 = isPictureInPictureActive
+        //   101b2acf8  tbz w24,#0x0 -> 0x101b2ad68  FALSE falls to pipStart; TRUE takes the stop arm
+        //   101b2ad48  ldr x8,[x22,#0x48] / w0 = 1  stop(restoreUserInterface: TRUE)
+        //   101b2ad6c  bl 0x1019d1424               KSComplexPlayerLayer.pipStart()
+        //   101b2ad78  bl 0x10346b480               setSelected: — w2 = 0 on stop, 1 on start
+        // Both arms of the inner `pipController` optional set w2 = 0 (0x101b2ad60 and 0x101b2ada0),
+        // which is just what optional chaining emits, so the stop arm collapses to one statement.
+        // ⚑[tool=decode_objc_selector ref=VideoPlayerView.onButtonPressed.pip:0x10346b480 result=setSelected:]
+        // ⚑[tool=decode_objc_selector ref=KSPictureInPictureProtocol.req0:0x1034641e0 result=isPictureInPictureActive]
+        // ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pipStart:0x1019d1424 result=OWNER_MATCH]
         if type == .pictureInPicture {
             if #available(tvOS 14.0, *) {
-                playerLayer?.isPipActive.toggle()
+                if let layer = playerLayer as? KSComplexPlayerLayer,
+                   let pipController = layer.player.pipController
+                {
+                    if pipController.isPictureInPictureActive {
+                        layer.player.pipController?.stop(restoreUserInterface: true)
+                        button.isSelected = false
+                    } else {
+                        layer.pipStart()
+                        button.isSelected = true
+                    }
+                }
             }
         }
         #if os(tvOS)

@@ -506,7 +506,20 @@ struct VideoControllerView: View {
 
     private var pipButton: some View {
         Button {
-            config.playerLayer?.isPipActive.toggle()
+            // ⚑ PATTERNED, NOT READ. `isPipActive` had to go — it has zero symbols image-wide — and
+            //   this is the same operation VideoPlayerView.onButtonPressed performs, where the shape
+            //   IS read in full (0x101b2abe4). THIS body has not been located or read, so the
+            //   spelling here is OURS: it is the derived mechanism applied to the SwiftUI call site,
+            //   not a claim about a Forward body. Locating it is its own unit.
+            if let layer = config.playerLayer as? KSComplexPlayerLayer,
+               let pipController = layer.player.pipController
+            {
+                if pipController.isPictureInPictureActive {
+                    layer.player.pipController?.stop(restoreUserInterface: true)
+                } else {
+                    layer.pipStart()
+                }
+            }
         } label: {
             Image(systemName: "rectangle.on.rectangle.circle.fill")
         }
