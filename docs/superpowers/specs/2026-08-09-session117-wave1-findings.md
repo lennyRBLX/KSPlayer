@@ -271,14 +271,39 @@ LIVE spans, and flipping `PlayerView` to FAITHFUL changed the DIVERGENT populati
 
 ⚠️ **Do not fix these by editing the expected numbers.** That is weakening a golden to pass your own
 work, and it is exactly the failure the project already has two memories about: a golden on counts
-is not a golden on property, and a golden anchored on mutable state rots. Both fixtures need
-re-anchoring on the invariant they are actually testing — for `sc_rank_mm`, that a named-but-
-undeclared callee blocks its caller regardless of queue membership, using a fixture chosen because
-it will never be reconstructed; for `sc_stale_screen`, the span-classification property rather than
-an occurrence count over a live corpus.
+is not a golden on property, and a golden anchored on mutable state rots.
 
-Until they are re-anchored, `FAIL 0` is unreachable for a reason that has nothing to do with the
-binary — and every future session that closes a MEMBER_MISSING row will hit the same wall.
+### Both were re-anchored later in s117 — and both now PASS
+
+An earlier revision of this section said the two were unfixable here and that `FAIL 0` was therefore
+structurally unreachable. **That was wrong on both counts**, and the correction is the useful part:
+re-anchoring a golden onto the invariant it means to test is not weakening it, it is the fix the
+memories prescribe. Only editing the expected value would have been weakening.
+
+**`sc_stale_screen`** asserted `len(_hits) == 3` for `bufferedCount = 0`, with a header claiming
+three is a number "no amount of editing ELSEWHERE in the file can change". False: a COMMENT quoting
+the needle counts. Of the five hits today exactly one (`:624`) is the statement, `:288` is the
+declaration, and `:495`, `:568`, `:580` are comments documenting this very divergence. Every
+derivation written into the file moves the number. The count was **removed**, not re-pinned — the
+header already named the real contract ("`find` reports the occurrences it should") and already
+carried the three property assertions that test it. A non-vacuity guard was added in its place,
+because the surviving `all(...)` is vacuously true on an empty list — a trap that same header warns
+about.
+
+**`sc_rank_mm`** pinned WHICH axis blocks `0x101ba2c5c` under an empty queue, on a comment claiming
+`0x101ba1cdc` is "not declared in Sources". Also false — it is declared at
+`LimitPreLoadIOContext.swift:559`. The deeper rot: **the fixture body itself got reconstructed** by
+`65f4c91`, so it is no longer a queue row, its callee is declared, and it correctly ranks READY.
+Both blocker axes are already covered by stable fixtures elsewhere — the queued axis two checks
+above on an *explicit* `queued=frozenset({...})` rather than live state, and the declaration axis
+below on `0x101b11aa8`. So the check was re-pointed at the missing POSITIVE control: a row whose
+callees are all declared must rank READY under an empty queue. That guards the real regression —
+the ranker reporting completed work as still blocked — and it is monotonic, because reconstruction
+only ever adds declarations.
+
+**The generalisable rule:** a golden fixture must not be a live body that reconstruction can close,
+and must not pin a count over a corpus that prose can move. Prefer an explicit synthetic input, or
+a property that is monotonic under reconstruction.
 
 ## Tool defect found, deferred because the wave was live
 
