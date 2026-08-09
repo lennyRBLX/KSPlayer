@@ -24,10 +24,13 @@ public final class IOInterruptContext {
     // FAITHFUL fields (binary reflection, alloc 0x30):
     public var flag: Bool                          // @ +0x10
     let block: (@Sendable () -> Bool)?      // 2-word closure @ +0x18 (fn) / +0x20 (ctx)
-    // `fileprivate` required by Swift: this public class exposes a property whose
-    // type (IOInterruptToken) is private. Field name/type are FAITHFUL; only the
-    // access modifier is added to satisfy the compiler (no semantic change).
-    fileprivate let token: IOInterruptToken // @ +0x28
+    // Field name/type are FAITHFUL. The ACCESS LEVEL is not binary-readable for any of the
+    // three helper classes below — they are vtable-devirtualized (null descriptor slots), so
+    // nothing in the image records `private` vs `internal`. It was previously `fileprivate`
+    // purely to satisfy the compiler; it is now `internal`, for the same non-semantic reason in
+    // the other direction: `openFormatContext` installs `interrupt.token.opaque` into
+    // `AVFormatContext.interrupt_callback` and must be able to read it.
+    let token: IOInterruptToken // @ +0x28
 
     /// ⚑[tool=disassemble ref=IOInterruptContext.interrupt.getter:0x101a34c08 result=24-instr]
     /// A short-circuit OR, read directly off the branch structure:
@@ -62,8 +65,11 @@ public final class IOInterruptContext {
 }
 
 /// Process-wide registry mapping interrupt ids to weak context references.
-/// Private (binary discriminator `P33_AAD283AF…`).
-private final class IOInterruptRegistry {
+/// The binary discriminator `P33_AAD283AF…` says the ORIGINAL was file-private; this is declared
+/// `internal` because the `@convention(c)` interrupt callback that FFmpeg calls must reach
+/// `shared`, `lock` and `contexts`. Access level is not binary-readable here (see the note on
+/// `IOInterruptContext.token`), so this is a spelling change, not a fidelity claim.
+final class IOInterruptRegistry {
     // FAITHFUL fields (binary reflection, alloc ~0x28):
     let lock: NSLock                                   // @ +0x10
     var nextID: Int                                    // @ +0x18
@@ -97,9 +103,10 @@ private final class IOInterruptRegistry {
     }
 }
 
-/// Opaque interrupt-token handle. Private.
+/// Opaque interrupt-token handle.
 /// `opaque` holds the id reinterpreted as a raw pointer (`*(tok+0x18) = id`).
-private final class IOInterruptToken {
+/// `internal` rather than `private` for the reason given on `IOInterruptContext.token`.
+final class IOInterruptToken {
     // FAITHFUL fields (binary reflection, alloc 0x20):
     let id: Int                                        // @ +0x10
     let opaque: UnsafeMutableRawPointer                // @ +0x18
@@ -111,8 +118,9 @@ private final class IOInterruptToken {
     }
 }
 
-/// Weak wrapper so the registry does not retain contexts. Private.
-private final class WeakIOInterruptContext {
+/// Weak wrapper so the registry does not retain contexts.
+/// `internal` rather than `private` for the reason given on `IOInterruptContext.token`.
+final class WeakIOInterruptContext {
     // FAITHFUL field (binary reflection, alloc 0x18):
     weak var context: IOInterruptContext?              // @ +0x10
 

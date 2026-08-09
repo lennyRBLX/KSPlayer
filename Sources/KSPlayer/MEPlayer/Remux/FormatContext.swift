@@ -468,16 +468,41 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
         throw KSPlayerError(description: KSPlayerErrorCode.formatCreate.description)
     }
 
-    // ⚑ UNRESOLVED — interrupt-callback install. Disasm @0x101a395cc-0x101a395dc: `stp x8,x27,[x0,#0xd8]`
-    //   installs `formatCtx.interrupt_callback = {callback: FUN_101a34dc0, opaque: x27}`, where the opaque
-    //   x27 = *(*(interrupt+0x28)+0x18) = `interrupt.token.opaque` (IOInterrupt.swift: token @+0x28,
-    //   IOInterruptToken.opaque @+0x18). The cb FUN_101a34dc0 = `{ IOInterruptRegistry.shared (swift_once
-    //   &DAT_1044e9ab8) ; FUN_101a34af4(opaque) & 1 }` — a hoisted @convention(c) closure over the
-    //   UN-reconstructed registry predicate FUN_101a34af4 (id→flag lookup). Base MEPlayerItem.openThread:171-185
-    //   inlines this reading `self.state`. DEFERRED: faithful reconstruction needs (a) FUN_101a34af4, (b) the
-    //   closure-hoisting shape, (c) cross-file access to `fileprivate token` — reconstructing now fabricates the
-    //   IOInterruptContext↔AVIOInterruptCB bridge (installing a WRONG cb mis-drives open/find interruption). Own unit.
-    _ = interrupt
+    // INTERRUPT-CALLBACK INSTALL — read in full; the three things this was deferred on are all
+    // resolved. Disasm @0x101a395cc-dc:
+    //   101a395cc  ldr x8, [x19, #0x28]     interrupt.token          (token @+0x28)
+    //   101a395d0  ldr x27, [x8,  #0x18]    token.opaque             (opaque @+0x18)
+    //   101a395d4  adrp/add -> 0x101a34dc0  the @convention(c) callback
+    //   101a395dc  stp x8, x27, [x0, #0xd8] formatCtx.interrupt_callback = {cb, opaque}
+    //
+    // (a) The callback 0x101a34dc0 is 23 instructions: `swift_once(&0x1044e9ab8, 0x101a349c4)`, load the
+    //     registry from 0x1044e9ac0 into x20 (swiftself), `bl 0x101a34af4`, `and w0,w0,#1`, ret.
+    // (b) The "un-reconstructed registry predicate" 0x101a34af4 is a LOOKUP over types that already
+    //     exist in IOInterrupt.swift — its 69 instructions read: nil-check the opaque, `objc_msgSend
+    //     'lock'` on registry+0x10, tracking-read access on registry+0x20 (the dictionary), the
+    //     Dictionary find (0x1001ad3c4 → index in x0, found-bit in w1), `values[index]`, a weak load
+    //     (0x10345d210), `'unlock'`, then `ldrb w8,[ctx,#0x10]` — i.e. `IOInterruptContext.interrupt`.
+    //     The registry it loads (0x1044e9ac0) is the SAME static `IOInterruptRegistry.shared` that
+    //     `IOInterruptContext.init` already reads, so nothing new had to be stood up.
+    // (c) The cross-file access is resolved by widening `token` / the three helper classes from
+    //     private to internal — their access level is NOT binary-readable (they are
+    //     vtable-devirtualized with null descriptor slots), so that is a spelling change only.
+    // ⚑[tool=name_exhaustion_gate ref=interrupt_predicate:0x101a34af4 result=INLINE-INSTEAD]
+    // ⚑[tool=function_extents ref=interrupt_callback:0x101a34dc0 result=23-instr-once-then-predicate]
+    //
+    // The weak load happens INSIDE the lock and the `.interrupt` read happens after `unlock` — that
+    // ordering is the binary's (weak load @0x101a34b58, unlock @0x101a34b68, flag read @0x101a34b84).
+    formatCtx.pointee.interrupt_callback = AVIOInterruptCB(
+        callback: { opaque in
+            guard let opaque else { return 0 }
+            let registry = IOInterruptRegistry.shared
+            registry.lock.lock()
+            let context = registry.contexts[Int(bitPattern: opaque)]?.context
+            registry.lock.unlock()
+            return (context?.interrupt ?? false) ? 1 : 0
+        },
+        opaque: interrupt.token.opaque
+    )
 
     // ── io projection. Disasm @0x101a397dc `bl 0x10345cd3c` = swift_getEnumCaseMultiPayload(buffer, EitherMeta),
     //   `cmp w0,#1`. tag 1 = `.right`; anything else = `.left`. FFmpegSubtitle's caller stores tag 0 for a URL
