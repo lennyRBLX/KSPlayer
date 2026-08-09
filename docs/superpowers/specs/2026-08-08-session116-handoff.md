@@ -371,6 +371,46 @@ compile and pass every gate.
 This is why rule 28 exists. Read the branch structure from `llvm-objdump` first, then use the cache
 only to orient inside each block.
 
+**VERIFIED FROM DISASSEMBLY (not the cache), so it can be transcribed directly.**
+
+Prologue and gate, 0x101ba53e4-0x101ba545c:
+
+    101ba53e4: bl   0x101ba4e30        findDiscontinuousPos — returns pos in x0, Bool in w1
+    101ba53ec: cmp  w8, #0x1
+    101ba53f0: b.ne 0x101ba553c        !ok -> the other arm
+    101ba53f4: ldr  w25, [x19, #0x14]  bufferSize
+    101ba5408: bl   beginAccess(self+0x50, w2=1)   MODIFY on urlPos
+    101ba540c: ldr  x22, [x19, #0x50]
+    101ba5410: cmn  x22, #0x1
+    101ba5414: b.ne 0x101ba5430        urlPos != UInt64.max -> use it
+    101ba5428: bl   beginAccess(self+0x80, w2=0)   READ on loadedSize
+    101ba542c: ldr  x22, [x19, #0x80]              ... else fall back to loadedSize
+    101ba5438: bl   0x101ba5a5c        canContinuePreload(at:)
+    101ba543c: tbz  w0, #0x0, 0x101ba5708          false -> return -1
+
+The lower-bound search, 0x101ba54a0-0x101ba5514:
+
+    101ba54a8: adds x8, x23, x20       lo + hi, trapping (b.vs)
+    101ba54b0: add  x9, x8, x8, lsr #63
+    101ba54b4: asr  x25, x9, #1        mid = (lo + hi) / 2
+    101ba54b8: ldur x27, [x19, #0x88]  entryList (the STORED field — see the cacheList note)
+    101ba54bc: tst  x27, #0xc000000000000001 / b.ne   bridged-array fallback
+    101ba54dc: add  x8, x27, x25, lsl #3            stride 8 -> element is a CLASS REFERENCE
+    101ba54e0: ldr  x26, [x8, #0x20]                entry
+    101ba54e8: bl   swift_retain
+    101ba54f0: ldr  x8, [x26, x8]                   entry.position (x28 = its offset global)
+    101ba54f4: cmp  x22, x8
+    101ba54f8: b.hs 0x101ba5490        pos >= entry.position -> raise lo
+    101ba5504: mov  x24, x26           else keep this entry as the running best
+    101ba5508: mov  x20, x25           and hi = mid
+    101ba5510: b.lt 0x101ba54a8        loop while lo < hi
+
+i.e. the first entry whose `position` exceeds `pos`, kept in x24, with retain/release per probe.
+Element stride 8 plus the retain confirms `[CacheFileEntry]` is an array of class references.
+
+STILL UNREAD FROM DISASSEMBLY, and the only thing between here and a written body: the `!ok` arm at
+0x101ba553c, and the read/EOF path 0x101ba5710-0x101ba5980.
+
 ✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
 block Ghidra discarded. Read from disassembly:
