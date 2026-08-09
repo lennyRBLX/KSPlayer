@@ -201,6 +201,54 @@ that widening changes an access level the binary may itself encode — the priva
 `_D69EFE1402863CA716A3171C7DB6DFB9` is evidence the original was file-private, so widening is a
 knowing divergence and must be recorded as one.
 
+## The pattern worth carrying forward: cross-file `fileprivate`, and how this codebase already solves it
+
+Three separate bodies this session are blocked by the same shape — the binary calls a member that
+Swift's access control cannot reach from the calling file:
+
+| body | member | owner file |
+|---|---|---|
+| `LimitSeparatePreLoadIOContext.more()` @0x101ba5398 | `updateSpeedSample` | CacheIOContext.swift (`private`) |
+| `PreLoadIOContext.more()` @0x101ba9eac (×2) | `updateSpeedSample` | CacheIOContext.swift (`private`) |
+| `KSMEPlayer.sourceDidOpenedSync()` @0x101a3bd64 | `MEPlayerItem.formatContext` | MEPlayerItem.swift (`fileprivate`) |
+
+**The third case already has the answer in-tree, and it is not "widen the access level".**
+`MEPlayerItem.seekable` exists at `MEPlayerItem.swift:528` — same file as the fileprivate field, so
+it can reach it — and is currently a stub returning `false` carrying an UNRESOLVED note that names
+this exact gap. The faithful move is to fill that accessor with the predicate, in the file that can
+see the field, and have the caller say `seekable = playerItem.seekable`. Nothing is invented: the
+member is already declared.
+
+Apply the same reading to `updateSpeedSample` before treating it as a user decision. Widening a
+`private` the binary's own discriminator confirms is file-private would be a knowing divergence;
+an accessor in the owning file may not be. Check whether one already exists first.
+
+## `KSMEPlayer.sourceDidOpenedSync()` — 0x101a3bd64, 381 instr, fully derived
+
+Not surfaced by `export_trie_oracle --class` or `vtable_walk` (KSMEPlayer's vtable holds only two
+`Init` slots; this is direct-dispatch) — it came from `member_missing_triage`. Synchronous, not
+async: mangles `yyF`, ordinary frame, no `swift_task_alloc`. Its `#fileID` puts it in
+KSMEPlayer.swift with an isolation check at line 300 and a `KSLog` at 305.
+
+It is NOT the source's `sourceDidOpened()` renamed — that one has a `tracks(mediaType: .video)`
+step, `videoOutput = nil`, a `runOnMainThread` marshal and `delegate?.readyToPlay(player:)`, none
+of which appear here; and this one adds the `seekable` assignment and a `startRecord` branch.
+
+Nine statements, all grounded: `isReadyToPlay = true`; the `seekable` predicate; `options.readyTime
+= CACurrentMediaTime()`; the `outputURL`/`startRecord` branch; `tracks(mediaType: .audio).first {
+$0.isEnabled }` (witness byte 0x58 = req10); an inlined `@MainActor` dynamic-isolation
+precondition; `as? FFmpegAssetTrack` then `.audioDescriptor` (+0xd8);
+`audioDescriptor.updateAudioFormat()`; a `.warning` KSLog; and
+`audioOutput.prepare(audioFormat:)` (witness byte 0x90 = req17).
+
+All ten offset globals are named, and one of them is a tooling win worth reusing: 0x1044ea218 is
+`MEPlayerItem.formatContext`, which `recover_field_by_access` refuses as AMBIGUOUS across 29
+candidates. It was settled by a SIBLING READER — `MEPlayerItem.ioContext.getter` loads the same
+global and returns `[obj+0x20]` as `AbstractAVIOContext?`, which is `FormatContext.ioContext`. When
+the access oracle refuses, look for another accessor that reads the same global.
+
+Zero named-but-undeclared callees.
+
 ## Tool defect found, deferred because the wave was live
 
 `decode_string_literal.py --addr <body>` dies with
