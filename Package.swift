@@ -44,6 +44,20 @@ let package = Package(
             path: "Sources/DOVIRPUShim",
             publicHeadersPath: "include"
         ),
+        // C shim exposing FFmpeg's private libavformat/url.h surface — the URLContext
+        // type and the ffurl_* protocol API. FFmpegKit ships public headers only, so
+        // URLContext was unnameable in Swift even though the symbols are linked in;
+        // Forward's field records type URLContextDownload.context as
+        // UnsafeMutablePointer<__C.URLContext>?. Same pattern as DOVIRPUShim.
+        .target(
+            name: "FFURLShim",
+            dependencies: [
+                .product(name: "Libavformat", package: "FFmpegKit"),
+                .product(name: "Libavutil", package: "FFmpegKit"),
+            ],
+            path: "Sources/FFURLShim",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "DisplayCriteria"
         ),
@@ -51,6 +65,7 @@ let package = Package(
             name: "PreLoadIOContext",
             dependencies: [
                 "KSPlayer",
+                "FFURLShim",
                 .product(name: "FFmpegKit", package: "FFmpegKit"),
                 .product(name: "Libavformat", package: "FFmpegKit"),
             ],
