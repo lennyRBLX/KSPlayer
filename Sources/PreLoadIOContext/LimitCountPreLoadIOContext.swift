@@ -59,4 +59,50 @@ public class LimitCountPreLoadIOContext: LimitPreLoadIOContext {
                    saveFile: saveFile, maxFileSize: maxFileSize,
                    maxReadedFileSize: maxReadedFileSize, isReadComplete: isReadComplete)
     }
+
+    /// @0x101ba2c5c, 72 B / 18 instructions, one trie symbol, no ICF fold. Reached through the
+    /// class's OVERRIDE TABLE, not its vtable — its own vtable carries 4 slots and none is a
+    /// Method; override entry 1 maps 0x101ba2c5c onto base descriptor 0x1039f6578
+    /// (`PreLoadIOContext.preloadCount()`), which is what makes this an `override`.
+    /// ⚑[tool=override_table ref=LimitCountPreLoadIOContext.preloadCount:0x101ba2c5c result=entry1-base-0x1039f6578]
+    ///
+    /// The single `bl` at 0x101ba2c64 targets 0x101ba1cdc statically — `LimitPreLoadIOContext`'s
+    /// own override, i.e. `super`, NOT the root `PreLoadIOContext.preloadCount()` at 0x101ba6bb8.
+    /// Both classes override the same base descriptor, so the super chain stops one level up.
+    /// ⚑[tool=export_trie_oracle ref=LimitPreLoadIOContext.preloadCount:0x101ba1cdc result=OWNER_MATCH]
+    ///
+    /// Statement order is the binary's:
+    ///   101ba2c64  bl 0x101ba1cdc            count = super.preloadCount()
+    ///   101ba2c70  cbz w0, 0x101ba2c94       count == 0 -> the zero path
+    ///   101ba2c74  ldrh w9,  [x20, 0xac0]    moreCount
+    ///   101ba2c80  ldrh w10, [x20, 0xac8]    maxMoreCount
+    ///   101ba2c84  cmp w9, w10
+    ///   101ba2c88  csinc w9, wzr, w9, hs     moreCount >= max ? 0 : moreCount &plus; 1
+    ///   101ba2c8c  csel  w0, w0, wzr, lo     moreCount <  max ? count : 0
+    ///   101ba2c94  mov w9, #0                the zero path only zeroes the counter
+    ///   101ba2c98  strh w9, [x20, 0xac0]     ONE store, shared by both paths
+    ///
+    /// The two `csel`/`csinc` share one `cmp`, so the counter update and the returned value are
+    /// two readings of the SAME predicate — that is why the else-arm both zeroes the counter and
+    /// zeroes the result. Written as a single `if/else if/else` because the binary performs
+    /// exactly one store to `moreCount` at a join point; a spelling with a `return` inside each
+    /// arm would be observationally identical here and cannot be discriminated from this body.
+    ///
+    /// Field names are NOT guessed. `recover_field_offsets` refuses both globals (this class has
+    /// metadata_init=1), so they come from the field records — 0 `maxMoreCount`, 1 `moreCount`,
+    /// both `UInt16` via __got 0x104112ad8 — cross-checked against the designated init above,
+    /// which stores `0` through 0xac0 and the ninth parameter through 0xac8.
+    /// ⚑[tool=fieldrec ref=LimitCountPreLoadIOContext:0x1039f616c result=2-fields-maxMoreCount-moreCount-UInt16]
+    override func preloadCount() -> UInt32 {
+        var count = super.preloadCount()
+        if count == 0 {
+            moreCount = 0
+        } else if moreCount < maxMoreCount {
+            moreCount += 1
+        } else {
+            moreCount = 0
+            count = 0
+        }
+        return count
+    }
 }
