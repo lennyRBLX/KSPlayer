@@ -56,6 +56,37 @@ Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d09
 
 ## Derived but NOT landed — start here, do not re-derive
 
+**`KSPlayerLayer.readyToPlay(player:)` @0x1019cda08** (1 CRITICAL + 1 HIGH + 2 LOW) — derived this
+session, NOT written. 0x1019cda08-0x1019cdf98, 1424 B, 356 instr. Trie:
+`readyToPlay<A where A: KSPlayer.MediaPlayerProtocol>(player: A) -> ()` (generic, OWNER_MATCH).
+
+The D1 prologue, read from disassembly:
+
+    1019cda80  ldr x8,[x22,#0x28] / blr    player.view  (MediaPlayerProtocol witness +0x28)
+    1019cda9c  bl 0x1019cf5d8              addSubtitle(to: view)
+    1019cdaac  str xzr, [x21, x8]          bufferedCount = 0   (x8 = *0x1044e6188)
+    1019cdab4  x19 = *0x104c634e0          options
+    1019cdc68  bl swift_conformsToProtocol the audioRecognizes walk
+    1019cde38  bl swift_allocObject        56-byte closure context, 5 captures at +0x10..+0x30
+    1019cde60  bl 0x101a03fd4              the Task creation shim
+
+`0x1019cf5d8` is trie-named `KSPlayerLayer.(addSubtitle in _B3181C2628785004269C41BC3433122F)(to: __C.UIView) -> ()`
+— PRIVATE (the `(… in _<discriminator>)` mangling) and **absent from source**, so D1 cannot be written
+without standing it up first. That is the unit's real gate.
+
+⚠️ **THE TASK IS REAL, and a naive grep says otherwise.** Searching the extent for
+`swift_task_create` / `ScMMa` / `ScPMa` returns NOTHING, which reads as "no Task here" and would have
+made me record D1's Task claim as refuted. It is wrapped: `swift_allocObject` builds a 56-byte
+context with five captures, and `bl 0x101a03fd4` (NOT_IN_TRIE, 163 instr) is the emitted `Task { }`
+shim, called with x0=x1=0 and the async function pointer in x3. Check for the *shape* — allocObject
+context + a 5-arg call with two leading nils — not for the runtime symbol name.
+
+REMAINING FOR THIS UNIT: stand up `addSubtitle(to:)`, transcribe the conformsToProtocol walk, and
+read the Task closure (prior sessions record it as an async CONTINUATION CHAIN, i.e. several
+functions, not one). D3 is already dischargeable as written — the verdict itself says the macOS
+window block and the iOS-14.2 PiP block are "correctly absent from an iOS image — platform-gated,
+not a divergence."
+
 **`KSPlayerLayer.set(url:options:)` @0x1019cb674** (2 CRITICAL + 1 MED + 1 LOW) — **DERIVED THIS
 SESSION, and D3 is outright REFUTED.** 0x1019cb674-0x1019cba60, 1004 B, 251 instr, only 6 branches.
 
