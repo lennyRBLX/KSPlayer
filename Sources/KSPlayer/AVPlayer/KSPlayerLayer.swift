@@ -275,7 +275,15 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
-    private var urls = [URL]()
+    // ⚠️ `urls` REMOVED — it was in source and absent from the binary's reflection field records
+    // (l2_field_gate REAL_FLAG). The binary puts it on the SUBCLASS: the same probe on
+    // KSComplexPlayerLayer returns PASS with src=[URL] bin=[URL], and that class already declares
+    // it. So this was a duplicate with no counterpart, and its three consumers went with it —
+    // `set(urls:options:)`, `nextPlayer()` and `previousPlayer()` — all of which had ZERO call
+    // sites and which this file already identified as not being the binary's members
+    // (see :1293-1294: "impl 0x1019d27a8 = playNextURL(), NOT nextPlayer()").
+    // ⚑[tool=l2_field_gate ref=KSPlayerLayer.urls result=REAL_FLAG-absent-in-binary]
+    // ⚑[tool=l2_field_gate ref=KSComplexPlayerLayer.urls result=PASS-src-and-bin-[URL]]
     // Binary fields 9 and 10, between the `state` backing store and isAutoPlay.
     // `variable initialization expression of KSPlayerLayer.playerTickClock : Swift.ContinuousClock`
     // gives both the type and the fact that it carries a declaration default;
@@ -437,17 +445,6 @@ open class KSPlayerLayer: NSObject {
             player.replace(url: url, options: self.options)
             if isAutoPlay {
                 prepareToPlay()
-            }
-        }
-    }
-
-    public func set(urls: [URL], options: KSOptions) {
-        self.options = options
-        self.urls.removeAll()
-        self.urls.append(contentsOf: urls)
-        if let first = urls.first {
-            runOnMainThread {
-                self.url = first
             }
         }
     }
@@ -846,20 +843,6 @@ extension KSPlayerLayer {
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyAvailableLanguageOptions] = langs
         MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyCurrentLanguageOptions] = current
-    }
-
-    private func nextPlayer() {
-        if urls.count > 1, let index = urls.firstIndex(of: url), index < urls.count - 1 {
-            isAutoPlay = true
-            url = urls[index + 1]
-        }
-    }
-
-    private func previousPlayer() {
-        if urls.count > 1, let index = urls.firstIndex(of: url), index > 0 {
-            isAutoPlay = true
-            url = urls[index - 1]
-        }
     }
 
     func seek(time: TimeInterval) {
