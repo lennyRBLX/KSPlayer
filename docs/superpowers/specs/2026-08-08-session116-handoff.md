@@ -561,6 +561,29 @@ this address. The three arms the comment names are: `seekByBytes = true`, the
 `formatCtx->duration = duration * AV_TIME_BASE` side-effect, and the per-track `languageCode`/`name`
 override driven from `audioLanguageCodeMap` / `subtitleLanguageCodeMap`.
 
+**`KSPlayerLayer_structural_placement_s76` D2 — ITS PROPOSED FIX IS REFUTED, and its blocker is
+stale.** The verdict says `AVPictureInPictureControllerDelegate` "is NOT among the binary's
+conformances for KSPlayerLayer" and that "the conformance belongs on KSComplexPlayerLayer. Lands
+with the KSComplexPlayerLayer stand-up (Package I)."
+
+Both halves need re-doing:
+
+1. The stand-up already happened — `public class KSComplexPlayerLayer: KSPlayerLayer` is declared at
+   KSPlayerLayer.swift:961, so "lands with Package I" no longer defers anything.
+2. `superclass_conformance_gate --file …/KSPlayerLayer.swift` reports
+   `KSPlayerLayer super=NSObject confs=['MediaPlayerDelegate']` and
+   **`KSComplexPlayerLayer super=KSPlayerLayer confs=[]`** — the target class has NO Swift
+   conformance records at all. Moving the conformance there is no better supported than leaving it.
+
+⚠️ The likely reason both are empty is that `AVPictureInPictureControllerDelegate` is an **ObjC**
+protocol, and ObjC conformances do not appear in Swift conformance records — which is exactly why
+the gate itself reports it as `source-extra (noted, not flagged)` rather than flagging it. So the
+verdict drew a placement conclusion from an oracle that cannot see the thing it is about.
+
+Re-derive with the ObjC route (the class's `__objc_protolist` / `objc_trampoline_oracle`) before
+moving anything. As it stands the divergence's *premise* is unverified and its *fix* is contradicted
+by the tool it rests on.
+
 **`AudioDescriptor.audioFormat(...)` @0x101a68c44** — pinned at the declaration in `240952a`.
 Forward's helper does not switch on sampleFormat: no `br x` in the extent, and
 `101a68eb8: mov w2, #0x1` sets commonFormat unconditionally. Not rewritten because the two
