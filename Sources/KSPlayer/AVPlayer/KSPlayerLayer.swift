@@ -609,14 +609,67 @@ open class KSPlayerLayer: NSObject {
     ///   `(any ConstantSubtitleDataSource)?`) and launches a Task with a 0x38-byte box holding
     ///   MainActor.shared, the MainActor:Actor witness table, the dataSource's two existential
     ///   words and `self`, at nil priority. The Task's async function pointer resolves to
-    ///   0x1019d5b58, which is NOT_IN_TRIE — its body is unread, so the statement is omitted rather
-    ///   than stubbed.
-    /// ⚑[tool=export_trie_oracle ref=readyToPlay.taskBody:0x1019d5b58 result=NOT_IN_TRIE]
+    ///   0x1019d5b58, which is NOT_IN_TRIE.
+    ///
+    ///   THAT PIN WAS WRONG AND IS NOW DISCHARGED. It read NOT_IN_TRIE as "unread" and omitted the
+    ///   statement. NOT_IN_TRIE means UNNAMED, not unreadable — and an inline `Task` closure needs
+    ///   no recovered name, because it is written inline in this method's source. 0x1019d5b58 is
+    ///   only a 32-instruction async partial-apply forwarder: it unpacks the five captured words
+    ///   and tail-branches to the real body at 0x1019cdf98, which begins exactly where this method
+    ///   ends (0x1019cda08-0x1019cdf98). The closure is four funclets — 0x1019cdf98 entry,
+    ///   0x1019ce034 post-await, 0x1019ce114 post-hop success, 0x1015f4544 post-hop error.
+    /// ⚑[tool=function_extents ref=readyToPlay.taskBody:0x1019cdf98 result=4-funclets-156B-entry]
     public func readyToPlay(player: some MediaPlayerProtocol) {
         addSubtitle(to: player.view)
         bufferedCount = 0
         player.playbackRate = options.startPlayRate
         options.audioRecognizes = subtitleModel.subtitleInfos.compactMap { $0 as? AudioRecognize }
+        // The guard order is the binary's and is the REVERSE of what the verdict described:
+        // `player.subtitleDataSource` is fetched FIRST through witness byte 0xe8 and branches away
+        // when nil (0x1019cdd68 / cbz 0x1019cdd78), and only then is `selectedSubtitleInfo` read
+        // through offset global 0x104c637f0 and branched away when NON-nil (cbnz 0x1019cddb0).
+        // The captured box is 0x38 bytes holding MainActor.shared, the MainActor:Actor witness
+        // table, the dataSource's two existential words, and an objc_retain'd `self` — a STRONG
+        // capture, so there is no [weak self].
+        //
+        // Inside: one await on witness +0x10 of the dataSource's table, which resolves to
+        // `infos() async throws -> [SubtitleInfo]` (the base SubtitleDataSource table holds no
+        // function pointer at +0x10, so the captured table is provably the conforming one). A
+        // thrown error is swift_errorRelease'd and every remaining statement is skipped — the
+        // error resume funclet 0x1015f4544 does nothing but release and return.
+        // ⚑[tool=decode_witness_table ref=ConstantSubtitleDataSource.infos:+0x10 result=async-throws-SubtitleInfo-array]
+        //
+        // Then a hop back to the MainActor executor (swift_task_switch on both paths), and:
+        //   1019ce170  ldr x23, [x8, #0x768] / blr    KSOptions metadata +0x768 = vtable slot 143
+        //                                             = wantedSubtitle(tracks:) -> SubtitleInfo?
+        //   1019ce1a8  bl 0x101ab2540                 selectedSubtitleInfo's willSet observer
+        //   1019ce1d4  stp x23, x24, [x20]            the two-word store, under a modify access
+        //   1019ce214  ldr x8, [x19, #0x58] / blr     delegate witness +0x58, requirement 10 of 11
+        //                                             = playerDidSelectSubtitle()
+        // ⚑[tool=vtable_walk ref=KSOptions:metadata+0x768 result=slot143-wantedSubtitle]
+        //
+        // `try?` versus an explicit `do/catch` with an empty catch is NOT decidable here — both
+        // lower to errorRelease-then-skip, and the error path executes no user statement.
+        //
+        // THE STATEMENT IS STILL NOT WRITTEN, BUT THE BLOCKER IS NOW A DIFFERENT, SMALLER ONE
+        // THAN "THE BODY IS UNREAD". It was written out in full and REVERTED because it does not
+        // compile, and the compiler error is itself a finding:
+        //     value of type 'any SubtitleDataSource' has no member 'infos'
+        // `infos()` is declared on `ConstantSubtitleDataSource` (SubtitleDataSource.swift:167),
+        // which refines the empty marker protocol `SubtitleDataSource` (:132). The binary agrees
+        // with the refined type and the source does not — this getter's mangled name is
+        // `$s8KSPlayer10KSAVPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`, i.e.
+        // `KSAVPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`, while
+        // MediaPlayerProtocol.swift:300 declares `var subtitleDataSource: (any SubtitleDataSource)?`.
+        // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
+        //
+        // That TYPE_DIVERGENCE is the whole remaining blocker, and it is its own unit because
+        // fixing it is three coupled changes, not one: MediaPlayerProtocol:300 and KSAVPlayer:770
+        // retype cleanly, but KSMEPlayer:408 returns `self` and KSMEPlayer conforms to
+        // `ConstantSubtitleDataSource` only in the BINARY (witness table 0x1041d76d8) — source has
+        // neither the conformance nor an `infos()` for it, and the binary's
+        // `KSMEPlayer.infos()` @0x101a18f68 is unread. Writing `as? (any ConstantSubtitleDataSource)`
+        // here instead would add a dynamic cast the binary does not perform.
         state = .readyToPlay
         #if os(macOS)
         runOnMainThread { [weak self] in
