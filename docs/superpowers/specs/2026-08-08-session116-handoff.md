@@ -56,6 +56,41 @@ Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d09
 
 ## Derived but NOT landed — start here, do not re-derive
 
+**`KSPlayerLayer_structural_placement_s76` D1 — THE COUNT IS STALE BY NINE.** The verdict says
+"KSPlayerLayer carries 11 pre-existing l2_field_gate REAL_FLAGs (subtitleView, _state,
+playerTickClock, playerTickTask, bufferingStartTime, subtitleModel,
+isAutoReplaceAndConstrainPlayerView, _isPipActive, state, urls, startTime)". Measured now:
+
+    l2_field_gate --file …/KSPlayerLayer.swift --class KSPlayerLayer
+    => 19 fields | PASS 4 · UNCHECKED 13 · REAL_FLAG 2
+       REAL_FLAG (must resolve): _isPipActive, urls
+
+Nine of the eleven have since resolved to PASS or UNCHECKED. The remaining debt is TWO fields, both
+"in source, absent in binary reflection". `_isPipActive` is already acknowledged in-file as
+"source-only scaffolding (zero trie hits)"; `urls` (:278) backs `set(urls:options:)`. Removing either
+has call-site consequences, so it is still a unit — but a two-field one, not an eleven-field one.
+
+**`openFormatContext` D1 — ITS BLOCKER IS NOT A NAMING BLOCKER, and the verdict cites the wrong
+address.** The divergence says the interrupt-callback install "needs the un-reconstructed registry
+predicate FUN_101a34af4". Read from disassembly at 0x101a395cc-dc:
+
+    101a395cc  ldr x8, [x19, #0x28]
+    101a395d0  ldr x27, [x8, #0x18]          the opaque
+    101a395d4  adrp/add -> 0x101a34dc0       the CALLBACK pointer
+    101a395dc  stp x8, x27, [x0, #0xd8]      formatCtx->interrupt_callback = {fn, opaque}
+
+The installed callback is **0x101a34dc0**, not 0x101a34af4. 0x101a34dc0 is a 23-instruction
+`@convention(c)` thunk: `swift_once` on token 0x1044e9ab8 (init 0x101a349c4), load the static from
+0x1044e9ac0 into x20 (swiftself), `bl 0x101a34af4`, `and w0,w0,#1`, return. So 0x101a34af4 is the
+PREDICATE the thunk calls, not the callback itself.
+
+And it needs no name: `name_exhaustion_gate --addr 0x101a34af4` returns **INLINE-INSTEAD** — one
+call site image-wide, "no independent identity: inline the expression at the call site". So the
+verdict's framing ("un-reconstructed registry predicate", implying a naming gate) is wrong twice
+over. What is actually required is reading its 69 instructions and inlining them in the closure. Its
+call set is `objc_msgSend 'lock'` (0x103464ae0) / `'unlock'` (0x10346e620), 0x1001ad3c4, and runtime
+exclusivity/retain — i.e. a locked registry lookup returning Bool, across 6 branches.
+
 **`KSPlayerLayer.readyToPlay(player:)` @0x1019cda08** (1 CRITICAL + 1 HIGH + 2 LOW) — derived this
 session, NOT written. 0x1019cda08-0x1019cdf98, 1424 B, 356 instr. Trie:
 `readyToPlay<A where A: KSPlayer.MediaPlayerProtocol>(player: A) -> ()` (generic, OWNER_MATCH).
