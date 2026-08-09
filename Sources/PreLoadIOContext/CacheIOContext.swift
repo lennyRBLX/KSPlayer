@@ -58,7 +58,7 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //    Forward gives it a `didSet` — the vtable setter (slot 10 @0x101b85f50) is NOT the
     //    bare generated store its getter (slot 9) is: after `*(self+0x50) = newValue` it
     //    watermarks `end` (self+0x48) up to the new position and calls s23
-    //    `updateDownloadSpeed` (@0x101b86044, the same body this file already reconstructs),
+    //    `updateSpeedSample` (@0x101b86044, the same body this file already reconstructs),
     //    both guarded by `newValue != .max`. The `.max` sentinel is the binary's
     //    `param_2 != 0xffffffffffffffff`; the `end` update is an unconditional store of
     //    `max(end, urlPos)` (the binary selects then stores on both arms), not a
@@ -71,7 +71,7 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         didSet {
             if urlPos != .max {
                 end = max(end, urlPos)
-                updateDownloadSpeed(urlPos)
+                updateSpeedSample(newPos: urlPos)
             }
         }
     }
@@ -467,7 +467,7 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         _downloadSpeed = 0
     }
 
-    // s23 @101b86044 — `func updateDownloadSpeed(_ pos: UInt64)` (name inferred,
+    // s23 @101b86044 — `updateSpeedSample(newPos:)` (trie-named; see the marker at the decl,
     //   devirt). Faithful (full): on each call read CFAbsoluteTimeGetCurrent(); if a
     //   prior sample exists (lastSpeedSampleTime != 0) and at least speedSampleInterval
     //   (inlined 0.5 s) has elapsed and pos has not gone backwards, compute speed =
@@ -475,7 +475,12 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   (inlined 209715200.0). Always record the new sample (time, pos).
     //   NOTE: the binary inlines the 0.5 / 209715200.0 thresholds rather than reading
     //   speedSampleInterval / maxReasonableSpeed — preserved as literals for fidelity.
-    func updateDownloadSpeed(_ pos: UInt64) { // name inferred (devirt)
+    // 🚨 NAME AND LABEL WERE FABRICATED. The trie names 0x101b86044
+    //   `PreLoadIOContext.CacheIOContext.(updateSpeedSample in _D69EFE1402863CA716A3171C7DB6DFB9)(newPos: Swift.UInt64) -> ()`.
+    //   The `LL` discriminator is THIS file's, so the member is file-private — hence `private`,
+    //   and its only caller (urlPos.didSet, above) is in this same file. The parameter is
+    //   LABELLED `newPos:`, not unlabelled `_`.
+    private func updateSpeedSample(newPos pos: UInt64) {
         let now = CFAbsoluteTimeGetCurrent()
         if lastSpeedSampleTime != 0 {
             let elapsed = now - lastSpeedSampleTime
