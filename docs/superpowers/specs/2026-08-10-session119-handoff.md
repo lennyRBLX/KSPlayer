@@ -42,15 +42,30 @@ Closing `KSPlayerLayer_readyToPlay_slot69_s84` removes **1 CRITICAL + 1 HIGH**.
    `0x101a3ccd0` with the argument loaded from `_AVMediaTypeSubtitle`, then filters, boxing each
    survivor with witness table `0x1041d7668` (`FFmpegAssetTrack : SubtitleInfo`). It reads no field
    of `self`, holds no literal, and never throws.
-9. **Settle the filter's second condition before you spell it.** At `0x101a1900c` the body calls
-   `0x10345c520`, which resolves through `__got 0x10410bae0` to libobjc `_object_getClass`
-   (`python3 scripts/bind_oracle.py --addr 0x10410bae0`) — so the class test is an EXACT class
-   identity compare against `FFmpegAssetTrack`'s metadata `0x1044e91c8`, not a subclass-tolerant
-   cast. But the append path is guarded by TWO conditions: `cmp x0, x28` then
-   `ccmp x21, #0x0, #0x4, eq` at `0x101a19014`, and `x21` is NOT identified. Identify `x21` first.
-   `FFmpegAssetTrack` is `public class` (not `open`, not `final`) at `FFmpegAssetTrack.swift:24`, so
-   an exact compare is CONSISTENT with a whole-module-devirtualized `as?` but does not prove it —
-   writing `compactMap { $0 as? FFmpegAssetTrack }` without settling `x21` invents a body.
+9. The filter is SETTLED — do not re-derive it. Read
+   `reconstruction/derivations/s118_infos_cast_lowering_probe.md`, which closes it by swiftc probe
+   at UNGROUNDED 0. `x21` is the element's instance word (stride 16 from base+0x20, a class-bound
+   existential), the guard is `object_getClass(elem) == FFmpegAssetTrack metadata AND elem != nil`,
+   and the body is:
+
+       public func infos() async throws -> [any SubtitleInfo] {
+           tracks(mediaType: .subtitle).compactMap { $0 as? FFmpegAssetTrack }
+       }
+
+   `filter { $0 is T }.map` is refuted (two `object_getClass`, 153 instr vs Forward's 113) and
+   `for` + `if let` is refuted (it emits `swift_unknownObjectRetain_n`; Forward emits the plain
+   `swift_unknownObjectRetain` via `__got 0x1041130b0`). The declaration is `async throws` even
+   though the body never throws — the trie carries the `K`.
+9a. **`FFmpegAssetTrack` must be made `final` FIRST, and that is a prerequisite, not a nicety.** The
+   probe shows the exact-metadata compare appears ONLY with a `final` cast target; a non-final
+   target — public OR internal-under-WMO — lowers to `swift_dynamicCastClass` and the body stops
+   matching. Source declares `public class FFmpegAssetTrack: MediaPlayerTrack` at
+   `FFmpegAssetTrack.swift:24`; the binary corroborates finality independently through the class's
+   vtable, which carries one `Init` slot and NO method slots
+   (`python3 scripts/vtable_walk.py FFmpegAssetTrack` → `VTableSize=1`, `override_table=False`).
+   Nothing in the tree subclasses it, so the keyword is safe. This is a NEW divergence that no
+   existing verdict records — land it as its own change with its own verdict, and note it touches
+   `FFmpegDecode`'s neighbourhood, which carries its own DIVERGENT verdict.
 10. Add the conformance `extension KSMEPlayer: ConstantSubtitleDataSource {}`. The binary carries it
     at witness table `0x1041d76d8`; source carries neither the conformance nor `infos()`. The
     protocol is at `Sources/KSPlayer/Subtitle/SubtitleDataSource.swift:152` — the pin in
