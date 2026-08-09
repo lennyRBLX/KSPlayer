@@ -335,30 +335,44 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     //   (the compiler would have inlined the helper here regardless); inventing a helper name
     //   would not be. Deferred, not guessed.
 
-    // s55 @101ba6bb8 — `func bufferedBytesAvailable() -> UInt32` (name inferred,
-    //   devirt). FAITHFUL (full, modulo the inherited-field offsets it reads). The
-    //   decompile: if isPreloadPaused → 0. Else, when CacheIOContext.eof and the two
-    //   inherited position fields at +0x50/+0x48 are equal (the fully-buffered case),
-    //   it returns the inherited 4-byte field at +0x14 (the AbstractAVIOContext buffer
-    //   size) only if `(<field+0x80> &+ uVar4) < <pos+0x50>`, else 0 — the &+ is an
-    //   overflow-checked add (the SoftwareBreakpoint(…) paths are Swift's UInt overflow
-    //   traps, NOT calls). When not at that EOF-equal case it returns that same +0x14
-    //   field. The +0x14/+0x48/+0x50/+0x80 reads are INHERITED CacheIOContext /
-    //   AbstractAVIOContext fields (out of this class's reconstruction scope — their
-    //   exact property names live in 1C.4/1C.7, not re-derived here) → the field-offset
-    //   arithmetic is preserved as an UNRESOLVED note and the isPreloadPaused spine is faithful.
-    func bufferedBytesAvailable() -> UInt32 { // name inferred (devirt)
+    // s55 @0x101ba6bb8 — 51 instr. vtable slot 55, the DECLARATION of this method; the
+    //   override chain is PreLoadIOContext (here) → LimitPreLoadIOContext @0x101ba1cdc →
+    //   LimitCountPreLoadIOContext @0x101ba2c5c, both of which override this same
+    //   base-method-descriptor 0x1039f6578 on base-class-descriptor 0x1039f6380.
+    //
+    // 🚨 THE NAME WAS FABRICATED AND IS NOW READ. This was `bufferedBytesAvailable()`,
+    //   carrying "name inferred (devirt)". The export trie names the address outright:
+    //   `$s16PreLoadIOContextAAC12preloadCounts6UInt32VyF` =
+    //   `PreLoadIOContext.PreLoadIOContext.preloadCount() -> Swift.UInt32`. No caller in
+    //   the tree used the invented spelling, so the rename has zero blast radius.
+    //
+    // 🚨 THE "UNRESOLVED" ARITHMETIC WAS NEVER UNRESOLVED — it was four unnamed offsets.
+    //   The old note deferred the whole eof branch to P8 because +0x14/+0x48/+0x50/+0x80
+    //   were "inherited fields out of scope". The ObjC ivar route names all four:
+    //   +0x14 `bufferSize` (AbstractAVIOContext, `let Int32`), +0x48 `end`, +0x50 `urlPos`,
+    //   +0x80 `logicalPos` (all CacheIOContext), so the branch is written out in full and
+    //   the compilable `return 0` spine — which returned the WRONG value on the common
+    //   path — is gone.
+    //
+    // Read instruction by instruction: `tbz w8,#0` on isPreloadPaused → `return 0`;
+    //   `cmp w8,#1`/`b.ne` on eof and `cmp x19,x8` on urlPos/end BOTH fall to 0x101ba6c60,
+    //   which is `ldr w0,[x20,#0x14]` = the bufferSize return; the surviving path does
+    //   `adds x9,x9,x8` + `b.hs`→`brk #0x1` (a CHECKED add, so `+` and NOT `&+` as the old
+    //   note said — `&+` is the wrapping operator and emits no trap) then
+    //   `csel w0, w8, wzr, lo` = `sum < urlPos ? bufferSize : 0`. The two `tbnz wN,#0x1f`
+    //   → `brk` guards are the Int32→UInt64 and Int32→UInt32 conversion traps.
+    // ⟨access level: the mangled name carries no discriminator and the class is not final,
+    //   so `internal` is retained from the previous declaration rather than derived.⟩
+    func preloadCount() -> UInt32 {
         if isPreloadPaused {
             return 0
         }
-        // UNRESOLVED → P8 (IO-completion): the eof / fully-buffered branch reads INHERITED CacheIOContext
-        //   + AbstractAVIOContext fields by offset (+0x14 buffer-size, +0x48/+0x50
-        //   position pair, +0x80) with an overflow-checked &+; those property names are
-        //   owned by 1C.4/1C.7 and not re-derived here → the available-bytes arithmetic
-        //   is not reconstructed. The isPreloadPaused short-circuit above is faithful;
-        //   the non-paused fall-through returns 0 as a compilable spine (binary returns
-        //   the +0x14 buffer-size field). — P2
-        return 0
+        if eof, urlPos == end {
+            // ⟨the binary emits one `csel`, so an early-return `if … { return 0 }` and this
+            //  conditional expression are indistinguishable here; the value shape is read.⟩
+            return logicalPos + UInt64(bufferSize) < urlPos ? UInt32(bufferSize) : 0
+        }
+        return UInt32(bufferSize)
     }
 
     // s52 @101ba9e44 — `var bufferedBytes: Int` (name inferred, devirt). FAITHFUL (full).
