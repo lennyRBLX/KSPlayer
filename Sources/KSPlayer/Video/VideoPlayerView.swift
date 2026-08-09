@@ -108,7 +108,15 @@ open class VideoPlayerView: PlayerView {
         }
     }
 
-    private var originalPlaybackRate: Float = 1.0
+    // `originalPlaybackRate: Float = 1.0` REMOVED (s116). It is not a Forward field: the class's
+    // field descriptor lists exactly 20 records and this is not among them, and a stored property
+    // always gets a field record — so by the standing rule that a field absent from the reflection
+    // records is ABSENT, it does not exist here. Corroborated two ways: a scan of the field records
+    // of all 1064 classmap descriptors finds `originalPlaybackRate` on NO type in the image, and it
+    // returns zero hits across the whole 57,138-name demangled export trie. The removal is
+    // self-contained — it had no use site anywhere under Sources/, only this declaration.
+    // ⚑[tool=fieldrec ref=VideoPlayerView:20-records result=originalPlaybackRate-absent]
+    // ⚑[tool=field_presence_sweep ref=VideoPlayerView.originalPlaybackRate result=ABSENT-from-binary]
 
     public let speedTipLabel: UILabel = {
         let label = UILabel()

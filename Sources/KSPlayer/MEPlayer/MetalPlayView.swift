@@ -93,6 +93,18 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     ///   The value comes from `init(options:)`, and the assignment there is read in full below.
     public var drawable: Drawable
     private let metalView = MetalView()
+    /// Field-record index 9, between `metalView` (8) and `isBackground` (10) — the position the
+    /// `isBackground` note below already asserted. Type read from the mangle, which is a ctrl-2
+    /// symref to `KSPlayer.DOVIDecoderConfigurationRecord` with a trailing `Sg`, so it is a genuine
+    /// Optional and not a bare `T`. `var` from the FieldRecord Flags word (0x00000002). `private`
+    /// from the per-file discriminator `33_8CE14EEEDB5CC7973511FB5E09E191F8LL` carried by its own
+    /// `vpfi` symbol; there is no `vpMV` and no `vpWvd` for it, and no getter/setter/modify is
+    /// exported. No declaration default is written: the `vpfi` @0x10011a290 returns nil, but a
+    /// `var` of Optional type emits a `vpfi` whether or not `= nil` was in the source, so the
+    /// default is NOT decidable and writing one would be fabrication.
+    /// ⚑[tool=dump_field_type_mangles ref=MetalPlayView.dovi:record9 result=DOVIDecoderConfigurationRecord_Sg]
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.dovi:0x10011a290 result=private-vpfi-only]
+    private var dovi: DOVIDecoderConfigurationRecord?
     /// Field-record index 10, between `dovi` (9) and `displayView` (11). Default READ from its
     /// `vpfi` @0x10002dab0 (`mov w0,#0` / `ret`), which it shares with `forcedFrameRetryScheduled`
     /// and `rotation`; the init re-emits the store at 0x101a5ef34.
@@ -130,6 +142,32 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// source field is READ, not matched by name.
     /// ⚑[tool=export_trie_oracle ref=KSOptions.renderUseDispatchSourceTimer:0x104c63400 result=vpWvd-named-Bool]
     private let renderUseDispatchSourceTimer: Bool
+    /// Field-record index 15, immediately after `renderUseDispatchSourceTimer` (14). The mangle is
+    /// a bare ctrl-1 direct symref to 0x1039efdcc with an EMPTY tail — no `Sg` — so the field is
+    /// the non-optional struct, not an Optional. `var` from the Flags word; `private` from the same
+    /// per-file discriminator as `dovi`, carried by its `vpfi`; no `vpMV`, no `vpWvd`, no exported
+    /// accessor of any kind.
+    ///
+    /// ⚑ The default is READ, not chosen: the `vpfi` @0x10199afb4 is not folded (OWNER_MATCH, one
+    ///   symbol) and returns the four-register value x0=0 / w1=1 / x2=0 / w3=0, which is
+    ///   `FlickerDetector`'s three fields all at their declared defaults (`lastSignature: Int?` nil
+    ///   occupying value+tag, `changeCount: Int` 0, `notified: Bool` false). What is NOT decidable
+    ///   is the SPELLING — `FlickerDetector()` and the fully-written-out memberwise call compile to
+    ///   the same vpfi — so the shorter form is written as the minimal claim.
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.flickerDetector:0x10199afb4 result=OWNER_MATCH-private-vpfi]
+    /// ⚑[tool=fieldrec ref=KSPlayer.FlickerDetector:0x1039efdcc result=3-fields-lastSignature-changeCount-notified]
+    ///
+    /// ⚠️ Forward spells the TYPE with a per-file discriminator —
+    ///   `KSPlayer.(FlickerDetector in _8CE14EEEDB5CC7973511FB5E09E191F8)` — i.e. it is file-private
+    ///   to this file there, while this tree declares it `public struct` in Metal/Drawable.swift.
+    ///   That placement/access divergence is its own unit and does not change what this field is.
+    private var flickerDetector = FlickerDetector()
+    /// Field-record index 16 — the LAST field, at instance offset 0xc9 with InstanceSize 0xca.
+    /// The mangle is the two bytes `Sb` with no trailing `Sg`, so it is `Bool`, not `Bool?` and not
+    /// `Bool!`. `var`, `private` by the same per-file discriminator. Default READ from the `vpfi`
+    /// @0x10002dab0 (`mov w0,#0` / `ret`), the same shared body `isBackground` above cites.
+    /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.forcedFrameRetryScheduled:0x10002dab0 result=false]
+    private var forcedFrameRetryScheduled: Bool = false
 //    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
     // displayLayerDelegate is a source-only construct — zero-hit across the whole demangled trie,
     // and MetalPlayView's field descriptor does not list it. Its REMOVAL is derived and ready. The
