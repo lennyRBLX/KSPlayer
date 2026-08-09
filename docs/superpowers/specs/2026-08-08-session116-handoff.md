@@ -307,6 +307,20 @@ sibling body: after a successful read it is a running maximum —
 immediately before `updateSpeedSample(newPos:)`. Name it from an anchor site in another body, then
 this unit is writable end to end.
 
+⚠️ **THE ANCHOR-SITE ROUTE HAS A TRAP, and I nearly walked into it.** Disassembling
+0x101b86000-0x101bac000 and grepping `(ldr|str) xN, [xM, #0x48]` finds ~20 sites. One of the most
+promising, a load/store pair at 0x101b96868/0x101b96890, sits inside
+`PreLoadIOContext.CacheOnlyIOContext.seek(offset:whence:)` @0x101b96820 — a seek writing a position
+field at +0x48, which looks like exactly the identification you want.
+
+**It is not transferable.** `CacheOnlyIOContext` is a DIFFERENT class from `PreLoadIOContext`, and
+both have `metadata_init=1`, so neither has a statically fixed layout. Two classes using the same
+offset number says nothing about them being the same field. Any anchor site must be on a receiver
+whose class is *established* to be `PreLoadIOContext` (or a subclass sharing its layout prefix)
+before its meaning transfers — so the route is: name the owning function of each site, check its
+owner class, and only then read the semantics. The other candidate pair at 0x101b85fe0 is
+NOT_IN_TRIE, so it cannot be attributed at all.
+
 ⚠️ Also note the decompile opens with `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`
 and `addEntry` THROWS — so the `do`/`catch` is exactly the structure Ghidra drops. Derive the error
 path from the disassembly, not from the cache.
