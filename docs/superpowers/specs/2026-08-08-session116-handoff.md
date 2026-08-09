@@ -471,6 +471,28 @@ sharing a register is the whole hazard here.
 
 With this, every instruction AND the return plumbing of `more()` are established.
 
+⛔ **AND YET IT STILL CANNOT BE WRITTEN — because of a DEPENDENCY, not a gap in the read.** This is
+the definitive scoping answer, and it connects two verdicts nobody had linked.
+
+Both witness dispatches in this body go through `moreDownload`. The source declares
+`let moreDownload: (any DownloadProtocol)?` at LimitSeparatePreLoadIOContext.swift:98, with the
+comment "⚑ optionality inferred (a nil existential is a zero metadata word; unobservable here)".
+**The binary disagrees.** The designated init's own trie mangle, transcribed at :185, reads
+`__allocating_init(download: KSPlayer.DownloadProtocol, moreDownload: KSPlayer.DownloadProtocol, …)`
+— NO `Sg`, i.e. non-optional on both.
+
+So writing `more()` forces a choice, and both options are wrong today:
+  · `moreDownload?.seek(…)` — introduces optional chaining the binary does not have; and the body
+    reads the existential with a bare `ldp x24,x25,[x0,#0x18]` and no nil test, so there is nothing
+    for the `?` to compile to.
+  · drop the `?` — which the standing **`PreLoadIOContext_download_existential`** verdict (MED)
+    records as BLOCKED, because `CacheIOContext.swift:211` and
+    `LimitSeparatePreLoadIOContext.swift:346` both delegate with `download: nil`, and the real
+    argument is built by the unreconstructed deep-FFmpeg URLContext open inside 0x101b90c58.
+
+**`more()` is therefore gated on `download_existential`, which is gated on 0x101b90c58.** Resolve
+that chain first; the transcription itself is then mechanical, because everything above is read.
+
 ✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
 block Ghidra discarded. Read from disassembly:
