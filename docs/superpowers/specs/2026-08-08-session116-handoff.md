@@ -438,8 +438,19 @@ The post-search size clamp, 0x101ba5710-0x101ba5764:
     101ba575c: ldr  x8, [x19, x28]     x28 = *(0x1044f5c48) = moreUrlPos
     101ba5764: b.eq 0x101ba58f0        urlPos == moreUrlPos -> skip the seek entirely
 
-**Only 0x101ba5768-0x101ba58f0 (the seek + second log site) remains unread from disassembly.**
-Everything else in the body now carries instruction-level evidence.
+**EVERY REGION OF THIS BODY IS NOW READ FROM DISASSEMBLY.** The last one, 0x101ba5768-0x101ba57c8,
+is structurally IDENTICAL to the `!ok` arm at 0x101ba553c — same `ldp x24,x25,[x0,#0x18]` existential
+load of `moreDownload`, same sign check, same `ldr x8,[x25,#0x30]` witness +0x30 = `seek(offset:whence:)`
+with `w1 = 0`, same `logLevel >= 3` gate before the log. The two differ only in `#line` (166 vs 186).
+That identity is exactly why the Ghidra cache folded them into one, and why a source written from the
+cache would carry one seek-and-log instead of two.
+
+⛔ **WHAT IS STILL NOT ESTABLISHED, and it is the last thing standing between this and a written
+body: the RETURN-VALUE dataflow.** `w24` carries the result and is written on several paths —
+`mov w24, #0x1` @0x101ba56b0, `mov w24, #-0x1` @0x101ba5708, the `0xdfb9b0bb` EOF constant, and the
+byte count from the read. Those individual writes are read, but I did NOT trace `w24` through every
+edge to the epilogue, so which path returns what is not proven. Trace it before writing — the
+returns are the part a reader cannot check against behaviour, and getting them wrong is invisible.
 
 ✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
