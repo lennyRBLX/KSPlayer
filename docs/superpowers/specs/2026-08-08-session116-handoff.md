@@ -56,6 +56,34 @@ Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d09
 
 ## Derived but NOT landed — start here, do not re-derive
 
+**`openFormatContext` D2 — ITS BLOCKER IS A TOOL MISMATCH, and the field IS nameable.** The
+in-source note says the `.right` AVIO install's swift_once-guarded store cannot be written because
+"naming it would assert an FFmpeg symbol this unit cannot provenance with `ffmpeg_name_oracle`,
+which fingerprints FUNCTIONS and can never CONFIRM a struct field."
+
+That is true of `ffmpeg_name_oracle` and irrelevant: **FFmpeg struct fields come from the headers**,
+which is the sanctioned route (and the protocol forbids writing them by numeric offset precisely
+because the header is authoritative). Read from the binary:
+
+    101a39828  bl 0x1030c1250        avio_alloc_context   (CONFIRMED)
+    101a3982c  mov x19, x0
+    101a39830  cbz x0 -> skip
+    101a3983c  cmn x8,#0x1 / b.ne    swift_once token 0x1044e6908, init 0x1019e22c0
+    101a39848  x8 = 0x104c63590      the value
+    101a3984c  str x8, [x19]         <- store at AVIOContext OFFSET 0
+    101a39864  str x19, [x28, #0x20] formatCtx.pb = avio
+
+Offset 0 of `AVIOContext` is `av_class` — Libavformat.framework/Headers/avio.h:160-172, whose own
+doc says "If this AVIOContext is manually allocated, then av_class may be set by the caller",
+which is exactly this call path. So the statement is `avio.pointee.av_class = …`, and no FFmpeg
+FUNCTION symbol needs provenancing at all.
+
+WHAT REMAINS for D2 is only the VALUE: 0x104c63590 is a Swift static behind `swift_once` (token
+0x1044e6908), initialised by 0x1019e22c0 — 47 instructions, NOT_IN_TRIE. Read that initialiser to
+name what AVClass is being installed; everything else in the arm is already derived
+(`av_malloc(ctx.bufferSize)` — bufferSize is `AbstractAVIOContext` +0x14 per its own declaration
+comment — plus the three C callbacks 0x1019e2628 / 0x1019e2684 / 0x1019e26e0).
+
 **`KSPlayerLayer_structural_placement_s76` D1 — THE COUNT IS STALE BY NINE.** The verdict says
 "KSPlayerLayer carries 11 pre-existing l2_field_gate REAL_FLAGs (subtitleView, _state,
 playerTickClock, playerTickTask, bufferingStartTime, subtitleModel,
