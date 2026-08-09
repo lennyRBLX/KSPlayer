@@ -599,6 +599,68 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
+    // STOOD UP from the binary — this member had no source counterpart at all. Body @0x1019ceb00,
+    // extent 0x1019ceb00-0x1019ced14, 532 B, 133 instructions, vtable idx76 / slot103, NOT ICF-folded
+    // (exactly one symbol at the address). It is the call target of
+    // `KSVideoPlayerView.openURL(_:options:)`'s subtitle branch, which is why that body could not be
+    // written before this one existed.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSPlayerLayer.select(subtitleInfo:isSecondary:):0x1019ceb00 result=OWNER_MATCH]
+    //
+    // SIGNATURE, read from the mangle `$s8KSPlayer0A5LayerC6select12subtitleInfo11isSecondaryyAA08SubtitleE0_pSg_SbtF`:
+    // the fragment `AA08SubtitleE0_pSg` is `_p` (existential) then `Sg` (Optional), so the parameter is
+    // `(any SubtitleInfo)?` and NOT a concrete type; `Sb` is Bool; the trailing `F` with no `K` and no
+    // `Ya` fixes it as non-throwing and non-async.
+    //
+    // ⚠️ ACCESS LEVEL IS NOT SEPARABLE ON THIS IMAGE, and `public` here is a spelling choice, not a
+    // reading. The three routes all refuse: the mangle carries no private discriminator (so not
+    // private/fileprivate — sibling slots 78-81 on this class DO carry one, e.g.
+    // `(addSubtitle in _B3181C2628785004269C41BC3433122F)`); `vpMV` is a PROPERTY descriptor and cannot
+    // exist for a method; and the Impl oracle is refused because `KSPlayerLayer` is `open` (non-final),
+    // where a non-null Impl is no evidence. The s91 stand-up verdict inferred "public-or-open" from the
+    // ABSENCE of a `Tj` dispatch thunk — that inference is VOID: this image exports ZERO `Tj` symbols of
+    // any kind across all 57138 trie names, so `Tj` absence discriminates nothing.
+    // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.select:access-level result=NOT-SEPARABLE-Tj-count-0]
+    //
+    // THE GUARD CHAIN, read branch by branch from 0x1019ceb30:
+    //   cbz x0, 0x1019cec38                     -> subtitleInfo == nil, skip to the store
+    //   swift_conformsToProtocol(0x1039ed8b4)   -> 0x1039ed8b4 is the MediaPlayerTrack protocol
+    //   cbz x0, 0x1019cec38                        descriptor (1 symbol, unfolded); no conformance,
+    //                                              skip to the store
+    //   ldr x26,[x0,#0x70] / blr x26            -> witness word 14 = MediaPlayerTrack requirement 13,
+    //   tbz w0,#0, 0x1019cec30                     resolved on FFmpegAssetTrack's table as
+    //                                              `isImageSubtitle.getter : Bool`; false skips
+    //   ldrb w8,[x20,x26] / cmp w8,#0x1         -> options.isSeekImageSubtitle
+    //   b.ne 0x1019cec30
+    // ⚠️ THE LAST TEST'S POLARITY IS THE COUNTER-INTUITIVE ONE and was read wrong on a first pass:
+    // `cmp w8,#0x1 / b.ne` continues to the select only when isSeekImageSubtitle is TRUE. The player
+    // select is enabled BY the seek-image-subtitle option, not suppressed by it.
+    //
+    // THE DISPATCH is an opened-existential generic call, not a direct one: `ldp x26,x27,[x20]` reads
+    // `self.player` as a two-word existential with NO nil test (so the field is non-optional, matching
+    // its source declaration), then `ldr x8,[x27,#0x160]` selects MediaPlayerProtocol requirement 43 —
+    // confirmed on BOTH conformer witness tables as
+    // `select<A where A: MediaPlayerTrack>(track: A) -> ()` (KSAVPlayer 0x1041d3f78 req43, KSMEPlayer
+    // 0x1041d7c68 req43).
+    //
+    // THE STORE always happens, on both isSecondary arms — the two arms converge on one inlined store
+    // block at 0x1019cecd4. The identity guard in front of it (`cbz x19` / `cmp x19,x8` / `b.ne`) and
+    // the calls to 0x101ab2de4 / 0x101ab2540 are NOT written here: those two addresses are already
+    // pinned in this tree as `SubtitleModel.secondarySubtitleInfo`'s and `selectedSubtitleInfo`'s
+    // `willSet` observers, whose source already opens `guard newValue !== ... else { return }`. A plain
+    // assignment produces them.
+    // ⚑[tool=export_trie_oracle ref=SubtitleModel.selectedSubtitleInfo.willSet:0x101ab2540 result=NOT_IN_TRIE]
+    // ⚑[tool=export_trie_oracle ref=SubtitleModel.secondarySubtitleInfo.willSet:0x101ab2de4 result=NOT_IN_TRIE]
+    public func select(subtitleInfo: (any SubtitleInfo)?, isSecondary: Bool) {
+        if let track = subtitleInfo as? any MediaPlayerTrack, track.isImageSubtitle, options.isSeekImageSubtitle {
+            player.select(track: track)
+        }
+        if isSecondary {
+            subtitleModel.secondarySubtitleInfo = subtitleInfo
+        } else {
+            subtitleModel.selectedSubtitleInfo = subtitleInfo
+        }
+    }
+
     public func changeBuffering(player _: some MediaPlayerProtocol, progress: UInt8) {
         bufferingProgress = progress
     }
