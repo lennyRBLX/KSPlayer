@@ -571,8 +571,22 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     //   `memmove` the tail left by one word, store count-1 — and whose returned element is
     //   immediately `swift_release`d, i.e. discarded.
     // ⚑[tool=disassemble_function ref=Array.remove(at:)_specialized:0x101ba3fd0 result=COW make-unique + bounds check + memmove tail + count-1 + return removed element]
-    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot31:0x101ba5a5c result=Method; NAME and argument label inferred]
-    func canPreload(_ position: UInt64) -> Bool { // name inferred (devirt)
+    // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot31:0x101ba5a5c result=Method]
+    //
+    // NAME AND ACCESS ARE NOW READ, not inferred. The export trie resolves 0x101ba5a5c to exactly
+    // one symbol owned by this class:
+    //   PreLoadIOContext.LimitSeparatePreLoadIOContext.(canContinuePreload in
+    //     _D3E0B2D62F772CE9EE6549031B37E873)(at: Swift.UInt64) -> Swift.Bool
+    // so the member is `canContinuePreload`, its argument label is `at:`, and the
+    // `(… in _<discriminator>)` form is the mangling for a PRIVATE member — which is why it is
+    // declared `private` here rather than at the file's default access.
+    //
+    // The previous spelling `canPreload(_:)` was explicitly marked "name inferred (devirt)" and was
+    // wrong on the name, the label and the access level. It also collided conceptually with
+    // `LimitPreLoadIOContext.canPreload`, a STORED `Bool` property on a different class — the
+    // rename removes that ambiguity as well.
+    // ⚑[tool=export_trie_oracle ref=LimitSeparatePreLoadIOContext.canContinuePreload(at:):0x101ba5a5c result=OWNER_MATCH-private]
+    private func canContinuePreload(at position: UInt64) -> Bool {
         if entryList.count < 9 {
             return true
         }
