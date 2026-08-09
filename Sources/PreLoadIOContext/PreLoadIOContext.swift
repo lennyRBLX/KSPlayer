@@ -165,29 +165,14 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         return result
     }
 
-    // s36 @101bab2d8 — `func reportThumbnailProgress(_:_:)` (name inferred, devirt).
-    //   FAITHFUL SPINE + UNRESOLVED → P8 (IO-completion) (the tail is a devirtualized indirect call
-    //   through an UNRECOVERED JUMPTABLE — "Could not recover jumptable … too many
-    //   branches"). The decompile gates two doubles through the NaN/inf validity check,
-    //   reads CacheIOContext.eof (== true) and a duration-like double field, and on the
-    //   pass path computes via the unnamed FUN_101ba7dc8 before the indirect tail-call  ⚑[tool=resolve_fun_pins ref=FUN_101ba7dc8:0x101ba7dc8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.timeToPosition(time: Swift.Double, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.UInt64
-    //   through `*(vtable + 0x590)`; otherwise it passes 0/flag through the same slot.
-    //   The branch target (vtable+0x590) is devirt with an unrecovered branch table →
-    //   no readable callee. Body left as a faithful-spine marker, NOT fabricated.
-    func reportThumbnailProgress(_ a: Double, _ b: Double) { // name inferred (devirt)
-        _ = a
-        _ = b
-        // UNRESOLVED → P8 (IO-completion) (s36 @101bab2d8): validity-gate(a,b) && eof==true &&
-        //   <duration-double> != 0 → dVar = FUN_101ba7dc8(a, b, <duration>), then the  ⚑[tool=resolve_fun_pins ref=FUN_101ba7dc8:0x101ba7dc8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.timeToPosition(time: Swift.Double, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.UInt64
-        //   indirect tail-call (*(self.vtable + 0x590))(a, dVar, flag) through an
-        //   UNRECOVERED JUMPTABLE; the else-branch passes (a, 0.0, 1) through the same
-        //   slot. The devirt branch target + the unnamed FUN_101ba7dc8 have no readable  ⚑[tool=resolve_fun_pins ref=FUN_101ba7dc8:0x101ba7dc8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.timeToPosition(time: Swift.Double, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.UInt64
-        //   body → not reconstructed. — P2
-        //   NB (M1C audit): the validity-gate here is the SAME family as s31/s33. When
-        //   P2 reconstructs it, the gate MUST include the sign / `> 0` term (binary
-        //   rejects non-positive time), not just isNaN/isInfinite — s31 AND s33 both
-        //   omitted it. Do not repeat the omission.
-    }
+    // 🚨 A SECOND FABRICATED DUPLICATE WAS DELETED HERE — `func reportThumbnailProgress(_:_:)`,
+    //   tagged "name inferred (devirt)" at s36 @0x101bab2d8 with a `_ = a; _ = b` stub body. The
+    //   trie names that address
+    //   `PreLoadIOContext.PreLoadIOContext.syncPlaybackPosition(time: Swift.Double, duration: Swift.Double) -> ()`,
+    //   and this class ALREADY declares exactly that at the bottom of this file — whose own comment
+    //   independently claims the same "Body @0x101bab2d8, 49 instr, slot 36". Two declarations, one
+    //   binary function, and the invented one was the less-resolved of the pair.
+    //   Its two unique observations are carried onto the surviving declaration rather than lost.
 
     // ── s49 / s50: the two cached-segment lookups. Both walk the inherited
     //    `entryList` ([CacheFileEntry], self+0x88) with the SAME inlined binary search;
@@ -484,6 +469,14 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         return delta > UInt64(Int64.max) ? .max : Int64(delta)
     }
 
+    // ⚑ CARRIED FROM THE DELETED `reportThumbnailProgress` DUPLICATE (same address):
+    //   the forward is an INDIRECT tail-call through `*(vtable + 0x590)` whose branch table Ghidra
+    //   could not recover ("too many branches"), so the callee is not readable from the jumptable —
+    //   it is identified here by the requirement index, not by the branch target. On the fail path
+    //   the same slot receives (time, 0.0, 1).
+    //   NB (M1C audit): this validity gate is the SAME family as s31/s33, and BOTH of those
+    //   originally omitted the sign / `> 0` term. The binary rejects non-positive time. The guard
+    //   below includes `time >= 0`; do not let a later edit drop it.
     // Requirement 8. Body @0x101bab2d8, 49 instr, slot 36. It is a pure FORWARDER: every path
     // tail-calls the (time:position:) overload above through metadata +0x590. Guard ladder, in
     // order: a float ladder on `time` rejecting negative / ±Inf / NaN; the same on `duration`; the
