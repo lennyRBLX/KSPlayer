@@ -249,6 +249,37 @@ the access oracle refuses, look for another accessor that reads the same global.
 
 Zero named-but-undeclared callees.
 
+## The gate's 5 FAILs, named — and two of them are golden rot, NOT reconstruction debt
+
+`recon_gate --mode handoff` at the end of s117: **PASS 84 · ANOMALY 2 · FAIL 5** (from PASS 74 ·
+ANOMALY 3 · FAIL 5). The two ANOMALYs are only `git_head` and `git_ahead_origin` drifting from this
+session's commits — re-baseline them. The five FAILs are:
+
+| check | what |
+|---|---|
+| `agg_critical` | 4 != 0 |
+| `agg_high` | 14 != 0 |
+| `agg_unresolved` | 1 != 0 |
+| `sc_stale_screen` | `stop/live span occurrence count: got 5 want 3` |
+| `sc_rank_mm` | `with an EMPTY queue the declaration axis blocks it anyway  queued=[] named=['101ba1cdc']` |
+
+**The last two are goldens that rotted on this session's legitimate work, not new defects.**
+0x101ba1cdc is `LimitPreLoadIOContext.preloadCount` — the super-target of the row closed in
+`65f4c91`. Closing that row took `LimitCountPreLoadIOContext.preloadCount` out of the
+MEMBER_MISSING queue, and the golden was anchored on it BEING queued. The stale-screen golden counts
+LIVE spans, and flipping `PlayerView` to FAITHFUL changed the DIVERGENT population it counts.
+
+⚠️ **Do not fix these by editing the expected numbers.** That is weakening a golden to pass your own
+work, and it is exactly the failure the project already has two memories about: a golden on counts
+is not a golden on property, and a golden anchored on mutable state rots. Both fixtures need
+re-anchoring on the invariant they are actually testing — for `sc_rank_mm`, that a named-but-
+undeclared callee blocks its caller regardless of queue membership, using a fixture chosen because
+it will never be reconstructed; for `sc_stale_screen`, the span-classification property rather than
+an occurrence count over a live corpus.
+
+Until they are re-anchored, `FAIL 0` is unreachable for a reason that has nothing to do with the
+binary — and every future session that closes a MEMBER_MISSING row will hit the same wall.
+
 ## Tool defect found, deferred because the wave was live
 
 `decode_string_literal.py --addr <body>` dies with
