@@ -282,8 +282,22 @@ public actor DemuxerIO {
     /// slot28 vtable async method — `FUN_101b7fef4` (async sync-entry: stores self into the async frame
     /// [@0x248] then `_swift_task_switch` to the continuation `FUN_101b7ff0c`; async-func-ptr vtable record,
     /// P41). The read-drive body the demuxer's `ioTask = Task { }` runs (spawned by `process`).
-    /// ⚑ NAME INFERRED — `recover_swift_function_name` @0x101b7fef4/0x101b7ff0c = None (async, no #function);
-    ///   `readLoop` inferred from role (the ioTask read/seek/park driver).
+    /// 🚨 THE NAME IS RECOVERED, NOT INFERRED — AND BOTH NAME TOOLS WERE BLIND TO IT.
+    ///   `recover_swift_function_name` @0x101b7fef4 and @0x101b7ff0c both return `#function: None`,
+    ///   and `name_exhaustion_gate` prints "no #function candidate". BOTH ARE WRONG: the `#function`
+    ///   default literal IS in the binary, built in REGISTERS as a Swift small string, which is the
+    ///   only form those tools do not scan for. Hand-derived at 0x101b80430:
+    ///     mov x3,#0x6572 / movk #0x6461,16 / movk #0x6e69,32 / movk #0x4c67,48
+    ///       → bytes 72 65 61 64 69 6e 67 4c = "readingL"
+    ///     mov x4,#0x6f6f / movk #0x2870,16 / movk #0x29,32 / movk #0xed00,48
+    ///       → bytes 6f 6f 70 28 29 = "oop()", discriminator 0xED = 0xE0|13 = count 13
+    ///     "readingL" + "oop()" = "readingLoop()", exactly 13 characters.
+    ///   Cross-checked against a known answer in this same class: `send(_:)`'s literal carries
+    ///   discriminator 0xE8 = 0xE0|8 = len("send(_:)"). No `add` patches either register before use,
+    ///   so the CSE/add-patch trap does not apply. The literal is built at 5 sites image-wide, all
+    ///   inside slot 28's own async chain.
+    /// ⚠️ A "no #function" result from either tool is therefore NOT evidence of absence, and an
+    ///   EXHAUSTED verdict resting on it is unsafe — EXHAUSTED is what licenses inventing a name.
     /// State-dispatched — `decode_int_switch.py --addr 0x101b7ff0c --reg w8 --start 0x101b7ff58` (golden-gated):
     ///   `{1 .reading → 0x101b80150, 2 .seeking → 0x101b800b8, 3 .paused → 0x101b7ff74, else → return}`.
     ///   Per-state actions decompile-grounded (continuation glossary):
@@ -296,7 +310,7 @@ public actor DemuxerIO {
     ///   jumptables ("Too many branches") + 32 pruned unreachable blocks + the `.paused` pre-park
     ///   formatContext dynamic-cast/witness; the exact while/await interleaving across suspension points is
     ///   not faithfully recoverable. The loop is the Task/continuation re-entry, NOT a `while` in this body.
-    public func readLoop() async {
+    public func readingLoop() async {
         switch state {
         case .reading:
             do {
@@ -317,8 +331,20 @@ public actor DemuxerIO {
     /// slot29 vtable method — `FUN_101b812b0` (77i, sync actor-isolated, `throws(Int32)`).  ⚑[tool=resolve_fun_pins ref=FUN_101b812b0:0x101b812b0 result=NOT_IN_TRIE]
     /// Drives one demux read through the action, records currentTime, notifies the delegate; on a
     /// read error throws the FFmpeg status as a typed `Int32`.
-    /// ⚑ NAME INFERRED — no #function literal (`recover_swift_function_name` @0x101b812b0 = None); the
-    ///   demuxer's per-call read-drive wrapper (identifier inferred from role + call target `performRead`).
+    /// NAME IS INVENTED, AND THE ABSENCE IS MEASURED. Unlike slot 28 above, this body contains NO
+    ///   string literal of any kind across all 77 instructions — its only `adrp` targets are the two
+    ///   field-offset globals 0x1044f33e8/0x1044f33e0 and the `__got` slot 0x104112928, and there is
+    ///   no ASCII mov/movk chain anywhere in 0x101b812b0-0x101b813e4 — so the `#function`,
+    ///   `#file`+`#line` and unique-literal routes are genuinely dead here, not merely unscanned.
+    ///   Trie: NOT IN TRIE both directions; the class's 42 trie symbols name only `send(_:)` and
+    ///   `update(delegate:)`, and the file-private discriminator appears only on six `vpfi` field
+    ///   initializers, never on a function symbol. Vtable elimination is barren: 5 non-null Method
+    ///   slots against 2 trie-named methods leaves 3 unnamed and 0 unclaimed names. Sole call site is
+    ///   inside `readingLoop()`, so the caller transfers no name. No masked twin.
+    /// ⚠️ `readFrame` is NOT a safe substitute even though the caller's failure log reads
+    ///   "[DemuxerIO] readFrame fail retryCount=" — `readFrame` is already the spelling of a
+    ///   KSPlayerErrorCode reflection case, and log prose is not a member name.
+    /// ⚑[invented=readPacket addr=0x101b812b0 exhaustion=name_exhaustion_gate approved=jweaver]
     /// ioAction is read UNCONDITIONALLY (`add x0,x20,x8` / `ldr x1,[x0,#0x18]` / `bl 0x10002abb8`, no
     ///   `cbz` on the metadata word) — which is what a NON-optional field compiles to. The old
     ///   `ioAction!` force-unwrap modelled that absence; with the field record's bare `_p` spelling it
