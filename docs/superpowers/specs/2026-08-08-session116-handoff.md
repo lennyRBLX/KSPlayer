@@ -344,9 +344,22 @@ before its meaning transfers — so the route is: name the owning function of ea
 owner class, and only then read the semantics. The other candidate pair at 0x101b85fe0 is
 NOT_IN_TRIE, so it cannot be attributed at all.
 
-⚠️ Also note the decompile opens with `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`
-and `addEntry` THROWS — so the `do`/`catch` is exactly the structure Ghidra drops. Derive the error
-path from the disassembly, not from the cache.
+✅ **THE DROPPED ERROR PATH IS NOW READ — the body is complete end to end.** The cache opens with
+`/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
+block Ghidra discarded. Read from disassembly:
+
+    101ba5958: mov  x21, #0x0            clear the swifterror register
+    101ba595c: bl   0x101b8ccac          addEntry(logicalPos:buffer:size:)  — throws
+    101ba5960: cbz  x21, 0x101ba596c     no error -> fall through
+    101ba5964: mov  x0, x21
+    101ba5968: bl   0x10345ccf4          swift_errorRelease — the CATCH, and it does nothing else
+    101ba596c: adds x0, x22, w24, uxtw   continue on both paths
+
+The catch body is empty apart from releasing the error, and control rejoins immediately. That is
+**`try? addEntry(logicalPos:…, buffer:…, size:…)`** — one statement, not a `do`/`catch` block.
+
+With this, every instruction of `more()` is accounted for and nothing in the unit is unread. What
+is left is purely writing it (plus declaring `canContinuePreload(at:)`, which D2 still gates).
 
 ⚠️ Do NOT under-scope this from the instruction count. It is not a straight-line body: ~24 branches
 with at least two loop back-edges (0x101ba5490 and 0x101ba54a8, entered from `b.hs` @0x101ba54f8 and
