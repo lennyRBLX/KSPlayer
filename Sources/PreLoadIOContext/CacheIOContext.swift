@@ -206,16 +206,36 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //       elimination the handoff reached by a different route.
     // ⚑[tool=fieldrec ref=CacheIOContext.init.default:0x101b86e7c result=strb-wzr-default-false]
     //
-    //   ⚠️ AND THERE IT STOPS. `eof` and `_isClosed` are both `Bool`, both `var`, both default
-    //     false, so width, mutability and the default axis are all exhausted. One route was tried
-    //     and came back NEGATIVE rather than untried: `_isClosed` is FILE-PRIVATE (its `vpfi`
-    //     carries the discriminator `_D69EFE1402863CA716A3171C7DB6DFB9`) while `eof` is not, so an
-    //     access from another file would have decided it — but all NINE accesses to this global
-    //     live in seven CacheIOContext methods (init, read, readComplete, seek, fileSize, close,
-    //     cachedTimeRanges), every one of them in THIS file. Neither field has an accessor, so the
-    //     accessor route is closed too.
-    //     Do NOT finish it on which name reads better against the `fileSize` write — that is
-    //     exactly the shape of the eight retractions session 112 had to make.
+    //   ✅ CLOSED, s114: **0x104c63938 is `eof`** — and by the very route recorded below as a
+    //     negative. The negative was a SCAN DEFECT, not a fact about the binary.
+    //
+    //     The note said "all NINE accesses live in seven CacheIOContext methods, every one in THIS
+    //     file". There are **22 sites in 19 functions**. A scan that only matches
+    //     `ldr xN,[xM,#0x938]` misses the 13 sites that spell the same access as
+    //     `adrp xM,0x104c63000` / `add xM,xM,#0x938` / `ldr xM,[xM]`, and every cross-file access
+    //     happens to take that second form. The 19 functions span FOUR classes in FOUR files:
+    //     CacheIOContext (this file), LimitPreLoadIOContext (`_54C5BFE7…`), PreLoadIOContext
+    //     (`_9C48347E…`) and LimitSeparatePreLoadIOContext (`_D3E0B2D6…`).
+    //
+    //     THE DECIDING SITE IS A WRITE FROM ANOTHER FILE. At 0x101ba59b8-0x101ba59c8,
+    //     `PreLoadIOContext.LimitSeparatePreLoadIOContext.more()` does
+    //     `adrp/add #0x938` / `ldr x8,[x8]` / `mov w9,#0x1` / `strb w9,[x19,x8]`. `_isClosed` is
+    //     private to file `_D69EFE1402863CA716A3171C7DB6DFB9` — its `vpfi` carries that
+    //     discriminator, while `eof`'s is plain `…C3eofSbvpfi` with none — and `more()` is declared
+    //     in file `_D3E0B2D62F772CE9EE6549031B37E873`. Swift cannot assign a file-private stored
+    //     property from a different file, so this global CANNOT be `_isClosed`. Only `eof` remains.
+    //     ⚑[tool=export_trie_oracle ref=CacheIOContext._isClosed:0x10002dab0 result=private-D69EFE14]
+    //     ⚑[tool=function_extents ref=LimitSeparatePreLoadIOContext.more:0x101ba5398 result=cross-file-write]
+    //
+    //     ⚑ THE COMPLEMENT AGREES, which is what makes this more than an elimination: the sibling
+    //       Bool global **0x1044f3848** has all 6 of its sites inside THIS file, is set `true` near
+    //       the top of `close()` (0x101b8c8e8-0x101b8c8f0), and is the sole operand of the
+    //       6-instruction leaf `shouldContinueRead()`, which returns `bic w0,w9,w8` = `!it`. That
+    //       is the file-private closed flag, and it is a different global from this one.
+    //
+    //     This is a derivation from access-control scope, not a judgement about which name reads
+    //     better against the `fileSize` write — that judgement is still forbidden here, and is the
+    //     shape of the eight retractions session 112 had to make.
     private var _isClosed: Bool = false
     // 17 downloadLock: serializes the download/cache mutation. NON-optional — the designated init
     //    allocs NSRecursiveLock() unconditionally (allocWithZone + init, no nil-branch), and l2 reads
