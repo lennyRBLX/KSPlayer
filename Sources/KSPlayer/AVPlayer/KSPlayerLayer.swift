@@ -663,13 +663,66 @@ open class KSPlayerLayer: NSObject {
         // MediaPlayerProtocol.swift:300 declares `var subtitleDataSource: (any SubtitleDataSource)?`.
         // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
         //
-        // That TYPE_DIVERGENCE is the whole remaining blocker, and it is its own unit because
-        // fixing it is three coupled changes, not one: MediaPlayerProtocol:300 and KSAVPlayer:770
-        // retype cleanly, but KSMEPlayer:408 returns `self` and KSMEPlayer conforms to
-        // `ConstantSubtitleDataSource` only in the BINARY (witness table 0x1041d76d8) — source has
-        // neither the conformance nor an `infos()` for it, and the binary's
-        // `KSMEPlayer.infos()` @0x101a18f68 is unread. Writing `as? (any ConstantSubtitleDataSource)`
-        // here instead would add a dynamic cast the binary does not perform.
+        // ⚑ DISCHARGED. The TYPE_DIVERGENCE that blocked this statement is fixed: the three
+        //   `subtitleDataSource` declarations are retyped to `(any ConstantSubtitleDataSource)?`
+        //   from the getters' own mangled names, `KSMEPlayer` carries the binary's
+        //   `ConstantSubtitleDataSource` conformance (witness table 0x1041d76d8), and
+        //   `KSMEPlayer.infos()` @0x101a18f68 is written. The statement below is now spelled.
+        //
+        // The capture list is READ, not inferred — reflection capture descriptor 0x103ce2218 says
+        // NumCaptureTypes=3, NumBindings=0: `(any Actor)?` at box +0x10/+0x18,
+        // `any ConstantSubtitleDataSource` at +0x20/+0x28, and `KSPlayerLayer` at +0x30. `self` is
+        // captured STRONGLY, so there is no `[weak self]`: the box's destroy function 0x1019d5b24
+        // releases +0x30 with a strong `objc_release`, and no weak init or destroy appears on the
+        // box anywhere. The `(any Actor)?` capture words are DEAD in the body — `MainActor.shared`
+        // and its conformance are recomputed at 0x1019cdfc4/0x1019cdfd0 — which is the signature of
+        // the isolation capture the compiler adds to a `Task { }` in a `@MainActor` context, not of
+        // anything the source wrote.
+        //
+        // A plain `Task { }` is exact here, and both alternatives are refuted: `await
+        // MainActor.run { }` emits no such call and no second closure context, and the hop happens
+        // on the ERROR path too, which a `MainActor.run` sub-closure would not do. This class is
+        // `@MainActor` at :84, which is what supplies the isolation.
+        //
+        // ⚑ SPELLING CHOICE, approved=jweaver. The error path executes NO user statement — the
+        //   resume does `swift_errorRelease` before the hop, and the post-hop error funclet
+        //   0x1015f4544 only releases the cached `MainActor.shared` and returns. `try?` with a
+        //   folded-away unwrap and `do { } catch { }` with an empty catch are therefore
+        //   OBSERVATIONALLY IDENTICAL in this image and the choice is not decidable from it. `try?`
+        //   is recorded. A bare `try await` IS refuted: the closure never rethrows, and both resume
+        //   paths converge on the same task switch and return normally.
+        //
+        // The awaited call is witness +0x10 of the captured table — requirement 1 of
+        // ConstantSubtitleDataSource's 2 (requirement 0 is the BaseProtocol slot at +0x8), flags
+        // 0x31 = Method|IsInstance|IsAsync, zero formal arguments. Its one-word result is released
+        // with `swift_bridgeObjectRelease`, i.e. an Array, and it is passed UNCHANGED as the sole
+        // argument to `wantedSubtitle`.
+        //
+        // Post-hop the three statements are unconditional — the only two conditionals in the whole
+        // closure are the error test and the weak-delegate nil test, and there is NO nil test on the
+        // `wantedSubtitle` result before the store:
+        //   · `self.options` (offset global 0x104c634e0) under a READ access, retained across the
+        //     call, then KSOptions vtable slot 143 = impl 0x1019bb974 =
+        //     `wantedSubtitle(tracks: [SubtitleInfo]) -> SubtitleInfo?`
+        //   · the `selectedSubtitleInfo` willSet observer 0x101ab2540, called with the NEW value and
+        //     swiftself = `self.subtitleModel`, immediately before the store
+        //   · the two-word store into `subtitleModel.selectedSubtitleInfo` (0x104c637f0) under a
+        //     MODIFY access, old value `swift_unknownObjectRelease`d
+        //   · `self.delegate` (0x1044e6138) loaded with `swift_unknownObjectWeakLoadStrong` — it is
+        //     `weak` at :86 — then witness +0x58, requirement index 10, the 11th and only
+        //     zero-argument requirement of KSPlayerLayerDelegate = `playerDidSelectSubtitle()`
+        // ⚑[tool=export_trie_oracle ref=KSOptions.wantedSubtitle:0x1019bb974 result=OWNER_MATCH-slot143]
+        // ⚑[tool=function_extents ref=readyToPlay.taskBody:0x1019cdf98 result=4-funclets-two-conditionals]
+        //   Full derivation: reconstruction/derivations/s118_readyToPlay_task_funclets.md
+        if let subtitleDataSource = player.subtitleDataSource, subtitleModel.selectedSubtitleInfo == nil {
+            Task {
+                guard let infos = try? await subtitleDataSource.infos() else {
+                    return
+                }
+                subtitleModel.selectedSubtitleInfo = options.wantedSubtitle(tracks: infos)
+                delegate?.playerDidSelectSubtitle()
+            }
+        }
         state = .readyToPlay
         #if os(macOS)
         runOnMainThread { [weak self] in

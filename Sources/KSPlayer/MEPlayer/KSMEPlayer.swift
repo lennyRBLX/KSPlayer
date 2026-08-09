@@ -14,7 +14,19 @@ import AppKit
 #endif
 
 // ⚑[tool=export_trie_oracle ref=MEPlayerItem.delegate:vpMV result=public ⇒ MEPlayerDelegate public ⇒ these five witness methods must be public too (Swift requires a witness to be at least as visible as its requirement). A forced consequence, not five independent observations]
-public final class KSMEPlayer: NSObject {
+// ⚑ @unchecked Sendable — compiler-MANDATED, not binary-observable, and it follows the MEPlayerItem
+//   precedent at MEPlayerItem.swift:14 exactly. `ConstantSubtitleDataSource` is declared `Sendable`
+//   because the binary genuinely SENDS a conformer across an executor boundary: readyToPlay's Task
+//   awaits `infos()` through witness +0x10, whose requirement flags are 0x31 (Method|IsInstance|
+//   IsAsync) and whose entry hops to the GENERIC executor, so the receiver leaves MainActor. Under
+//   this target's Swift 6 that call compiles only if the existential is Sendable.
+//   Sendable is a MARKER protocol — no witness table, no conformance record, no reflection trace —
+//   so it is invisible in the image and cannot be read from it either way. What IS read is the hop,
+//   and Sendable is the spelling that makes the source express it. `unchecked` covers the one
+//   stored property the compiler flags, `loopCount`; every other stored property already satisfies
+//   the check. Recorded as a judgement call, approved=jweaver.
+// ⚑[tool=decode_witness_table ref=ConstantSubtitleDataSource.infos:0x1041d76d8 result=req1-flags-0x31-IsAsync]
+public final class KSMEPlayer: NSObject, @unchecked Sendable {
     // Forward 1.3.17 stored fields — reflection order (desc 0x1039ef750); reconstructed session 16c (KSMEPlayer M1 fields).
     // Explicit `: Type` on every field. bufferingCountDownTimer removed (source-extra); seekable computed→stored;
     // shouldResumePlayback added; _pipController lazy→stored pipController; bufferingProgress Int→UInt8.

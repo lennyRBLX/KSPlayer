@@ -149,7 +149,7 @@ public protocol CacheSubtitleDataSource: URLSubtitleDataSource {
     func addCache(fileURL: URL, downloadURL: URL) // sync (§7.1, req flags 0x11)
 }
 
-public protocol ConstantSubtitleDataSource: SubtitleDataSource {
+public protocol ConstantSubtitleDataSource: SubtitleDataSource, Sendable {
     // ⚑ 1 async method (§1 CORRECTED — method-bearing, NOT a marker; conformer KSAVPlayer, witness 0x1019aba18).
     //   return element → Task 6 witness-verify (sibling URLSubtitleDataSource PINNED [URLSubtitleInfo] s19; UNPROVEN here, P55/P23)
     // ⚑ s106 RENAME searchSubtitle() -> infos(). The requirement was spelled `searchSubtitle()`
