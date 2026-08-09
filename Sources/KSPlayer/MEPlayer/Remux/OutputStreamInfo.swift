@@ -230,7 +230,25 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     }
 
     // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────
-    // ⚑ method name `buildTranscodeContext` INFERRED (devirt; not in binary). Called by Remuxer.write
+    // 🚨 THE CLAIM "not in binary" IS FALSE, AND THE WHOLE SIGNATURE IS WRONG. The export trie names
+    // 0x101a1ab5c outright:
+    //   KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>,
+    //                                       block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?)
+    //     -> Swift.Int32
+    // Four differences from the declaration below, not one:
+    //   · base name    — `buildTranscodeContext` is INVENTED; it is `transcode`.
+    //   · first label  — `packet:`, not unlabelled `_`.
+    //   · second param — `block:`, not `completion:`, AND THE OPTIONALITY IS INVERTED: the binary has
+    //                    an OPTIONAL closure taking a NON-optional pointer; the source has a
+    //                    non-optional closure taking an OPTIONAL pointer.
+    //   · return type  — `Int32`, not `Void`.
+    // ⚠️ NOT CORRECTED HERE ON PURPOSE. Making `block` optional changes what is forwarded to
+    // `TranscodeProtocol.transcode(_:output:completion:)`, and the `Int32` return needs a value on
+    // each of the body's return paths — both require reading the 205-instruction body
+    // (0x101a1ab5c-0x101a1ae90), which is its own unit. Applying half the signature would leave a
+    // declaration that looks verified and is not. The FALSE "not in binary" claim is what is fixed.
+    // ⚑[tool=export_trie_oracle ref=OutputStreamInfo.transcode:0x101a1ab5c result=transcode(packet:block:)-Int32]
+    // Called by Remuxer.write
     // as s13(packet, completion). NOT just a builder: it ensures a per-stream Copy/BSF context exists
     // (dispatch AAC/ADTS → BSF, else Copy) AND invokes `ctx.transcode(packet, output: outPacket, completion:)`
     // — the terminal witness call (L161) is the function's PRIMARY effect [body-audit re-walk fix].
@@ -244,7 +262,8 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // BUILD is further guarded by outPacket(+0x60) live + streamMapping[idx] + timeBaseMap[idx] + a live
     // output AVStream (formatCtx->streams[mapped]); then decide Copy vs BSF and store transcodeMap[idx].
     // (Which branch dominates at runtime is binary-UNVERIFIED — assetTrackMap's populator was not located.)
-    func buildTranscodeContext(_ packet: UnsafeMutablePointer<AVPacket>,           // ⚑ name inferred (devirt slot13)
+    // ⚑ NAME AND SIGNATURE ARE WRONG — see the trie signature recorded above this comment block.
+    func buildTranscodeContext(_ packet: UnsafeMutablePointer<AVPacket>,           // ⚑ INVENTED name; real name is `transcode`
                                completion: (UnsafeMutablePointer<AVPacket>?) -> Void) {  // forwarded to ctx.transcode (binary: callback FUN_101a660d0 + closure box, adapted by the compiler reabstraction thunk FUN_101a1f1a8 — not source-level)
         let idx = packet.pointee.stream_index                                     // *(uint*)(packet+0x24)
 
