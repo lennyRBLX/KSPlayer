@@ -493,6 +493,29 @@ So writing `more()` forces a choice, and both options are wrong today:
 **`more()` is therefore gated on `download_existential`, which is gated on 0x101b90c58.** Resolve
 that chain first; the transcription itself is then mechanical, because everything above is read.
 
+**THE CHAIN WAS WALKED TO ITS TERMINUS and the blocker is REAL AND CURRENT — not stale like so many
+others this session.** 0x101b90c58 is fully trie-named (no inference):
+
+    PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32,
+      options: UnsafeMutablePointer<OpaquePointer?>?, interrupt: __C.AVIOInterruptCB,
+      isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
+
+264 instructions, 0x101b90c58-0x101b91078. The CLASS exists — `Sources/PreLoadIOContext/
+URLContextDownload.swift` — but that designated init does NOT: the file carries
+`UNRESOLVED: real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 … Opens an FFmpeg
+URLContext (deep IO; stripped calls named only by the P2 oracle) → UNRESOLVED→P8`, and only the
+inherited `init(bufferSize:)` is written as the compilable spine.
+
+So the terminus is a 264-instruction FFmpeg URLContext open whose callees are stripped. That is the
+actual bottom of this dependency chain, and it is a genuine reconstruction unit — not a stale note,
+not a mis-scoping, not a tooling gap.
+
+⚠️ One caution for whoever opens it: `recover_swift_function_name` on this address returns
+`#function: init(url:flags:options:interrupt:isReadComplete:)` at high confidence but reports
+CONFLICTING `#file` anchors — `Components/PlayerOptions.swift` (a different module) and
+`PreLoadIOContext/CacheIOContext.swift` — plus a bare `'multiple_requests'` literal. Trust the TRIE
+name, which is unambiguous; do not take the `#file` from that tool here.
+
 ✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
 block Ghidra discarded. Read from disassembly:
