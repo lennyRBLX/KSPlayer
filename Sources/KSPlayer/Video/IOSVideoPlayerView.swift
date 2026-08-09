@@ -441,6 +441,50 @@ open class IOSVideoPlayerView: VideoPlayerView {
         updateUI(isLandscape: isLandscape)
     }
 
+    // READ IN FULL from 0x101b08f3c-0x101b09494 (1368 B, 342 instr, vtable slot 146). Every one of
+    // the 23 `setConstant:` sends, every arm condition and every `setHidden:` receiver is resolved.
+    //
+    // EIGHT LAYOUT CONSTRAINTS ARE DRIVEN THAT THE SOURCE NEVER MENTIONED. The field names are NOT
+    // inferred from the access sites: each `0x1044f0fXX` global was read for the offset it holds and
+    // that offset looked up in `field_offset_vector IOSVideoPlayerView` —
+    //   0x1044f0f30->0x2d8 topLeftBackgroundLeading · 0x1044f0f38->0x2e0 topRightBackgroundTrailing
+    //   0x1044f0f40->0x2e8 leftBackgroundViewLeading · 0x1044f0f48->0x2f0 bottomBackgroundLeading
+    //   0x1044f0f50->0x2f8 bottomBackgroundTrailing  · 0x1044f0f58->0x2c8 topStatusLeading
+    //   0x1044f0f60->0x2d0 topStatusTrailing         · 0x1044f0f68->0x300 bottomBackgroundHeight
+    // Two constants are raw doubles rather than `fmov` immediates and were decoded, not read:
+    // `mov x8,#0x800000000000 / movk x8,#0x4040,lsl #48` = 33.0 and `mov x8,#0x4059...` = 100.0.
+    // ⚑[tool=field_offset_vector ref=IOSVideoPlayerView.updateUI:0x101b08f3c result=8-constraints-23-sends]
+    //
+    // THE ARM SPLIT is `UIDevice.current.userInterfaceIdiom` — selectors decode as 'currentDevice'
+    // (0x1034604c0) and 'userInterfaceIdiom' (0x10346e920) off the __objc_classrefs UIDevice entry
+    // at 0x104410510. `.phone` is raw 0, so `cbz x22` @0x101b090dc sends phone down the non-A path.
+    // The binary has THREE constraint blocks and the two non-portrait ones are identical, so this
+    // reduces to: portrait-on-phone gets 20/30, everything else 15/25, height 100 throughout.
+    // ⚑[tool=decode_objc_selector ref=UIDevice.userInterfaceIdiom:0x10346e920 result=arm-split]
+    //
+    // ⚠️ THE HEIGHT CONSTRAINT IS FORCE-UNWRAPPED ON THE PORTRAIT PATH ONLY. Blocks A and C reach
+    // it by `cbz x0, <skip>` (optional); the portrait path reaches the SHARED send at 0x101b093e8
+    // by `cbnz x0, 0x101b093e0` with a `brk #0x1` fallthrough — a nil constraint TRAPS there. The
+    // `!` below is that trap, not a stylistic choice.
+    //
+    // THE SUBTITLE TEST WAS WRONG ON ITS PATH, and the correction is read, not guessed. The binary
+    // goes `playerLayer` (PlayerView field @0x8, via global 0x1044e74e8) -> `subtitleModel`
+    // (KSPlayerLayer, global 0x104c63500, vpWvd-named) -> a keypath pair 0x10356fd18/0x10356fd40
+    // driven through `swift_getKeyPath` and `Combine.Published._enclosingInstance(_:wrapped:storage:)`,
+    // then `ldr x22,[x0,#0x10] / cmp x22,#0 / cset w2,eq`. There is no `srtControl` anywhere in the
+    // path — and PlayerView's reflection records carry no such field at all.
+    // The property IS `subtitleInfos`: a keypath PATTERN is emitted per USE SITE, so its address
+    // proves nothing, but resolving the relative pointers at pattern+0x08/+0x0c gives root
+    // 0x103c2e927 and value 0x103c2e92d for BOTH this pair and the pair KSSubtitle.swift already
+    // records for `subtitleInfos`, while `parts` resolves to a different value type. The shared
+    // value descriptor mangles `Say` + symbolic ref + `_pG` = `Array<any Protocol>`.
+    // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.subtitleModel:0x104c63500 result=vpWvd-named]
+    //
+    // REMOVED, because no offset global in the extent resolves to any of them: the whole
+    // `landscapeButton` / `lockButton` / `maskImageView.image` block. Those three fields exist
+    // (maskImageView 0x168, landscapeButton 0x170, VideoPlayerView.lockButton 0xe0) and the body
+    // never loads one. The leading unconditional `srtButton.isHidden` also goes — the binary sets
+    // srtButton exactly once, inside the phone arm.
     open func updateUI(isLandscape: Bool) {
         if isLandscape {
             topMaskView.isHidden = KSOptions.topBarShowInCase == .none
@@ -448,24 +492,43 @@ open class IOSVideoPlayerView: VideoPlayerView {
             topMaskView.isHidden = KSOptions.topBarShowInCase != .always
         }
         toolBar.playbackRateButton.isHidden = false
-        toolBar.srtButton.isHidden = srtControl.subtitleInfos.isEmpty
         if UIDevice.current.userInterfaceIdiom == .phone {
             if isLandscape {
-                landscapeButton.isHidden = true
-                toolBar.srtButton.isHidden = srtControl.subtitleInfos.isEmpty
+                if let playerLayer {
+                    toolBar.srtButton.isHidden = playerLayer.subtitleModel.subtitleInfos.isEmpty
+                } else {
+                    toolBar.srtButton.isHidden = true
+                }
+                topLeftBackgroundLeadingConstraint?.constant = 15
+                topRightBackgroundTrailingConstraint?.constant = -15
+                leftBackgroundViewLeadingConstraint?.constant = 33
+                bottomBackgroundLeadingConstraint?.constant = 15
+                bottomBackgroundTrailingConstraint?.constant = -15
+                topStatusLeadingConstraint?.constant = 25
+                topStatusTrailingConstraint?.constant = -25
+                bottomBackgroundHeightConstraint?.constant = 100
             } else {
                 toolBar.srtButton.isHidden = true
-                if let image = maskImageView.image {
-                    landscapeButton.isHidden = image.size.width < image.size.height
-                } else {
-                    landscapeButton.isHidden = false
-                }
+                topLeftBackgroundLeadingConstraint?.constant = 20
+                topRightBackgroundTrailingConstraint?.constant = -20
+                leftBackgroundViewLeadingConstraint?.constant = 33
+                bottomBackgroundLeadingConstraint?.constant = 20
+                bottomBackgroundTrailingConstraint?.constant = -20
+                topStatusLeadingConstraint?.constant = 30
+                topStatusTrailingConstraint?.constant = -30
+                bottomBackgroundHeightConstraint!.constant = 100
             }
             toolBar.playbackRateButton.isHidden = !isLandscape
         } else {
-            landscapeButton.isHidden = true
+            topLeftBackgroundLeadingConstraint?.constant = 15
+            topRightBackgroundTrailingConstraint?.constant = -15
+            leftBackgroundViewLeadingConstraint?.constant = 33
+            bottomBackgroundLeadingConstraint?.constant = 15
+            bottomBackgroundTrailingConstraint?.constant = -15
+            topStatusLeadingConstraint?.constant = 25
+            topStatusTrailingConstraint?.constant = -25
+            bottomBackgroundHeightConstraint?.constant = 100
         }
-        lockButton.isHidden = !isLandscape
         judgePanGesture()
     }
 
