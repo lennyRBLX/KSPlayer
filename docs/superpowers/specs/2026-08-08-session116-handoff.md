@@ -1018,6 +1018,105 @@ zero-generators hit in the same sitting: `Trie.walk(0)` enumerates 403 symbols w
 and `print(s[:120])` truncated in the printer, making complete entries look truncated. Run every
 absence query against a known-present control first.
 
+## LANDED: the decodeFrame unit — 95dce8d. What it closed and what it did NOT
+
+`VideoToolboxDecode_decodeFrame_idx29` is FAITHFUL (HIGH 18→17, LOW 10→9, DIVERGENT files
+10→9). `FFmpegDecode` D1 (CRITICAL) and D2 (HIGH) are fixed **in source** but the file still
+reads 9 divergences — a verdict flips per FILE, so no counter moves until the other seven close.
+
+Everything in the section above was confirmed against the binary. The load-bearing additions:
+
+- The call site passes `packet.corePacket` and **guards** rather than force-unwraps:
+  `101a373ec ldr x22,[x21,#0x30]` / `cbz x22 →` the epilogue, `ret` at 0x101a379f0, no `brk`
+  on that path. The discriminator is in the same body — `assetTrack!` two lines down compiles
+  to `cbz x20 → brk #0x1` (0x101a376c4 → 0x101a37a08). Offset 0x30 is `corePacket` by its own
+  getter's body (`101a63f38 ldr x0,[x20,#0x30]`), not by arithmetic on field records.
+- `doDecode` is emitted **twice** — 0x101a373ac (412 instr) and 0x101a5bdb4 (416 instr), both
+  NOT_IN_TRIE, both carrying the identical guard.
+- `makeDecode` has ZERO direct callers; it is KSOptions **vtable slot 97**, dispatched through
+  `ldr x8,[x8,#0x5f8]`. Image-wide there are exactly five such dispatch sites and only two are
+  makeDecode; the other three are ruled out by argument shape.
+- FFmpegDecode's `isVideo` is at 0x61 and `assetTrack` at 0x68 — and **`recover_field_offsets`
+  recovers ZERO offsets for that class**. `field_offset_vector.py --module KSPlayer FFmpegDecode`
+  is the tool that answers (metadata 0x1044e9418, InstanceSize 0x70).
+
+**Two things left deliberately visible rather than smoothed over.** FFmpegDecode's
+`frame.size` / `frame.position` are inside the `filter.filter` closure — a separate binary
+extent the x24 scan never covered — so they are carried through UNREAD at their new
+`packet.pointee` spelling and marked as the first thing to check when that unit opens. And the
+`avcodec_send_packet` marker reads `result=REFUTED`, because that is what the oracle returns:
+the sole divergence is a struct-offset immediate (`#0x154` vs stock `#0xa4`), the known
+non-stock AVCodecContext ABI, while all ten fingerprint siblings diverge at index 0 or 3. That
+one flag is the **only** thing the commit's deferral file suppresses; the other three blocks
+raised on the first attempt were FIXED, not suppressed.
+
+**Why FFmpegDecode cannot simply be finished.** D3 (the nine-way side-data block) is not a free
+deletion — the file's own note records that Forward moved that loop into `VideoSwresample.s32`
+@0x101a67274, and removing it without landing s32 REGRESSES the edrMetaData path. D3 is
+coupled to the still-UNRESOLVED `VideoSwresample_DVbodies_deferral_p3a`. D4/D5/D6 look
+independently workable; D9 is a list of unverified leads filed as a divergence and should be
+re-derived, not closed by fiat.
+
+## `readyToPlay` — derived this session, NOT landed. Do not re-derive.
+
+`KSPlayerLayer_readyToPlay_slot69_s84` @0x1019cda08, extent 0x1019cda08-0x1019cdf98, 356 instr.
+Its four entries are: D1 CRITICAL (a prologue with no source counterpart), D2 HIGH
+(`updateNowPlayingInfo()` has no counterpart), D3 LOW, D4 LOW.
+
+Statements 1-3 of the missing prologue are **confirmed by direct read**:
+
+    1019cda80  ldr x8,[x22,#0x28] / blr x8      witness req → player.view.getter
+    1019cda9c  bl 0x1019cf5d8                   self.addSubtitle(to: view)
+    1019cdaa4  ldr x8,[x8,#0x188] / str xzr     bufferedCount = 0
+    1019cdae4  ldr s0,[x20,#0x40]               options.startPlayRate
+    1019cdaf0  ldr x8,[x1,#0x38] / blr x8       → player.playbackRate.setter
+
+`0x1019cf5d8` is trie-named `KSPlayerLayer.(addSubtitle in _B3181…)(to: __C.UIView)` — a
+**private** method, 191 instr, **absent from the source**. It must be stood up before D1 can be
+written.
+
+**`0x1044e6188` = `bufferedCount`, and the route matters.** The offset resolver names only 7 of
+KSPlayerLayer's 17 fields (private stored properties export no accessor to name them by), and
+both `bufferedCount` and `shouldSeekTo` have getters that **ICF-fold to 0x10198eb18** — the
+371-symbol mega-fold — so the "prove it from its own getter" trick is unavailable. What settles
+it is a **type** argument from a different body: `changeLoadState` @0x1019ce4ec reads that same
+global and does `ldr x8,[x19,x28]` / `cbnz x8` — a 64-bit INTEGER test. Among the 17 fields
+`bufferedCount` (`Si`) is the only integer value-field; the two `Sd` candidates would need
+`fcmp`, and the three Bools would use `ldrb`. Statement 8's `ldr d8` on 0x1044e6190 is likewise
+a double load, and its `fcmp d8,#0.0` → play() / seek(time:) arms match `shouldSeekTo`.
+
+Statements 4-5 (a `swift_conformsToProtocol` walk appending into `KSOptions.audioRecognizes`,
+and a MainActor Task over `subtitleModel.selectedSubtitleInfo` + `player.subtitleDataSource`)
+are **read but not decoded**: 0x1019cdb44-0x1019cdc40 is an sret call returning an ARRAY
+(`ldr x22,[x27,#0x10]` is its count) followed by a loop over it. That is more structure than
+the verdict's one-line description implies — decode it before writing.
+
+**Check D3 before trusting it.** It claims the macOS window block AND the iOS 14.2 PiP block
+are "correctly absent from an iOS image — platform-gated". The macOS half is right. The PiP
+half is guarded by `#if !os(macOS) && !os(tvOS)`, which is **active on iOS**, so its absence is
+either a real divergence or the source's PiP block diverges. Do not close D3 as written.
+
+## A gate was right and I was wrong — worth the 10 minutes it costs to check
+
+`l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as
+`src=[(subtitle:String,start:Double,duration:Double)]` vs `bin=[…Int64,…Int64]`. Two independent
+routes appeared to contradict it: `dump_binary_field_types.py` reported the row **unmapped**,
+and the field record's own mangle carries a symbolic reference
+(`SaySS8subtitle_<SYM:2@0x10536e600>5startAB8durationtG`) whose target resolves **past `__text`**
+(which ends 0x103451708) and is **not a bind site**. It looked like a tool bug.
+
+It was not. `dump_binary_field_types.py` threw an exception on `read_mem` *before* that row and
+still printed its table — a partially-failed tool whose "unmapped" is a false negative, which is
+the real trap here. The **export trie** settles the type in one class-proven symbol, and
+`xcrun swift-demangle` reads it straight out:
+
+    $s8KSPlayer14SubtitleDecodeC24pendingASSImageSubtitles33_F85593AD…LLSaySS8subtitle_s5Int64V5startAH8durationtGvpfi
+      → [(subtitle: Swift.String, start: Swift.Int64, duration: Swift.Int64)]
+
+Fixed rather than suppressed (declaration-only — the field has no readers yet). The lesson is
+the ordering: when a gate and a tool disagree, check whether the *tool* failed before doubting
+the gate, and give the trie a turn before concluding a type is unreadable.
+
 ## Two verdict-hygiene findings that will save you time
 
 1. **s84/s104 verdict `source_lines` are systematically stale.** Every agent that checked found the
