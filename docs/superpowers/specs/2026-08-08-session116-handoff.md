@@ -144,20 +144,38 @@ So the writes are:
   · phone AND portrait:  `toolBar.srtButton.isHidden = true` (w2=1)     — matches source :457
   · phone AND landscape: `toolBar.srtButton.isHidden = <count == 0>`    — matches source :455
 
-TWO THINGS STILL UNREAD, and they are why the body is not written:
+x27 IS RESOLVED: global 0x1044e74e8 -> offset 0x8 -> **`PlayerView.playerLayer`**
+(`field_offset_vector PlayerView`: playerLayer 0x8, delegate 0x10, toolBar 0x20). So
+`ldr x8,[x20,x27]` / `cbz x8, 0x101b0930c` @0x101b091b8 is a nil test on `self.playerLayer`, and the
+nil arm sets `toolBar.srtButton.isHidden = true` (w2=1 @0x101b09310).
 
-1. **The collection behind the landscape `isEmpty`.** 0x101b091c0-0x101b09228 is a KEYPATH access,
-   not a field read: 0x10356fd18 and 0x10356fd40 are keypath/metadata structures, NOT strings
-   (`decode_string_literal` on them returns binary garbage, which is the correct negative), handed
-   to 0x10345cdd8 and then 0x1034532ec, after which `ldr x22,[x0,#0x10]` / `cmp x22,#0` /
-   `cset w2,eq` produces the Bool. Identify what that keypath pair projects before writing
-   `srtControl.subtitleInfos.isEmpty` — the source's spelling is plausible but NOT established, and
-   PlayerView's own reflection records carry no `srtControl` at all (see the PlayerView D3 above).
-2. **x27**, loaded from global 0x1044e74e8 -> offset 0x8 and used as `add x0, x20, x27` under a
-   `swift_beginAccess`. `recover_field_offsets --class IOSVideoPlayerView --global 0x1044e74e8`
-   answers NOT RECOVERED, so it needs the vpWvd symbolic route.
+THE LANDSCAPE `isEmpty` CHAIN IS RESOLVED TOO — and it REFUTES the source's spelling:
 
-Everything else in this body is read. Those two reads finish it.
+    ldr x22,[x8,x9]  with x9 = *(0x104c63500)  ->  KSPlayerLayer.subtitleModel   [vpWvd symbol]
+    swift_getKeyPath(0x10356fd18)   0x10345cdd8 -> __got 0x104112ee0 _swift_getKeyPath
+    swift_getKeyPath(0x10356fd40)
+    0x1034532ec -> __got 0x10410ce50
+        Combine.Published._enclosingInstance(_:wrapped:storage:) static subscript GETTER
+    ldr x22,[x0,#0x10] / cmp x22,#0 / cset w2,eq        -> `.isEmpty`
+
+So the statement is
+`toolBar.srtButton.isHidden = playerLayer.subtitleModel.<@Published ...>.isEmpty`
+— reached through `playerLayer.subtitleModel`, NOT through a `srtControl` on the view. That matters
+twice over: PlayerView's reflection records carry no `srtControl` at all (PlayerView D3 above), so
+the source's `srtControl.subtitleInfos` is wrong on BOTH halves of the path.
+
+⚠️ AND IT IS NOT `subtitleInfos`. This tree already records keypath pairs per property in
+KSSubtitle.swift — `parts` = d1e8/d210, `subtitleInfos` = d140/168, `flag` = d240/d268, all on page
+0x10356d. **This body's pair is 0x10356fd18/0x10356fd40**, a different page, with the same 0x28
+stride, so it is a fourth, unattributed property. Do not write `subtitleInfos`.
+
+THE ONE REMAINING READ: name the `@Published` property that fd18/fd40 projects. `field_offset_vector
+SubtitleModel` cannot help — the class has `metadata_init=1`, so its metadata is initialized at
+RUNTIME and the static image holds no field offsets (it returns 0x0 for every field, which looks
+like a real map and is not). Use the vpWvd symbolic route or anchor sites across bodies. The two
+keypath component words are 0x80000010 (fd18) and 0x80000008 (fd40).
+
+Everything else in this body is read.
 
 **The UNRESOLVED verdict's premise is dead.** `VideoSwresample_DVbodies_deferral_p3a` defers on
 "unverifiable with current tools … NOT protocol witness tables". `decode_witness_table.py` was
