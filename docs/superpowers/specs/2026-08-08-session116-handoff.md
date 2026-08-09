@@ -344,7 +344,34 @@ before its meaning transfers — so the route is: name the owning function of ea
 owner class, and only then read the semantics. The other candidate pair at 0x101b85fe0 is
 NOT_IN_TRIE, so it cannot be attributed at all.
 
-✅ **THE DROPPED ERROR PATH IS NOW READ — the body is complete end to end.** The cache opens with
+⛔ **DO NOT WRITE THIS BODY FROM THE DECOMPILE — IT LINEARIZES TWO SYMMETRIC TAILS INTO ONE.**
+This is the last thing s116 established and it is the most important one for whoever writes it.
+
+Reading 0x101ba5688-0x101ba570c from DISASSEMBLY (not the cache) shows a *second* KSLog site and a
+*second* `urlPos` tail, distinct from the one at 0x101ba5980:
+
+    101ba5690: mov  w6, #0xa6            #line 166  <- the FIRST log site (the other is 186)
+    101ba569c: blr  x8                   the LogHandler witness call
+    101ba56b4: tbnz x21, #0x3f, …        sign test on the new position
+    101ba56cc: ldr  x8, [x19, #0x48]
+    101ba56d0: cmp  x21, x8
+    101ba56d4: csel x8, x21, x8, hi
+    101ba56d8: stp  x8, x21, [x19, #0x48]   <- writes 0x48 AND 0x50 in ONE stp
+    101ba56e4: bl   0x101b86044          updateSpeedSample(newPos:)
+    101ba56f4: str  x8, [x19, x9]        x9 = *(0x1044f5c40) = fakeUrlPos
+    101ba5700: str  x8, [x19, x9]        x9 = *(0x1044f5c48) = moreUrlPos
+    101ba5708: mov  w24, #-0x1           the -1 return on the other edge
+
+Note the `stp x8, x21, [x19, #0x48]` — a single paired store covering 0x48 and 0x50 — which is the
+`urlPos = …` setter inlined again, exactly as at 0x101ba5980. So the body has TWO such tails on
+different paths, and the Ghidra cache presents them as one. A source written from the cache would
+have one log site instead of two and one tail instead of two: structurally wrong, and it would
+compile and pass every gate.
+
+This is why rule 28 exists. Read the branch structure from `llvm-objdump` first, then use the cache
+only to orient inside each block.
+
+✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
 block Ghidra discarded. Read from disassembly:
 
