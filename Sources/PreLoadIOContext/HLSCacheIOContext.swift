@@ -12,8 +12,8 @@ import FFmpegKit   // AVIOInterruptCB chain — subContexts holds CacheIOContext
 //             NAMES + ORDER + COUNT + TYPES + defaults transcribed verbatim, NOT
 //             re-derived from the decompile). The ⚑ ones are best-effort (Optional/
 //             composite shapes, plus the m3u8Buffer name is inferred) → l2_field_gate
-//             UNCHECKs them (expected 0 FLAG). HLSSegment is an UNRESOLVED placeholder
-//             — its real fields belong to the streaming owner phase, NOT fabricated here.
+//             UNCHECKs them (expected 0 FLAG). HLSSegment WAS a fabricated placeholder and is
+//             now deleted — the field record types `segments` as [Foundation.URL].
 //   init    — the designated init s18 @101b96cb0 delegates to the inner field-store
 //             init FUN_101b96cb0 (cached); reconstructed from that inner: it stores all  ⚑[tool=resolve_fun_pins ref=FUN_101b96cb0:0x101b96cb0 result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.init(download: PreLoadIOContext.URLContextDownload, mediaId: Swift.String, baseURL: Foundation.URL, formatContextOptions: [Swift.String : Any]) throws -> PreLoadIOContext.HLSCacheIOContext
 //             14 fields (defaults below; download/mediaId/baseURL/formatContextOptions
@@ -32,12 +32,14 @@ import FFmpegKit   // AVIOInterruptCB chain — subContexts holds CacheIOContext
 // AVIOInterruptCB resolves via `import FFmpegKit` (subContexts' CacheIOContext value
 // exposes it). Builds via `swift build --target PreLoadIOContext`.
 
-// ⚑ `public` is FORCED, not observed: HLSCacheIOContext.segments carries a property
-//   descriptor (public-exclusive), and a public stored property's type must be public.
-//   HLSSegment itself has NO owner-position symbol in the trie, so its own access is not
-//   directly observable — this is a deduction from `segments`, recorded as such.
-// ⚑[tool=export_trie_oracle ref=HLSCacheIOContext.segments:vpMV result=public ⇒ HLSSegment public by type-visibility rule]
-public struct HLSSegment {}  // UNRESOLVED placeholder — real fields → owner phase (streaming)
+// 🚨 `HLSSegment` WAS DELETED FROM HERE, AND IT NEVER EXISTED IN THE BINARY.
+//   It was declared `public struct HLSSegment {}` as an "UNRESOLVED placeholder" for the
+//   element type of `segments`, and the whole block above it deduced its ACCESS LEVEL from
+//   `segments`' property descriptor — a careful deduction about a type that is not there.
+//   The reflection field record for `segments` (index 7) is `Say<SYM:2@0x1052f1200>G`, and
+//   that same symref target is ALSO fields 2 (`baseURL`) and 4 (`hlsCacheDir`); it resolves
+//   through __got 0x104109b20 to `_$s10Foundation3URLVMn`. The element type is
+//   `Foundation.URL`. See the declaration of `segments` below.
 
 public class HLSCacheIOContext: AbstractAVIOContext {
     // --- stored fields (brief table order + defaults; defaults are the inner init's
@@ -63,9 +65,13 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     private var m3u8Buffer: Data? = nil // ⚑ (name + type inferred; gate UNCHECKED)
     // 6  m3u8Parsed: whether the manifest has been parsed into `segments`. init false.
     private var m3u8Parsed: Bool = false
-    // 7  segments: the parsed HLS segment list. init []. ⚑ element type is the
-    //    HLSSegment placeholder (UNRESOLVED).
-    public var segments: [HLSSegment] = [] // ⚑ (element type placeholder; gate UNCHECKED)
+    // 7  segments: the parsed HLS segment list. init [].
+    //    ELEMENT TYPE READ, not inferred: field record 7 is `Say<SYM:2@0x1052f1200>G`, whose
+    //    symref target is shared with fields 2 (`baseURL`) and 4 (`hlsCacheDir`) and resolves
+    //    through __got 0x104109b20 = `_$s10Foundation3URLVMn`. There is no `Sg` tail, so the
+    //    element is `URL` and not `URL?` — the same reader prints `Sg` where it is present
+    //    (CacheIOContext's `formatContextOptions` is `SDySSypGSg`, `isInterleaved` is `SbSg`).
+    public var segments: [URL] = []
     // 8  subContexts: per-segment-URL child cache contexts, guarded by subContextsLock.
     //    init [:].
     private var subContexts: [String: CacheIOContext] = [:]
@@ -170,8 +176,8 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         //   subContextsLock, register the segment, and return its AVIOContext*.
         // UNRESOLVED → owner phase (streaming/P8): the cache-key String derivation, the URLContextDownload
         //   build (P8), the keyed subContexts insert (the same insert helper setSubContext pins), and the
-        //   trailing segment-match loop over `segments` (its element URL read goes through the HLSSegment
-        //   placeholder layout, like segmentIndex) are NOT reconstructed; the AVIOContext materialization +
+        //   trailing segment-match loop over `segments` (its element URL read is a plain [URL]
+        //   element read now that the HLSSegment fabrication is gone, as in segmentIndex) are NOT reconstructed; the AVIOContext materialization +
         //   non-nil return are characterized only. The lock discipline + miss-path spine above are faithful.
         // ⚑[tool=get_function_by_address ref=FUN_101b86a2c:0x101b86a2c result=segment cache-key String builder (URLComponents queryItems/url, 651B)]  ⚑[tool=resolve_fun_pins ref=FUN_101b86a2c:0x101b86a2c result=RESOLVES_UNIQUELY] = (extension in PreLoadIOContext):Foundation.URL.sortQueryString.getter : Swift.String
         // ⚑[tool=get_function_by_address ref=FUN_1019f0d98:0x1019f0d98 result=String(UTF8View,count) re-encode in the cache-key derivation]  ⚑[tool=resolve_fun_pins ref=FUN_1019f0d98:0x1019f0d98 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Swift.String.md5() -> Swift.String
@@ -182,26 +188,37 @@ public class HLSCacheIOContext: AbstractAVIOContext {
 
     // --- methods (only the 4 cached small methods; names devirt→inferred) ---
 
-    // s22 @101b9a960 — `func segmentIndex(for url: URL) -> Int?` (name inferred, devirt).
-    //   FAITHFUL SPINE + UNRESOLVED on the segment element shape. The decompile takes a
-    //   URL, computes its absoluteString, then under exclusive access on `segments`
-    //   iterates the array comparing each segment's `URL.absoluteString` (via
-    //   get_absoluteString + Swift._stringCompareWithSmolCheck) and returns the matching
-    //   index (the found-marker pair {index, found}); miss → none. The per-element URL
-    //   read goes through HLSSegment's value-witness layout, whose fields are the
-    //   UNRESOLVED placeholder → the comparison body is a faithful spine, the element
-    //   access is NOT reconstructed.
-    func segmentIndex(for url: URL) -> Int? { // name inferred (devirt)
+    // s22 @0x101b9a960 — 101 instr (0x101b9a960-0x101b9aaf4). THE NAME IS READ, NOT INFERRED:
+    //   the trie carries `$s16PreLoadIOContext08HLSCacheC0C12segmentIndex3forSiSg10Foundation3URLV_tF`
+    //   = `HLSCacheIOContext.segmentIndex(for: Foundation.URL) -> Swift.Int?`, so the old
+    //   "name inferred (devirt)" tag was wrong — this identifier was never a guess.
+    //
+    // 🚨 THE RECORDED BLOCKER WAS THE FABRICATION ITSELF. The body used to be a loop with
+    //   `_ = index` / `_ = target` no-ops, deferred to the "owner phase (streaming)" because
+    //   "the per-element URL read goes through HLSSegment's value-witness layout, whose
+    //   fields are the UNRESOLVED placeholder". HLSSegment never existed; the element is a
+    //   `URL`, so there is nothing to defer and the loop is written out in full.
+    //
+    // The body independently CONFIRMS the element type, which is why it is corrected in the
+    //   same unit as the field: at 0x101b9aa24 the element is copied into an alloca through
+    //   the value witness `initializeWithCopy` ([x27,#0x10]) and at 0x101b9aa34 the copy is
+    //   handed straight to `bl 0x1034522d8` = `URL.absoluteString.getter` with the copy as
+    //   swiftself. A struct wrapping a URL could not be called that way.
+    //
+    // Read in full: `target` is computed once before the loop (same getter, on the parameter);
+    //   `segments` is read under a read-mode `swift_beginAccess`; an empty array takes
+    //   `cbz x28 -> 0x101b9aa90`, which sets tag 1 = nil. Each iteration bounds-checks
+    //   (`cmp x23,x8` / `b.hs` -> `brk #0x1`), addresses the element by VWT stride
+    //   (`madd x1, x9, x23, x8`), then compares the two Strings by raw words first
+    //   (`cmp x0,x25` + `cmp x20,x19`, the equal-equal fast path at 0x101b9aa9c) and falls
+    //   back to `bl 0x103459604` = `_stringCompareWithSmolCheck(…, w4=0)`. A hit returns
+    //   `(x23, tag 0)`; running off the end returns `(0, tag 1)`.
+    func segmentIndex(for url: URL) -> Int? {
         let target = url.absoluteString
         for index in segments.indices {
-            _ = index
-            _ = target
-            // UNRESOLVED → owner phase (streaming): the binary reads segments[index]'s URL
-            //   via HLSSegment's value-witness layout, computes its .absoluteString and
-            //   compares to `target` (get_absoluteString + _stringCompareWithSmolCheck);
-            //   on equality returns `index`. HLSSegment's fields are the UNRESOLVED
-            //   placeholder → the element URL access is NOT reconstructed; the loop/compare
-            //   spine above is faithful.
+            if segments[index].absoluteString == target {
+                return index
+            }
         }
         return nil
     }
@@ -227,7 +244,8 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         // UNRESOLVED → owner phase (streaming): the binary indexes subContexts' value
         //   buffer (*(subContexts + 0x38) + index*8) by the s22-resolved slot to return the
         //   child CacheIOContext. That index→key→value mapping depends on the segment/key
-        //   layout (HLSSegment placeholder) → NOT reconstructed; the lock + empty-guard +
+        //   layout → NOT reconstructed (the HLSSegment fabrication is gone; what remains
+        //   unread here is the subContexts key mapping, not the element type); the lock + empty-guard +
         //   lookup spine are faithful.
         return nil
     }
@@ -401,5 +419,6 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //       1C.3 + stripped FFmpeg)
     //   DEVIRT (no readable body):
     //     • s21 @ — — devirtualized → P2
-    //   HLSSegment's fields are owned by the streaming phase. — NOT fabricated.
+    //   the streaming engine is owned by a later phase. — NOT fabricated.
+    //   (HLSSegment is deleted; it was never in the binary.)
 }
