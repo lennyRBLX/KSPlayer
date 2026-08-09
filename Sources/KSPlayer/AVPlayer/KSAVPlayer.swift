@@ -571,6 +571,45 @@ extension KSAVPlayer {
         loadState = item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull ? .playable : .loading
     }
 
+    // KSPlayer.KSAVPlayer.update(loadState:oldValue:) @0x1019a4db8 — 167 instr, vtable slot 97.
+    //   Trie-named `$s8KSPlayer10KSAVPlayerC6update9loadState8oldValueyAA09MediaLoadE0O_AHtF`, one
+    //   symbol at the address, and the class's 281 trie symbols carry ZERO `33_<32hex>LL` manglings,
+    //   so it is not file-private. The name is doubly grounded: the inlined KSLog's own `#function`
+    //   literal decodes to "update(loadState:oldValue:)".
+    //
+    // ⚠️ THE `loadState` didSet ABOVE INLINES THIS BODY — and drops half of it. The didSet runs
+    //   `playOrPause()` then `bufferingProgress = 0` for the non-playable states, but has NO
+    //   `.playable` arm at all, so the firstPlayableTime stamp and its KSLog are simply absent from
+    //   the reconstruction. (The two spellings of the other arm ARE equivalent: MediaLoadState is
+    //   `idle, loading, playable`, so `else` and `.loading || .idle` cover the same cases.)
+    //   Rewiring the didSet to CALL this is a separate unit — the didSet itself was not derived here,
+    //   and this session has been bitten by assuming a caller's shape.
+    //
+    // Read from the binary: `cmp w19, w1, uxtb` / `b.eq` epilogue is the guard; `cmp w19, #0x2` picks
+    //   the `.playable` arm (MediaLoadState tag 2); both `fcmp d0, #0.0` tests are on KSOptions fields
+    //   (`firstPlayableTime` global 0x104c63490, `prepareTime` 0x104c63438) under a MODIFY access;
+    //   the timestamp is `bl` QuartzCore `CACurrentMediaTime`. The body contains NO arithmetic at all
+    //   — only `cmp`/`fcmp` against constants, no checked add, no CMTime.
+    // ⚑ The logged value is `options.firstTimeLog()` @0x1019c0938, the member reconstructed earlier
+    //   in this same session — an independent derivation arriving at it is a real cross-check.
+    // ⚑ KSLog level constant is 3 = `.warning`, which is KSLog's declared default, so the bare form
+    //   is the faithful spelling. Tag 3 is derived from the BINARY, not from source order: the
+    //   `LogLevel.description` getter's `csel` ladder maps 0→panic 1→fatal 2→error 3→warning.
+    // ⟨UNGROUNDED: `if a == 0, b != 0 { … }` versus two `guard … else { return }` — both arms exit to
+    //  the same epilogue, so the source form is not separable from the codegen.⟩
+    func update(loadState: MediaLoadState, oldValue: MediaLoadState) {
+        guard loadState != oldValue else { return }
+        playOrPause()
+        if loadState == .playable {
+            if options.firstPlayableTime == 0, options.prepareTime != 0 {
+                options.firstPlayableTime = CACurrentMediaTime()
+                KSLog(options.firstTimeLog())
+            }
+        } else {
+            bufferingProgress = 0
+        }
+    }
+
     private func playOrPause() {
         if playbackState == .playing {
             if loadState == .playable {
