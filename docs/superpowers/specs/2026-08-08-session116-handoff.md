@@ -151,9 +151,32 @@ holding its values WEAKLY — looked up under the lock, weak-loaded, and a Bool 
 at +0x10. `FormatContext.interrupt` is typed `IOInterruptContext`, almost certainly the referent
 type.
 
-**That construct does not exist in source, and standing it up is D1's actual cost** — not naming the
-predicate. It is the "closure-hoisting shape" the verdict's `fix` field gestures at without
-describing.
+⚠️ **AND THEN THE CONSTRUCT TURNED OUT TO ALREADY EXIST.** I wrote "that construct does not exist in
+source" — wrong. `Sources/KSPlayer/MEPlayer/IOInterrupt.swift` already declares the whole thing:
+
+    private final class IOInterruptRegistry { lock; nextID; contexts: [Int: WeakIOInterruptContext];
+                                              register(_:token:) }     (:66-:91)
+    private final class WeakIOInterruptContext                          (:115)
+    private final class IOInterruptToken { id; opaque }                 (:102)
+    public  final class IOInterruptContext { flag; block; token;
+                                             var interrupt: Bool { flag || (block?() ?? false) } }
+
+and `IOInterruptContext.init` already does `let reg = IOInterruptRegistry.shared // _swift_once →
+DAT_1044e9ac0` — **the same static 0x1044e9ac0 the predicate loads**. So the registry, the weak box,
+the token and the Bool are all present, and 0x101a34af4 is just a LOOKUP over them:
+`contexts[Int(bitPattern: opaque)]?.value?.interrupt`, taken under `reg.lock`.
+
+The install's opaque matches too: `ldr x8,[x19,#0x28]` is `IOInterruptContext.token` (+0x28, per
+that class's own field comments) and `ldr x27,[x8,#0x18]` is the token's `opaque`.
+
+**THE ONE REAL OBSTACLE IS ACCESS, NOT DERIVATION.** `IOInterruptToken` is `private` and
+`IOInterruptContext.token` is `fileprivate` — deliberately, because "this public class exposes a
+property whose type is private". `FormatContext.swift` is a different file, so it cannot write
+`interrupt.token.opaque`, and the C callback cannot reach `IOInterruptRegistry.shared` either.
+Resolving that is a spelling decision (widen the access, or hoist the callback into
+IOInterrupt.swift where the registry is visible — the latter matches the binary, since the callback
+0x101a34dc0 and the predicate 0x101a34af4 both sit in the 0x101a34xxx block with the registry code,
+not with openFormatContext at 0x101a39xxx). Decide that, and D1 is a short write.
 
 **`KSPlayerLayer.readyToPlay(player:)` @0x1019cda08** (1 CRITICAL + 1 HIGH + 2 LOW) — derived this
 session, NOT written. 0x1019cda08-0x1019cdf98, 1424 B, 356 instr. Trie:
