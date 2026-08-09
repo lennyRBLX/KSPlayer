@@ -191,12 +191,102 @@ public class Anime4KPipeline: VideoPipeline {
         frameStateLock.unlock()
     }
 
-    // DECLARED, BODY PINNED. init's tail call to this method is decoded (0x101a7c5c0, preset in
-    // x0); the body itself is 156 instructions at 0x101a78b10 and was NOT read, so nothing is
-    // written for it. It compiles as a no-op, which is a divergence its own unit must close.
-    // ⚑[tool=function_extents ref=Anime4KPipeline.loadPreset:0x101a78b10 result=156-instr-unread]
-    public func loadPreset(_: Anime4KPreset) {
-        // UNRESOLVED → own unit: 0x101a78b10, 156 instr.
+    // READ IN FULL. All 156 instructions of 0x101a78b10-0x101a78d80 are accounted for; the earlier
+    // "NOT read" pin is discharged. vtable idx69. Exactly one exported symbol at the address
+    // (unfolded), and the body's own KSLog literals independently confirm the member: `#file` =
+    // 'KSPlayer/Anime4KPipeline.swift' (30) and `#function` = 'loadPreset(_:)' (14), the latter
+    // also fixing the single UNLABELLED parameter.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.Anime4KPipeline.loadPreset:0x101a78b10 result=OWNER_MATCH]
+    //
+    // STATEMENT ORDER IS LOAD-BEARING and is the binary's, not a preference:
+    //   101a78b3c: strb w0, [x20, #0x20]   self.preset = preset      (BEFORE the guard)
+    //   101a78b40: bl   0x101a78d80        build the shader-path list
+    //   101a78b48: bl   0x101a79b84        loadShaderFiles(...)
+    //   101a78b54: mov  w8, #0x2
+    //   101a78b58: strb w8, [x20, #0x31]   cachedUpscaleSupport = nil (raw byte 2 = Optional.none)
+    //   101a78b5c: cbz  w21, 0x101a78d34   `.disabled` -> the bare epilogue
+    // The `.disabled` early exit sits AFTER all three side effects and skips ONLY the log, so it
+    // cannot be hoisted to the top of the body. Offsets are named from this class's STATIC field
+    // offset vector @0x1044ebe58 (preset 0x20, cachedUpscaleSupport 0x31, anime4Ks 0x18); note
+    // `recover_field_offsets` refuses this class because every access is a constant immediate off
+    // the self register, so there is no ivar-offset global to resolve.
+    // ⚑[tool=field_offset_vector ref=Anime4KPipeline result=preset-0x20-cachedUpscaleSupport-0x31]
+    //
+    // THE SHADER LIST IS INLINED, and that is a tool ruling rather than a style choice. The list is
+    // built by 0x101a78d80, which is NOT_IN_TRIE; `name_exhaustion_gate` returns INLINE-INSTEAD on
+    // it (1 call site image-wide), i.e. it has no independent identity and must NOT be given an
+    // invented name. Its 58 instructions are a 13-arm jump table on the preset case index, read
+    // from the byte table at 0x10356bee0 = 00 25 11 14 08 1a 1d 17 23 0e 20 05 0b scaled by 4 off
+    // branch base 0x101a78db0 — 13 DISTINCT arms, no sharing, which is why no two cases are folded
+    // into one `case .a, .b:` label below.
+    // ⚑[tool=name_exhaustion_gate ref=anime4k_shader_list:0x101a78d80 result=INLINE-INSTEAD]
+    //
+    // Every path string is decoded with `decode_string_literal`, never read off a pointer value.
+    // ⚠️ The stored `_object` word in each static array carries the `_StringObject.nativeBias`: the
+    // real UTF-8 start is stored + 0x20, the INVERSE of the usual trap. Decoding at the stored
+    // address yields NUL-crossing garbage. Verified end to end on case `.modeCAHQ` (object
+    // 0x1044ec348: count 6, capacityAndFlags 12, six 16-byte String pairs all tagged 0xd000).
+    // The `.disabled` arm loads `__swiftEmptyArrayStorage` and returns a genuinely empty array.
+    // ⚑[tool=decode_string_literal ref=anime4k_shader_paths result=14-distinct-73-elements]
+    public func loadPreset(_ preset: Anime4KPreset) {
+        self.preset = preset
+        let files: [String]
+        switch preset {
+        case .disabled:
+            files = []
+        case .modeAFast:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+        case .modeBFast:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+        case .modeCFast:
+            files = ["Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+        case .modeAHQ:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        case .modeBHQ:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        case .modeCHQ:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        case .modeAAFast:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Restore/Anime4K_Restore_CNN_S.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+        case .modeBBFast:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_Soft_S.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+        case .modeCAFast:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_S.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+        case .modeAAHQ:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        case .modeBBHQ:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        case .modeCAHQ:
+            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        }
+        loadShaderFiles(files)
+        cachedUpscaleSupport = nil
+        if preset == .disabled {
+            return
+        }
+        KSLog("[Anime4K] Loaded preset: \(preset.displayName) with \(anime4Ks.count) shaders")
+    }
+
+    // DECLARED HERE, BODY PINNED — and the pin belongs to THIS member, not to `loadPreset` above.
+    // vtable idx72, body @0x101a79b84, extent 0x101a79b84-0x101a7a34c, 1992 B / 498 instructions,
+    // none of them read. It is a vtable slot, so it is not `private` (a private method on a
+    // non-final class is statically dispatched and takes no slot); internal vs public is NOT
+    // separable on this image, because the export trie carries ZERO `Tj` dispatch thunks of any
+    // kind, so `Tj` absence discriminates nothing. The weaker spelling is written.
+    //
+    // The NAME is read, not invented: the body materializes its own `#function` literal
+    // 'loadShaderFiles(_:)' (19 chars) alongside its `#file` companion 'KSPlayer/Anime4KPipeline.swift'
+    // (30), and `recover_swift_function_name` returns it at high confidence with both anchors ok.
+    // That is why this is a named declaration rather than a FUN_-address pin.
+    // ⚑[tool=recover_swift_function_name ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=high-confidence-#function]
+    // ⚑[tool=export_trie_oracle ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=NOT_IN_TRIE]
+    // ⚑[tool=function_extents ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=498-instr-unread]
+    //
+    // CONSEQUENCE, stated plainly: until these 498 instructions are read, `anime4Ks` stays empty and
+    // `supported` stays false, so the KSLog above reports 0 shaders. `loadPreset` itself is now
+    // faithful; this is where the remaining gap lives, and it is its own unit.
+    func loadShaderFiles(_: [String]) {
+        // UNRESOLVED → own unit: 0x101a79b84, 498 instr.
     }
 
     /// ⚑[tool=export_trie_oracle ref=Anime4KPipeline.getPerformanceStats():0x101a7b2a8 result=59-instr]
