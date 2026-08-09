@@ -107,8 +107,10 @@ public final class FormatContext {
             : .zero
         // +0x28 duration: the binary re-derives durationSeconds = max(formatCtx.duration,0)/AV_TIME_BASE (INTEGER
         //   divide → Double) and stores THAT on every non-PlayList path — the dominant path (plain file playback:
-        //   ioContext is nil / not a PlayList). // UNRESOLVED: the `ioContext as? PlayList` seg≥2 branch keeps the
-        //   `duration` PARAM instead (and mutates formatCtx.duration) — deferred with the PlayList protocol.
+        //   ioContext is nil / not a PlayList).
+        // ⚠️ A `// UNRESOLVED: the ioContext as? PlayList seg>=2 branch` marker stood here and is REMOVED:
+        //   the cast is not in this function. See the corrected header block — 1153 instructions with zero
+        //   swift_dynamicCast, zero swift_conformsToProtocol and zero adrp to page 0x1039ed.
         let durationSecondsInt = max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE)
         let durationValue = Double(durationSecondsInt)
         // +0x48 = String(cString: iformat.name). FUN_101a350bc reads *(*(formatCtx+8)); MEPlayerItem:236 idiom.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
@@ -135,9 +137,10 @@ public final class FormatContext {
                 if track.mediaType == .subtitle || abs((track.startTime - startTimeValue).seconds) < 10 {
                     track.startTime = startTimeValue
                 }
-                // UNRESOLVED: the `ioContext as? PlayList` per-entry languageCode/name override (LAB_101a358b8 tail —
-                //   witness +0x08/+0x10/+0x20 + an [Int32:String] lookup keyed by the stream id) — deferred with the
-                //   PlayList protocol. ⚑[tool=name_type_at_addr ref=PlayList:0x103c2fbba result=protocol-not-in-tree]
+                // ⚠️ A `// UNRESOLVED: the ioContext as? PlayList per-entry override` marker stood here, citing
+                //   the LAB_101a358b8 tail. REMOVED: 0x101a358b8 is inside this extent and is a plain
+                //   `mov x26,x0 / ldr x0,[x0,#0x78] / bl 0x10345745c` string-bridge sequence — no cast, no
+                //   protocol descriptor. The marker was describing code that is not here.
                 assetTracks.append(track)
             } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_ATTACHMENT {
                 // Embedded-font attachment: codec_id ∈ {NONE, 0x18000 TTF, 0x18006 OTF} — raw compare = the binary's
@@ -189,8 +192,9 @@ public final class FormatContext {
         self.fileSize = fileSize     // +0x30 = param_3
         self.fontsDir = fontsDir     // (sym field) from param_6
         self.duration = durationValue
-        // +0x58 seekByBytes: false on every reconstructed (non-PlayList) path. // UNRESOLVED: the
-        //   `ioContext as? PlayList` seg≥2 branch computes true (+ mutates formatCtx.duration) — deferred.
+        // +0x58 seekByBytes: false on every path in this function.
+        // ⚠️ A `// UNRESOLVED: the ioContext as? PlayList seg>=2 branch` marker stood here and is REMOVED for
+        //   the same measured reason as the other two.
         self.seekByBytes = false
         self.assetTracks = assetTracks
         self.formatName = formatNameValue
