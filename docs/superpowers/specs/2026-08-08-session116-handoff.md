@@ -532,12 +532,24 @@ I then ran that check, and **FOUR OF THE SIX ARE ALREADY NAMED**. The note is st
 `0x1019e1f94` is a particularly good sign: this init `throws`, and its error construction is
 `KSPlayerError.init(errorCode:avErrorCode:)`, fully named, so the throw path is already writable.
 
-**So this is not a wall — it is ONE FFmpeg attribution (0x1030c03e4) plus one in-image negative
-(0x101b95540) away from being a normal 264-instruction unit.** Run the object-file attribution route
-on 0x1030c03e4 (the same route that produced the `av_dict_get` CONFIRMED verdict, not the bare
-`--addr` probe, which returns 27 candidates and no verdict).
+⚠️ **I FIRST WROTE "this is not a wall — it is one FFmpeg attribution away". THEN I RAN THE
+ATTRIBUTION, AND IT FAILED.** `ffmpeg_name_oracle --addr 0x1030c03e4 --resolve` — the discriminating
+mode, not the bare probe — returns:
 
-That would unblock the whole chain: `URLContextDownload.init` → `download_existential` → `more()`.
+    "fp": [92, 368], "n_fp_candidates": 14, "in_ffmpeg_band": true,
+    "status": "UNKNOWN", "survivors": [],
+    "why": "no indexed symbol matches instruction-for-instruction"
+
+Fourteen fingerprint candidates, zero instruction-level survivors. The FFmpeg symbol index does not
+contain this function, so the route that produced the `av_dict_get` CONFIRMED verdict does **not**
+name it. `0x1030c03e4` is the URLContext open at the heart of this init and it stays unnamed.
+
+**So the terminus IS real, and it is measured rather than assumed.** Four of six callees are named,
+which makes the unit smaller than its note suggested — but the one that matters most is not, and it
+cannot be written around: naming it needs either an FFmpeg index built from the matching build, or a
+different discriminator entirely.
+
+That is the true bottom of `URLContextDownload.init` → `download_existential` → `more()`.
 
 ⚠️ One caution for whoever opens it: `recover_swift_function_name` on this address returns
 `#function: init(url:flags:options:interrupt:isReadComplete:)` at high confidence but reports
