@@ -56,6 +56,53 @@ Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d09
 
 ## Derived but NOT landed — start here, do not re-derive
 
+**`KSPlayerLayer.set(url:options:)` @0x1019cb674** (2 CRITICAL + 1 MED + 1 LOW) — **DERIVED THIS
+SESSION, and D3 is outright REFUTED.** 0x1019cb674-0x1019cba60, 1004 B, 251 instr, only 6 branches.
+
+D1 CONFIRMED from the trie: `KSPlayer.KSPlayerLayer.set(url: Foundation.URL, options: KSPlayer.KSOptions?) -> ()`,
+OWNER_MATCH, 1 symbol. The parameter IS Optional and `cbz x24` @0x1019cb6fc is its nil test.
+
+⚠️ **D3 IS FALSE.** It claims the KSOptions byte offsets "could not be tool-read … KSOptions emits no
+vpWvd globals". Both resolve immediately with the module flag, and KSOptions emits dozens of vpWvd
+globals:
+
+    recover_field_offsets --class KSOptions --module KSPlayer --offset 0x45  ->  isAutoPlay
+    recover_field_offsets --class KSOptions --module KSPlayer --offset 0x58  ->  playerTypes
+
+THE BODY, read from disassembly:
+
+    1019cb6fc  cbz x24 ->                if let options {
+    1019cb71c    str x24, [x22, x21]       self.options = options      (x21 = *0x104c634e0 = options)
+    1019cb748    ldrb w21, [x24, #0x45]    options.isAutoPlay
+    1019cb75c    strb w21, [x22, x8]       self.isAutoPlay = …         (x8 = *0x104c63520)
+                                          }
+    1019cb794  blr x21                   the url assignment through [x28+0x10]
+    1019cb7c8  ldr x8, [x24, #0x58]      options.playerTypes
+    1019cb7cc  ldr x9, [x8, #0x10]       .count
+    1019cb7d0  cbz x9 ->                 empty -> fall back
+    1019cb7d4    ldp x26, x27, [x8,#0x20]  first element (metatype + witness)
+    1019cb7e0    bl 0x1019b20bc            type metadata accessor for KSPlayer.KSAVPlayer
+    1019cb7e8    x27 = 0x1041d3f78         KSAVPlayer's MediaPlayerProtocol witness table
+    1019cb814  bl swift_getObjectType    type(of: self.player)   (player = *0x104c634f0)
+    1019cb818  cmp x0, x26
+    1019cb81c  b.eq ->                   same type -> skip construction
+    1019cb8ec  bl 0x1034523a4            URL.==  (self.url vs the new url; url = *0x104c634f8)
+    1019cb8f0  tbz w0,#0 ->              URLs DIFFER -> assign + replace path
+    1019cb8fc    ldrb w8, [x22, x8]        self.isAutoPlay
+    1019cb904    b.ne ->                   not auto-play -> epilogue
+    1019cb91c    ldr x8, [x8, #0x2b8]      metadata +0x2b8 = vtable slot 60
+    1019cb920    b 0x1019cba04             -> Impl 0x1019cc5f8 = KSPlayerLayer.play()   TRIE-NAMED
+    1019cb924  (differ) beginAccess w2=0x21 modify on url, assign, endAccess, then 0x1019c9a68
+
+So the shape is: assign options + isAutoPlay when non-nil; pick
+`options.playerTypes.first ?? KSAVPlayer.self`; construct a replacement when it differs from
+`type(of: player)`; and on the same-URL path call `play()` only when `isAutoPlay`.
+
+STILL UNNAMED (D4, all real trie negatives): 0x1019d5978 (construct-and-store), 0x1019c9a68 /
+0x1019c9cd4 (the state helper). 0x104c63520 also refuses `recover_field_offsets`; it is `isAutoPlay`
+by role — assigned from the confirmed `options.isAutoPlay` and later gating `play()`, and the class
+declares `isAutoPlay` — but that is inference, not a read, so mark it as such if you write it.
+
 **`PlayerView.set(url:options:)` @0x1019fe194** (3 HIGH + 1 MED + 1 LOW), 163 instr, idx18/slot33.
 - Its signature MATCHES source (`KSOptions` non-optional). The KSPlayerLayer Optional shape does
   **not** carry over — the mangles differ by exactly `CSg` vs `Ct`.
