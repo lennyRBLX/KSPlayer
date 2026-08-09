@@ -19,13 +19,22 @@
 //  dominant-path `duration` = durationSeconds. Symbolic FFmpeg field access = faithful by construction
 //  under the non-stock ABI.
 //
-//  STILL UNRESOLVED (flagged `// UNRESOLVED`, NOT fabricated) — the `ioContext as? PlayList` arms: the
-//  `seekByBytes`=true branch + the `formatCtx->duration = duration*AV_TIME_BASE` side-effect + the per-track
-//  `languageCode`/`name` override from the playlist's per-entry metadata. `PlayList` (mangled
-//  `$s8KSPlayer8PlayListP`, cast-target descriptor resolved via l2 walk_mangled @0x103c2fbba) is a
-//  Forward-only protocol NOT yet reconstructed in-tree (only `parsePlaylist()` helpers exist); the same
-//  cast drives MEPlayerItem's FUN_101a512b4. Reconstructing these arms now would fabricate PlayList's
-//  witness interface — a flagged deferral is success (a plausible-but-wrong body looks done and crashes).
+//  ⚠️ CORRECTED — THE `ioContext as? PlayList` ARMS ARE NOT IN THIS FUNCTION. This block used to
+//  record them as "STILL UNRESOLVED" here, and the s84 verdict carried the same attribution. Both
+//  are wrong about the location. Measured over the whole extent of the inner init
+//  (0x101a350bc-0x101a362c0, 1153 instructions):
+//    · zero `swift_dynamicCast` and zero `swift_conformsToProtocol` calls;
+//    · zero `adrp` to page 0x1039ed — so the `PlayList` protocol descriptor at 0x1039edc98 is
+//      never referenced.
+//  A conditional protocol cast cannot happen without one of those. The arms — the
+//  `seekByBytes`=true branch, the `formatCtx->duration = duration*AV_TIME_BASE` side-effect and the
+//  per-track `languageCode`/`name` override from the playlist metadata — live somewhere else; the
+//  original note's own aside points at MEPlayerItem's FUN_101a512b4, which is the place to look.
+//  ⚑[tool=export_trie_oracle ref=$s8KSPlayer8PlayListMp:0x1039edc98 result=unreferenced-in-this-extent]
+//
+//  Two further things that block quoting the old note: `PlayList` IS reconstructed in-tree now
+//  (`public protocol PlayList` with all four requirements, PlayerDefines.swift:642), so "NOT yet
+//  reconstructed" is stale as well.
 //
 //  FFmpeg provenance (P32) — every av* symbol named in this file is ffmpeg_name_oracle result=CONFIRMED:
 //    ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]     (FUN_103253ed0, avutil/mem.o — free+null idiom)
