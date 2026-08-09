@@ -67,18 +67,30 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// ⚠️ The binary's `updateVideo` takes a NON-Optional `__C.CMFormatDescriptionRef`; KSOptions
     ///   .swift:881 declares `formatDescription: CMFormatDescription?`. Separate unit.
     ///
-    /// 🚧 THE REMOVAL IS NOT DONE, and the field is deliberately still here. Both READ sites are
-    ///   settled — the `formatDescription` didSet @0x101a5e510 and the `fps` didSet @0x101a5e850
-    ///   both compute the argument as `dovi != nil` — but there is a THIRD site, the WRITE at
-    ///   `isDovi = frame.isDovi` below, and what the binary does there has NOT been read. `dovi` is
-    ///   a `DOVIDecoderConfigurationRecord?` while `frame.isDovi` is a `Bool`, so the write cannot
-    ///   simply be retargeted at `dovi` without inventing the value. Substituting the two reads
-    ///   while leaving the write would make the field write-only and dead, which is worse than the
-    ///   divergence. Read the write site's binary counterpart first, then remove all three together.
-    private var isDovi: Bool = false
+    /// ✅ REMOVED. The third site — the WRITE that blocked this — is now read: the binary stores
+    ///   `self.dovi = frame.dovi`, a raw 10-byte POD copy, and never reads `frame.isDovi` at all.
+    ///   In `draw`'s body @0x101a611f4:
+    ///       ldur x8,  [frame, #0x7b]   ; frame.dovi bytes 0..7
+    ///       ldurh w9, [frame, #0x83]   ; frame.dovi bytes 8..9
+    ///       ldr  x10, [x10, #0x8f0]    ; MetalPlayView.dovi offset global -> 0x78
+    ///       str  x8,  [self+dovi]      ; 10 bytes, exactly self+0x78..0x81
+    ///       strh w9,  [self+dovi, #0x8]
+    ///   `VideoVTBFrame` carries BOTH `dovi` (record 10, at frame+0x7b, same `__got` type ref as
+    ///   this class's) and `isDovi` (record 11, at frame+0x85) — and frame+0x85 is read NOWHERE in
+    ///   the whole 603-instruction body. So the source's `isDovi = frame.isDovi` was the wrong
+    ///   field on both sides.
+    ///   ⚑[tool=field_offset_vector ref=VideoVTBFrame result=dovi-0x7b-isDovi-0x85]
+    ///
+    ///   An exhaustive `__text` scan for the offset global 0x1044ea8f0 finds exactly FIVE `dovi`
+    ///   sites in the entire image, which is the complete inventory: the two tag READS below
+    ///   (`formatDescription` didSet @0x101a5e510 and `fps` didSet @0x101a5e850, each
+    ///   `ldrb w8,[&dovi,#0x9] / cmp w8,#1 / cset ne` = `dovi != nil`), this WRITE, and two
+    ///   `dovi = nil` stores in the initialisers — which independently re-confirm that the nil
+    ///   representation is payload-zero with tag byte 1 (`str xzr` / `mov w9,#0x100` / `strh w9,[+8]`).
+    ///   ⚑[tool=recover_field_offsets ref=MetalPlayView.dovi:0x1044ea8f0 result=5-sites-2-reads-1-write-2-nil-init]
     private var formatDescription: CMFormatDescription? {
         didSet {
-            options.updateVideo(refreshRate: fps, isDovi: isDovi, formatDescription: formatDescription)
+            options.updateVideo(refreshRate: fps, isDovi: dovi != nil, formatDescription: formatDescription)
         }
     }
 
@@ -93,7 +105,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
                         displayLink?.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
                     }
                 }
-                options.updateVideo(refreshRate: fps, isDovi: isDovi, formatDescription: formatDescription)
+                options.updateVideo(refreshRate: fps, isDovi: dovi != nil, formatDescription: formatDescription)
             }
         }
     }
@@ -498,7 +510,10 @@ extension MetalPlayView {
             guard let pixelBuffer else {
                 return
             }
-            isDovi = frame.isDovi
+            // The binary copies the frame's `dovi` RECORD, not its `isDovi` Bool: a 10-byte POD
+            // move `ldur x8,[frame,#0x7b]` / `ldurh w9,[frame,#0x83]` into self+0x78..0x81.
+            // frame+0x85 (`VideoVTBFrame.isDovi`) is read nowhere in the 603-instruction body.
+            dovi = frame.dovi
             fps = frame.fps
             let cmtime = frame.cmtime
             let par = pixelBuffer.size
