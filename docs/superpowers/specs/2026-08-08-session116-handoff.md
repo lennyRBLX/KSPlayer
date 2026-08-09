@@ -510,6 +510,20 @@ So the terminus is a 264-instruction FFmpeg URLContext open whose callees are st
 actual bottom of this dependency chain, and it is a genuine reconstruction unit — not a stale note,
 not a mis-scoping, not a tooling gap.
 
+**AND THE "STRIPPED CALLS" NOTE LOOKS PESSIMISTIC — this unit may be more open than it reads.** Its
+264 instructions call 20 distinct targets; the six non-runtime ones are 0x1030c03e4, 0x10323a9d8,
+0x101b95540, 0x1019e1f94, 0x1019f59c4 and 0x101b90c44. `ffmpeg_name_oracle --addr` alone does NOT
+name them — on 0x10323a9d8 it returns `in_ffmpeg_band: true, n_candidates: 27` and a candidate list,
+not a verdict. But **0x10323a9d8 is already CONFIRMED elsewhere in this tree** as `av_dict_get`
+(FormatContext.swift carries
+`⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED] (FUN_10323a9d8, avutil/dict.o
+— inside toDictionary)`), which came from the fuller object-file attribution rather than the bare
+`--addr` probe.
+
+So before treating this as a wall: run the full attribution route on the other five, and check
+whether any is already named somewhere in `Sources/`. The source note "stripped calls named only by
+the P2 oracle" may simply predate that work.
+
 ⚠️ One caution for whoever opens it: `recover_swift_function_name` on this address returns
 `#function: init(url:flags:options:interrupt:isReadComplete:)` at high confidence but reports
 CONFLICTING `#file` anchors — `Components/PlayerOptions.swift` (a different module) and
