@@ -800,14 +800,49 @@ extension KSPlayerLayer: MediaPlayerDelegate {}
 
 // MARK: - AVPictureInPictureControllerDelegate
 
+// THE CONFORMANCE IS ON THE SUBCLASS. All six AVPictureInPictureControllerDelegate callbacks are
+// implemented on KSComplexPlayerLayer in the binary, and none on KSPlayerLayer — the same
+// belongs-on-the-subclass shape `urls` had. Three of the six were already declared in
+// KSComplexPlayerLayer's class body (failedToStartPictureInPictureWithError,
+// WillStartPictureInPicture, WillStopPictureInPicture); the two below were the ones stranded up
+// here, and moving them takes the conformance with them.
+//   KSComplexPlayerLayer.pictureInPictureControllerDidStopPictureInPicture       0x1019d2bac
+//   KSComplexPlayerLayer.pictureInPictureController(_:restoreUserInterface…:)    0x1019d3220
 @available(tvOS 14.0, *)
-extension KSPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
+extension KSComplexPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
+    /// @0x1019d2bac is ONE instruction — `b 0x1019d62ec` — into an 81-instruction body, which is
+    /// where the four statements below are read from. The previous spelling kept only the third.
+    ///   1019d6338  ldr x24,[x22,#0x28] / blr    MediaPlayback req4 = player.view.getter
+    ///   1019d6360  bl 0x103460dc0                selref 0x10440b138 = 'didStopPIP'
+    ///   1019d6378  ldr x24,[x22,#0x28] / blr    player.view.getter AGAIN (a second fetch)
+    ///   1019d63a4  bl 0x1019cf5d8                addSubtitle(to:)
+    ///   1019d63bc  ldr x24,[x21,#0xf8] / blr    witness +0xf8 = req30 = pipController.getter
+    ///   1019d63e8  cbz x20                       the Optional chain on pipController
+    ///   1019d63f8  ldr x8,[x21,#0x48] / w0 = 0  witness +0x48 = stop(restoreUserInterface:),
+    ///                                            argument FALSE — read, not inferred
+    /// ⚑[tool=decode_objc_selector ref=KSComplexPlayerLayer.didStopPIP:0x103460dc0 result=didStopPIP]
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.req30:0x1019a0e40 result=pipController.getter]
+    ///
+    /// ⚑ THE BODY IS NOT COMPLETE. It ends `mov x20, x19` / `bl 0x1019d2bb0` — a 227-instruction
+    ///   NOT_IN_TRIE function taking `self`, which has NOT been read. That statement is deliberately
+    ///   absent rather than guessed; writing it needs 0x1019d2bb0 as its own unit.
+    /// ⚑[tool=function_extents ref=KSComplexPlayerLayer.DidStopPIP.tail:0x1019d2bb0 result=227-instr-unread]
     public func pictureInPictureControllerDidStopPictureInPicture(_: AVPictureInPictureController) {
+        player.view.didStopPIP()
+        addSubtitle(to: player.view)
         player.pipController?.stop(restoreUserInterface: false)
     }
 
+    /// @0x1019d3220, 45 instructions, read in full. The previous spelling was `isPipActive = false`,
+    /// which has no counterpart at all — `isPipActive` has zero symbols image-wide. The body takes a
+    /// read access on `self.player`, loads the two-word existential, and calls witness `[wtable+0x48]`
+    /// under a `cbz` optional chain. That slot is req8 of the 10-requirement
+    /// `KSPictureInPictureController : KSPictureInPictureProtocol` table (wt 0x1041d45a0), i.e.
+    /// `stop(restoreUserInterface:)`, and the argument is `mov w0, #0x1` — TRUE, the opposite of the
+    /// value the sibling callback above passes.
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req8-stop-restoreUserInterface]
     public func pictureInPictureController(_: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler _: @escaping (Bool) -> Void) {
-        isPipActive = false
+        player.pipController?.stop(restoreUserInterface: true)
     }
 }
 
@@ -867,7 +902,13 @@ extension KSPlayerLayer {
     /// a platform-gating false positive — the iOS declaration in UIKitExtend.swift is
     /// `KSSlider: UXSlider` with `typealias UXSlider = UISlider`, so the conformance is satisfied.
     /// The `#else` arm is OURS: the binary is an iOS image and says nothing about the macOS form.
-    private func addSubtitle(to view: UIView) {
+    /// `fileprivate`, not `private`, and the CALL SITE is what proves it: Swift mangles both with
+    /// the same file discriminator, so `33_B3181…LL` cannot tell them apart. But 0x1019d62ec —
+    /// `KSComplexPlayerLayer`'s DidStop handler — calls this at 0x1019d63a4 with a
+    /// KSComplexPlayerLayer `self`, and a `private` member of `KSPlayerLayer` is not visible to a
+    /// different type even in the same file. `fileprivate` is the narrowest spelling that admits
+    /// the call the binary makes.
+    fileprivate func addSubtitle(to view: UIView) {
         delegate?.playerDidAddSubtitle(view)
         subtitleView.backingLayer?.zPosition = 1
         if let superview = subtitleView.superview, superview == view {
