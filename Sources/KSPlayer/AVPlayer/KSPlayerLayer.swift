@@ -814,6 +814,80 @@ extension KSPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
 // MARK: - private functions
 
 extension KSPlayerLayer {
+    /// @0x1019cf5d8, 191 instructions, one symbol at the address (no ICF fold). `private` is read
+    /// off the trie's module-hash discriminator:
+    ///   $s8KSPlayer0A5LayerC11addSubtitle33_B3181C2628785004269C41BC3433122FLL2toySo6UIViewC_tF
+    ///
+    /// TWO blocked bodies call this, which is why it is stood up before either of them:
+    /// `readyToPlay(player:)` @0x1019cda08 calls it with `player.view` at 0x1019cda9c, and the
+    /// 81-instruction body @0x1019d62ec that `KSComplexPlayerLayer`'s
+    /// `pictureInPictureControllerDidStopPictureInPicture` tail-branches into calls it too.
+    ///
+    /// Statement order is the binary's, established by monotone address order:
+    ///   1019cf640  blr  witness +0x50   delegate?.playerDidAddSubtitle(view)
+    ///   1019cf674  objc_msgSend$setZPosition:               (d0 = fmov #1.0)
+    ///   1019cf680  objc_msgSend$superview  / 1019cf6cc  static NSObject.==
+    ///   1019cf6ec  objc_msgSend$bringSubviewToFront:  then `b 0x1019cf8bc` = RETURN
+    ///   1019cf6fc  objc_msgSend$addSubview:
+    ///   1019cf708  objc_msgSend$setTranslatesAutoresizingMaskIntoConstraints:  (w2 = 0)
+    ///   1019cf76c/7b8/804/850  constraintEqualToAnchor: ×4 → array +0x20/+0x28/+0x30/+0x38
+    ///   1019cf8b4  objc_msgSend$activateConstraints:  on _OBJC_CLASS_$_NSLayoutConstraint
+    ///
+    /// The delegate call takes the `to:` PARAMETER, not `subtitleView` — at 0x1019cf638 the
+    /// argument register is x19 (the parameter), and `subtitleView` is not loaded until
+    /// 0x1019cf654, after the call. Witness slot +0x50 is `playerDidAddSubtitle(__C.UIView)`,
+    /// proven from a concrete conformance whose slot holds
+    /// `Components.PlayerViewModel.playerDidAddSubtitle(__C.UIView) -> ()`.
+    /// The receiver is `self.delegate`, loaded weakly (`swift_unknownObjectWeakLoadStrong`), which
+    /// matches the field record's `Xw` weak-storage tail.
+    ///
+    /// THERE ARE NO CONSTRAINT CONSTANTS. Over the whole extent the only floating-point immediate
+    /// is `fmov d0, #1.0` at 0x1019cf66c feeding `setZPosition:`; the only other constant load is
+    /// the array header at 0x10347fd80 (count 4). Every constraint is the bare
+    /// `constraintEqualToAnchor:` — no `:constant:` and no `:multiplier:` selector appears.
+    /// ⚑[tool=decode_objc_selector ref=addSubtitle.constraints:0x10345fb40 result=constraintEqualToAnchor:]
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.addSubtitle(to:):0x1019cf5d8 result=one-symbol-no-ICF-fold]
+    ///
+    /// Only two `self` fields are touched, both READ, neither written: `delegate`
+    /// (offset global 0x1044e6138) and `subtitleView` (0x104c634e8). `subtitleModel` is never
+    /// referenced. The byte offsets themselves are NOT statically readable — KSPlayerLayer is
+    /// metadata_init=1, so the resolver recovers the offset-global NAMES and nothing more.
+    ///
+    /// The `-layer` nil test at 0x1019cf668 SKIPS the store rather than trapping, so the store is
+    /// optional-chained — and that is not a codegen artifact. The two platforms disagree about the
+    /// type: UIKit annotates `UIView.layer` non-null while `NSView.layer` is genuinely `CALayer?`,
+    /// so neither plain spelling compiles everywhere. `backingLayer` is this repo's own accessor
+    /// for exactly that (UXKit.swift:95); under `canImport(UIKit)` — which is the image being
+    /// reconstructed — it is `layer` and nothing else, so this line is the binary's
+    /// `objc_msgSend$layer` / `cbz` / `setZPosition:` verbatim.
+    /// `bringSubviewToFront(_:)` is UIKit-only and has no NSView counterpart, so the raise is
+    /// spelled per-platform INLINE rather than by adding a shim to AppKitExtend.swift. Editing
+    /// that file drags `KSSlider` into the diff, where the superclass gate reads its AppKit
+    /// declaration (`KSSlider: NSSlider`) against this iOS image's `super=UISlider` and BLOCKs on
+    /// a platform-gating false positive — the iOS declaration in UIKitExtend.swift is
+    /// `KSSlider: UXSlider` with `typealias UXSlider = UISlider`, so the conformance is satisfied.
+    /// The `#else` arm is OURS: the binary is an iOS image and says nothing about the macOS form.
+    private func addSubtitle(to view: UIView) {
+        delegate?.playerDidAddSubtitle(view)
+        subtitleView.backingLayer?.zPosition = 1
+        if let superview = subtitleView.superview, superview == view {
+            #if canImport(UIKit)
+            view.bringSubviewToFront(subtitleView)
+            #else
+            view.addSubview(subtitleView, positioned: .above, relativeTo: nil)
+            #endif
+            return
+        }
+        view.addSubview(subtitleView)
+        subtitleView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            subtitleView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            subtitleView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            subtitleView.widthAnchor.constraint(equalTo: view.widthAnchor),
+            subtitleView.heightAnchor.constraint(equalTo: view.heightAnchor),
+        ])
+    }
+
     private func updateNowPlayingInfo() {
         if MPNowPlayingInfoCenter.default().nowPlayingInfo == nil {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyPlaybackDuration: player.duration]
