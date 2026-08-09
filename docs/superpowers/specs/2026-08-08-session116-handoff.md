@@ -230,6 +230,56 @@ Callees resolved (all four in-image, trie-named except one):
     0x101b95bfc  NOT_IN_TRIE  (a real negative)
     0x1019b4074 / 0x1019c0094  KSOptions.logLevel / logger unsafeMutableAddressor — the 2 KSLog sites
 
+**MOST OF THIS BODY IS NOW DERIVED.** A verbatim cache was generated for it this session
+(`reconstruction/decompiles/LimitSeparatePreLoadIOContext_more_101ba5398.txt`, ANCHOR_VERIFIED
+true). The shape, in order:
+
+1. lazily allocate `loadMoreBuffer` via `_swift_slowAlloc(bufferSize, -1)` when nil;
+2. `findDiscontinuousPos()` returning (pos, ok);
+3. on ok: read `bufferSize` (self+0x14), take a MODIFYING access on self+0x50, substitute self+0x80
+   when self+0x50 == `UInt64.max`, then `canContinuePreload(at:)`;
+4. on true: a BINARY SEARCH over the array at self+0x88 for the first `CacheFileEntry` whose
+   `position` exceeds pos (`(lo+hi)/2` with `SCARRY8` overflow trap, retain/release per probe, and a
+   bridged-array fallback through `thunk_FUN_101b91580`), then clamp `entry.position - pos` to
+   `bufferSize`;
+5. if self+0x50 != `moreUrlPos`: call `moreDownload`'s witness +0x30 (seek), KSLog, then
+   `moreUrlPos = self+0x50`;
+6. read through `moreDownload`'s witness +0x28 into `loadMoreBuffer`;
+7. EOF handling — on the `-0x20464f45` sentinel (= AVERROR_EOF) with size-1 < 0, set `eof` when
+   `isJudgeEOF`, and return `0xdfb9b0bb`;
+8. otherwise `CacheIOContext.addEntry(logicalPos:buffer:size:)` (**throws**), advance self+0x50 with
+   a carry trap, raise self+0x48 to the new max, `updateSpeedSample(newPos:)`, and store into
+   `fakeUrlPos` and `moreUrlPos`.
+
+BOTH KSLog STRINGS ARE DECODED (D3 said `result=not-attempted`): the message prefix is
+`'[CacheIOContext] more ffurl_seek2 '` (34 chars @0x103d3fa40, i.e. stored 0x103d3fa20 + 0x20), the
+`#fileID` is `'PreLoadIOContext/LimitSeparatePreLoadIOContext.swift'` (52 @0x103d3f9b0), the
+`#function` is the small string `more()`, and `#line` is 0xba = **186** — matching the source
+comment's second site.
+
+⛔ **THE ONE THING THAT BLOCKS WRITING IT, and it is a TOOL GAP, not an absence in the binary.**
+Five self offsets are used numerically and cannot be soundly named right now: **0x48, 0x50, 0x80,
+0x88** (and 0x14, which IS solid — `AbstractAVIOContext.bufferSize`, per its own declaration comment
+`readLimit@+0x10, bufferSize@+0x14`). Ghidra names the others symbolically from reflection
+(`loadMoreBuffer`, `moreUrlPos`, `moreDownload`, `fakeUrlPos`, `CacheIOContext::isJudgeEOF`,
+`CacheIOContext::eof`, `CacheFileEntry::position`) but not these.
+
+`field_offset_vector.py` REFUSES both `LimitSeparatePreLoadIOContext` and `CacheIOContext` with
+"no exported metadata symbol `$s8KSPlayer…CN` in the trie" — it hardcodes the **KSPlayer** module
+prefix, and these classes live in the **PreLoadIOContext** module (`_TtC16PreLoadIOContext…`). That
+is a tool bug, and fixing it is probably a one-line change plus a golden. `dump_binary_field_types`
+does work on them but prints record ORDER, not byte offsets, and MEMORY rule 82 forbids inferring
+offsets from record order. Candidates that must NOT be written until confirmed: 0x88 looks like
+`entryList` (it is the array being binary-searched) and 0x50/0x80 like `logicalPos`/`urlPos` — all
+three are plausible and none is established.
+
+Fix the module prefix in `field_offset_vector.py`, or use the s98 offset/name reflection-table
+technique, and this body is writable in one sitting.
+
+⚠️ Also note the decompile opens with `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`
+and `addEntry` THROWS — so the `do`/`catch` is exactly the structure Ghidra drops. Derive the error
+path from the disassembly, not from the cache.
+
 ⚠️ Do NOT under-scope this from the instruction count. It is not a straight-line body: ~24 branches
 with at least two loop back-edges (0x101ba5490 and 0x101ba54a8, entered from `b.hs` @0x101ba54f8 and
 `b.lt` @0x101ba5510), signed arithmetic with overflow traps (`b.vs` @0x101ba54ac), and sign-bit tests
