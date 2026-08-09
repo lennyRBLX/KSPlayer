@@ -216,6 +216,33 @@ built 2026-08-01, two days *after* that verdict. Measured this session:
 slot 31. The UNRESOLVED label is still honest — the three DV bodies (131 / 349 / 591 instr, all
 NOT_IN_TRIE) are genuinely unwritten — but the stated *reason* no longer holds.
 
+**`LimitSeparatePreLoadIOContext.more()` @0x101ba5398** (1 HIGH + 1 MED + 1 LOW) — the largest
+*closable* unit left, and the one I would start a fresh session on. 0x101ba5398-0x101ba5a5c, 1732 B,
+433 instr, vtable idx30. Source body is a bare `0`, so the compiled override returns 0 unconditionally
+and the separate-preload path never runs.
+
+Callees resolved (all four in-image, trie-named except one):
+
+    0x101ba5a5c  LimitSeparatePreLoadIOContext.(canContinuePreload in _D3E0B2D6…)(at: UInt64) -> Bool
+    0x101ba4e30  LimitSeparatePreLoadIOContext.findDiscontinuousPos          (per the verdict)
+    0x101b8ccac  CacheIOContext.addEntry(logicalPos:buffer:size:) throws -> ()
+    0x101b86044  CacheIOContext.(updateSpeedSample in _D69EFE14…)(newPos: UInt64) -> ()
+    0x101b95bfc  NOT_IN_TRIE  (a real negative)
+    0x1019b4074 / 0x1019c0094  KSOptions.logLevel / logger unsafeMutableAddressor — the 2 KSLog sites
+
+⚠️ Do NOT under-scope this from the instruction count. It is not a straight-line body: ~24 branches
+with at least two loop back-edges (0x101ba5490 and 0x101ba54a8, entered from `b.hs` @0x101ba54f8 and
+`b.lt` @0x101ba5510), signed arithmetic with overflow traps (`b.vs` @0x101ba54ac), and sign-bit tests
+(`tbnz x22,#0x3f` @0x101ba5558, `tbnz x21,#0x3f` @0x101ba56b4). Budget it like `addTimeIndex`
+(301 instr, which needed a full derivation pass plus independent verification), not like a
+constraint-setter.
+
+`canContinuePreload(at:)` is a private member our source does not declare — it has `canPreload(_:)`
+at :524, a different symbol. That reconciliation is its own unit and it gates D2.
+
+D3's two KSLog message strings were never decoded; the verdict says so explicitly
+(`result=not-attempted`). Decode them rather than carrying the source comment's 34-char prefix.
+
 **`FormatContext` inner init @0x101a350bc** (1 MED) — its stated blocker is now STALE, but the unit
 is bigger than the verdict implies. FormatContext.swift:22-27 defers the `ioContext as? PlayList`
 arms because "`PlayList` … is a Forward-only protocol NOT yet reconstructed in-tree". **It is
