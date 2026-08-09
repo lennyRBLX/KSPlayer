@@ -68,10 +68,21 @@ Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d09
 - D3: `srtControl` is not merely untouched — it is **absent from PlayerView's reflection field
   records entirely** (NumFields=5: playerLayer, delegate, toolBar, playTimeDidChange, backBlock)
   and no trie symbol names it, while `toolBar` yields four.
-- ⚠️ I did NOT finish verifying the delegate dance at 0x1019fe2e4-0x1019fe358 myself. Read it
-  before writing: `tbz w25,#0` skips a `delegate = self` block when the URLs are UNEQUAL, and the
-  common path then sets delegate = nil, calls set, and sets delegate = self again. That ordering
-  looks redundant and must be confirmed, not assumed.
+- ⚠️ The delegate dance at 0x1019fe2e4-0x1019fe358 WAS read from disassembly this session:
+  `tbz w25,#0` skips a `delegate = self` block when the URLs are UNEQUAL, and the common path then
+  sets delegate = nil, calls slot-55 `set`, and sets delegate = self again. The ordering really is
+  that redundant-looking; it is not a misreading.
+- ⛔ **D3 IS WHY THIS FILE STILL CANNOT FLIP, and it is a field-debt unit, not a statement fix.**
+  `srtControl` is absent from PlayerView's reflection field records, so the source's
+  `public let srtControl = SubtitleModel()` (:68) and `srtControl.url = url` (:168) are both
+  divergent — but the property has **15 uses across `VideoPlayerView.swift` and
+  `IOSVideoPlayerView.swift`** (selectedSubtitleInfo, subtitleInfos, the srtButton menu, the
+  auto-select-embedded-subtitle path). Removing it is a cross-file change with a 15-site blast
+  radius and is its own unit. Nothing inside `set(url:options:)` can close it.
+
+  So even with D1 and D2 fully derived and the delegate dance verified, this file is gated on the
+  `srtControl` field-debt sweep. Budget that first, or accept that writing D1+D2 moves no counter
+  (the verdict flips per FILE).
 
 **`IOSVideoPlayerView.updateUI(isLandscape:)` @0x101b08f3c** (2 HIGH + 1 LOW) — best-positioned
 remaining target, and **the expensive half is now done**. 0x101b08f3c-0x101b09494, 1368 B, 342 instr.
