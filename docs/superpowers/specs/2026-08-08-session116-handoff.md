@@ -1,4 +1,4 @@
-# Session 116 handoff — 5 commits, 4 verdicts closed, and a concurrency hazard
+# Session 116 handoff — 5 verdicts closed (+D2 of a sixth), and a concurrency hazard
 
 Take state from `python3 scripts/recon_gate.py --mode handoff`, never from this file. The numbers
 below are what I measured at the end of s116; re-derive them.
@@ -6,11 +6,11 @@ below are what I measured at the end of s116; re-derive them.
 |                | takeover | end of s116 |
 |----------------|----------|-------------|
 | CRITICAL       | 6        | 6           |
-| HIGH           | 24       | **20**      |
+| HIGH           | 24       | **18**      |
 | MED            | 17       | **16**      |
-| LOW            | 13       | **12**      |
+| LOW            | 13       | **11**      |
 | UNRESOLVED     | 1        | 1           |
-| faithful floor | 356      | **360**     |
+| faithful floor | 356      | **361**     |
 
 ## ⚠️ READ THIS FIRST — several sessions were running on this repo at once
 
@@ -35,6 +35,10 @@ is not your own session id is a peer. Their `scratchpad/` names their in-flight 
 Memory: `concurrent-sessions-race-on-one-repo`.
 
 ## Landed (mine)
+
+Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d095f`
+(IOSVideoPlayerView.updateUI — all 342 instructions) and `0e3f556`
+(canPreload -> canContinuePreload, which closes D2 of LimitSeparatePreLoadIOContext.more).
 
 - `528dccf` KSOptions idx128-130 placement. `wantedAudio`/`audioFrameMaxCount`/`isAudioRateByFilter`
   moved between `syncDecodeAudio` and `fontsDir`, matching vtable order. The file's own comment
