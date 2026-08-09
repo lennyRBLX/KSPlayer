@@ -1373,6 +1373,32 @@ all 356 instructions (0x1019cdc34) and it is inside the loop, not at entry, so i
 inlined isolated callee. Its `reportUnexpectedExecutor` gives a hard `#fileID` anchor —
 `'KSPlayer/KSPlayerLayer.swift'` line **465**.
 
+## The classmap collides on 28 names, and KSPlayer LOSES every collision that matters
+
+`PlayerView_setUrlOptions` D4 records that `vtable_walk.py PlayerView` answers `refused:
+no-vtable` not because PlayerView is a UIView subclass but because the classmap holds two entries
+named PlayerView and lookup returns the first. **Verified, and it is broader than one class.**
+
+`reconstruction/classmap_1.3.17.jsonl` has 1064 entries under 1002 distinct names. Lookup takes
+the FIRST match, silently. **28 names appear in more than one module, and 4 involve a KSPlayer
+class — in all four KSPlayer does NOT win:**
+
+    PlayerView     Notelet      0x1039e919c   (KSPlayer 0x1039ee210 is 2 of 2)
+    Coordinator    Shared       0x1039a6cfc   (KSPlayer 0x1039ed33c is 16 of 17)
+    Box            Kingfisher   0x1039ac98c   (KSPlayer 0x1039ee654 is 4 of 4)
+    BundleFinder   ForwardWidget 0x1039a4048  (KSPlayer 0x1039eae58 is 11 of 12)
+
+The danger is that it fails as a *plausible wrong answer*, never as an error — `refused:
+no-vtable` reads exactly like a correct conclusion about a UIView subclass.
+
+**One verdict was worth checking and is clean:** `Coordinator_playerCurrentTimeTotalTime_s81`
+(9 divergences) is anchored on `binary_addr` 0x1019db8e8, not on a name lookup, so its findings
+stand. A verdict anchored on an ADDRESS is immune; one that ran a tool by NAME is not.
+
+The fix is a module-aware lookup in the tool, which was NOT made here — an agent was running
+against these tools at the time and MEMORY rule 7 forbids editing a tool underneath one. Until
+then, pass the KSPlayer descriptor explicitly via `--desc`.
+
 ## A gate was right and I was wrong — worth the 10 minutes it costs to check
 
 `l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as

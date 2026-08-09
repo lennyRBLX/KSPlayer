@@ -439,7 +439,9 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     //   `$s16PreLoadIOContext05LimitabC0C26calculateCacheDistribution33_54C5BFE79C74C4F124A8D6AC1061ABF8LL…`
     //   = `LimitPreLoadIOContext.(calculateCacheDistribution in _54C5BFE79C74C4F124A8D6AC1061ABF8)()`.
     //   `calculateCachedDistribution` was never in the binary. The `LL` discriminator makes it
-    //   file-private, hence `private`. It had no caller in the tree, so the rename is free.
+    //   file-private, hence `private`. It had no caller in the tree, so the rename was free.
+    //   ⚠️ THAT LAST CLAUSE IS NOW STALE: `preloadCount()` below calls it (`bl 0x101b9f684` at
+    //   0x101ba1f68), which is also the binary's only caller. The rename remains correct.
     // ⚑[tool=vtable_walk ref=LimitPreLoadIOContext.slot44:0x101b9f684 result=Method-last-slot]
     private func calculateCacheDistribution() -> (readed: UInt64, contiguousPreload: UInt64,
                                                   disconnected: UInt64, disconnectedStartIndex: Int?) {
@@ -505,5 +507,93 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
             return 1
         }
         return max(min(Double(fetchedSize) / Double(maxFileSize), 1), 0.01)
+    }
+
+    /// Forward 1.3.17 @0x101ba1cdc, extent 0x101ba1cdc-0x101ba2618 (2364 B / 591 instr), one symbol.
+    ///
+    /// It is an OVERRIDE, which is why it carries no method descriptor of its own: override-table
+    /// entry 8 pairs impl 0x101ba1cdc with base-method-descriptor 0x1039f6578 =
+    /// `method descriptor for PreLoadIOContext.PreLoadIOContext.preloadCount() -> Swift.UInt32`,
+    /// under base-class descriptor 0x1039f6380. It is absent from the 45-slot vtable, as an
+    /// override should be. Access is written bare to match the base's bare `func` at
+    /// PreLoadIOContext.swift:357; the mangling carries no discriminator (so not private) and an
+    /// override emits nothing that separates internal from public.
+    /// ⚑[tool=override_table ref=LimitPreLoadIOContext.preloadCount:0x101ba1cdc result=entry8-base-0x1039f6578]
+    ///
+    /// EVERY field this body touches is NAMED, not eliminated — the ObjC ivar list names the
+    /// offset globals outright and its 14 entries match `fieldrec`'s 14 records in order:
+    /// `canPreload` 0x104c63980, `maxFileSize` 0x104c63988, `maxReadedFileSize` 0x104c63990,
+    /// `cachedDistribution` 0x1044f4aa0, `cachedDistributionLogicalPos` 0x1044f4aa8,
+    /// `cachedDistributionEntryCount` 0x1044f4ab0, `lastKnownCachedSize` 0x1044f4ab8. The constant
+    /// offsets come from those globals' static values: `bufferSize` +0x14, `end` +0x48,
+    /// `urlPos` +0x50, `logicalPos` +0x80, `entryList` +0x88.
+    /// ⚑[tool=ivar_name_oracle ref=LimitPreLoadIOContext:0x104406c00 result=14-named-in-record-order]
+    ///
+    /// CONTROL FLOW, re-verified against the binary by the orchestrator rather than taken from the
+    /// derivation: `cmp w8,#0x1 / b.ne` on `canPreload` (0x101ba1d18); `cbz w19` on the base result
+    /// (0x101ba1de4); `cmp x0,#0x2 / b.lt` on `entryList.count` (0x101ba1e10); `cmp x21,x8 / b.hs`
+    /// picking the log arm when `contiguousPreload >= maxFileSize` (0x101ba1ff4); and
+    /// `cmp x8,x22 / b.hs` returning `count` when `maxReadedFileSize >= readed` (0x101ba201c).
+    ///
+    /// `super.preloadCount()` is INLINED at 0x101ba1d24-0x101ba1de4 — it reproduces the base body
+    /// @0x101ba6bb8 field for field (isPreloadPaused → eof → `urlPos == end` →
+    /// `logicalPos + UInt64(bufferSize) < urlPos`), differing only in that the base's
+    /// `csel w0,w8,wzr,lo` is split into a branch because the two arms have different fates here.
+    ///
+    /// THE LOG MESSAGE IS READ, not paraphrased. `_StringGuts.grow` is called with `w0 = 0xa5`
+    /// (0x101ba2118), and `literalCapacity + 2 * interpolationCount` = 149 + 2*8 = 165 = 0xa5 for
+    /// exactly the eight segments below — which is why the inconsistent `=` / `:` punctuation is
+    /// preserved rather than tidied. Level is `mov w0,#0x3` = `.warning`, gated on
+    /// `KSOptions.logLevel` (`cmp w8,#0x3 / b.lo`); `#fileID` decodes to
+    /// 'PreLoadIOContext/LimitPreLoadIOContext.swift' and `#line` to `mov w6,#0x207` = 519.
+    /// ⚑ 519 exceeds this file's length, so the reconstruction's line numbering does not match the
+    ///   original and `#line` cannot serve as a placement gate here.
+    /// ⚑ `KSLog(…)` vs `KSLog(level: .warning, …)` is NOT DECIDABLE: `w0 = 3` equals `KSLog`'s
+    ///   declared default, so the call site cannot distinguish an omitted argument from an explicit
+    ///   one. Written bare, matching every other KSLog site in this file.
+    /// ⚑ `first!`/`last!` vs `[0]`/`[count-1]`: both lower to the same trap sequence. The binary
+    ///   emits `cbz count → brk` for the first element and a separate `count-1` overflow check plus
+    ///   a bounds check for the last, which is consistent with either spelling.
+    /// ⚑ The `for` loop vs `reduce`, and `guard` vs `if`, are likewise indistinguishable — the
+    ///   ORDER of the four cache conditions is read, the syntax carrying them is not.
+    override func preloadCount() -> UInt32 {
+        guard canPreload else {
+            return 0
+        }
+        let count = super.preloadCount()
+        if count == 0 {
+            return 0
+        }
+        if entryList.count < 2 {
+            return count
+        }
+        var totalSize: UInt64 = 0
+        for entry in entryList {
+            totalSize += UInt64(entry.size)
+        }
+        let distribution: (readed: UInt64, contiguousPreload: UInt64,
+                           disconnected: UInt64, disconnectedStartIndex: Int?)
+        if let cached = cachedDistribution,
+           cachedDistributionLogicalPos == logicalPos,
+           cachedDistributionEntryCount == entryList.count,
+           lastKnownCachedSize == totalSize
+        {
+            distribution = cached
+        } else {
+            distribution = calculateCacheDistribution()
+            cachedDistribution = distribution
+            cachedDistributionLogicalPos = logicalPos
+            cachedDistributionEntryCount = entryList.count
+            lastKnownCachedSize = totalSize
+        }
+        if distribution.contiguousPreload >= maxFileSize {
+            KSLog("[CacheIOContext] reach maxFileSize=\(maxFileSize) contiguousPreload=\(distribution.contiguousPreload) disconnected=\(distribution.disconnected) first entryLogicalPos=\(entryList.first!.position) last entryLogicalPos:\(entryList.last!.position) logicalPos:\(logicalPos) urlPos:\(urlPos) entryListCount:\(entryList.count)")
+            return 0
+        }
+        if distribution.readed > maxReadedFileSize {
+            let entry = entryList[1]
+            return entry.maxSize ?? entry.size
+        }
+        return count
     }
 }
