@@ -128,9 +128,36 @@ D2 IS CONFIRMED against the field vector: `maskImageView` (0x168), `landscapeBut
 any of them** — the body only ever loads 0x1044f0f30-f68 (the eight constraints) and 0x1044f18a0
 (topMaskView @0x80). The source's phone block at :322-337 genuinely has no counterpart.
 
-STILL UNREAD, and the reason the body is not written: x21 is RELOADED at 0x101b091b0 as
-`ldr x21,[x25,x28]` from a different base and offset than the 0x80 load, so the later `setHidden:`
-receiver is NOT proven to be topMaskView. Resolve x25/x28 first. Everything else above is read.
+THE `setHidden:` RECEIVERS ARE ALL RESOLVED. x21 is used for TWO different objects and that is the
+trap — do not carry the first binding forward:
+
+    x21 (first, @0x101b08f6c)  self.topMaskView          via global 0x1044f18a0 -> offset 0x80
+                                                         (a VideoPlayerView field)
+    x25                        self.toolBar              via global 0x1044e7508 -> offset 0x20
+    x26                        toolBar.playbackRateButton  global 0x1044e7468 -> PlayerToolBar 0x38
+    x28                        toolBar.srtButton           global 0x1044e7438 -> PlayerToolBar 0x8
+    x21 (rebound, @0x101b08ff8 and again @0x101b091b0)  toolBar.srtButton
+
+So the writes are:
+  · `topMaskView.isHidden = <topBarShowInCase test>`      — matches source :445-449
+  · `toolBar.playbackRateButton.isHidden = false` (w2=0)  — matches source :450
+  · phone AND portrait:  `toolBar.srtButton.isHidden = true` (w2=1)     — matches source :457
+  · phone AND landscape: `toolBar.srtButton.isHidden = <count == 0>`    — matches source :455
+
+TWO THINGS STILL UNREAD, and they are why the body is not written:
+
+1. **The collection behind the landscape `isEmpty`.** 0x101b091c0-0x101b09228 is a KEYPATH access,
+   not a field read: 0x10356fd18 and 0x10356fd40 are keypath/metadata structures, NOT strings
+   (`decode_string_literal` on them returns binary garbage, which is the correct negative), handed
+   to 0x10345cdd8 and then 0x1034532ec, after which `ldr x22,[x0,#0x10]` / `cmp x22,#0` /
+   `cset w2,eq` produces the Bool. Identify what that keypath pair projects before writing
+   `srtControl.subtitleInfos.isEmpty` — the source's spelling is plausible but NOT established, and
+   PlayerView's own reflection records carry no `srtControl` at all (see the PlayerView D3 above).
+2. **x27**, loaded from global 0x1044e74e8 -> offset 0x8 and used as `add x0, x20, x27` under a
+   `swift_beginAccess`. `recover_field_offsets --class IOSVideoPlayerView --global 0x1044e74e8`
+   answers NOT RECOVERED, so it needs the vpWvd symbolic route.
+
+Everything else in this body is read. Those two reads finish it.
 
 **The UNRESOLVED verdict's premise is dead.** `VideoSwresample_DVbodies_deferral_p3a` defers on
 "unverifiable with current tools … NOT protocol witness tables". `decode_witness_table.py` was
