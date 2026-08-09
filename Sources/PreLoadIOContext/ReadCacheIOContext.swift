@@ -81,20 +81,36 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     // ⚑[tool=export_trie_oracle ref=ReadCacheIOContext:vpfi result=5-end-entryCache-eof-logicalPos-urlPos]
     // ⚑[tool=body_fingerprint ref=ReadCacheIOContext.firstEntryContain:0x101bad8a4 result=indexed-by-CacheFileEntry.position]
     //
-    // ⚠️ STILL OPEN: 0x1044f6910 and 0x1044f6920 are `end` and `urlPos` in SOME order. Both are
-    //   `var`, both `UInt64`, both defaulted, so neither width, mutability nor the default axis
-    //   separates them. What IS established about 0x1044f6910, and is worth not re-deriving:
-    //   it is a scalar and NOT a reference — `seek` traps on bit 63 at 0x101bad080 and then does
-    //   `adds`/`b.vs` at 0x101bad084, which is arithmetic on a UInt64, and `fileSize` does an
-    //   UNSIGNED max into it (`csel …, hi` @0x101bad4f8).
+    // ✅ CLOSED, s114: **0x1044f6910 is `end`** — and NOT by the declaration-order hypothesis below,
+    //   which stays refuted. The route that closed it is a READ, not a guess about the compiler:
+    //   `seek` LOGS the field it is about to interpolate, so the label names the value.
     //
-    //   A HYPOTHESIS, recorded as one and NOT written into any body: the init's five default
-    //   stores appear to run in FIELD-DECLARATION order, which would give 0x1044f6910 = `end` and
-    //   0x1044f6920 = `urlPos`. Three of the five slots are independently bound above — eof (1st),
-    //   logicalPos (3rd) and entryCache (5th) — and all three land exactly where declaration order
-    //   predicts. That is suggestive, not decisive, and it is a claim about compiler behaviour
-    //   rather than a read, so it needs a golden on a class whose bindings are ALL known before
-    //   anything is written from it.
+    //   At 0x101bad13c-0x101bad168 the 28-byte literal `'[ReadCacheIOContext] urlPos '` is appended
+    //   and the very next load is `ldr x8,[x8,#0x920]` through **0x1044f6920**, whose value goes
+    //   straight into the interpolation buffer. That pins `urlPos` = 0x1044f6920.
+    //
+    //   ⚑ THE PAIRING IS VALIDATED AGAINST A KNOWN ANSWER before being used, which is the whole
+    //     reason it is trustworthy. The next label in the SAME statement is built in registers at
+    //     0x101bad1a0-0x101bad1b8 — x0 = 0x6c616369676f6c20, x1 = 0xec000000_3a736f50, i.e.
+    //     `" logicalPos:"`, count 12 — and the load that follows it at 0x101bad1c8 goes through
+    //     **0x104c639e0**, which the export trie independently names
+    //     `direct field offset for …ReadCacheIOContext.logicalPos`. The label-to-value convention
+    //     therefore holds on a field bound by an entirely different route.
+    //     ⚑[tool=export_trie_oracle ref=ReadCacheIOContext.logicalPos:0x104c639e0 result=vpWvd-logicalPos]
+    //
+    //   With every other `var` pinned by an independent route — `eof` 0x1044f6918 (mutability axis),
+    //   `logicalPos` 0x104c639e0 (vpWvd), `urlPos` 0x1044f6920 (the label above), `entryCache`
+    //   0x1044f6930 (loaded, nil'd with `str xzr`, then `swift_release`d at 0x101bad6a4-0x101bad6ac,
+    //   which only a class-typed optional can be) — `end` is the only `var` the field records leave
+    //   for 0x1044f6910. The arithmetic axis corroborates it independently: `seek` traps on bit 63
+    //   at 0x101bad080 and does signed `adds`/`b.vs` at 0x101bad084, and `fileSize` does an unsigned
+    //   max into it (`csel …, hi` @0x101bad4f8) — arithmetic, so not the reference-typed candidate.
+    //   ⚑[tool=fieldrec ref=ReadCacheIOContext:0x103cc0ccc result=8-fields-5-var]
+    //   ⚑[tool=bind_oracle ref=ReadCacheIOContext.entryCache:0x104113030 result=swift_release]
+    //
+    //   THE SUPERSEDED HYPOTHESIS, kept because its refutation is still load-bearing: the init's
+    //   five default stores appear to run in FIELD-DECLARATION order, which would give the same
+    //   answer for the wrong reason. It is a claim about compiler behaviour rather than a read.
     //
     //   ❌ THAT GOLDEN WAS RUN, ON KSPlayerLayer, AND THE HYPOTHESIS FAILED IT. DO NOT USE IT.
     //   KSPlayerLayer is the ideal control — 11 `vpfi` fields, with `delegate` and
@@ -119,7 +135,7 @@ public class ReadCacheIOContext: AbstractAVIOContext {
     //   through 0x940 ascend while the fields they carry do not.
     private var eof: Bool = false
     // end: logical end offset of the cached stream.
-    private var end: UInt64 = 0 // ⚑ gate-UNCHECKED; UInt64 by the position-field pattern (siblings gate-confirmed)
+    private var end: UInt64 = 0 // UInt64 read from the field record (symref -> __got 0x104112b58 = _$ss6UInt64VMn); offset global 0x1044f6910, closed s114 — see above
     // logicalPos: current logical read cursor.
     public var logicalPos: UInt64 = 0 // UInt64 — l2_field_gate binary signal (unscoped; matches CacheOnlyIOContext.logicalPos)
     // urlPos: current position within the backing download.
