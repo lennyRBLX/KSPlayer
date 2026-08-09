@@ -50,12 +50,12 @@ public class LimitCountPreLoadIOContext: LimitPreLoadIOContext {
     // to be invented. It is its own unit. The existence-check RAN and LOCATED that construction —
     // it is found and characterised, not missing:
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext18URLContextDownloadC3url5flags7options9interrupt14isReadCompleteAC10Foundation3URLV_s5Int32VSpys13OpaquePointerVSgGSgSo15AVIOInterruptCBVSbtKcfc:0x101b90c58 result=LOCATED]
-    init(download: (any DownloadProtocol)?, md5: String,
+    init(download: any DownloadProtocol, md5: String,
          bufferSize: Int32 = 32 * 1024, saveFile: Bool,
          maxFileSize: UInt64, maxReadedFileSize: UInt64, isReadComplete: Bool,
-         maxMoreCount: UInt16) {
+         maxMoreCount: UInt16) throws {
         self.maxMoreCount = maxMoreCount   // binary s3: self.maxMoreCount = param; moreCount defaults 0
-        super.init(download: download, md5: md5, bufferSize: bufferSize,
+        try super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, maxFileSize: maxFileSize,
                    maxReadedFileSize: maxReadedFileSize, isReadComplete: isReadComplete)
     }

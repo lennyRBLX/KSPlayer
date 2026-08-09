@@ -95,7 +95,11 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     //    and could not have been value-copied by FUN_1001263e0.
     // ⚑[tool=disassemble_function ref=outlined_existential_copy:0x1001263e0 result=CONFIRMED — copies metadata@+0x18 + witness@+0x20 + VWT[0] buffer copy]
     // ⚑[tool=decode_witness_table ref=AbstractAVIOContext:DownloadProtocol:0x1041d5330 result=CONFIRMED (conf_desc 0x103568820, 8 requirements)]
-    let moreDownload: (any DownloadProtocol)? // ⚑ optionality inferred (a nil existential is a zero metadata word; unobservable here)
+    // ⚑ NON-OPTIONAL, and the old note ("optionality inferred … unobservable here") is refuted:
+    //   it IS observable, in the field records. This typeref is a bare `_p` with no trailing `Sg`,
+    //   against `ReadCacheIOContext.download`'s `_pSg` as the control.
+    // ⚑[tool=fieldrec ref=LimitSeparatePreLoadIOContext.moreDownload:0x1039f61e8 result=_p-no-Sg]
+    let moreDownload: any DownloadProtocol
     // 5  moreUrlPos: current position within the secondary download. Designated init
     //    zeroes it. ⚑ (gate-UNCHECKED; UInt64 by the position-field pattern).
     private var moreUrlPos: UInt64 = 0 // ⚑
@@ -223,9 +227,9 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     // existentials because both arrive indirectly and are destroyed on exit with the
     // outlined existential destroy 0x100012a78 (@in/owned indirect params, the same
     // convention the convenience init below uses for its URL).
-    public init(download: (any DownloadProtocol)?, moreDownload: (any DownloadProtocol)?,
+    public init(download: any DownloadProtocol, moreDownload: any DownloadProtocol,
                 md5: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool,
-                maxFileSize: UInt64, maxReadedFileSize: UInt64, isReadComplete: Bool) {
+                maxFileSize: UInt64, maxReadedFileSize: UInt64, isReadComplete: Bool) throws {
         self.loadMoreBuffer = nil          // binary: *(self+loadMoreBuffer) = 0
         self.fakeUrlPos = 0                // binary: *(self+fakeUrlPos) = 0
         self.moreUrlPos = 0                // binary: *(self+moreUrlPos) = 0
@@ -233,7 +237,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
         self.moreDownload = moreDownload   // binary: FUN_1001263e0 existential copy of x1 @0x101ba4708
         self.maxFileSize = maxFileSize     // binary: *(self+0x104c639a8) = x6 @0x101ba4714
         self.maxReadedFileSize = maxReadedFileSize // binary: *(self+0x104c639b0) = x7 @0x101ba4720
-        super.init(download: download, md5: md5, bufferSize: bufferSize,
+        try super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete) // binary: FUN_101b86d38  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
     }
 
@@ -379,19 +383,28 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     public convenience init(url: URL, formatContextOptions: [String: Any], interrupt: AVIOInterruptCB,
                             saveFile: Bool, maxFileSize: UInt64,
                             maxReadedFileSize: UInt64, isReadComplete: Bool) throws {
-        // binary: one owned dictionary, mutated in place between the two download builds.
+        // ⚑ BOTH BUILDS ARE NOW WRITTEN, and the `cacheKey` placeholder is gone. The binary
+        //   constructs TWICE from ONE owned dictionary mutated in place between them:
+        //   0x101ba4420 over the PRE-mutation options → `download` (box at fp-0x88), then the
+        //   `rw_timeout` insert, then 0x101ba4508 over the POST-mutation options → `moreDownload`
+        //   (box at fp-0xb0). Both pass flags 1 and isReadComplete false, exactly as CacheIOContext's
+        //   single build does, and each box carries the same static witness table 0x1041d5330.
+        // ⚑ `let cacheKey = ""` WAS A SELF-DECLARED PLACEHOLDER AND IS REPLACED. The binary derives
+        //   the key from the URL, through two calls that are both trie-named rather than raw
+        //   addresses now, and `sortQueryString` is declared as of e9292c1 — so the real expression
+        //   is writable rather than stubbed.
+        // ⚑[tool=resolve_fun_pins ref=URL.sortQueryString.getter:0x101b86a2c result=RESOLVES_UNIQUELY]
+        // ⚑[tool=resolve_fun_pins ref=String.md5:0x1019f0d98 result=RESOLVES_UNIQUELY]
+        // ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
+        var avOptions = formatContextOptions.avOptions
+        let download = try URLContextDownload(url: url, flags: 1, options: &avOptions, interrupt: interrupt, isReadComplete: false)
+        av_dict_free(&avOptions)
         var options = formatContextOptions
-        // UNRESOLVED → P8: download = try URLContextDownload(url: url, flags: 1,
-        //   options: &options.avOptions, interrupt: interrupt) — binary @0x101ba43bc-
-        //   0x101ba4420: avOptions built from the PRE-mutation dictionary, the
-        //   AVDictionary** passed as x2, then av_dict_free(&avOptions) @0x101ba444c.
         options["rw_timeout"] = 100_000 // binary: Dictionary<String,Any> subscript set @0x101ba44a4
-        // UNRESOLVED → P8: moreDownload = try URLContextDownload(url: url, flags: 1,
-        //   options: &options.avOptions, interrupt: interrupt) — binary @0x101ba44b8-
-        //   0x101ba4508 over the POST-mutation dictionary, av_dict_free @0x101ba4540.
-        _ = options // the mutated dictionary feeds the deferred second build above
-        let cacheKey = "" // ⚑ PLACEHOLDER — NOT the binary's value; see the UNRESOLVED cacheKey marker
-        self.init(download: nil, moreDownload: nil, md5: cacheKey,
+        var moreAVOptions = options.avOptions
+        let moreDownload = try URLContextDownload(url: url, flags: 1, options: &moreAVOptions, interrupt: interrupt, isReadComplete: false)
+        av_dict_free(&moreAVOptions)
+        try self.init(download: download, moreDownload: moreDownload, md5: url.sortQueryString.md5(),
                   bufferSize: 256 * 1024, // binary: mov w4,#0x40000 — NOT the 32 KiB default
                   saveFile: saveFile, maxFileSize: maxFileSize,
                   maxReadedFileSize: maxReadedFileSize, isReadComplete: isReadComplete)

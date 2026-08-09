@@ -142,9 +142,9 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
     // LimitSeparatePreLoadIOContext.swift:346 — see LimitCountPreLoadIOContext.swift. The
     // existence-check for the value those spines stand in for LOCATED it:
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext18URLContextDownloadC3url5flags7options9interrupt14isReadCompleteAC10Foundation3URLV_s5Int32VSpys13OpaquePointerVSgGSgSo15AVIOInterruptCBVSbtKcfc:0x101b90c58 result=LOCATED]
-    init(download: (any DownloadProtocol)?, md5: String, bufferSize: Int32 = 32 * 1024,
+    init(download: any DownloadProtocol, md5: String, bufferSize: Int32 = 32 * 1024,
          saveFile: Bool, maxFileSize: UInt64, maxReadedFileSize: UInt64,
-         isReadComplete: Bool) {
+         isReadComplete: Bool) throws {
         self.maxFileSize = maxFileSize            // binary s37: self.maxFileSize = param_6
         self.maxReadedFileSize = maxReadedFileSize // binary s37: self.maxReadedFileSize = param_7
         // binary s37: the remaining 12 own fields are set to the constants carried as the
@@ -153,7 +153,7 @@ public class LimitPreLoadIOContext: PreLoadIOContext {
         //   flattening the chain and belong to PreLoadIOContext — NOT re-set here.
         // binary s37: delegates to CacheIOContext's designated init (FUN_101b86d38),  ⚑[tool=resolve_fun_pins ref=FUN_101b86d38:0x101b86d38 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheIOContext.init(download: KSPlayer.DownloadProtocol, md5: Swift.String, bufferSize: Swift.Int32, saveFile: Swift.Bool, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.CacheIOContext
         //   inherited through PreLoadIOContext.
-        super.init(download: download, md5: md5, bufferSize: bufferSize,
+        try super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete)
     }
 

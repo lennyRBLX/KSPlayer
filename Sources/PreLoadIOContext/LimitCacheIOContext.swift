@@ -27,11 +27,11 @@ public class LimitCacheIOContext: CacheIOContext {
     // P8 spines at CacheIOContext.swift:211 and LimitSeparatePreLoadIOContext.swift:346, whose
     // real argument is built by the FFmpeg URLContext open that the existence-check LOCATED:
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext18URLContextDownloadC3url5flags7options9interrupt14isReadCompleteAC10Foundation3URLV_s5Int32VSpys13OpaquePointerVSgGSgSo15AVIOInterruptCBVSbtKcfc:0x101b90c58 result=LOCATED]
-    public init(download: (any DownloadProtocol)?, md5: String,
+    public init(download: any DownloadProtocol, md5: String,
                 bufferSize: Int32 = 32 * 1024, saveFile: Bool, maxFileSize: UInt64,
-                isReadComplete: Bool) {
+                isReadComplete: Bool) throws {
         self.maxFileSize = maxFileSize
-        super.init(download: download, md5: md5, bufferSize: bufferSize,
+        try super.init(download: download, md5: md5, bufferSize: bufferSize,
                    saveFile: saveFile, isReadComplete: isReadComplete)
     }
 }

@@ -50,7 +50,13 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //    via `as? AbstractAVIOContext`). Built by the convenience init via the shared URLContextDownload
     //    init (URLContextDownload conforms to DownloadProtocol through AbstractAVIOContext).
     // ⚑[tool=name_type_at_addr ref=DownloadProtocol:0x1039edd38 result=(any DownloadProtocol)? — 40B non-class existential; confirmed 4x: typeref-demangle 0x103571a68, 40B value-witness copy, fr_category=complex, downstream offset lastSpeedSampleTime@+0x58]
-    var download: (any DownloadProtocol)?
+    // ⚑ NON-OPTIONAL. The field record's typeref is a bare `_p` with NO trailing `Sg`, and the
+    //   control that makes that absence informative is `ReadCacheIOContext.download`, which DOES
+    //   carry `_pSg` — so the emitter writes `Sg` when it means it, and the optionality here is a
+    //   per-declaration fact, not a uniform guess. `CacheIOContext.fileSize()` projects this
+    //   existential and calls through it with no nil test at all.
+    // ⚑[tool=fieldrec ref=CacheIOContext.download:0x1039f5670 result=_p-no-Sg]
+    var download: any DownloadProtocol
     // 2  end: logical end offset of the cached stream. ⚑ gate-UNCHECKED; UInt64 by
     //    the position-field pattern (siblings gate-confirmed).
     var end: UInt64 = 0 // ⚑ (gate UNCHECKED; position-pattern)
@@ -344,7 +350,7 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // literal search for it ever hit.
     // ⚑[tool=export_trie_oracle ref=$s16PreLoadIOContext05CacheC0C8download3md510bufferSize8saveFile14isReadCompleteAC8KSPlayer16DownloadProtocol_p_SSs5Int32VS2btKcfc result=labels RECOVERED]
     // ⚑[tool=export_trie_oracle ref=CacheIOContext.init:throws result=the mangled name ends `tKcfc` — the K is `throws`, which this declaration does NOT carry; body+callers unchanged this batch, PINNED as its own unit]
-    public init(download: (any DownloadProtocol)?, md5: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
+    public init(download: any DownloadProtocol, md5: String, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) throws {
         self.download = download
         self.saveFile = saveFile          // binary: explicit (char)param_5 store
         self.isReadComplete = isReadComplete // binary: explicit param_6 store
@@ -377,17 +383,26 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // left as the delegated `download`-build call, NOT reconstructed. Arity/param
     // roles beyond formatContextOptions + interrupt are inferred.
     //
-    // UNRESOLVED → P8 (IO-completion): the real convenience init's full signature (the URL + options
-    //   that FUN_101b90c58 opens an FFmpeg URLContext from) is deep FFmpeg whose  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
-    //   stripped calls only the P2 oracle names. The determinable post-delegation
-    //   field stores (formatContextOptions, interrupt) are shown here as the faithful
-    //   spine; the download-build is the delegated call, not fabricated.
-    // ⚑[tool=export_trie_oracle ref=CacheIOContext.init(url:formatContextOptions:interrupt:saveFile:isReadComplete:) result=DIVERGENT — the trie carries this convenience at ARITY 5 with `url:` as the first label and NO `bufferSize:`; this declaration has 6 params led by `cacheKey:`. Signature + body are a unit of their own (dropping a parameter changes the delegation), so it is PINNED rather than half-applied here]
-    public convenience init(cacheKey: String, formatContextOptions: [String: Any]?, interrupt: AVIOInterruptCB?, bufferSize: Int32 = 32 * 1024, saveFile: Bool, isReadComplete: Bool) {
-        // UNRESOLVED → P8 (IO-completion): download = URLContextDownload(<FFmpeg URLContext open via
-        //   FUN_101b90c58>) — the shared inner init opens the libavformat URLContext;  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
-        //   deep FFmpeg, not reconstructed. Delegated as nil here (compilable spine).
-        self.init(download: nil, md5: cacheKey, bufferSize: bufferSize, saveFile: saveFile, isReadComplete: isReadComplete)
+    /// Convenience init @0x101b8668c, 146 instructions. ⚑ THE ARITY PIN IS DISCHARGED: the trie
+    /// carries this at ARITY 5 led by `url:` with NO `bufferSize:`, and it THROWS. The old
+    /// 6-parameter `cacheKey:`-led declaration was the reconstruction's own, and the `download: nil`
+    /// it delegated was never Forward's value — the binary CONSTRUCTS here.
+    ///
+    /// It builds ONE `URLContextDownload` at 0x101b86778 with flags **1** and isReadComplete
+    /// hardcoded **false** (not the parameter), boxes it as a `DownloadProtocol` existential — the
+    /// witness table is the static 0x1041d5330, the inherited `AbstractAVIOContext : DownloadProtocol`
+    /// conformance this tree already declares — and passes the box ADDRESS as `download`.
+    /// It then delegates through vtable+0x380 with `md5:` = `url.sortQueryString.md5()` and
+    /// bufferSize **0x40000** (256 KiB), NOT the 32 KiB default, and finally stores only
+    /// `formatContextOptions` (offset global 0x1044f3828) and `interrupt` (0x1044f3830).
+    ///
+    /// `av_dict_free` runs on the NON-throwing edge only, which is why it sits after the build.
+    /// ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
+    public convenience init(url: URL, formatContextOptions: [String: Any], interrupt: AVIOInterruptCB, saveFile: Bool, isReadComplete: Bool) throws {
+        var avOptions = formatContextOptions.avOptions
+        let download = try URLContextDownload(url: url, flags: 1, options: &avOptions, interrupt: interrupt, isReadComplete: false)
+        av_dict_free(&avOptions)
+        try self.init(download: download, md5: url.sortQueryString.md5(), bufferSize: 256 * 1024, saveFile: saveFile, isReadComplete: isReadComplete)
         self.formatContextOptions = formatContextOptions // binary: store at +formatContextOptions
         self.interrupt = interrupt                       // binary: 2-word store at +interrupt
     }
