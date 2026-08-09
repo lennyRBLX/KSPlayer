@@ -216,6 +216,20 @@ built 2026-08-01, two days *after* that verdict. Measured this session:
 slot 31. The UNRESOLVED label is still honest — the three DV bodies (131 / 349 / 591 instr, all
 NOT_IN_TRIE) are genuinely unwritten — but the stated *reason* no longer holds.
 
+**`FormatContext` inner init @0x101a350bc** (1 MED) — its stated blocker is now STALE, but the unit
+is bigger than the verdict implies. FormatContext.swift:22-27 defers the `ioContext as? PlayList`
+arms because "`PlayList` … is a Forward-only protocol NOT yet reconstructed in-tree". **It is
+reconstructed** — `public protocol PlayList` with all four requirements in witness-table order at
+PlayerDefines.swift:642. So the deferral's reason no longer holds.
+
+⚠️ But before planning it: the body is **1153 instructions** (0x101a350bc-0x101a362c0, 4612 B), and
+the cast is NOT in it — a full dump contains no `swift_dynamicCast` and no `swift_conformsToProtocol`
+call anywhere in the extent. Find where the cast actually lives (the outer init 0x101a35050, or
+MEPlayerItem's FUN_101a512b4 which the source comment says shares it) before attributing the arms to
+this address. The three arms the comment names are: `seekByBytes = true`, the
+`formatCtx->duration = duration * AV_TIME_BASE` side-effect, and the per-track `languageCode`/`name`
+override driven from `audioLanguageCodeMap` / `subtitleLanguageCodeMap`.
+
 **`AudioDescriptor.audioFormat(...)` @0x101a68c44** — pinned at the declaration in `240952a`.
 Forward's helper does not switch on sampleFormat: no `br x` in the extent, and
 `101a68eb8: mov w2, #0x1` sets commonFormat unconditionally. Not rewritten because the two
