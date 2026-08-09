@@ -10,10 +10,12 @@ import FFmpegKit   // AVIOInterruptCB chain — subContexts holds CacheIOContext
 //
 //   fields  — the 14 stored properties are orchestrator-RESOLVED (the brief's table:
 //             NAMES + ORDER + COUNT + TYPES + defaults transcribed verbatim, NOT
-//             re-derived from the decompile). The ⚑ ones are best-effort (Optional/
-//             composite shapes, plus the m3u8Buffer name is inferred) → l2_field_gate
-//             UNCHECKs them (expected 0 FLAG). HLSSegment WAS a fabricated placeholder and is
-//             now deleted — the field record types `segments` as [Foundation.URL].
+//             re-derived from the decompile). ⚠️ THE "m3u8Buffer name is inferred" NOTE THAT
+//             STOOD HERE WAS STALE: the ObjC ivar list names 0x1044f4308 `m3u8Buffer` outright.
+//             baseURL / hlsCacheDir / m3u8Buffer are all NON-OPTIONAL (empty field-record tails)
+//             and HLSSegment was a fabricated placeholder, now deleted — `segments` is
+//             [Foundation.URL]. l2_field_gate still UNCHECKs several of these, but that means its
+//             route (a mangled property symbol) is closed, NOT that the type is unknowable.
 //   init    — the designated init s18 @101b96cb0 delegates to the inner field-store
 //             init FUN_101b96cb0 (cached); reconstructed from that inner: it stores all  ⚑[tool=resolve_fun_pins ref=FUN_101b96cb0:0x101b96cb0 result=RESOLVES_UNIQUELY] = PreLoadIOContext.HLSCacheIOContext.init(download: PreLoadIOContext.URLContextDownload, mediaId: Swift.String, baseURL: Foundation.URL, formatContextOptions: [Swift.String : Any]) throws -> PreLoadIOContext.HLSCacheIOContext
 //             14 fields (defaults below; download/mediaId/baseURL/formatContextOptions
@@ -52,14 +54,21 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     //    String two-word, bridge-retained).
     public let mediaId: String
     // 2  baseURL: the manifest base URL for resolving relative segment URLs. init-set
-    //    (param_4; copied via Foundation::URL value-witness). ⚑ optionality inferred.
-    public let baseURL: URL? // ⚑ (optionality inferred; gate UNCHECKED)
+    //    (param_4; copied via Foundation::URL value-witness).
+    //    NON-OPTIONAL, READ THREE WAYS: field record 2 is `symref->__got 0x104109b20` =
+    //    `_$s10Foundation3URLVMn` with an EMPTY tail (flags=0, so `let`); the same symref target
+    //    is field 4 and the element of field 7; and the trie's own init signature says
+    //    `baseURL: Foundation.URL`. This file already QUOTED that signature in its comments while
+    //    declaring `URL?` — the source contradicted its own recorded evidence.
+    public let baseURL: URL
     // 3  formatContextOptions: FFmpeg format-context options for child contexts. init-set
     //    (param_5).
     let formatContextOptions: [String: Any]
     // 4  hlsCacheDir: on-disk cache dir (tmpDir/videoCache/<mediaId>/hls). init-derived
-    //    + createDirectory. ⚑ optionality inferred.
-    public let hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
+    //    + createDirectory. NON-OPTIONAL: field record 4 is the SAME `symref->__got 0x104109b20`
+    //    (`_$s10Foundation3URLVMn`) with an EMPTY tail, flags=0 (`let`). The init already derives
+    //    it from a non-optional `URL(fileURLWithPath:)` chain, so nothing else changes.
+    public let hlsCacheDir: URL
     // 5  m3u8Buffer: the downloaded m3u8 manifest bytes.
     //    TYPE AND DEFAULT ARE BOTH READ. Field record 5 is `symref->__got 0x104109c60` =
     //    `_$s10Foundation4DataVMn` with an EMPTY tail, so the field is `Data`, NOT `Data?`
@@ -108,7 +117,7 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     // create). Signature (param→field) transcribed from the inner's explicit stores; the
     // init symbol itself is absent so arity/labels are inferred. super.init(bufferSize:)
     // is the inherited AbstractAVIOContext spine.
-    public init(download: URLContextDownload, mediaId: String, baseURL: URL?, formatContextOptions: [String: Any]) throws {
+    public init(download: URLContextDownload, mediaId: String, baseURL: URL, formatContextOptions: [String: Any]) throws {
         self.download = download
         self.mediaId = mediaId
         self.baseURL = baseURL
