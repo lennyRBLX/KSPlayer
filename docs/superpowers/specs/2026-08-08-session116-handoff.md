@@ -408,8 +408,38 @@ The lower-bound search, 0x101ba54a0-0x101ba5514:
 i.e. the first entry whose `position` exceeds `pos`, kept in x24, with retain/release per probe.
 Element stride 8 plus the retain confirms `[CacheFileEntry]` is an array of class references.
 
-STILL UNREAD FROM DISASSEMBLY, and the only thing between here and a written body: the `!ok` arm at
-0x101ba553c, and the read/EOF path 0x101ba5710-0x101ba5980.
+The `!ok` arm, 0x101ba553c-0x101ba55a4 — it is NOT a no-op, it seeks and logs:
+
+    101ba553c: mov  x22, x0            pos, from findDiscontinuousPos
+    101ba5548: add  x0, x19, x8        x8 = *(0x1044f5c50) = moreDownload
+    101ba554c: ldp  x21, x23, [x0, #0x18]   the existential: instance + witness table
+    101ba5558: tbnz x22, #0x3f, trap        sign check (the Int64 conversion of pos)
+    101ba5560: ldr  x8, [x23, #0x30]        witness +0x30 = seek(offset:whence:)
+    101ba5568: mov  w1, #0x0                whence = 0
+    101ba5574: blr  x8                      moreDownload.seek(offset: Int64(pos), whence: 0)
+    101ba557c: bl   KSOptions.logLevel.unsafeMutableAddressor
+    101ba5598: cmp  w8, #0x3 / b.lo 0x101ba56b0    log only when logLevel >= 3
+    101ba55a0: adrp/add 0x103d3f9b0               the #fileID literal
+
+then it falls into the 0x101ba56b0 tail (`mov w24, #0x1`, the `stp` urlPos write, return 1). Note
+`moreDownload` is read here as a NON-optional two-word existential — relevant to the standing
+`PreLoadIOContext_download_existential` optionality verdict.
+
+The post-search size clamp, 0x101ba5710-0x101ba5764:
+
+    101ba5710: cbz  x24, 0x101ba5750   no entry found -> skip the clamp
+    101ba5718: ldr  x20, [x24, x8]     entry.position
+    101ba5724: subs x8, x20, x22       entry.position - pos   (b.lo -> trap on borrow)
+    101ba5730: cmp  w9, #0x1 / b.lt    skip when size < 1
+    101ba573c: cmp  x8, x9  / b.hs     skip when the difference >= size
+    101ba5744: lsr  x9, x8, #31 / cbnz -> trap    the Int32 range check
+    101ba574c: str  x8, [sp, #0x18]    size = Int32(entry.position - pos)
+    101ba5750: ldr  x20, [x19, #0x50]  urlPos
+    101ba575c: ldr  x8, [x19, x28]     x28 = *(0x1044f5c48) = moreUrlPos
+    101ba5764: b.eq 0x101ba58f0        urlPos == moreUrlPos -> skip the seek entirely
+
+**Only 0x101ba5768-0x101ba58f0 (the seek + second log site) remains unread from disassembly.**
+Everything else in the body now carries instruction-level evidence.
 
 ✅ **THE DROPPED ERROR PATH IS NOW READ.** The cache opens with
 `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`, and 0x101ba5964 is precisely the
