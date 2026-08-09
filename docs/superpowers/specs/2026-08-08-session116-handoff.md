@@ -1230,6 +1230,74 @@ returns "NOT RECOVERED — do not guess it"; they receive the incoming `formatCo
 and the two `interrupt` words), and `URLContextDownload`'s field offsets — that class is
 `metadata_init=1` and `field_offset_vector.py` correctly REFUSES it rather than returning zeros.
 
+## The "deep FFmpeg" designated init is fully mapped — and it is ONE call, not a sequence
+
+`URLContextDownload.init(url:flags:options:interrupt:isReadComplete:)` @0x101b90c58, 264 instr,
+no ICF fold. Carried for several sessions as "deep FFmpeg, not reconstructed". It is now read
+end to end, and the expected multi-call `ffurl_alloc` → `av_dict_set` → open sequence **does not
+exist**: the body makes exactly TWO calls into the FFmpeg band, and the open is a single call.
+
+Field writes (all four stored fields, in reflection order `context, keepAlive, isReadComplete, url`):
+
+- `context` @self+0x18 — pre-set nil (`str xzr,[x27,#0x18]!`), then filled as the **out-parameter**
+  of the open call under a Modify|Tracking access (`mov w2,#0x21` → beginAccess), not from a
+  return value.
+- `keepAlive` @self+0x20 — NOT a parameter. It is
+  `av_dict_get(options?.pointee, "multiple_request", nil, 0)?.pointee.value` read via
+  `String(cString:)` and compared `== "1"`. The key literal decodes at 0x103d10100.
+  ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]
+- `isReadComplete` @self+0x21 — stored straight from parameter x5.
+- `url` — value-witness `initializeWithCopy` into `self + [0x1044f38e0]`, which `ivar_name_oracle`
+  names `url`. The offset itself is NOT statically readable (metadata_init=1; the global reads 0).
+
+`flags` is passed through unmodified (spilled at entry, reloaded verbatim into w2). `options` is
+used twice — dereferenced once for the `av_dict_get` lookup behind an explicit nil check, then
+forwarded unchanged. `interrupt` is spilled as a 2-word struct and passed **by address**; it is
+never stored on self, so whatever writes `URLContext.interrupt_callback` does so inside the open.
+
+**Two divergences this body settles, both against the current source:**
+
+1. `url` has NO `Sg` in its field record — it is a **non-optional** `Foundation.URL`, while
+   URLContextDownload.swift:44 declares `var url: URL?`.
+2. It does **not** call `super.init(bufferSize:)` at all. The superclass state is one inlined
+   8-byte store on the SUCCESS path — the constant at 0x1034e5ad8 is `ffffffff00000400`, i.e.
+   `readLimit = -1` and `bufferSize = 0x40000` = **256 KiB**, not the source's `32 * 1024`.
+
+**⚠️ PLACEMENT: this init is declared in `CacheIOContext.swift`, not `URLContextDownload.swift`.**
+Verified directly, not taken from the agent — the body's `#fileID` literal decodes to
+`'PreLoadIOContext/CacheIOContext.swift'` with `#function` = `'init(url:flags:options:interrupt:isReadComplete:)'`
+and `#line` 1043. Per [[fileid-literals-decide-placement]] that is decisive.
+⚑[tool=decode_string_literal ref=URLContextDownload.init:0x103d3eb40 result='PreLoadIOContext/CacheIOContext.swift']
+
+**The one throw path** is `result != 0` from the open →
+`KSPlayerError(errorCode: <tag 1>, avErrorCode: result)`, boxed with `swift_allocError` against
+`type metadata for KSPlayer.KSPlayerError`. Tag 1 reads as `formatOpenInput` from the binary's own
+19-case field descriptor at 0x103cbacac. The second `brk #1` in the body is a force-unwrap trap on
+a NULL `AVDictionaryEntry.value`, NOT a throw. There is also an inlined `KSLog` guarded by
+`KSOptions.logLevel >= .warning` emitting `"url open cost time=… result=…"`, timed by two
+`CACurrentMediaTime()` calls bracketing the open.
+
+**⚠️ A NEW DIVERGENCE FALLS OUT OF THAT, and it is not small.** The binary's `KSPlayerErrorCode`
+has **19** cases beginning `formatCreate, formatOpenInput, avioOpen, formatOutputCreate, …`; the
+source enum begins `unknown, formatCreate, formatOpenInput, formatOutputCreate, …`. The binary
+has no `unknown`, adds `avioOpen` (2) and `noStream` (7), and drops four cases the source carries.
+Since these are payload-less, tag == declaration index, so **every raw-value-sensitive use of this
+enum in the reconstruction is off by one.** That deserves its own unit before anything is written
+against a specific case.
+
+**THE ONE THING THAT IS NOT PROVEN, and it will block a commit.** The open call at 0x1030c03e4 is
+almost certainly `ffurl_open_whitelist`, but the oracle returns **`CONSISTENT_AMBIGUOUS`**, not
+CONFIRMED — the fingerprint is consistent but shared by 14 indexed symbols and the discriminator
+could not run ("candidate code not extractable from the archives"). `--resolve` returns UNKNOWN
+with zero survivors, and `avio_open2`, `ffio_open_whitelist`, `avio_open`, `ffurl_alloc` and
+`av_dict_set` are each REFUTED on the fingerprint. The independent evidence is the call SHAPE:
+eight arguments with the last three NULL, matching
+`int ffurl_open_whitelist(URLContext **puc, const char *filename, int flags,
+const AVIOInterruptCB *int_cb, AVDictionary **options, const char *whitelist,
+const char *blacklist, URLContext *parent)` from url.h exactly. **Do not write a CONFIRMED marker
+for it** — the pre-commit FFmpeg gate demands literally `result=CONFIRMED`, so writing this body
+will need either a better discriminator or a named deferral, exactly as `avcodec_send_packet` did.
+
 ## A gate was right and I was wrong — worth the 10 minutes it costs to check
 
 `l2_field_gate` BLOCKed `SubtitleDecode.pendingASSImageSubtitles` as
