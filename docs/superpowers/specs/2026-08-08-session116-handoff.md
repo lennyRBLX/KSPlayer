@@ -963,6 +963,61 @@ Forward's helper does not switch on sampleFormat: no `br x` in the extent, and
 **`Anime4KPipeline.loadShaderFiles(_:)` @0x101a79b84** — now declared, body pinned. 498 instr,
 unread. Until it is written, `anime4Ks` stays empty and loadPreset's KSLog reports 0 shaders.
 
+## The `decodeFrame` signature unit — scoped precisely, and it is ONE atomic compile unit
+
+This is the premise behind BOTH `FFmpegDecode_decodeFrame` D1 (CRITICAL) and
+`VideoToolboxDecode` D1 (HIGH). It had been carried as "first decide where that state lives in
+Forward's shape". It is now measured. **The `Packet` class is NOT the problem — `Packet` is alive
+in the binary** (`fieldrec --class Packet`: desc=0x1039effec, 7 fields — duration, timestamp,
+position, size, corePacket, isFlush, assetTrack). Only the *parameter type* diverges.
+
+All three conformers agree, and each carries a `Tq` method descriptor:
+
+    $s8KSPlayer12FFmpegDecodeC11decodeFrame4from17completionHandlerySpySo8AVPacketVG_ys6ResultOyAA7MEFrame_ps5Error_pGctF   0x101a2220c  677 instr
+    $s8KSPlayer14SubtitleDecodeC11decodeFrame4from17completionHandlerySpySo8AVPacketVG_...                                   0x101a69de8
+    $s8KSPlayer18VideoToolboxDecodeC11decodeFrame4from17completionHandlerySpySo8AVPacketVG_...                               0x101a6ce44  572 instr
+
+`SpySo8AVPacketVG` = `UnsafeMutablePointer<AVPacket>`. The source declares `from packet: Packet`
+in the `DecodeProtocol` requirement (MEPlayerItemTrack.swift:322/324) and in all three conformers
+(FFmpegDecode:40, VideoToolboxDecode:52, SubtitleDecode:178).
+
+**Why it cannot be split per-file:** the protocol requirement is shared, so the requirement, the
+three conformers and the one call site (`MEPlayerItemTrack.swift:152`, inside
+`fileprivate func doDecode(packet: Packet)` at :135) must change together or nothing compiles.
+That coupling — not the difficulty of any one body — is what actually blocked it.
+
+Per-conformer interior cost, measured from the source side:
+
+- **VideoToolboxDecode** — trivial. Its ONLY parameter use is
+  `guard let corePacket = packet.corePacket?.pointee, let data = corePacket.data else { return }`.
+- **SubtitleDecode** — trivial, and already half-done: :179-180 unwraps `packet.corePacket` and
+  calls the pointer-taking overload `decodeFrame(from:) -> ([SubtitlePart], Int64, Timebase)?`
+  (:106, FUN_101a69f54) that ALREADY takes `UnsafeMutablePointer<AVPacket>`.
+- **FFmpegDecode** — the real work. Seven `packet.assetTrack!` sites plus
+  `packet.assetTrack!.mediaType == .video`. Under a raw pointer those cannot come from the packet.
+  **They do not have to**: reflection gives FFmpegDecode its own stored `assetTrack` (field 8) and
+  a precomputed `isVideo` (field 7, `Sb`), and the source already sets both in `init` (:21-25). So
+  the shape is `packet.assetTrack!` → `assetTrack` and `packet.assetTrack!.mediaType == .video` →
+  `isVideo`. **This is the hypothesis to verify against 0x101a2220c, not a licence to write it.**
+
+Open question for the caller, and the one thing that decides the call-site spelling: `corePacket`
+is `UnsafeMutablePointer<AVPacket>?`, so `doDecode` must either force-unwrap or guard. Read
+0x101a2220c's caller before choosing.
+
+**Adjacent, do NOT fold it in.** `makeDecode` is a *different* divergence and it is on a different
+type: the binary exports `$s8KSPlayer9KSOptionsC10makeDecode6packetAA0D8Protocol_pAA6PacketC_tF`
+— `KSOptions.makeDecode(packet: Packet) -> DecodeProtocol` — while the source calls
+`makeDecode(assetTrack: packet.assetTrack!)` on `MEPlayerItemTrack` (:150). Note it still takes
+`Packet`, which is more evidence `Packet` survives in Forward.
+
+**A trap that cost real time here — a substring scan of mangled text is not an absence oracle.**
+I recorded "0 DecodeProtocol symbols" and nearly built on it. The mangler compresses the name to
+`AA0D8Protocol_p`; it never appears as text. Demangle first, then grep. Two other mechanical
+zero-generators hit in the same sitting: `Trie.walk(0)` enumerates 403 symbols while the cached
+`reconstruction/export_trie_names.json` holds 57,138 (the same `6PacketC` query gave 0, then 50),
+and `print(s[:120])` truncated in the printer, making complete entries look truncated. Run every
+absence query against a known-present control first.
+
 ## Two verdict-hygiene findings that will save you time
 
 1. **s84/s104 verdict `source_lines` are systematically stale.** Every agent that checked found the
