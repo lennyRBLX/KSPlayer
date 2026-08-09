@@ -130,10 +130,30 @@ PREDICATE the thunk calls, not the callback itself.
 
 And it needs no name: `name_exhaustion_gate --addr 0x101a34af4` returns **INLINE-INSTEAD** — one
 call site image-wide, "no independent identity: inline the expression at the call site". So the
-verdict's framing ("un-reconstructed registry predicate", implying a naming gate) is wrong twice
-over. What is actually required is reading its 69 instructions and inlining them in the closure. Its
-call set is `objc_msgSend 'lock'` (0x103464ae0) / `'unlock'` (0x10346e620), 0x1001ad3c4, and runtime
-exclusivity/retain — i.e. a locked registry lookup returning Bool, across 6 branches.
+verdict's framing as a NAMING gate is wrong. But its word "registry" is RIGHT, and that is the real
+cost. Read from disassembly:
+
+    101a34b08  cbz x0                    opaque == nil -> false
+    101a34b10  ldr x19, [x20, #0x10]     the static's lock
+    101a34b18  bl objc_msgSend 'lock'
+    101a34b2c  beginAccess w2=0x20       tracking-read on static+0x20
+    101a34b30  ldr x20, [x20, #0x20]     the Dictionary
+    101a34b38  cbz x8                    empty -> not found
+    101a34b40  bl 0x1001ad3c4            hash/lookup: index in x0, found-bit in w1
+    101a34b4c  ldr x20, [x8, x0, lsl #3] values[index]
+    101a34b58  bl 0x10345d210            weak load of the referent
+    101a34b68  bl objc_msgSend 'unlock'
+    101a34b6c  cbz x21                   referent gone -> false
+    101a34b84  ldrb w8, [x21, #0x10]     the Bool returned
+
+So: a FILE-PRIVATE STATIC REGISTRY — an NSLock plus a dictionary keyed by the `opaque` pointer
+holding its values WEAKLY — looked up under the lock, weak-loaded, and a Bool read off the referent
+at +0x10. `FormatContext.interrupt` is typed `IOInterruptContext`, almost certainly the referent
+type.
+
+**That construct does not exist in source, and standing it up is D1's actual cost** — not naming the
+predicate. It is the "closure-hoisting shape" the verdict's `fix` field gestures at without
+describing.
 
 **`KSPlayerLayer.readyToPlay(player:)` @0x1019cda08** (1 CRITICAL + 1 HIGH + 2 LOW) — derived this
 session, NOT written. 0x1019cda08-0x1019cdf98, 1424 B, 356 instr. Trie:
