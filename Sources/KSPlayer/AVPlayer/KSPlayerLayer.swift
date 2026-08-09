@@ -294,7 +294,22 @@ open class KSPlayerLayer: NSObject {
     // `KSPlayerLayer.isAutoReplaceAndConstrainPlayerView.getter : Swift.Bool`.
     public private(set) var subtitleModel = SubtitleModel()
     public var isAutoReplaceAndConstrainPlayerView = false
-    public init(url: URL, isAutoPlay: Bool = KSOptions.isAutoPlay, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
+    /// `required` is READ, not stylistic. `PlayerView.set(url:options:)` @0x1019fe394 constructs
+    /// through `KSOptions.playerLayerType` — a `KSPlayerLayer.Type` — by loading metatype slot
+    /// +0x270 and `blr`-ing it. Only a `required` initialiser gets a metatype slot; a plain `init`
+    /// cannot be called on a dynamic metatype at all. The slot resolves to 0x1019ca3c4 =
+    /// `KSPlayerLayer.__allocating_init(url:options:delegate:)`.
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.__allocating_init(url:options:delegate:):0x1019ca3c4 result=OWNER_MATCH]
+    ///
+    /// ⚑ SEPARATE, UNFIXED DIVERGENCE — the LABEL SET. The binary carries exactly three
+    ///   KSPlayerLayer initialisers and none of them has an `isAutoPlay:` parameter:
+    ///     init(url:options:delegate:)   init(item:url:delegate:)   init()
+    ///   This declaration's `isAutoPlay:` therefore has no counterpart, and because Swift mangles
+    ///   defaulted parameters into the symbol it makes this a 4-label init the binary does not
+    ///   have. Left in place deliberately: removing it changes THIS initialiser's body (the field
+    ///   would have to come from elsewhere) and belongs to its own unit, not to the
+    ///   PlayerView.set(url:options:) unit that only needed `required` to compile faithfully.
+    public required init(url: URL, isAutoPlay: Bool = KSOptions.isAutoPlay, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
         self.url = url
         self.options = options
         self.delegate = delegate

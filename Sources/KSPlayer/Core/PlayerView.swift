@@ -164,11 +164,55 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
         totalTime = 0.0
     }
 
+    /// @0x1019fe194, 163 instructions, one symbol at the address. Statement order below is the
+    /// binary's, taken from the arm split at `cbz x0, 0x1019fe364` and the join at 0x1019fe3ec:
+    ///   1019fe1f4  toolBar.currentTime = 0        (PlayerToolBar.currentTime, global 0x1044e74a0)
+    ///   1019fe22c  totalTime = 0                  (PlayerToolBar.totalTime,   global 0x1044e74a8)
+    ///   1019fe258  ldr [x8,#0x78] / blr / cbz     playerLayer via metadata slot +0x78 = its GETTER
+    ///   -- reuse arm --
+    ///   1019fe2bc  bl 0x1034523a4                 static Foundation.URL.== (layer.url vs url)
+    ///   1019fe2e4  tbz w25,#0x0                   equal -> the block below, else skip it
+    ///   1019fe304  str x24,[x23,#0x8] / weakAssign  playerLayer.delegate = self
+    ///   1019fe330  str xzr,[x23,#0x8] / weakAssign  playerLayer.delegate = nil
+    ///   1019fe348  bl 0x1019cb674                 playerLayer.set(url:options:)
+    ///   1019fe34c  str x24,[x23,#0x8] / weakAssign  playerLayer.delegate = self
+    ///   -- nil arm --
+    ///   1019fe364  swift_once + read              static KSOptions.playerLayerType
+    ///   1019fe3d0  blr metatype slot +0x270       .init(url:options:delegate:)
+    ///   1019fe3e8  blr metadata slot +0x80        self.playerLayer = <result>
+    ///
+    /// THREE PREMISES REFUTED while writing this. The reuse call is a DIRECT `bl` to 0x1019cb674,
+    /// not the vtable slot-55 dispatch the verdict described. The nil-test reads `playerLayer`
+    /// through its vtable-dispatched GETTER (metadata +0x78), not through the field-offset global
+    /// 0x1044e74e8 — which is never loaded anywhere in this extent. And the URL-equality check at
+    /// 0x1019fe2bc was not in the verdict's account at all.
+    ///
+    /// ⚠️ THE EQUAL PATH ASSIGNS THE DELEGATE, THEN IMMEDIATELY NILS IT. That reads oddly, so it
+    /// was verified rather than transcribed: `tbz w25,#0x0` at 0x1019fe2e4 jumps to 0x1019fe314,
+    /// and the guarded block ends at 0x1019fe310 with the weak-assign — the very next instruction
+    /// IS 0x1019fe314, with no branch over it. Both writes target the same slot (x23 is recomputed
+    /// from the same x20 and the same offset global). So the redundancy is the binary's, not a
+    /// transcription error, and it is written as read.
+    /// ⚑[tool=decode_witness_table ref=PlayerView:KSPlayerLayerDelegate:0x1041d6308 result=11-requirements]
+    ///
+    /// `srtControl.url = url` is REMOVED, and the strongest form of the evidence is not "unused in
+    /// this body" — PlayerView has no such field at all. Its reflection record lists exactly five:
+    /// playerLayer, delegate, toolBar, playTimeDidChange, backBlock. Image-wide the exact string
+    /// `srtControl` occurs ZERO times, against 2 for `toolBar` and 6 for `playerLayer`.
+    /// ⚑[tool=fieldrec ref=PlayerView:0x1039ee210 result=5-fields-no-srtControl]
     open func set(url: URL, options: KSOptions) {
-        srtControl.url = url
         toolBar.currentTime = 0
         totalTime = 0
-        playerLayer = KSPlayerLayer(url: url, options: options)
+        if let playerLayer {
+            if playerLayer.url == url {
+                playerLayer.delegate = self
+            }
+            playerLayer.delegate = nil
+            playerLayer.set(url: url, options: options)
+            playerLayer.delegate = self
+        } else {
+            playerLayer = KSOptions.playerLayerType.init(url: url, options: options, delegate: self)
+        }
     }
 
     // MARK: - KSSliderDelegate
