@@ -520,9 +520,24 @@ not a verdict. But **0x10323a9d8 is already CONFIRMED elsewhere in this tree** a
 — inside toDictionary)`), which came from the fuller object-file attribution rather than the bare
 `--addr` probe.
 
-So before treating this as a wall: run the full attribution route on the other five, and check
-whether any is already named somewhere in `Sources/`. The source note "stripped calls named only by
-the P2 oracle" may simply predate that work.
+I then ran that check, and **FOUR OF THE SIX ARE ALREADY NAMED**. The note is stale:
+
+    0x10323a9d8  av_dict_get                                     CONFIRMED in FormatContext.swift:32
+    0x1019f59c4  the FFmpeg URL-string helper                    named at Utility.swift:403
+    0x101b90c44  a metadata accessor                             named at LimitSeparate…swift:271
+    0x1019e1f94  KSPlayer.KSPlayerError.init(errorCode:avErrorCode:)   TRIE-NAMED (OWNER_MATCH)
+    0x1030c03e4  NOT_IN_TRIE — in the FFmpeg band; this is the URLContext open itself
+    0x101b95540  NOT_IN_TRIE — in-image
+
+`0x1019e1f94` is a particularly good sign: this init `throws`, and its error construction is
+`KSPlayerError.init(errorCode:avErrorCode:)`, fully named, so the throw path is already writable.
+
+**So this is not a wall — it is ONE FFmpeg attribution (0x1030c03e4) plus one in-image negative
+(0x101b95540) away from being a normal 264-instruction unit.** Run the object-file attribution route
+on 0x1030c03e4 (the same route that produced the `av_dict_get` CONFIRMED verdict, not the bare
+`--addr` probe, which returns 27 candidates and no verdict).
+
+That would unblock the whole chain: `URLContextDownload.init` → `download_existential` → `more()`.
 
 ⚠️ One caution for whoever opens it: `recover_swift_function_name` on this address returns
 `#function: init(url:flags:options:interrupt:isReadComplete:)` at high confidence but reports
