@@ -506,6 +506,57 @@ public class HLSCacheIOContext: AbstractAVIOContext {
         return ffurl_seek2(context, offset, whence)
     }
 
+    /// Forward 1.3.17 @0x101b97480, extent 0x101b97480-0x101b9757c (252 B / 63 instr), one symbol,
+    /// no ICF fold. Overrides `AbstractAVIOContext.read` (PlayerDefines.swift:680, `open`).
+    ///
+    /// ⚠️ `export_trie_oracle --addr 0x101b97480 --owner HLSCacheIOContext` answers
+    /// `FOLDED_AWAY … name NOT RECOVERABLE from this address — do not guess it`. **That is a TOOL
+    /// BUG, not a real negative.** `owner_of` strips an accessor suffix AFTER it has already
+    /// stripped the parameter list, so a METHOD named `read` is mistaken for a `read` coroutine
+    /// accessor and the owner comes back as the MODULE `PreLoadIOContext`. All six
+    /// `read(buffer:size:)` symbols in the AVIO family are mis-owned the same way. Unscoped, the
+    /// address resolves cleanly and unambiguously:
+    /// `$s16PreLoadIOContext08HLSCacheC0C4read6buffer4sizes5Int32VSpys5UInt8VGSg_AHtF`.
+    /// ⚑[tool=export_trie_oracle ref=HLSCacheIOContext.read:0x101b97480 result=1-symbol-owner_of-bug]
+    ///
+    /// THE FFmpeg SPINE IS AN INLINED `download.read(buffer:size:)`, not a second spine. The site
+    /// matches `URLContextDownload.read` @0x101b91078 opcode for opcode across 13 instructions,
+    /// differing only in base register (x20 → x22) and stack slot, and it reads ANOTHER CLASS's
+    /// storage — `[x22,#0x18]` and `[x22,#0x21]` are `URLContextDownload.context` and
+    /// `.isReadComplete`, off `x22 = [x20,#0x18]` = this class's `download`. That only happens
+    /// through inlining, so the faithful source is the method call, not a copy of the FFmpeg
+    /// branch. The AVERROR_EOF constant (`mov w19,#0xb0bb / movk #0xdfb9`) is likewise the inlined
+    /// callee's own nil-context return, folded straight to the `n < 1` block because the optimiser
+    /// knows AVERROR_EOF < 1.
+    ///
+    /// `m3u8Buffer` IS READ, NOT ELIMINATED. Offset global 0x1044f4308 is a trie negative with a
+    /// zero static value, `recover_field_offsets` recovers nothing (metadata_init=1) and
+    /// `recover_field_by_access` returns no resolution — but the ObjC ivar list NAMES it outright,
+    /// and its 14 entries match `fieldrec`'s 14 records in order. The `w2 = 0x21` Modify|Tracking
+    /// access with its matching `swift_endAccess` confirms the mutation.
+    /// ⚑[tool=ivar_name_oracle ref=HLSCacheIOContext.m3u8Buffer:0x1044f4308 result=named-record-5]
+    ///
+    /// CONTROL FLOW, read by the orchestrator: `parseM3U8()` @0x101b99ce8 is called ONLY on the
+    /// `n < 1` and EOF paths. The append path ends `b 0x101b97560` at 0x101b97558, jumping PAST
+    /// the `bl` at 0x101b9755c to the epilogue; the nil-buffer path likewise returns 0 without it.
+    ///
+    /// ⚑ `Data(bytes:count:)` is a SPELLING choice. 0x100036e98 is a real trie negative; what is
+    ///   read is that it takes `x0 = buffer`, `w1 = n`, returns a two-word `Data` and branches on
+    ///   the 15-byte inline-representation threshold. The initializer's source spelling is not
+    ///   derived from that. ⚑[tool=export_trie_oracle ref=Data.init:0x100036e98 result=NOT_IN_TRIE]
+    override public func read(buffer: UnsafeMutablePointer<UInt8>?, size: Int32) -> Int32 {
+        guard let buffer else {
+            return 0
+        }
+        let n = download.read(buffer: buffer, size: size)
+        if n < 1 {
+            parseM3U8()
+            return n
+        }
+        m3u8Buffer.append(Data(bytes: buffer, count: Int(n)))
+        return n
+    }
+
     // UNRESOLVED → later phase (do NOT reconstruct — declared nowhere beyond these
     //   markers; their bodies are deep/devirt and/or call stripped FFmpeg + DirectoryWatcher
     //   (1C.3) the P2 oracle names — fabrication risk):
