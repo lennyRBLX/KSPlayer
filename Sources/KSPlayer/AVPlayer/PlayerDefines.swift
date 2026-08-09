@@ -284,73 +284,78 @@ public struct LoadingState {
 
 public let KSPlayerErrorDomain = "KSPlayerErrorDomain"
 
-public enum KSPlayerErrorCode: Int {
-    case unknown
-    case formatCreate
-    case formatOpenInput
-    case formatOutputCreate
-    case formatWriteHeader
-    case formatFindStreamInfo
-    case readFrame
-    case codecContextCreate
-    case codecContextSetParam
-    case codecContextFindDecoder
-    case codesContextOpen
-    case codecVideoSendPacket
-    case codecAudioSendPacket
-    case codecVideoReceiveFrame
-    case codecAudioReceiveFrame
-    case auidoSwrInit
-    case codecSubtitleSendPacket
-    case videoTracksUnplayable
-    case subtitleUnEncoding
-    case subtitleUnParse
-    case subtitleFormatUnSupport
-    case subtitleParamsEmpty
+// ⚑ RAW TYPE AND CASE SET REBUILT FROM THE BINARY. This enum was `: Int` with 22 cases; the image
+//   says `: String` with 19, and the raw values ARE the message strings — which is why the
+//   `CustomStringConvertible` extension that used to sit below is GONE rather than edited.
+//
+//   The raw type is read, not inferred: the trie carries `rawValue.getter` as `SSvg` (String) and
+//   `init(rawValue: String)`, while `init(rawValue: Int)` and `description.getter` are real trie
+//   NEGATIVES. `KSPlayerErrorCode` exports 9 symbols in total — rawValue ×3, init(rawValue:),
+//   Ma/Mn/N, and SH/SQ/SY — and no CustomStringConvertible conformance at all. That conformance
+//   belongs to `KSPlayerError` instead (getter 0x1019e2150), not to this enum.
+//
+//   The 19 case NAMES and their ORDER come from the field records on descriptor 0x1039edbb8. The 19
+//   raw VALUES were each decoded by the orchestrator from the `rawValue` getter's own 19-arm byte
+//   table (getter 0x1019e1be0-0x1019e1e38, table @0x103568513): sixteen are heap literals, decoded
+//   individually with decode_string_literal; three are register-form small strings whose bytes were
+//   read straight out of the immediates — `avio_ope`+`n fail` (x0=0x65706F5F6F697661,
+//   x1=0xEE006C696166206E), `readFram`+`e fail`, and `no strea`+`m found`.
+//
+//   Relative to the old 22: ADDED `avioOpen` and `noStream`; REMOVED `unknown`,
+//   `codecContextFindDecoder`, `codecVideoSendPacket`, `codecAudioSendPacket` and `auidoSwrInit`;
+//   and the order differs. Every removed case had its source references re-pointed in this change.
+//
+//   FFmpeg provenance (P32) for this whole change. The names below occur inside DECODED STRING
+//   LITERALS rather than at call sites, but each is also confirmed at its real call address by
+//   ffmpeg_name_oracle, re-run for this commit rather than quoted from an older marker:
+// ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_context:0x1031b85bc result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avformat_find_stream_info:0x1030e8520 result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_output_context2:0x103193858 result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_to_context:0x1029f5974 result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avcodec_open2:0x10294caf8 result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=avcodec_free_context:0x102d53ac8 result=CONFIRMED]
+// ⚑[tool=ffmpeg_name_oracle ref=av_frame_alloc:0x103240100 result=CONFIRMED]
+//   ONE symbol resists confirmation and is deliberately NOT claimed as confirmed: the codec-context
+//   allocator whose name appears inside case `codecContextCreate`'s raw value below. Its call site in
+//   this image is 0x102d5394c — adjacent to the confirmed avcodec_free_context in the same
+//   avcodec/options.o — and the oracle answers UNKNOWN there, refuting the candidate at instruction
+//   index 41 ('add x8, x8, @' vs 'ldr x8, [x8, @]'), i.e. the built library differs from this image at
+//   that function. That name survives in this file only as decoded string DATA, never as a claim
+//   about a call. Recorded in reconstruction/deferral_s118_avcodec_alloc_context3.md.
+// ⚑[tool=fieldrec ref=KSPlayerErrorCode:0x1039edbb8 result=19-cases-String-raw]
+public enum KSPlayerErrorCode: String {
+    case formatCreate = "avformat_alloc_context return nil"
+    case formatOpenInput = "avformat can't open input"
+    case avioOpen = "avio_open fail"
+    case formatOutputCreate = "avformat_alloc_output_context2 fail"
+    case formatWriteHeader = "avformat_write_header fail"
+    case formatFindStreamInfo = "avformat_find_stream_info return nil"
+    case readFrame = "readFrame fail"
+    case noStream = "no stream found"
+    case codecContextCreate = "avcodec_alloc_context3 return nil"
+    case codecContextSetParam = "avcodec can't set parameters to context"
+    case codesContextOpen = "codesContext can't Open"
+    case codecVideoReceiveFrame = "avcodec can't receive video frame"
+    case codecAudioReceiveFrame = "avcodec can't receive audio frame"
+    case codecSubtitleSendPacket = "avcodec can't decode subtitle"
+    case videoTracksUnplayable = "VideoTracks are not even playable."
+    case subtitleUnEncoding = "Subtitle encoding format is not supported."
+    case subtitleUnParse = "Subtitle parsing error"
+    case subtitleFormatUnSupport = "Current subtitle format is not supported"
+    case subtitleParamsEmpty = "Subtitle Params is empty"
 }
 
-extension KSPlayerErrorCode: CustomStringConvertible {
-    public var description: String {
-        switch self {
-        case .formatCreate:
-            return "avformat_alloc_context return nil"
-        case .formatOpenInput:
-            return "avformat can't open input"
-        case .formatOutputCreate:
-            return "avformat_alloc_output_context2 fail"
-        case .formatWriteHeader:
-            return "avformat_write_header fail"
-        case .formatFindStreamInfo:
-            return "avformat_find_stream_info return nil"
-        case .codecContextCreate:
-            return "avcodec_alloc_context3 return nil"
-        case .codecContextSetParam:
-            return "avcodec can't set parameters to context"
-        case .codesContextOpen:
-            return "codesContext can't Open"
-        case .codecVideoReceiveFrame:
-            return "avcodec can't receive video frame"
-        case .codecAudioReceiveFrame:
-            return "avcodec can't receive audio frame"
-        case .videoTracksUnplayable:
-            return "VideoTracks are not even playable."
-        case .codecSubtitleSendPacket:
-            return "avcodec can't decode subtitle"
-        case .subtitleUnEncoding:
-            return "Subtitle encoding format is not supported."
-        case .subtitleUnParse:
-            return "Subtitle parsing error"
-        case .subtitleFormatUnSupport:
-            return "Current subtitle format is not supported"
-        case .subtitleParamsEmpty:
-            return "Subtitle Params is empty"
-        case .auidoSwrInit:
-            return "swr_init swrContext fail"
-        default:
-            return "unknown"
-        }
-    }
-}
+// ⚑ THE `CustomStringConvertible` EXTENSION IS REMOVED, and its absence is the finding.
+//   `KSPlayerErrorCode.description.getter` is a real trie NEGATIVE — the enum exports 9 symbols and
+//   none of them is a description getter, nor is there a CustomStringConvertible conformance record
+//   for it. The switch that stood here returned exactly the strings that are now the enum's raw
+//   values, so nothing is lost: every `.description` call site becomes `.rawValue`, which is the
+//   same String by construction. The conformance the binary DOES carry is on `KSPlayerError`
+//   (getter 0x1019e2150), which is a different type and its own unit.
+//   Its `default: return "unknown"` arm is gone with the `unknown` case it existed to serve, and
+//   its `auidoSwrInit` arm is gone with that case — neither exists in the image.
 
 /// Forward-new error type. The shipped 1.3.17 binary replaces the upstream `extension NSError` error
 /// model with this struct — descriptor 0x1039edbd4 (kind=struct), ~70+ uses app-wide (KSPlayer core +
@@ -377,19 +382,45 @@ public struct KSPlayerError: Error {
     // STORED PROPERTY is still `message` (that name comes from the field record); only the
     // parameter label differs, which is exactly the kind of difference the trie can settle and
     // reflection cannot.
-    public init(code: Int32, description: String? = nil) {
+    // ⚑ TWO SEPARATE INITS, not one with a defaulted parameter. The trie carries
+    //   `init(code:)` at 0x1019e1f88 (3 instructions — store code, store a nil message, return) and
+    //   `init(code:description:)` at 0x10000e52c as DISTINCT symbols. A defaulted `description:`
+    //   would emit one init plus a default-argument generator, not two inits, and the trie has no
+    //   such generator here.
+    //   The label is `description:` and its type is **String, NOT String?** — the optionality lives
+    //   on the stored property `message` (`SSSg`), which the nil-message init writes directly.
+    //   ⚑[tool=export_trie_oracle ref=KSPlayerError.init(code:):0x1019e1f88 result=3-instr-message-nil]
+    public init(code: Int32) {
+        self.code = code
+        message = nil
+    }
+
+    public init(code: Int32, description: String) {
         self.code = code
         message = description
     }
 
-    /// ⚑ inferred convenience: matches the binary's throw payload {code = 0, message}.
-    /// The literal 0 is the value this init was already audited as storing, preserved verbatim
-    /// across the retype. It is deliberately NOT written `.unknown`: the static `unknown` below
-    /// is AVERROR_UNKNOWN (-1313558101), a different value entirely.
-    public init(description: String) {
-        code = 0
-        message = description
+    /// ⚑ The only one of KSPlayerError's four inits that is actually CALLED — once, from
+    /// `FFmpegDecode.decodeFrame` at 0x101a229fc. The trie names it at 0x1019e1f94, which is a
+    /// ONE-instruction forwarder `b 0x1019e429c`; the real body is at 0x1019e429c and contains
+    /// ZERO `bl`. It does NOT call `.description`, does NOT call FFmpeg's error-string helper, and wraps no
+    /// `AVError`: it stores `avErrorCode` into `code` verbatim — an x8 pass-through, untouched on
+    /// all 19 exits — and inlines the enum's own `rawValue` switch for `message` as a 19-way jump
+    /// table at 0x103568526, the same literal set the `rawValue` getter uses.
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerError.init(errorCode:avErrorCode:):0x1019e1f94 result=1-instr-forwarder-to-0x1019e429c]
+    public init(errorCode: KSPlayerErrorCode, avErrorCode: Int32) {
+        code = avErrorCode
+        message = errorCode.rawValue
     }
+
+    // ⚑ `init(description:)` IS REMOVED — it was an inferred convenience with NO trie symbol, and
+    //   the trie's four KSPlayerError inits are `init(code:)`, `init(code:description:)`,
+    //   `init(errorCode:)` and `init(errorCode:avErrorCode:)`. Its three call sites carried a
+    //   literal `code = 0`, which every one of them now spells outright as
+    //   `KSPlayerError(code: 0, description:)`. Nothing about the constructed value changes; what
+    //   changes is that the source no longer declares an initializer the image does not have.
+    //   Dead-strip is excluded as an explanation: `init(errorCode:)` and `init(code:)` both survive
+    //   in the trie with zero call sites, so an unused init is NOT stripped from this image.
 
     /// ⚑ getter 0x1019e223c — `sxtw x0, w0` / `ret`, the whole body. `self.code` is the struct's
     /// first field and arrives in w0, so this is a plain sign-extension of the Int32 to Int: no
@@ -501,19 +532,23 @@ extension KSPlayerError: LocalizedError {
     }
 }
 
-extension NSError {
-    convenience init(errorCode: KSPlayerErrorCode, userInfo: [String: Any] = [:]) {
-        var userInfo = userInfo
-        userInfo[NSLocalizedDescriptionKey] = errorCode.description
-        self.init(domain: KSPlayerErrorDomain, code: errorCode.rawValue, userInfo: userInfo)
-    }
-
-    convenience init(description: String) {
-        var userInfo = [String: Any]()
-        userInfo[NSLocalizedDescriptionKey] = description
-        self.init(domain: KSPlayerErrorDomain, code: 0, userInfo: userInfo)
-    }
-}
+// ⚑ THE UPSTREAM `extension NSError` ERROR MODEL IS REMOVED. This is the base regression the
+//   reconstruction has tracked since the KSPlayerError struct was recovered, and it is now closed by
+//   an exhaustive sweep rather than by preference.
+//
+//   All FOURTEEN `NSError(...)` sites in the tree were derived. THIRTEEN construct a `KSPlayerError`
+//   inline — `_swift_allocError(0x1041d5790, …)`, then `str <code>,[x1]`, then `stp <message>,[x1,#8]`
+//   — and one (VideoToolboxDecode's synchronous decodeFrame) constructs nothing at all. **No site
+//   anywhere in the image constructs an NSError, sets an error domain, or builds a `userInfo`
+//   dictionary.** Two catch sites confirm the type from the other direction: both call
+//   `swift_dynamicCast` with destination type 0x1041d5790 — KSPlayerError's metadata — and then read
+//   the Int32 at value-offset 0.
+//
+//   These two inits could not survive the enum's real shape in any case: `code: errorCode.rawValue`
+//   needs an Int and the raw values are Strings, and `errorCode.description` needs a getter that is a
+//   real trie negative. That incompatibility is evidence, not an obstacle — it is the compiler
+//   showing the two error models are mutually exclusive.
+// ⚑[tool=export_trie_oracle ref=KSPlayerError.metadata:0x1041d5790 result=13-of-14-sites-allocError-0-NSError]
 
 #if !SWIFT_PACKAGE
 extension Bundle {

@@ -461,11 +461,18 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
     //   findTime below — a decompile-only body would bake the wrong value (`time`).
     options?.prepareTime = CACurrentMediaTime()
 
-    // avformat_alloc_context() → nil ⟹ throw #1. Binary: err.code@0 = 0 (.unknown), message =
-    //   .formatCreate.description (disasm str-length 0x21=33 = "avformat_alloc_context return nil"; the
-    //   decompiler's string POINTER is scrambled — the length is the reliable disambiguator).
+    // ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_context:0x1031b85bc result=CONFIRMED]
+    // ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED]
+    // ⚑[tool=ffmpeg_name_oracle ref=avformat_find_stream_info:0x1030e8520 result=CONFIRMED]
+    // avformat_alloc_context() → nil ⟹ throw #1. The site INLINES the construction —
+    //   `_swift_allocError(0x1041d5790, …)` then `str <code>,[x1]` then `stp <message>,[x1,#8]` —
+    //   so it calls none of KSPlayerError's four inits; the spelling below is the source form of
+    //   that inline shape. code is the LITERAL 0, and message is the 33-byte literal at
+    //   0x103d34f20, byte-identical to `formatCreate`'s raw value.
+    //   ⚑ `.description` became `.rawValue`: the enum is String-raw in the binary and has no
+    //     description getter at all (real trie negative) — same String either way.
     guard let formatCtx = avformat_alloc_context() else {
-        throw KSPlayerError(description: KSPlayerErrorCode.formatCreate.description)
+        throw KSPlayerError(code: 0, description: KSPlayerErrorCode.formatCreate.rawValue)
     }
 
     // INTERRUPT-CALLBACK INSTALL — read in full; the three things this was deferred on are all
@@ -578,9 +585,11 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
     av_dict_free(&avOptions)   // ⚑ binary frees before the result check (@0x101a39ab4) — both success and failure paths
     guard openResult == 0 else {
         avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (=FUN_1030e632c) — see provenance header
-        // throw #2. ⚑ binary embeds the open AVERROR in code@0 (P8, KSPlayerError-owner) — reconstructed via
-        //   description-form (code=.unknown). message = .formatOpenInput.description (str-length 0x19=25).
-        throw KSPlayerError(description: KSPlayerErrorCode.formatOpenInput.description)
+        // throw #2. ⚑ NOW WRITTEN WITH ITS REAL CODE. The pin here used to say the AVERROR could not
+        //   be carried because `code` was enum-typed; `code` is `Int32`, so it can. The binary's
+        //   code operand at this site is the LIVE avformat_open_input return, which is `openResult`,
+        //   and message is the 25-byte literal at 0x103d34f00 = `formatOpenInput`'s raw value.
+        throw KSPlayerError(code: openResult, description: KSPlayerErrorCode.formatOpenInput.rawValue)
     }
     options?.openTime = CACurrentMediaTime()   // ⚑ P42
 
@@ -605,13 +614,16 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
         avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (see open-fail path)
         // AVERROR_EOF = FFERRTAG('E','O','F',' ') = -0x20464f45. throw #4 (EOF special) vs throw #3.
         if findResult == swift_AVERROR_EOF {
-            // ⚑ binary: err.code@0 = AVERROR_EOF (raw), message nil. The enum-typed `code` cannot hold a raw
-            //   AVERROR — P8 (KSPlayerError-owner); reconstructed as an empty-message unknown.
-            throw KSPlayerError(code: Int32(KSPlayerErrorCode.unknown.rawValue), description: nil)
+            // ⚑ CORRECTED. This site names NO enum case at all. The binary materialises the constant
+            //   `mov w20,#0xb0bb / movk w20,#0xdfb9` = 0xdfb9b0bb = -541478725 = AVERROR_EOF straight
+            //   into `code`, and stores a nil message — so the old spelling was wrong twice over: it
+            //   invented `.unknown` (a case the image does not have) and it routed a raw AVERROR
+            //   through an enum rawValue. `code` is `Int32`, which carries the AVERROR directly.
+            throw KSPlayerError(code: swift_AVERROR_EOF)
         }
-        // throw #3. ⚑ binary embeds the find AVERROR in code@0 (P8). message = .formatFindStreamInfo.description
-        //   (str-length 0x24=36).
-        throw KSPlayerError(description: KSPlayerErrorCode.formatFindStreamInfo.description)
+        // throw #3. ⚑ code is the LIVE avformat_find_stream_info return, i.e. `findResult`; message is
+        //   the 36-byte literal at 0x103d34e80 = `formatFindStreamInfo`'s raw value.
+        throw KSPlayerError(code: findResult, description: KSPlayerErrorCode.formatFindStreamInfo.rawValue)
     }
 
     // ⚑ the returned pointer is the POST-open ctx re-read from the `ps` out-parameter slot
@@ -623,7 +635,10 @@ func openFormatContext(io: Either<URL, AbstractAVIOContext>,
     //   ⚑ the s74 brief placed this check at 0x101a39bc0; that address is the `ldur`, and the `cbz x26` is at
     //     0x101a39c0c. Corrected against the disassembly.
     guard let openedCtx = mutableCtx else {
-        throw KSPlayerError(description: KSPlayerErrorCode.formatFindStreamInfo.description)
+        // ⚑ This throw and throw #3 are ONE physical block in the binary (0x101a39e98-0x101a39ee0),
+        //   not two — they share the same 36-byte message literal. What differs is `code`: on the
+        //   find-failure path it is the live return, and on THIS path it is provably 0.
+        throw KSPlayerError(code: 0, description: KSPlayerErrorCode.formatFindStreamInfo.rawValue)
     }
 
     if let options {

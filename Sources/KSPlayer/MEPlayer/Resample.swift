@@ -201,7 +201,7 @@ class VideoSwresample: FrameChange {
         }
         let pbuf = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize))
         guard let pbuf else {
-            throw KSPlayerError(description: "pixelBufferPool Create fail. format=\(format), width=\(width) height=\(height)")
+            throw KSPlayerError(code: 0, description: "pixelBufferPool Create fail. format=\(format), width=\(width) height=\(height)")
         }
         pbuf.aspectRatio = frame.sample_aspect_ratio.size
         pbuf.yCbCrMatrix = frame.colorspace.ycbcrMatrix
@@ -358,11 +358,22 @@ class AudioSwresample: FrameChange {
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
         if !(descriptor == avframe.pointee) || outChannel != descriptor.outChannel {
             let newDescriptor = AudioDescriptor(frame: avframe.pointee)
-            if setup(descriptor: newDescriptor) {
-                descriptor = newDescriptor
-            } else {
-                throw NSError(errorCode: .auidoSwrInit, userInfo: ["outChannel": newDescriptor.outChannel, "inChannel": newDescriptor.channel])
+            // ⚑ THE GUARD IS NOT `setup`'s RETURN VALUE. In 0x101a681f4-0x101a688a0 the Bool `setup`
+            //   returns is never tested; the binary calls it and then tests `self.swrContext`
+            //   (self+0x10) for nil. The old `if setup(...) { } else { }` shape tested the wrong
+            //   thing.
+            // ⚑ `.auidoSwrInit` IS NOT A CASE IN THE IMAGE — and neither is the `userInfo`
+            //   dictionary this site used to build: there is no Dictionary metadata, no Dictionary
+            //   init and no error-domain string anywhere in the body. The whole payload is one
+            //   interpolated String at [x1,#0x8]. The strings `auidoSwrInit` and `inChannel` occur
+            //   NOWHERE in the image; the message is built from the 30-byte literal at 0x103d36db0,
+            //   the small string " inChannel=", and two AVChannelLayout.description calls on
+            //   descriptor+0x40 and descriptor+0x20.
+            _ = setup(descriptor: newDescriptor)
+            guard swrContext != nil else {
+                throw KSPlayerError(code: 0, description: "swrContext is nil. outChannel=\(newDescriptor.outChannel) inChannel=\(newDescriptor.channel)")
             }
+            descriptor = newDescriptor
         }
         let numberOfSamples = avframe.pointee.nb_samples
         let outSamples = swr_get_out_samples(swrContext, numberOfSamples)

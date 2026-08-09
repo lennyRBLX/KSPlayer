@@ -146,11 +146,15 @@ public class ThumbnailController {
         }
         var result = avformat_open_input(&formatCtx, urlString, nil, nil)
         guard result == 0, let formatCtx else {
-            throw NSError(errorCode: .formatOpenInput, avErrorCode: result)
+            // ⚑[tool=ffmpeg_name_oracle ref=avformat_open_input:0x1030e5dac result=CONFIRMED]
+            // ⚑ code is the LIVE open-input return; message is the 25-byte literal at
+            //   0x103d34f00 = `formatOpenInput`'s raw value. In the binary this throw is factored out
+            //   of the thumbnail bodies into the shared helper 0x101a308c4-0x101a31310.
+            throw KSPlayerError(code: result, description: KSPlayerErrorCode.formatOpenInput.rawValue)
         }
         result = avformat_find_stream_info(formatCtx, nil)
         guard result == 0 else {
-            throw NSError(errorCode: .formatFindStreamInfo, avErrorCode: result)
+            throw KSPlayerError(code: result, description: KSPlayerErrorCode.formatFindStreamInfo.rawValue)
         }
         var videoStreamIndex = -1
         for i in 0 ..< Int32(formatCtx.pointee.nb_streams) {
@@ -160,12 +164,12 @@ public class ThumbnailController {
             }
         }
         guard videoStreamIndex >= 0, let videoStream = formatCtx.pointee.streams[videoStreamIndex] else {
-            throw NSError(description: "No video stream")
+            throw KSPlayerError(code: 0, description: "No video stream")
         }
 
         let videoAvgFrameRate = videoStream.pointee.avg_frame_rate
         if videoAvgFrameRate.den == 0 || av_q2d(videoAvgFrameRate) == 0 {
-            throw NSError(description: "Avg frame rate = 0, ignore")
+            throw KSPlayerError(code: 0, description: "Avg frame rate = 0, ignore")
         }
         var codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: nil)
         defer {
@@ -186,7 +190,8 @@ public class ThumbnailController {
             av_frame_free(&frame)
         }
         guard let frame else {
-            throw NSError(description: "can not av_frame_alloc")
+            // ⚑[tool=ffmpeg_name_oracle ref=av_frame_alloc:0x103240100 result=CONFIRMED]
+            throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
         }
         for i in 0 ..< thumbnailCount {
             let seek_pos = interval * Int64(i) + videoStream.pointee.start_time

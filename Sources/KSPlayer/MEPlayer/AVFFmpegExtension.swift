@@ -78,21 +78,39 @@ extension AVCodecContext {
 
 extension AVCodecParameters {
     mutating func createContext(options: KSOptions?) throws -> UnsafeMutablePointer<AVCodecContext> {
+        // ⚑ BINARY-ONLY HEAD GUARD, and it is the fifth `_swift_allocError` in this body: the
+        //   enclosing function 0x101a07dc8-0x101a08224 holds FIVE, one more than source had throws.
+        // ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_to_context:0x1029f5974 result=CONFIRMED]
+        // ⚑[tool=ffmpeg_name_oracle ref=avcodec_open2:0x10294caf8 result=CONFIRMED]
+        // ⚑[tool=ffmpeg_name_oracle ref=avcodec_free_context:0x102d53ac8 result=CONFIRMED]
+        //   This one runs BEFORE the context allocation — so it frees nothing — and stores
+        //   `code = 0` with the same 39-byte message literal 0x103d34e20 as the set-param throw.
+        guard extradata == nil || extradata_size > 0 else {
+            throw KSPlayerError(code: 0, description: KSPlayerErrorCode.codecContextSetParam.rawValue)
+        }
         var codecContextOption = avcodec_alloc_context3(nil)
         guard let codecContext = codecContextOption else {
-            throw NSError(errorCode: .codecContextCreate)
+            // ⚑ code is the LITERAL 0 (`str wzr`), not a live return; message is the 33-byte literal
+            //   at 0x103d34e50, byte-identical to `codecContextCreate`'s raw value.
+            throw KSPlayerError(code: 0, description: KSPlayerErrorCode.codecContextCreate.rawValue)
         }
         var result = avcodec_parameters_to_context(codecContext, &self)
         guard result == 0 else {
             avcodec_free_context(&codecContextOption)
-            throw NSError(errorCode: .codecContextSetParam, avErrorCode: result)
+            // ⚑ code is the LIVE parameters-to-context return (`w23` @0x101a07e2c).
+            throw KSPlayerError(code: result, description: KSPlayerErrorCode.codecContextSetParam.rawValue)
         }
         if codec_type == AVMEDIA_TYPE_VIDEO, options?.hardwareDecode ?? false {
             codecContext.getFormat()
         }
         guard let codec = avcodec_find_decoder(codecContext.pointee.codec_id) else {
             avcodec_free_context(&codecContextOption)
-            throw NSError(errorCode: .codecContextFindDecoder, avErrorCode: result)
+            // ⚑ `.codecContextFindDecoder` IS NOT A CASE IN THE IMAGE, and this site is why that is
+            //   not a problem: it never referenced one. The throw at 0x101a07fe8-0x101a0808c builds a
+            //   RUNTIME INTERPOLATION from the 32-byte literal at 0x103d35260 plus the Int32 at
+            //   codecContext+0x18, and its message matches none of the 19 raw values. `code` is the
+            //   literal 0 (`str wzr`) — NOT the live `result` the old spelling passed.
+            throw KSPlayerError(code: 0, description: "can't find decoder for codec_id=\(codecContext.pointee.codec_id)")
         }
         codecContext.pointee.codec_id = codec.pointee.id
         codecContext.pointee.flags2 |= AV_CODEC_FLAG2_FAST
@@ -113,7 +131,9 @@ extension AVCodecParameters {
         av_dict_free(&avOptions)
         guard result == 0 else {
             avcodec_free_context(&codecContextOption)
-            throw NSError(errorCode: .codesContextOpen, avErrorCode: result)
+            // ⚑ code is the LIVE codec-open return (`w20`); message is the 23-byte literal at
+            //   0x103d34e00, byte-identical to `codesContextOpen`'s raw value.
+            throw KSPlayerError(code: result, description: KSPlayerErrorCode.codesContextOpen.rawValue)
         }
         return codecContext
     }
@@ -474,12 +494,10 @@ extension String {
     }
 }
 
-public extension NSError {
-    convenience init(errorCode: KSPlayerErrorCode, avErrorCode: Int32) {
-        let underlyingError = AVError(code: avErrorCode)
-        self.init(errorCode: errorCode, userInfo: [NSUnderlyingErrorKey: underlyingError])
-    }
-}
+// ⚑ REMOVED with the rest of the `extension NSError` error model. The binary's counterpart is
+//   `KSPlayerError.init(errorCode:avErrorCode:)`, declared in PlayerDefines.swift — and unlike the
+//   other three KSPlayerError inits it is genuinely CALLED, exactly once, from
+//   `FFmpegDecode.decodeFrame` at 0x101a229fc. It wraps no `AVError` and builds no `userInfo`.
 
 public extension AVError {
     /// Resource temporarily unavailable

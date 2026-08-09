@@ -129,9 +129,13 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         // ⚑[tool=ffmpeg_name_oracle ref=0x103193858 result=CONFIRMED] avformat_alloc_output_context2 (79/316)
         let allocResult = avformat_alloc_output_context2(&contextPointer, nil, resolvedFormatName, filename)
         guard let outputContext = contextPointer else {          // L398 guards on ctx == nil
-            _ = allocResult   // ⚑ binary embeds this AVERROR in the KSPlayerError box (code@0); the exact
-                              //   code-field mechanics (enum-vs-Int) = KSPlayerError-owner/P8 (throwing bodies throw KSPlayerError)
-            throw KSPlayerError(code: Int32(KSPlayerErrorCode.formatOutputCreate.rawValue), description: KSPlayerErrorCode.formatOutputCreate.description)
+            // ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_output_context2:0x103193858 result=CONFIRMED]
+            // ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
+            // ⚑ RESOLVED. The `_ = allocResult` discard and the enum-vs-Int question are both gone:
+            //   `code` is `Int32`, and the binary's code operand here IS the live
+            //   avformat_alloc_output_context2 return, i.e. `allocResult`. message is the 35-byte
+            //   literal at 0x103d34ed0 = `formatOutputCreate`'s raw value.
+            throw KSPlayerError(code: allocResult, description: KSPlayerErrorCode.formatOutputCreate.rawValue)
         }
         // ⚑ binary also sets an AVFormatContext numeric field (+0x80 = 0x200000 / 2 MiB tuning, L410) —
         //   which field UNRESOLVED → omitted (non-load-bearing for stream/map setup).
@@ -165,8 +169,13 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
 
         // ── C3: avio_open → avformat_write_header → av_dict_free ─────────────────────────────────────
         // ⚑[tool=ffmpeg_name_oracle ref=0x1030c0914 result=CONFIRMED] avio_open (32/128)
-        guard avio_open(&outputContext.pointee.pb, filename, AVIO_FLAG_WRITE) >= 0 else {   // L1246/1249
-            throw KSPlayerError(description: "avio_open fail")   // code=.unknown; ⚑ binary embeds the AVERROR (P8)
+        // ⚑ THE MESSAGE HERE WAS A SELF-DECLARED STRING AND IT IS NOT ONE — the 16 bytes the binary
+        //   loads equal arm 2 of the rawValue table exactly, so it is `KSPlayerErrorCode.avioOpen`,
+        //   a case the reconstruction did not have until this change. `code` is the live avio_open
+        //   return, which now has to be bound to be thrown.
+        let avioResult = avio_open(&outputContext.pointee.pb, filename, AVIO_FLAG_WRITE)
+        guard avioResult >= 0 else {   // L1246/1249
+            throw KSPlayerError(code: avioResult, description: KSPlayerErrorCode.avioOpen.rawValue)
         }
         // ⚑ DEFERRED — build `options` (AVDictionary) from formatContextOptions (FUN_101a322c0, L1262:
         //   [String:Any] → per-entry AVDictionary inserts, e.g. hls_segment_filename/hls_segment_type). Reconstruct
@@ -176,7 +185,9 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         let headerResult = avformat_write_header(outputContext, &options)
         av_dict_free(&options)   // ⚑[tool=ffmpeg_name_oracle ref=0x10323b034 result=CONFIRMED] av_dict_free (27/108)
         guard headerResult >= 0 else {                          // L1266 / L1356
-            throw KSPlayerError(code: Int32(KSPlayerErrorCode.formatWriteHeader.rawValue), description: KSPlayerErrorCode.formatWriteHeader.description)
+            // ⚑ code is the live avformat_write_header return, `headerResult`; message is the
+            //   26-byte literal at 0x103d34eb0 = `formatWriteHeader`'s raw value.
+            throw KSPlayerError(code: headerResult, description: KSPlayerErrorCode.formatWriteHeader.rawValue)
         }
 
         // ── C4: assemble the 12 stored fields + return (implicit) — L1311-1380 ───────────────────────

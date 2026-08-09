@@ -65,7 +65,7 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         guard let track = formatContext.assetTracks.first(where: { $0.mediaType == .subtitle }) else {
             // throw @0x101a9f800-844: code@0 = 0 (.unknown), message = "can not judge stream" (str-len 0x14=20,
             //   chars @0x103d3a070; the decompile's pointer 0x103d3a050 is P72-scrambled). _swift_allocError(0x1041d5790).
-            throw KSPlayerError(description: "can not judge stream")
+            throw KSPlayerError(code: 0, description: "can not judge stream")
         }
 
         // ── on match (LAB_101a9f554): enable the stream, reset its startTime, record the index, build the decode. ──

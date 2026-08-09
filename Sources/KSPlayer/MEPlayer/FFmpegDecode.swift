@@ -267,7 +267,16 @@ class FFmpegDecode: DecodeProtocol {
                 } else if result == AVError.tryAgain.code {
                     break
                 } else {
-                    let error = NSError(errorCode: assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
+                    // ⚑ THE ONE SITE IN THE IMAGE THAT CALLS A KSPlayerError INITIALIZER — every
+                    //   other error is constructed inline. The call is at 0x101a229fc, into the real
+                    //   body 0x1019e429c behind the 1-instruction forwarder.
+                    //   The ternary survives verbatim as arithmetic on the CASE INDEX rather than a
+                    //   branch: `cmp w28,#0 / mov w8,#0xb / cinc w8,w8,eq` — base 11 is
+                    //   `codecVideoReceiveFrame`, incremented to 12 `codecAudioReceiveFrame` when the
+                    //   media-type discriminant is 0. `avErrorCode` is the live decode result.
+                    //   The returned (code, message) pair is then boxed TWICE — once for KSLog and
+                    //   once into the `.failure` payload — which is why both statements below stand.
+                    let error = KSPlayerError(errorCode: assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
                     KSLog(error)
                     completionHandler(.failure(error))
                 }

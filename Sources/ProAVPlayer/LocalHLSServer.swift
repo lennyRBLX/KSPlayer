@@ -252,7 +252,7 @@ class LocalHLSServer {
         let host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1")
         let path = relativePath(from: rootDirectory, to: fileURL)
         guard let url = URL(string: "http://\(host):\(port)/\(path)") else {
-            throw KSPlayerError(description: "can not get url ")
+            throw KSPlayerError(code: 0, description: "can not get url ")
         }
         return url
     }

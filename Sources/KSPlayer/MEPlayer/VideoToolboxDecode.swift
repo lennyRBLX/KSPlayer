@@ -171,7 +171,7 @@ class VideoToolboxDecode: DecodeProtocol {
                 guard status == noErr else {
                     if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
                         if isKeyFrame {
-                            completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
+                            completionHandler(.failure(KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)))
                         } else {
                             // 解决从后台切换到前台，解码失败的问题
                             self.needReconfig = true
@@ -204,7 +204,12 @@ class VideoToolboxDecode: DecodeProtocol {
                 }
             } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
                 if isKeyFrame {
-                    throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
+                    // ⚑ LIVE DIVERGENCE, recorded rather than silently "fixed": the binary's
+                    //   decodeFrame 0x101a6ce44-0x101a6d734 contains ZERO `_swift_allocError`, so it
+                    //   constructs NO error at this site. What it does instead is not yet read, so the
+                    //   throw is migrated to KSPlayerError rather than deleted — deleting it would be
+                    //   writing a control flow nobody has derived. Its own unit.
+                    throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
                 } else {
                     // 解决从后台切换到前台，解码失败的问题
                     needReconfig = true
@@ -341,7 +346,9 @@ extension CMFormatDescription {
                 return sampleBuffer
             }
         }
-        throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
+        // ⚑ Both failure edges of CMBlockBufferCreateWithMemoryBlock/CMSampleBufferCreate converge
+        //   on ONE throw at 0x101a0bcd4-0x101a0bd18; code is the LIVE failing OSStatus (`w22`).
+        throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
         // swiftlint:enable line_length
     }
 }
