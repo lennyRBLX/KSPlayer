@@ -278,13 +278,31 @@ Same for `LimitSeparatePreLoadIOContext`. So the blocker is a genuine property o
 tooling, and it is the case `[[field-offset-vector-metadata-init]]` already documents. The tool is
 right to refuse.
 
-THE ROUTE that does work here is the one that refusal names: anchor sites across bodies, or the
-trie-named accessors. `dump_binary_field_types --module`-style output gives record ORDER only, and
-MEMORY rule 82 forbids inferring offsets from record order.
+THE ROUTE that works is the one the refusal names — the trie-named accessors — and
+`recover_field_offsets.py` implements it. **Three of the four are now RECOVERED**, and the class
+that owns them is `PreLoadIOContext`, not the two I tried first:
 
-Candidates that must NOT be written until confirmed that way: 0x88 looks like `entryList` (it is the
-array being binary-searched) and 0x50/0x80 like `logicalPos`/`urlPos`. All three are plausible;
-none is established.
+    python3 scripts/recover_field_offsets.py --class PreLoadIOContext --module PreLoadIOContext --verbose
+      0x50  urlPos       (setter @0x101ba6e04, getter @0x100a4e368)
+      0x80  loadedSize   (getter @0x101ba9e44)
+      0x88  cacheList    (getter @0x101ba4244)
+
+⚠️ **AND THIS IS WHY THE NO-GUESSING RULE EARNS ITS KEEP.** An earlier revision of this file listed
+"plausible" candidates: `0x88 looks like entryList`, `0x50/0x80 like logicalPos/urlPos`. Measured:
+0x88 is **cacheList**, not entryList. 0x80 is **loadedSize**, not urlPos. Only 0x50 was right. Two
+of three plausible-looking guesses were wrong, in a body where a wrong field name would have
+compiled cleanly and silently read the wrong memory.
+
+Note the same probe on `CacheIOContext` and on `LimitSeparatePreLoadIOContext` returns NOT RECOVERED
+for all four offsets — the accessors that touch them by constant immediate belong to
+`PreLoadIOContext`. Probe every class in the chain, not just the one the method is declared on.
+
+**ONLY 0x48 REMAINS.** No named accessor of any class in the chain touches it by constant immediate,
+so this route cannot name it. Its use is distinctive and should make it identifiable from a
+sibling body: after a successful read it is a running maximum —
+`self[0x48] = max(self[0x48], newPos)` — i.e. a high-water mark updated only on the success path,
+immediately before `updateSpeedSample(newPos:)`. Name it from an anchor site in another body, then
+this unit is writable end to end.
 
 ⚠️ Also note the decompile opens with `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`
 and `addEntry` THROWS — so the `do`/`catch` is exactly the structure Ghidra drops. Derive the error
