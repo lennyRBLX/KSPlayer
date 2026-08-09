@@ -52,9 +52,22 @@ class VideoToolboxDecode: DecodeProtocol {
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
         // P3a DONE: the DV RPU-extraction loop below (after the guard) reconstructs Forward's hardware-path
         // DV decode (binary L120-236 @0x101a6ce44; ff_dovi_rpu_parse→get_metadata→convertAVDOVIToKSDOVIMetadata),
-        // body-audited FAITHFUL (commits c203481 + the 489b6a5 shutdown tail). STILL DEFERRED: each `maxTimestamp`
-        // below marked ⚑P3 is an UNVERIFIED lastPosition→maxTimestamp placeholder (the removed field) — the
-        // VTDecode output-handler timestamp semantics are a separate unit. Structural-diff → P8. Cached: VTBox_slot29_101a6ce44.txt.
+        // body-audited FAITHFUL (commits c203481 + the 489b6a5 shutdown tail).
+        //
+        // ⚠️ SCOPE CORRECTION — the ⚑P3 deferral does NOT belong to this body. This comment used to say
+        // "each `maxTimestamp` below marked ⚑P3 is an UNVERIFIED placeholder", which reads as a deferral on
+        // `decodeFrame`. The four ⚑P3 lines (150, 151, 153, 158) are lexically inside `decodeFrame` but they
+        // sit in the `[weak self]` closure handed to VTDecompressionSessionDecodeFrame below — and that
+        // closure is a SEPARATE binary function with its own address.
+        //
+        // Measured over this body's whole extent, 0x101a6ce44-0x101a6d734, 572 instructions: the only
+        // touches of self+0x30 / +0x38 / +0x40 are TWO stores, `str x8,[x19,#0x40]` @0x101a6cf0c and
+        // @0x101a6d65c — the two doFlushCodec resets. There is no read of any of the three, so nothing in
+        // this extent implements the timestamp bookkeeping the ⚑P3 markers describe.
+        // ⚑[tool=function_extents ref=VideoToolboxDecode.decodeFrame:0x101a6ce44 result=572-instr-two-0x40-stores]
+        //
+        // The deferral is real, but it is the CLOSURE's, and it needs the closure's own address and unit.
+        // Cached: VTBox_slot29_101a6ce44.txt.
         if needReconfig {
             // 解决从后台切换到前台，解码失败的问题
             session = DecompressionSession(assetTrack: session.assetTrack, options: options)!
