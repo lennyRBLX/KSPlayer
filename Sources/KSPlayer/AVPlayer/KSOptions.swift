@@ -168,6 +168,69 @@ open class KSOptions {
     // The prior pin rested on recover_swift_function_name, which reads #function/#file literals that
     // a release build strips — the same failure mode already recorded for slots 220-225 below.
     // ⚑[tool=vtable_impl_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=identity-discharged]
+    /// wanted audio track, or nil for automatic selection
+    /// - Parameter :  audio track
+    /// - Returns: The selected track
+    // idx128 slot222 @0x10002db34 — identity DISCHARGED (s97); see the slot-128 block above.
+    // Return type is MediaPlayerTrack?, NOT Int?. Two independent lines of evidence:
+    //   (1) the trie demangles this address's sole KSOptions METHOD symbol as
+    //       `wantedAudio(tracks: [KSPlayer.MediaPlayerTrack]) -> KSPlayer.MediaPlayerTrack?`;
+    //   (2) the ABI agrees — MediaPlayerTrack is AnyObject-constrained, so the existential is
+    //       (ref, witness) and `nil` is exactly the observed `mov x0,#0x0; mov x1,#0x0; ret`.
+    //       An `Int?` nil does not leave x1 zero, so the body refutes the Int? spelling on its own.
+    // ⚠️ The name is NOT recoverable from the address alone: export_trie_oracle --addr 0x10002db34
+    // --owner KSOptions answers `OWNER_AMBIG (586 symbols)` / `NOT RECOVERABLE from this address —
+    // do not guess it`. It becomes recoverable only by filtering that fold list to KSOptions' four
+    // symbols and combining it with the vtable-uniqueness argument above, which is why the marker
+    // below names the vtable oracle rather than the trie oracle.
+    // ⚑[tool=vtable_impl_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=signature-recovered]
+    open func wantedAudio(tracks _: [MediaPlayerTrack]) -> MediaPlayerTrack? {
+        nil
+    }
+
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019b91c8 (extent 0x1019b91c8-0x1019b9330, 90 instr, all
+    // accounted for). The trie prints the return type as UInt16, and the body proves it independently:
+    // the renderer arm caps at 0x1000 = 4096, which cannot be held in the UInt8 the source declared.
+    // The branch is `cmp x20,x0 / b.eq 0x1019b9284` @0x1019b9228 where x20 is the static loaded under
+    // swift_beginAccess from 0x104c63118 and x0 is the AudioRendererPlayer metadata accessor's result;
+    // EQUAL takes the max(channelCount,6) / >>1 / 4096 arm, NOT-equal the channelCount / >>2 / 1024 arm.
+    // Both `mul` sites are checked (smulh + cmp asr #63) and both tails `tbz/tbnz #0x3f`, i.e. the Int
+    // arithmetic traps on overflow and on a negative result — the shape of a UInt16(_:) conversion.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.audioFrameMaxCount(fps:channelCount:):0x1019b91c8 result=signature+body-recovered]
+    // ⚑[tool=export_trie_oracle ref=static KSPlayer.KSOptions.audioPlayerType:0x104c63118 result=OWNER_MATCH]
+    // ⚑[tool=export_trie_oracle ref=type metadata accessor for KSPlayer.AudioRendererPlayer:0x101a14c08 result=OWNER_MATCH]
+    open func audioFrameMaxCount(fps: Float, channelCount: Int) -> UInt16 {
+        if KSOptions.audioPlayerType == AudioRendererPlayer.self {
+            let count = (Int(fps) * max(channelCount, 6)) >> 1
+            if count >= 4096 {
+                return 4096
+            } else {
+                return UInt16(count)
+            }
+        } else {
+            let count = (Int(fps) * channelCount) >> 2
+            if count >= 1024 {
+                return 1024
+            } else {
+                return UInt16(count)
+            }
+        }
+    }
+
+    // SIGNATURE AND BODY BOTH RECOVERED @0x1019b9330 (extent 0x1019b9330-0x1019b93a8, 30 instr, all
+    // accounted for) — idx130, the slot immediately after audioFrameMaxCount, which is why it is
+    // declared here. Same static and same swift_once token (0x1044e5248) as the body above, but
+    // ⚠️ NOT the same comparand: this one calls the metadata accessor at 0x101a160a4, which the trie
+    // names AudioUnitPlayer, where audioFrameMaxCount calls 0x101a14c08 = AudioRendererPlayer. The
+    // scouting note above this class described idx130 as returning "that same static-type equality";
+    // it is the same static but a different class, read from the accessor rather than assumed.
+    // `cmp x19,x0 / cset w0,eq` @0x1019b9378 is the whole result.
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.isAudioRateByFilter():0x1019b9330 result=OWNER_MATCH]
+    // ⚑[tool=export_trie_oracle ref=type metadata accessor for KSPlayer.AudioUnitPlayer:0x101a160a4 result=OWNER_MATCH]
+    open func isAudioRateByFilter() -> Bool {
+        KSOptions.audioPlayerType == AudioUnitPlayer.self
+    }
+
     internal var fontsDir: URL? // Tier 3a: read by SubtitleDecode.init (FUN_101a6914c @0x133 _TtC8KSPlayer9KSOptions::fontsDir) -> SubtitleDecode.fontsDir = fontsDir?.path  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     public var audioRecognizes: [AudioRecognize] = []
     // sutile
@@ -615,26 +678,6 @@ open class KSOptions {
         tracks.first
     }
 
-    /// wanted audio track, or nil for automatic selection
-    /// - Parameter :  audio track
-    /// - Returns: The selected track
-    // idx128 slot222 @0x10002db34 — identity DISCHARGED (s97); see the slot-128 block above.
-    // Return type is MediaPlayerTrack?, NOT Int?. Two independent lines of evidence:
-    //   (1) the trie demangles this address's sole KSOptions METHOD symbol as
-    //       `wantedAudio(tracks: [KSPlayer.MediaPlayerTrack]) -> KSPlayer.MediaPlayerTrack?`;
-    //   (2) the ABI agrees — MediaPlayerTrack is AnyObject-constrained, so the existential is
-    //       (ref, witness) and `nil` is exactly the observed `mov x0,#0x0; mov x1,#0x0; ret`.
-    //       An `Int?` nil does not leave x1 zero, so the body refutes the Int? spelling on its own.
-    // ⚠️ The name is NOT recoverable from the address alone: export_trie_oracle --addr 0x10002db34
-    // --owner KSOptions answers `OWNER_AMBIG (586 symbols)` / `NOT RECOVERABLE from this address —
-    // do not guess it`. It becomes recoverable only by filtering that fold list to KSOptions' four
-    // symbols and combining it with the vtable-uniqueness argument above, which is why the marker
-    // below names the vtable oracle rather than the trie oracle.
-    // ⚑[tool=vtable_impl_oracle ref=KSPlayer.KSOptions.wantedAudio:0x10002db34 result=signature-recovered]
-    open func wantedAudio(tracks _: [MediaPlayerTrack]) -> MediaPlayerTrack? {
-        nil
-    }
-
     /// @0x1019bb974, 175 instructions. The signature is the trie's, not inferred:
     /// ⚑[tool=export_trie_oracle ref=KSOptions.wantedSubtitle(tracks:):0x1019bb974 result=OWNER_MATCH]
     /// This is the method MEPlayerItem.swift:464 identified at the call site and left unbuilt.
@@ -694,49 +737,6 @@ open class KSOptions {
     // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.videoFrameMaxCount:0x1019bea54 result=signature+body-recovered]
     open func videoFrameMaxCount(fps _: Float, naturalSize _: CGSize, isLive _: Bool, reorderSize: Int32) -> UInt8 {
         reorderSize > 2 ? 8 : 4
-    }
-
-    // SIGNATURE AND BODY BOTH RECOVERED @0x1019b91c8 (extent 0x1019b91c8-0x1019b9330, 90 instr, all
-    // accounted for). The trie prints the return type as UInt16, and the body proves it independently:
-    // the renderer arm caps at 0x1000 = 4096, which cannot be held in the UInt8 the source declared.
-    // The branch is `cmp x20,x0 / b.eq 0x1019b9284` @0x1019b9228 where x20 is the static loaded under
-    // swift_beginAccess from 0x104c63118 and x0 is the AudioRendererPlayer metadata accessor's result;
-    // EQUAL takes the max(channelCount,6) / >>1 / 4096 arm, NOT-equal the channelCount / >>2 / 1024 arm.
-    // Both `mul` sites are checked (smulh + cmp asr #63) and both tails `tbz/tbnz #0x3f`, i.e. the Int
-    // arithmetic traps on overflow and on a negative result — the shape of a UInt16(_:) conversion.
-    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.audioFrameMaxCount(fps:channelCount:):0x1019b91c8 result=signature+body-recovered]
-    // ⚑[tool=export_trie_oracle ref=static KSPlayer.KSOptions.audioPlayerType:0x104c63118 result=OWNER_MATCH]
-    // ⚑[tool=export_trie_oracle ref=type metadata accessor for KSPlayer.AudioRendererPlayer:0x101a14c08 result=OWNER_MATCH]
-    open func audioFrameMaxCount(fps: Float, channelCount: Int) -> UInt16 {
-        if KSOptions.audioPlayerType == AudioRendererPlayer.self {
-            let count = (Int(fps) * max(channelCount, 6)) >> 1
-            if count >= 4096 {
-                return 4096
-            } else {
-                return UInt16(count)
-            }
-        } else {
-            let count = (Int(fps) * channelCount) >> 2
-            if count >= 1024 {
-                return 1024
-            } else {
-                return UInt16(count)
-            }
-        }
-    }
-
-    // SIGNATURE AND BODY BOTH RECOVERED @0x1019b9330 (extent 0x1019b9330-0x1019b93a8, 30 instr, all
-    // accounted for) — idx130, the slot immediately after audioFrameMaxCount, which is why it is
-    // declared here. Same static and same swift_once token (0x1044e5248) as the body above, but
-    // ⚠️ NOT the same comparand: this one calls the metadata accessor at 0x101a160a4, which the trie
-    // names AudioUnitPlayer, where audioFrameMaxCount calls 0x101a14c08 = AudioRendererPlayer. The
-    // scouting note above this class described idx130 as returning "that same static-type equality";
-    // it is the same static but a different class, read from the accessor rather than assumed.
-    // `cmp x19,x0 / cset w0,eq` @0x1019b9378 is the whole result.
-    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSOptions.isAudioRateByFilter():0x1019b9330 result=OWNER_MATCH]
-    // ⚑[tool=export_trie_oracle ref=type metadata accessor for KSPlayer.AudioUnitPlayer:0x101a160a4 result=OWNER_MATCH]
-    open func isAudioRateByFilter() -> Bool {
-        KSOptions.audioPlayerType == AudioUnitPlayer.self
     }
 
     /// customize dar
