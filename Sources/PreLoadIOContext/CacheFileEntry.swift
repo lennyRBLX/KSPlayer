@@ -41,11 +41,21 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     //   reconstruction/binding_refuted_s61.json
     //   RESOLVED in session 62: `position` is now `let` — the init assigns it from its
     //   `position` PARAMETER, so the `= 0` default was never observable. `file` still stands.
-    var file: FileHandle! // ⚑ IUO: field-record mangle `So12NSFileHandleC` carries NO `Sg` ⇒ non-optional
-    //   (nil until init opens it; `guard let file` binds it). The prior `?` was an inferred guess; the
-    //   binary is authoritative. FileHandle erases to NSFileHandle (Foundation.apinotes SwiftName).
+    // ⚑ s114: `let`, NOT an IUO `var`. Two independent binary signals, both re-read here:
+    //   the field record's FLAGS word is 0 (= `let`; 0x2 would be IsVar), and the mangle
+    //   `So12NSFileHandleC` carries no `Sg`. Decisively, the designated init @0x101b90114 emits NO
+    //   implicit-nil default store for this field anywhere in its 226 instructions — an IUO `var`
+    //   always gets one in the prologue — and writes it exactly once, on the success path, by a
+    //   plain 8-byte `str x20,[x22,#0x10]` at 0x101b90488.
+    //   ⚑[tool=fieldrec ref=CacheFileEntry.file:0x103cc062c result=flags0-let-no-Sg]
+    let file: FileHandle
     // url: source/destination URL of the cache file.
-    let url: URL? // type inferred — ⚑ (Foundation; unmapped in field-records)
+    // ⚑ s114: `URL`, NOT `URL?` — the field record's tail is EMPTY (a `Sg` would make it Optional)
+    //   and its symref is Foundation's `URL` nominal type descriptor. The init's parameter is
+    //   non-optional for the same reason: it takes URL's own metadata and value witness, never
+    //   `Optional<URL>`'s.
+    //   ⚑[tool=bind_oracle ref=CacheFileEntry.url:0x104109b20 result=Foundation.URL-no-Sg]
+    let url: URL
     // position: base byte offset of this entry within the underlying stream.
     //   s13/s14 compute `offset - position`; accessed as `*(ulong *)` with an
     //   UNSIGNED compare (`offset < position`) → 64-bit unsigned. Brief's `Int64`
@@ -70,12 +80,53 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     // Arity inferred (no mangled init symbol exists); param→field stores are explicit in the inner init.
     // Body opens the EXISTING cache file + reads its NSURLFileSizeKey size → faithful spine; the
     // NSFileManager/URLResourceValues marshalling detail is UNRESOLVED.
-    init(url: URL?, position: UInt64) {
-        self.url = url
+    /// @0x101b90114 (the initializing `…cfc`; the allocating thunk is 0x101b900c4), 226 instructions.
+    /// The trie gives the whole signature, and all three of its differences from the previous
+    /// spelling are read, not inferred:
+    /// `init(url: Foundation.URL, position: Swift.UInt64) throws -> CacheFileEntry?` — FAILABLE,
+    /// THROWING, and taking a NON-optional `url`.
+    /// ⚑[tool=export_trie_oracle ref=CacheFileEntry.init(url:position:):0x101b90114 result=ACSg-throws]
+    ///
+    ///   · the three declaration defaults are the only ones materialised in the prologue —
+    ///     `saveFile = false` (0x101b901c4), `size = 0` (0x101b901d4), `maxSize = nil` (0x101b901e4,
+    ///     payload zeroed + tag byte 1). `file`, `url` and `position` get none, which is what makes
+    ///     them non-defaulted `let`s.
+    ///   · FAILABILITY is a NULL class reference, not an enum tag: `Optional<CacheFileEntry>` for a
+    ///     class is a nullable pointer, so the nil path just sets x22 = 0 after
+    ///     `swift_deallocPartialClassInstance` (0x101b90310). It returns nil WITHOUT throwing — the
+    ///     swifterror register is restored from its entry spill.
+    ///   · there are exactly TWO throw paths and this body calls NO `swift_willThrow` of its own —
+    ///     both are propagations: from `URL.resourceValues(forKeys:)` and from
+    ///     `FileHandle(forUpdating:)`, whose shim converts an `NSError`. So the thrown value is a
+    ///     bridged Cocoa error, not a type declared in this module.
+    ///
+    /// ⚑ The old note said the init opens the file for READING. It does not: the selector is
+    ///   `fileHandleForUpdatingURL:error:`, i.e. `FileHandle(forUpdating:)`, read-write.
+    ///   ⚑[tool=decode_objc_selector ref=CacheFileEntry.init:0x10440b4a8 result=fileHandleForUpdatingURL:error:]
+    ///
+    /// ⚑ `size` comes from `URLResourceValues.fileSize` (an `Int?`) through a TRAPPING `UInt32(_:)`
+    ///   narrowing — traps at 0x101b90494 on negative and 0x101b90498 on > UInt32.max. It is NOT a
+    ///   FileManager attributes lookup and NOT a seek-to-end. The `forKeys:` argument is the
+    ///   one-element literal `[.fileSizeKey]`, built as a stack-promoted array whose sole element is
+    ///   the CoreFoundation global `NSURLFileSizeKey`.
+    ///   ⚑[tool=bind_oracle ref=URLResourceValues.fileSize:0x104109830 result=fileSizeSiSgvg]
+    ///
+    /// ⚑ Spellings the binary does not decide: whether `maxSize` is written `size` or
+    ///   `UInt32(fileSize)` (same register w20, one conversion), and whether `resourceValues(...)`
+    ///   is bound to a local or chained into `.fileSize`.
+    init?(url: URL, position: UInt64) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        if let fileSize = values.fileSize {
+            size = UInt32(fileSize)
+            maxSize = size
+        }
         self.position = position
-        self.saveFile = true                  // binary sets saveFile=true on this path
-        // UNRESOLVED: open existing file (NSFileManager.fileExists) + read NSURLFileSizeKey → size/maxSize,
-        //   then open FileHandle → file. Foundation spine in FUN_101b90114; detail deferred. — P2  ⚑[tool=resolve_fun_pins ref=FUN_101b90114:0x101b90114 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(url: Foundation.URL, position: Swift.UInt64) throws -> PreLoadIOContext.CacheFileEntry?
+        self.url = url
+        saveFile = true
+        file = try FileHandle(forUpdating: url)
     }
 
     // UNRESOLVED: s9 @101b881f8 → inner FUN_101b8fb0c — the DESIGNATED init (3 args: param_1 = a  ⚑[tool=resolve_fun_pins ref=FUN_101b8fb0c:0x101b8fb0c result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(dir: Foundation.URL, position: Swift.UInt64, maxSize: Swift.UInt32?) throws -> PreLoadIOContext.CacheFileEntry
@@ -162,7 +213,9 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     //   helpers (FUN_100395fc0 build-Data, FUN_101b95a8c, FUN_10000627c) are not
     //   resolvable from the cached decompile — spine preserved, helper detail TODO.
     func write(offset: UInt64, buffer: UnsafePointer<UInt8>, length: Int32) throws { // name inferred (devirt)
-        guard let file else { return }
+        // ⚑ s114: the `guard let file` that stood here is GONE because `file` is a non-optional
+        //   `let` (field-record flags 0, no `Sg`, and the init emits no implicit-nil default).
+        //   A non-optional cannot be conditionally bound, and the binary has no nil test for it.
         let target = offset - position // binary: traps if offset < position
         if try file.offset() != target {
             try file.seek(toOffset: target)
@@ -179,7 +232,8 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
     // UNRESOLVED: the decompile shows the _read call but the returned-Data
     //   marshalling is obscured — return shape is a best-effort spine.
     func read(offset: UInt64, length: Int32) throws -> Data? { // name inferred (devirt)
-        guard let file else { return nil }
+        // ⚑ s114: same as `write` above — `file` is a non-optional `let`, so there is no binding
+        //   guard here and none in the binary.
         let target = offset - position // binary: traps if offset < position
         if try file.offset() != target {
             try file.seek(toOffset: target)
