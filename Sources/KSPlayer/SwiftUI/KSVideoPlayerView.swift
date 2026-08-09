@@ -216,7 +216,10 @@ public struct KSVideoPlayerView: View {
             .onDrop(of: ["public.file-url"], isTargeted: nil) { providers -> Bool in
                 providers.first?.loadDataRepresentation(forTypeIdentifier: "public.file-url") { data, _ in
                     if let data, let path = NSString(data: data, encoding: 4), let url = URL(string: path as String) {
-                        openURL(url)
+                        // `options: nil` is read, not chosen — see openURL's own note. This site is
+                        // macOS-gated and so is NOT the iOS image's caller; it is spelled to match
+                        // the one call the binary does contain.
+                        openURL(url, options: nil)
                     }
                 }
                 return true
@@ -302,15 +305,51 @@ public struct KSVideoPlayerView: View {
         case play, controller, info
     }
 
-    public func openURL(_ url: URL) {
-        runOnMainThread {
-            if url.isSubtitle {
-                let info = URLSubtitleInfo(url: url)
-                playerCoordinator.subtitleModel.selectedSubtitleInfo = info
-            } else if url.isAudio || url.isMovie {
-                self.url = url
-                title = url.lastPathComponent
-            }
+    // Forward 1.3.17 @0x101ac99ac, extent 0x101ac99ac-0x101ac9e2c (1152 B / 288 instr), OWNER_MATCH,
+    // one symbol, not ICF-folded. Three of this unit's seven recorded divergences are closed here;
+    // the remaining four all require the KSVideoPlayerView STRUCT RESTRUCTURE (the `@StateObject`
+    // wraps `KSVideoPlayerModel`, not `KSVideoPlayer.Coordinator`, and both else-branch writes land
+    // on the MODEL) and are held in verdict `KSVideoPlayerView_openURL_101ac99ac`.
+    //
+    // 1. THE `options:` PARAMETER IS REAL. The trie mangles this body
+    //    `openURL(_: Foundation.URL, options: KSPlayer.KSOptions?) -> ()`, and the body's third
+    //    conditional branch `cbz x28, 0x101ac9c98` is that parameter's nil test, off the prologue
+    //    spill `stur x1, [x29,#-0x90]`.
+    //    ⚠️ NO `= nil` DEFAULT IS WRITTEN, and the reason matters. An earlier note argued the
+    //    default is absent because no `…fA0_` generator exists for it. That argument is UNSOUND:
+    //    the export trie carries ZERO default-argument generators across all 57,138 symbols, along
+    //    with zero closures, thunks and outlined helpers, so a generator would be missing whether
+    //    or not a default was written. Whether a default exists is NOT DECIDABLE by any oracle in
+    //    scripts/. What IS read is the CALL: this method has exactly one caller in the IMAGE and it
+    //    passes an immediate zero (`mov x1, #0x0` at 0x101aca4b4, an immediate rather than a load
+    //    from self — note `model.options` is in scope there and is deliberately not what is passed).
+    //    That caller is an unnamed async funclet, NOT the macOS-gated drop handler at :219 below,
+    //    which the iOS image cannot contain; :219 is spelled to match the one call that IS read.
+    //    ⚑[tool=export_trie_oracle ref=KSVideoPlayerView.openURL:0x101ac99ac result=OWNER_MATCH-1-symbol]
+    //
+    // 2. `runOnMainThread { }` IS NOT IN THE BINARY — the body is straight-line. `runOnMainThread`
+    //    exists at 0x101a03e88 and is never called; an exhaustive scan of the extent finds zero
+    //    `swift_allocObject`, zero `dispatch_async` and zero `swift_task_*`, so no closure context
+    //    is ever formed. The enclosing struct is already `@MainActor`, so dropping it changes no
+    //    semantics. ⚑[tool=disassemble ref=openURL:0x101ac99ac result=0-closure-0-async-glue]
+    //
+    // 3. `else if url.isAudio || url.isMovie` DOES NOT EXIST — the else is entered unguarded. The
+    //    whole 288-instruction extent contains exactly THREE conditional branches: `tbz w20,#0x0`
+    //    (the isSubtitle test), `cbz x22` (playerLayer nil, inside the subtitle arm) and `cbz x28`
+    //    (options nil, inside the else). `URL.isAudio` @0x1019f2ad0 and `URL.isMovie` @0x1019f28f0
+    //    both exist and neither is called.
+    //    ⚑[tool=disassemble ref=openURL:0x101ac99ac result=3-cond-branches-tbz-cbz-cbz]
+    //
+    // `url.isSubtitle` is likewise never called out-of-line — the optimiser inlined it into a
+    // membership test against a static 5-element `["ass","srt","ssa","vtt","sup"]` at 0x1044e72c0.
+    // Spelling it `url.isSubtitle` matches the semantics; the inlining is the compiler's.
+    public func openURL(_ url: URL, options: KSOptions?) {
+        if url.isSubtitle {
+            let info = URLSubtitleInfo(url: url)
+            playerCoordinator.subtitleModel.selectedSubtitleInfo = info
+        } else {
+            self.url = url
+            title = url.lastPathComponent
         }
     }
 }
