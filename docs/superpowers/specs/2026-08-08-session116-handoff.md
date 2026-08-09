@@ -56,6 +56,27 @@ Also landed after the list below: `9948bcb` (Anime4KPipeline.loadPreset), `05d09
 
 ## Derived but NOT landed — start here, do not re-derive
 
+**`KSPlayerLayer_structural_placement_s76` D1 — `urls` BELONGS ON THE SUBCLASS, and it is already
+there.** The two surviving REAL_FLAGs are `_isPipActive` and `urls`. For `urls` the answer is
+measured, not a judgement call:
+
+    l2_field_gate --class KSPlayerLayer       -> REAL_FLAG urls   (in source, absent in binary reflection)
+    l2_field_gate --class KSComplexPlayerLayer-> PASS      urls   src=[URL] bin=[URL] type matches binary
+
+So the binary puts `urls` on `KSComplexPlayerLayer`, where the source ALREADY declares it
+(KSPlayerLayer.swift:962) and where it type-matches. `KSPlayerLayer`'s `private var urls = [URL]()`
+at :278 is a duplicate with no counterpart at all.
+
+That also explains its consumers: the next/previous navigation at :852/:859 is
+`playNextURL()` / `playPreviousURL()`, and `KSComplexPlayerLayer.playNextURL` is trie-named at
+0x1019d27a8 — i.e. those members are the SUBCLASS's too. Moving `urls`, `set(urls:options:)` and the
+two navigation methods down to `KSComplexPlayerLayer` is therefore the faithful fix, not a
+workaround. ⚠️ It does move a `public` API between classes, so it is a real (if mechanical) unit.
+
+`_isPipActive` is the harder half: it is `@Published` (VideoPlayerView binds `$isPipActive` at :157)
+and its `didSet` drives pipController start/stop, so removing it deletes working behaviour. The
+file's own comment already calls it "source-only scaffolding (zero trie hits)".
+
 **`openFormatContext` D2 — ITS BLOCKER IS A TOOL MISMATCH, and the field IS nameable.** The
 in-source note says the `.right` AVIO install's swift_once-guarded store cannot be written because
 "naming it would assert an FFmpeg symbol this unit cannot provenance with `ffmpeg_name_oracle`,
