@@ -132,7 +132,26 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     //   `str xzr, [x20, #0x80]` cannot discriminate the two (both are 8 zero bytes), and doDecode's arithmetic below
     //   is the body that would settle it — left as recorded type debt, its own unit.
     var bitrate = Double(0)
+    // THE PACKET IS UNWRAPPED ONCE, AT THE TOP, AND THE RAW POINTER IS WHAT REACHES THE DECODER.
+    // `decodeFrame` takes `UnsafeMutablePointer<AVPacket>` in Forward, not `Packet` — see the
+    // DecodeProtocol requirement below — so `corePacket` has to be non-optional before the call.
+    // The binary hoists exactly that guard to the head of this body:
+    //   101a373ec  ldr x22,[x21,#0x30]   packet.corePacket     (x21 = the incoming Packet)
+    //   101a373f0  cbz x22, 0x101a379d0  -> the epilogue, which ends `ret` at 0x101a379f0
+    //   101a373f4  ldrb w8,[x22,#0x28]   corePacket.pointee.flags   = isKeyFrame, INLINED on the
+    //   101a373f8  tbz w8,#0x0           AV_PKT_FLAG_KEY            already-unwrapped pointer
+    // It is a GUARD-with-return, not a force-unwrap, and the discriminator is in this same body:
+    // `assetTrack!` two lines down compiles to `cbz x20 -> brk #0x1` at 0x101a376c4/0x101a37a08,
+    // and NO `brk` sits on the corePacket path. Offset 0x30 is corePacket by its own getter's body
+    // (0x101a63f38 `ldr x0,[x20,#0x30]`), not by arithmetic on the field records.
+    // ⚑[tool=export_trie_oracle ref=Packet.corePacket.getter:0x101a63f18 result=offset-0x30]
+    // ⚑[tool=decode_witness_table ref=DecodeProtocol.req1:0x1041d7970 result=thunk-to-0x101a2220c]
+    // This body is emitted TWICE — 0x101a373ac (412 instr) and 0x101a5bdb4 (416 instr), both
+    // NOT_IN_TRIE, consistent with `fileprivate`. Both carry the identical guard.
     fileprivate func doDecode(packet: Packet) {
+        guard let corePacket = packet.corePacket else {
+            return
+        }
         if packet.isKeyFrame, packet.assetTrack!.mediaType != .subtitle {
             let seconds = packet.seconds
             let diff = seconds - lastPacketSeconds
@@ -149,7 +168,7 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         lastPacketBytes += packet.size
         let decoder = decoderMap.value(for: packet.assetTrack!.trackID, default: makeDecode(assetTrack: packet.assetTrack!))
 //        var startTime = CACurrentMediaTime()
-        decoder.decodeFrame(from: packet) { [weak self] result in
+        decoder.decodeFrame(from: corePacket) { [weak self] result in
             guard let self else {
                 return
             }
@@ -321,7 +340,22 @@ public extension Dictionary {
 
 protocol DecodeProtocol {
     func decode()
-    func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void)
+    // THE REQUIREMENT TAKES A RAW AVPacket POINTER, NOT `Packet`. All three conformers agree, and
+    // each exports its own method descriptor (`…Tq`):
+    //   $s8KSPlayer12FFmpegDecodeC11decodeFrame4from17completionHandlerySpySo8AVPacketVG_…  0x101a2220c
+    //   $s8KSPlayer14SubtitleDecodeC11decodeFrame4from17completionHandlerySpySo8AVPacketVG_… 0x101a69de8
+    //   $s8KSPlayer18VideoToolboxDecodeC11decodeFrame4from17completionHandlerySpySo8AVPacketVG_… 0x101a6ce44
+    // `SpySo8AVPacketVG` is `UnsafeMutablePointer<AVPacket>`. Dispatch is through the witness
+    // table at requirement index 1, whose slot in each of the three conformances is a branch
+    // island to exactly those addresses.
+    // ⚑[tool=decode_witness_table ref=SubtitleDecode:DecodeProtocol:0x1041d93f8 result=req1-thunk-0x101a69de8]
+    // ⚑[tool=decode_witness_table ref=VideoToolboxDecode:DecodeProtocol:0x1041d95c8 result=req1-thunk-0x101a6ce44]
+    // Proof it is a pointer and not the class, from FFmpegDecode's body: the parameter register
+    // x24 never reaches an ARC helper, `[x24]` (the isa word) is never read, and the only offset
+    // dereferenced out of it is 0x28 — masked with bit 0 and tested at bit 2, i.e. the
+    // AV_PKT_FLAG_KEY / AV_PKT_FLAG_DISCARD bits of `flags`. `Packet.size` also sits at 0x28, so
+    // the offset alone is ambiguous; the flag masks and the absent ARC traffic are what settle it.
+    func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>, completionHandler: @escaping (Result<MEFrame, Error>) -> Void)
     func doFlushCodec()
     func shutdown()
 }

@@ -36,7 +36,16 @@ class SubtitleDecode: DecodeProtocol {
     private let isASS: Bool
     private let fontsDir: String?
     private var subtitleHeader: String?
-    private var pendingASSImageSubtitles: [(subtitle: String, start: Double, duration: Double)] = [] // §8.6
+    // `start`/`duration` are Int64, not Double. The field record cannot settle it — its type
+    // mangle is `SaySS8subtitle_<SYM:2@0x10536e600>5startAB8durationtG`, whose symbolic reference
+    // resolves past __text (ends 0x103451708) and is not a bind site, so `dump_binary_field_types`
+    // reports the row unmapped. The export trie decides it in ONE class-proven symbol — class,
+    // field and type in the same mangling — and `xcrun swift-demangle` reads it as
+    // `[(subtitle: Swift.String, start: Swift.Int64, duration: Swift.Int64)]`:
+    //   $s8KSPlayer14SubtitleDecodeC24pendingASSImageSubtitles33_F85593AD49D6A91639A62D57F41DA4BDLLSaySS8subtitle_s5Int64V5startAH8durationtGvpfi
+    // The `33_…LL` discriminator also confirms `private`. No call site changes: the field is
+    // declared and never read (its bodies are still deferred), so this is a declaration-only fix.
+    private var pendingASSImageSubtitles: [(subtitle: String, start: Int64, duration: Int64)] = [] // §8.6
     // init(assetTrack:options:) — Batch 4 Tier 3a. FUN_101a6914c (via __allocating_init thunk 0x101a69100). Base  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     // cce7002 init is the adaptation reference, reworked for Forward's added fields (assetTrack/isASS/fontsDir/
     // subtitleHeader §8.3) + a codecContext time_base set (like FFmpegDecode). isASS = codec_id in {SSA/ASS/EIA_608}
@@ -175,9 +184,15 @@ class SubtitleDecode: DecodeProtocol {
     // decodeFrame(from:) above on packet.corePacket, then delivers each part as a SubtitleFrame. FUN_101a69de8  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
     // @0x101a69e24 captures the tuple's .timebase (x2) and passes it to the frame-init getPosition helper (FUN_101a63adc,
     // outlined into the frame build); the tuple's .timestamp (x1) is unused here (frame timing derives from part.start).
-    func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
-        guard let corePacket = packet.corePacket,
-              let (parts, _, timebase) = decodeFrame(from: corePacket) else {
+    // The parameter is the raw pointer, and this body forwards it UNCHANGED — it loads no field
+    // out of it. Between entry and the call only x1 and x2 move; x0 and x20 are untouched:
+    //   101a69e08  mov x19, x2      101a69e0c  mov x21, x1
+    //   101a69e10  bl  0x101a69f54  101a69e14  cbz x0, 0x101a69f10   (the nil-tuple early return)
+    // So the `packet.corePacket` unwrap this body used to do belongs to the CALLER now, and the
+    // two-overload split is the binary's own: 0x101a69de8 (91 instr) ends exactly where
+    // 0x101a69f54 (278 instr) begins.
+    func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+        guard let (parts, _, timebase) = decodeFrame(from: packet) else {
             return
         }
         for part in parts {

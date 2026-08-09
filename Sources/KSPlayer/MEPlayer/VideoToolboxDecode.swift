@@ -49,7 +49,21 @@ class VideoToolboxDecode: DecodeProtocol {
         self.session = session
     }
 
-    func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+    // ⚠️ D1 CLOSED — the parameter is `UnsafeMutablePointer<AVPacket>`, and the guard below moved
+    // with it. Read over the whole extent 0x101a6ce44-0x101a6d734:
+    //   - the parameter (x0 -> x21) takes NO swift_retain/swift_release/objc_retain, has no isa
+    //     load, and is never read at offset 0 — it is not a class instance.
+    //   - there is NO cbz/cbnz on the parameter before its first dereference at 0x101a6cf14, so
+    //     it is non-Optional. The only two conditional branches ahead of that point test
+    //     self.needReconfig (self+0x48) and the return of the session builder.
+    //   - the nil test that DOES exist is on the loaded `data`: `101a6cf14 ldr x24,[x21,#0x18]` /
+    //     `101a6cf18 cbz x24, 0x101a6d664`, and 0x101a6d664 is the stack-guard + epilogue — it
+    //     returns WITHOUT invoking completionHandler, which is why the guard has no else-call.
+    //   - the offsets touched are exactly {0x8,0x10,0x18,0x20,0x28,0x40,0x48} = pts, dts, data,
+    //     size, flags, duration, pos. Under the old `Packet` spelling 0x30/0x38 would be
+    //     corePacket/isFlush; neither is ever read.
+    // ⚑[tool=export_trie_oracle ref=VideoToolboxDecode.decodeFrame:0x101a6ce44 result=one-symbol-no-ICF-fold]
+    func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
         // P3a DONE: the DV RPU-extraction loop below (after the guard) reconstructs Forward's hardware-path
         // DV decode (binary L120-236 @0x101a6ce44; ff_dovi_rpu_parse→get_metadata→convertAVDOVIToKSDOVIMetadata),
         // body-audited FAITHFUL (commits c203481 + the 489b6a5 shutdown tail).
@@ -74,7 +88,8 @@ class VideoToolboxDecode: DecodeProtocol {
             doFlushCodec()
             needReconfig = false
         }
-        guard let corePacket = packet.corePacket?.pointee, let data = corePacket.data else {
+        let corePacket = packet.pointee
+        guard let data = corePacket.data else {
             return
         }
         // P3a Phase B Step 2 — Dolby-Vision RPU extraction (binary L120-236 @0x101a6ce44, ADDITIVE).
@@ -133,17 +148,29 @@ class VideoToolboxDecode: DecodeProtocol {
                 ._EnableAsynchronousDecompression,
             ]
             var flagOut = VTDecodeInfoFlags.frameDropped
-            let timestamp = packet.timestamp
+            // THE HOIST IS FORWARD'S, NOT A COMPILE FIX. The closure below escapes, so nothing may
+            // capture the raw pointer; the binary reads its packet fields ONCE, up front, and
+            // spills them to the frame under construction before the decode call:
+            //   101a6cf1c  ldp x12,x13,[x21,#0x8]   pts, dts     -> 101a6cf40  stp x13,x12,[sp,#0x38]
+            //   101a6cf24  ldr w11,[x21,#0x28]      flags        -> 101a6cf3c  str w11,[sp,#0x24]
+            //   101a6cf28  ldp x9,x10,[x21,#0x40]   duration,pos -> 101a6cf38  stp x10,x9,[sp,#0x28]
+            // `timestamp` and `isKeyFrame` were `Packet` members; with D1 they are computed here
+            // from the same two fields the source's own `Packet` used — `timestamp` is
+            // `pts == Int64.min ? dts : pts` (Model.swift's assetTrack.didSet) and `isKeyFrame` is
+            // the AV_PKT_FLAG_KEY bit of `flags` (Model.swift's computed property).
             let packetFlags = corePacket.flags
             let duration = corePacket.duration
             let size = corePacket.size
+            let position = corePacket.pos
+            let timestamp = corePacket.pts == Int64.min ? corePacket.dts : corePacket.pts
+            let isKeyFrame = packetFlags & AV_PKT_FLAG_KEY == AV_PKT_FLAG_KEY
             let status = VTDecompressionSessionDecodeFrame(session.decompressionSession, sampleBuffer: sampleBuffer, flags: flags, infoFlagsOut: &flagOut) { [weak self] status, infoFlags, imageBuffer, _, _ in
                 guard let self, !infoFlags.contains(.frameDropped) else {
                     return
                 }
                 guard status == noErr else {
                     if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                        if packet.isKeyFrame {
+                        if isKeyFrame {
                             completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
                         } else {
                             // 解决从后台切换到前台，解码失败的问题
@@ -160,11 +187,11 @@ class VideoToolboxDecode: DecodeProtocol {
                 guard let imageBuffer else { return }
                 let frame = VideoVTBFrame(pixelBuffer: imageBuffer, fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
                 frame.timebase = session.assetTrack.timebase
-                if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.maxTimestamp > 0 { // ⚑P3 lastPosition→maxTimestamp
+                if isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.maxTimestamp > 0 { // ⚑P3 lastPosition→maxTimestamp
                     self.startTime = self.maxTimestamp - timestamp // ⚑P3 lastPosition→maxTimestamp
                 }
                 self.maxTimestamp = max(self.maxTimestamp, timestamp) // ⚑P3 lastPosition→maxTimestamp
-                frame.position = packet.position
+                frame.position = position
                 frame.timestamp = self.startTime + timestamp
                 frame.duration = duration
                 frame.size = size
@@ -176,7 +203,7 @@ class VideoToolboxDecode: DecodeProtocol {
                     VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
                 }
             } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                if packet.isKeyFrame {
+                if isKeyFrame {
                     throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
                 } else {
                     // 解决从后台切换到前台，解码失败的问题
