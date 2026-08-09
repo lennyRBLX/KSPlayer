@@ -155,6 +155,52 @@ Two field names remain unrecoverable and must not be guessed: globals 0x1044e618
 `bufferedCount` store) and 0x104c63520 / 0x1044e6190 (the `isAutoPlay` / `shouldSeekTo` guards).
 The offset resolver answers `NOT RECOVERED` for all three.
 
+## `PreLoadIOContext.more()` — 0x101ba9eac, 1183 instr
+
+Extent and instruction count hold exactly. Lines drifted: 535-541 → the method is at 636-642.
+"vtable idx 54" and the source comment's "slot 201" are the same slot in two framings (descriptor
+slot 54 + VTableOffset 147 words = metadata word 201) — neither was wrong.
+
+**The stated blocker set is over-scoped by three.** Of the seven members both entries name,
+`canAccessNetwork` (`CacheIOContext.swift:424`, overridden at `LimitPreLoadIOContext.swift:260`),
+`preloadCount` (`PreLoadIOContext.swift:357`, overridden at `:559`) and `updateSpeedSample`
+(`CacheIOContext.swift:483`) are **already declared**. Only four are genuinely absent:
+`processThumbnailFetchRequest`, `findDiscontinuousPos`, `readComplete`, `addEntry`.
+
+**The HIGH is over-stated.** Its claim that "the source's unconditional `return 0` is not the
+binary's behaviour on any non-paused input" is false: when the second `findDiscontinuousPos()`
+returns `.none`, the binary zeroes self+0x58/+0x60/+0x68, unlocks, and returns 0. The source's
+`return 0` is the binary's behaviour on exactly that path.
+
+**The LOW's pin is dischargeable.** `⚑[… ref=more_guard_log:0x103d3fa80 result=fragment-only]` is
+refuted — 0x103d3fa80 is the emitted *biased* pointer and the literal begins at biased+0x20, where
+it decodes cleanly to `'PreLoadIOContext/PreLoadIOContext.swift'`. The bias is explicit in the
+instruction pair `add x8, x8, #0xaa0` / `sub x21, x8, #0x20`. All nine KSLog messages decode, and
+their nine `#line` values (636, 642, 649, 670, 678, 686, 698, 712, 735) pair 1:1 with the messages
+in address order with no crossing.
+
+Four distinct return values, not three: -1, 1, 0, and a computed Int32 returned from two sites.
+
+Two working-path field-offset globals are real trie negatives and must not be guessed — 0x104c63940
+(the lock ivar) and 0x104c639c0 (the lazy-alloc buffer), with the recovered module `Wvd` globals
+bracketing both without covering them. The literal-immediate offsets the path uses (self+0x14,
++0x48, +0x50, +0x58/+0x60/+0x68, +0x80) are likewise `NOT RECOVERED`, so the source comment's names
+for them are unverified.
+
+## The blocker that now spans two bodies and needs a decision
+
+`CacheIOContext.updateSpeedSample` is declared — `private`, at `CacheIOContext.swift:483` — and is
+called from **two different files'** bodies: `LimitSeparatePreLoadIOContext.more()` @0x101ba5398 and
+`PreLoadIOContext.more()` @0x101ba9eac (twice, 0x101baa87c and 0x101baac50). Swift cannot express a
+cross-file call to a `private` member, so neither body can be written faithfully at the current
+access level. Being declared is not the same as being reachable.
+
+This is a structural blocker of the same kind `url.h` was, and like that one it is a decision, not
+a derivation: widen `updateSpeedSample` to `internal`, or pin both bodies as inexpressible. Note
+that widening changes an access level the binary may itself encode — the private discriminator
+`_D69EFE1402863CA716A3171C7DB6DFB9` is evidence the original was file-private, so widening is a
+knowing divergence and must be recorded as one.
+
 ## Tool defect found, deferred because the wave was live
 
 `decode_string_literal.py --addr <body>` dies with
