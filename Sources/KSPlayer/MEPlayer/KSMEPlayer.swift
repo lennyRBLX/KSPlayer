@@ -582,6 +582,43 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
+    // KSPlayer.KSMEPlayer.reset() @0x101a427b0 — 97 instr (0x101a427b0-0x101a42934), exactly one
+    // exported symbol at the address (no ICF fold). NOT vtable-dispatched: KSMEPlayer's vtable is
+    // 2 slots, both `Init`, and the class has no override table (kind flag 0x4000 clear). It is
+    // reached three ways — `KSMEPlayer : MediaPlayerProtocol` witness req#37 (WT 0x1041d7c68,
+    // slot 38 / offset 0x130, through the 1-instruction tail-call thunk 0x101a447a0) plus direct
+    // `bl` from replace(item:) @0x101a3c4d8 and from stop() @0x101a43cf8.
+    //
+    // `public` is NOT invented. The trie carries no access-discriminating symbol for the method
+    // itself, but a public protocol's requirement can only be witnessed by a public member, and
+    // this is a witness of public `MediaPlayerProtocol` from inside that conformance extension.
+    //
+    // ⚠️ THREE DIVERGENCES THIS BODY EXPOSES, each left to its own unit rather than smuggled in:
+    //  · `stop()` directly above INLINES this body; the binary factors it out and calls it.
+    //  · req#37 makes `reset()` a MediaPlayerProtocol REQUIREMENT in Forward, and this tree's
+    //    MediaPlayerProtocol does not declare it. Adding it cascades to every conformer.
+    //  · the `loadState` store here runs NO observer, while the `playbackState` store two lines
+    //    down loads its old value and calls its didSet at 0x101a3e510. Both properties carry an
+    //    identical didSet in this tree, so the binary and the tree disagree about `loadState`'s
+    //    observer — a fact about loadState's DECLARATION, not about this body.
+    public func reset() {
+        options.reset() //                         @0x101a427e0-0x101a42800, KSOptions vtable slot 4
+        loadState = .idle //                       @0x101a4281c-0x101a42820, modify access, byte 0
+        playbackState = .idle //                   @0x101a4283c-0x101a4284c, modify access + didSet
+        isReadyToPlay = false //                   @0x101a42868-0x101a4286c, modify access, byte 0
+        loopCount = 0 //                           @0x101a42870-0x101a42878, NO exclusivity check
+        // playerItem.send(.close) @0x101a42894-0x101a428d0. The Event value is built on the stack
+        // (payload word0 = 6, payload zeroed, tag byte = 3 = numPayloadCases, i.e. the no-payload
+        // marker; empty-case ordinal 6 in declaration order is `close`) and handed to the
+        // trie-named MEPlayerItem.send(MEPlayerItem.Event). NOT WRITTEN: `MEPlayerItem.Event` and
+        // `MEPlayerItem.send(_:)` are both undeclared in this tree, so the statement cannot be
+        // spelled yet. Declaring that enum is its own unit.
+        // ⚑[tool=export_trie_oracle ref=MEPlayerItem.send:0x101a48b04 result=MEMBER_UNDECLARED]
+        if KSOptions.isClearVideoWhereReplace { // @0x101a428ec-0x101a428f8, read access, 0x1044e5151
+            videoOutput?.flush() //                @0x101a428fc-0x101a4291c, FrameOutput witness req#2
+        }
+    }
+
     @MainActor
     public var contentMode: UIViewContentMode {
         get {
