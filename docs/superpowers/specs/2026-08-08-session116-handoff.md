@@ -257,24 +257,34 @@ BOTH KSLog STRINGS ARE DECODED (D3 said `result=not-attempted`): the message pre
 `#function` is the small string `more()`, and `#line` is 0xba = **186** — matching the source
 comment's second site.
 
-⛔ **THE ONE THING THAT BLOCKS WRITING IT, and it is a TOOL GAP, not an absence in the binary.**
-Five self offsets are used numerically and cannot be soundly named right now: **0x48, 0x50, 0x80,
-0x88** (and 0x14, which IS solid — `AbstractAVIOContext.bufferSize`, per its own declaration comment
-`readLimit@+0x10, bufferSize@+0x14`). Ghidra names the others symbolically from reflection
-(`loadMoreBuffer`, `moreUrlPos`, `moreDownload`, `fakeUrlPos`, `CacheIOContext::isJudgeEOF`,
-`CacheIOContext::eof`, `CacheFileEntry::position`) but not these.
+⛔ **THE ONE THING THAT BLOCKS WRITING IT.** Five self offsets are used numerically and cannot be
+soundly named yet: **0x48, 0x50, 0x80, 0x88** (0x14 IS solid — `AbstractAVIOContext.bufferSize`, per
+its own declaration comment `readLimit@+0x10, bufferSize@+0x14`). Ghidra names the others
+symbolically from reflection (`loadMoreBuffer`, `moreUrlPos`, `moreDownload`, `fakeUrlPos`,
+`CacheIOContext::isJudgeEOF`, `CacheIOContext::eof`, `CacheFileEntry::position`) but not these.
 
-`field_offset_vector.py` REFUSES both `LimitSeparatePreLoadIOContext` and `CacheIOContext` with
-"no exported metadata symbol `$s8KSPlayer…CN` in the trie" — it hardcodes the **KSPlayer** module
-prefix, and these classes live in the **PreLoadIOContext** module (`_TtC16PreLoadIOContext…`). That
-is a tool bug, and fixing it is probably a one-line change plus a golden. `dump_binary_field_types`
-does work on them but prints record ORDER, not byte offsets, and MEMORY rule 82 forbids inferring
-offsets from record order. Candidates that must NOT be written until confirmed: 0x88 looks like
-`entryList` (it is the array being binary-searched) and 0x50/0x80 like `logicalPos`/`urlPos` — all
-three are plausible and none is established.
+⚠️ **CORRECTION — an earlier revision of this file called this a `field_offset_vector.py` bug
+("it hardcodes the KSPlayer module prefix, fixing it is a one-line change"). That was WRONG on both
+counts and would have sent you to fix a tool that is working.** The tool has a `--module` flag and
+its own docstring names this exact case; I had simply invoked it without one, and its
+KSPlayer-shaped error message hid the real answer. Invoked correctly:
 
-Fix the module prefix in `field_offset_vector.py`, or use the s98 offset/name reflection-table
-technique, and this body is writable in one sitting.
+    python3 scripts/field_offset_vector.py CacheIOContext --module PreLoadIOContext
+    -> CacheIOContext has metadata_init=1 -- its metadata is initialized at RUNTIME, so the
+       static image holds no field offsets. Reading it anyway returns 0x0 for InstanceSize and
+       0x0 for every field, which looks like a real map and is not.
+
+Same for `LimitSeparatePreLoadIOContext`. So the blocker is a genuine property of the binary, not
+tooling, and it is the case `[[field-offset-vector-metadata-init]]` already documents. The tool is
+right to refuse.
+
+THE ROUTE that does work here is the one that refusal names: anchor sites across bodies, or the
+trie-named accessors. `dump_binary_field_types --module`-style output gives record ORDER only, and
+MEMORY rule 82 forbids inferring offsets from record order.
+
+Candidates that must NOT be written until confirmed that way: 0x88 looks like `entryList` (it is the
+array being binary-searched) and 0x50/0x80 like `logicalPos`/`urlPos`. All three are plausible;
+none is established.
 
 ⚠️ Also note the decompile opens with `/* WARNING: Removing unreachable block (ram,0x101ba5964) */`
 and `addEntry` THROWS — so the `do`/`catch` is exactly the structure Ghidra drops. Derive the error
