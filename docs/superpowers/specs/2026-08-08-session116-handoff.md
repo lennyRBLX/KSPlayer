@@ -67,11 +67,16 @@ So the binary puts `urls` on `KSComplexPlayerLayer`, where the source ALREADY de
 (KSPlayerLayer.swift:962) and where it type-matches. `KSPlayerLayer`'s `private var urls = [URL]()`
 at :278 is a duplicate with no counterpart at all.
 
-That also explains its consumers: the next/previous navigation at :852/:859 is
-`playNextURL()` / `playPreviousURL()`, and `KSComplexPlayerLayer.playNextURL` is trie-named at
-0x1019d27a8 — i.e. those members are the SUBCLASS's too. Moving `urls`, `set(urls:options:)` and the
-two navigation methods down to `KSComplexPlayerLayer` is therefore the faithful fix, not a
-workaround. ⚠️ It does move a `public` API between classes, so it is a real (if mechanical) unit.
+And its consumers are source-only too — **the file already says so**. KSPlayerLayer.swift:1293-1294
+records `impl 0x1019d27a8 = playNextURL(), NOT nextPlayer()` and `previousTrack — … NOT
+previousPlayer()`. So `KSPlayerLayer`'s `private func nextPlayer()` (:851), `previousPlayer()`
+(:858) and `set(urls:options:)` (:444) are scaffolding that duplicates members the SUBCLASS holds
+properly: `KSComplexPlayerLayer.playNextURL()` is trie-named at 0x1019d27a8.
+
+So the faithful fix is a DELETION, not a move: drop `urls`, `set(urls:options:)`, `nextPlayer()` and
+`previousPlayer()` from `KSPlayerLayer`. ⚠️ Two consequences make it a real unit rather than a tidy-up
+— `set(urls:options:)` is `public` API, and `nextPlayer()` has an in-file caller (the
+`if error == nil { nextPlayer() }` tail noted at :728). Check both before cutting.
 
 `_isPipActive` is the harder half: it is `@Published` (VideoPlayerView binds `$isPipActive` at :157)
 and its `didSet` drives pipController start/stop, so removing it deletes working behaviour. The
