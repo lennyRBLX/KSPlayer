@@ -525,10 +525,42 @@ extension MEPlayerItem {
 // MARK: MediaPlayback
 
 extension MEPlayerItem: MediaPlayback {
+    /// The four-arm predicate below is READ, not designed. It is transcribed from
+    /// `KSMEPlayer.sourceDidOpenedSync()` @0x101a3bd64, whose statement 2 assigns
+    /// `KSMEPlayer.seekable` (offset global 0x1044ea148) from an expression over
+    /// `playerItem.formatContext` (0x1044ea218):
+    ///   101a3be50  cbz x8, 0x101a3be74      formatContext == nil            -> false
+    ///   101a3be54  ldr x9, [x8, #0x18]      FormatContext.formatCtx
+    ///   101a3be58  ldr x9, [x9, #0x20]      AVFormatContext.pb
+    ///   101a3be5c  cbz x9, 0x101a3be6c      pb == nil                       -> true
+    ///   101a3be60  ldr w9, [x9, #0x90]      AVIOContext.seekable
+    ///   101a3be64  cmp w9, #0x1 / b.lt      seekable >= 1                   -> true
+    ///   101a3be7c  ldr d0, [x8, #0x28]      FormatContext.duration != 0.0   -> the result
+    ///
+    /// `formatCtx` is dereferenced with NO nil test, which is why it is spelled unwrapped here —
+    /// and the declaration agrees: FormatContext.swift:63 declares it non-optional
+    /// `UnsafeMutablePointer<AVFormatContext>` at +0x18. `duration` is +0x28, likewise declared.
+    /// The FFmpeg offsets are named, not numeric: pb is AVFormatContext's fifth pointer field and
+    /// seekable is AVIOContext's, both from this build's own headers.
+    /// ⚑[tool=recover_field_offsets ref=MEPlayerItem.formatContext:0x1044ea218 result=named-via-sibling-reader]
+    ///
+    /// ⚠️ ONE INFERENCE, FLAGGED RATHER THAN HIDDEN. The predicate was read from an INLINED copy.
+    /// No standalone `seekable` symbol exists in MEPlayerItem's trie subtree, so this getter is
+    /// presumed to be the thing the optimiser inlined into `sourceDidOpenedSync` — the caller
+    /// cannot have spelled it itself, because `formatContext` is fileprivate to THIS file. That is
+    /// strong but it is not a read of this getter's own body. If a MediaPlayback witness entry for
+    /// `seekable` is later located, read it and re-adjudicate before trusting this.
     var seekable: Bool {
-        // ⚑ UNRESOLVED (commit-1 stub): base read the removed `formatCtx` field's pb.seekable. Forward reads it
-        //   via `formatContext` (field 7). Deferred to the seekable migration commit.
-        false
+        guard let formatContext else {
+            return false
+        }
+        guard let pb = formatContext.formatCtx.pointee.pb else {
+            return true
+        }
+        if pb.pointee.seekable >= 1 {
+            return true
+        }
+        return formatContext.duration != 0.0
     }
 
     public func prepareToPlay() {
