@@ -297,11 +297,34 @@ Note the same probe on `CacheIOContext` and on `LimitSeparatePreLoadIOContext` r
 for all four offsets — the accessors that touch them by constant immediate belong to
 `PreLoadIOContext`. Probe every class in the chain, not just the one the method is declared on.
 
-**ONLY 0x48 REMAINS, and its unrecoverability by this route is MEASURED, not assumed.** Probed with
-`recover_field_offsets.py --offset 0x48` against every class in the chain — `CacheIOContext`,
-`PreLoadIOContext`, `LimitPreLoadIOContext`, `LimitSeparatePreLoadIOContext`, `AbstractAVIOContext`,
-`ReadCacheIOContext`, `HLSCacheIOContext` — and all seven return NOT RECOVERED. Do not re-run those
-seven probes. Its use is distinctive and should make it identifiable from a
+✅ **0x48 DOES NOT NEED A NAME — THE UNIT IS UNBLOCKED.** It is never `more()`'s own field access:
+it belongs to `urlPos`'s `didSet`, which the compiler INLINED into `more()`.
+
+Proof — the `urlPos` setter @0x101ba6e04 (29 instr, the address `recover_field_offsets` reports for
+`urlPos offset=0x50`) is instruction-for-instruction the same shape as `more()`'s tail:
+
+    101ba6e2c: str  x19, [x20, #0x50]      urlPos = newValue
+    101ba6e30: cmn  x19, #0x1
+    101ba6e34: b.eq 0x101ba6e58             ... skip the didSet when newValue == UInt64.max
+    101ba6e38: ldr  x8, [x20, #0x48]
+    101ba6e3c: cmp  x19, x8
+    101ba6e40: csel x8, x19, x8, hi         self[0x48] = max(newValue, self[0x48])
+    101ba6e44: str  x8, [x20, #0x48]
+    101ba6e4c: bl   0x101b86044             updateSpeedSample(newPos:)
+
+`more()` reproduces exactly that at 0x101ba5980/0x101ba598c followed by the same
+`bl 0x101b86044`. So the whole "max into 0x48 then updateSpeedSample" sequence in `more()` is
+produced by writing **`urlPos = newPos`** — one statement — and the 0x48 field is `urlPos`'s
+observer's business, in a different member's body.
+
+⚠️ This is worth generalising: an unnameable offset inside a body may not belong to that body at
+all. Before hunting a field name, check whether the surrounding instruction sequence reproduces a
+known accessor's shape — a `didSet`/`willSet` inlined at the assignment site looks exactly like a
+foreign field access. Probing `recover_field_offsets.py --offset 0x48` across all seven classes in
+the chain returns NOT RECOVERED every time, which is correct and was never going to be the answer.
+
+So `more()`'s tail is: `urlPos = newPos`, then the `fakeUrlPos` and `moreUrlPos` stores. Nothing in
+this unit is blocked on a name any more. Its use is distinctive and should make it identifiable from a
 sibling body: after a successful read it is a running maximum —
 `self[0x48] = max(self[0x48], newPos)` — i.e. a high-water mark updated only on the success path,
 immediately before `updateSpeedSample(newPos:)`. Name it from an anchor site in another body, then
