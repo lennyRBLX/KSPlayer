@@ -38,6 +38,43 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// default. `private` per the trie's discriminator on its accessors.
     /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.isPaused:0x10002c740 result=true]
     private var isPaused: Bool = true
+    /// s116: `isDovi` REMOVED — it is not a Forward field. The class's field records hold 17
+    /// entries and it is not among them, and a stored property always gets one. What the binary
+    /// passes for `isDovi:` is READ, not chosen: the `didSet` computes it as the Optional-TAG test
+    /// on `dovi`, at 0x101a5e510 —
+    ///     101a5e4a4  ldr  x8, [x8, #0x8f0]     ; the offset global holding 0x78 = dovi
+    ///     101a5e4a8  add  x24, x21, x8         ; x24 = &self.dovi
+    ///     101a5e510  ldrb w8, [x24, #0x9]      ; dovi's extra tag byte at self+0x81
+    ///     101a5e514  cmp  w8, #0x1
+    ///     101a5e518  cset w21, ne              ; isDovi = (tag != 1)
+    /// Tag 1 IS the nil representation, read from `dovi`'s own `vpfi` @0x10011a290
+    /// (`mov x0,#0` / `mov w1,#0x100` / `ret` — payload zero, byte 9 = 1), so `cset ne` is exactly
+    /// `dovi != nil`. The `fps` didSet at 0x101a5e850 computes the same argument the same way,
+    /// which is the second, independent witness.
+    /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.dovi:0x10011a290 result=nil-tag-byte-1]
+    ///
+    /// ⚠️ THREE THINGS THIS `didSet` DOES THAT THE SOURCE DOES NOT — each its own unit, NOT written
+    ///   here because none of them is needed to remove `isDovi`:
+    ///   1. an early `guard self.formatDescription != nil else { return }` (`cbz x19` @0x101a5e3ac
+    ///      jumping to the epilogue), so `updateVideo` is never reached with nil;
+    ///   2. when `oldValue?.naturalSize != newValue.naturalSize`, it rebuilds a `'BGRA'` buffer and
+    ///      re-enqueues it into `displayView.layer as! AVSampleBufferDisplayLayer`;
+    ///   3. it writes `options.dynamicRange` itself — `.dolbyVision` when `dovi != nil`, else
+    ///      `formatDescription.dynamicRange` — under a MODIFY exclusivity access. `updateVideo`'s
+    ///      own body never assigns it, so that store belongs to this caller.
+    ///   ⚑[tool=export_trie_oracle ref=KSOptions.dynamicRange:0x104c63388 result=vpWvd-named]
+    ///
+    /// ⚠️ The binary's `updateVideo` takes a NON-Optional `__C.CMFormatDescriptionRef`; KSOptions
+    ///   .swift:881 declares `formatDescription: CMFormatDescription?`. Separate unit.
+    ///
+    /// 🚧 THE REMOVAL IS NOT DONE, and the field is deliberately still here. Both READ sites are
+    ///   settled — the `formatDescription` didSet @0x101a5e510 and the `fps` didSet @0x101a5e850
+    ///   both compute the argument as `dovi != nil` — but there is a THIRD site, the WRITE at
+    ///   `isDovi = frame.isDovi` below, and what the binary does there has NOT been read. `dovi` is
+    ///   a `DOVIDecoderConfigurationRecord?` while `frame.isDovi` is a `Bool`, so the write cannot
+    ///   simply be retargeted at `dovi` without inventing the value. Substituting the two reads
+    ///   while leaving the write would make the field write-only and dead, which is worse than the
+    ///   divergence. Read the write site's binary counterpart first, then remove all three together.
     private var isDovi: Bool = false
     private var formatDescription: CMFormatDescription? {
         didSet {

@@ -48,7 +48,27 @@ open class VideoPlayerView: PlayerView {
     public let topMaskView = LayerContainerView()
     // 是否播放过
     private(set) var isPlayed = false
-    private var cancellable: AnyCancellable?
+    /// s116: RENAMED and RETYPED from `cancellable: AnyCancellable?`. This is the SAME slot — field
+    /// record 10 in both, between `isPlayed` (9) and `currentDefinition` (11), at instance offset
+    /// 0x90 — but the binary's is an ARRAY, not an Optional: the mangle is `Say…CG` over
+    /// `Combine.AnyCancellable`, and its `vpfi` @0x10002d9dc loads `__swiftEmptyArrayStorage`, i.e.
+    /// `= []`. `private` from the discriminator `33_9509C8D922D77542C05FE4014DF5C0F7LL`.
+    /// Deleting the six source-only fields and substituting this name makes the remaining 20 source
+    /// properties match the binary's 20 field records ONE-FOR-ONE in order, which is what shows the
+    /// two are the same slot rather than a coincidence of position.
+    /// ⚑[tool=fieldrec ref=VideoPlayerView.cancellables:record10 result=Say-AnyCancellable-G-offset-0x90]
+    ///
+    /// ⚠️ THE BINARY NEVER WRITES IT. A whole-`__text` scan (0x100004000-0x103451708) for a load of
+    ///   its offset global 0x1044f18b8 finds exactly THREE sites: the `= []` field init in
+    ///   `init(frame:)`, and two releases (deinit and `.cxx_destruct`). There is no append, no
+    ///   `store(in:)`, and no exclusivity-guarded write anywhere. Corroborated from the other side:
+    ///   `assign(to:on:)`, `Subscribers.Assign` and any `$isPipActive` symbol are ALL absent from
+    ///   the image, and the only `AnyCancellable.store(in:)` bound is the `Set` overload, which
+    ///   cannot apply to an Array. So the subscription below is source-only scaffolding — which is
+    ///   consistent, because `isPipActive` itself has ZERO hits across all 57,138 trie names and
+    ///   KSPlayerLayer.swift already records it as ours.
+    /// ⚑[tool=export_trie_oracle ref=VideoPlayerView.cancellables:0x1044f18b8 result=three-sites-init-and-two-releases]
+    private var cancellables: [AnyCancellable] = []
 
     public private(set) var currentDefinition = 0 {
         didSet {
@@ -154,7 +174,14 @@ open class VideoPlayerView: PlayerView {
     override public init(frame: CGRect) {
         super.init(frame: frame)
         setupUIComponents()
-        cancellable = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton)
+        // ⚑ SOURCE-ONLY, and knowingly so — kept for behaviour, not claimed of Forward. The binary
+        //   never writes `cancellables` at all (see the declaration's note), and neither
+        //   `assign(to:on:)` nor `$isPipActive` exists anywhere in the image. The `.append` spelling
+        //   is therefore OURS; it is written this way only because the FIELD's type is read from the
+        //   binary and is an Array.
+        if let c = playerLayer?.$isPipActive.assign(to: \.isSelected, on: toolBar.pipButton) {
+            cancellables.append(c)
+        }
         toolBar.onFocusUpdate = { [weak self] _ in
             self?.autoFadeOutViewWithAnimation()
         }
