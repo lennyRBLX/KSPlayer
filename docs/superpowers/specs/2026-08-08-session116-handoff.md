@@ -297,8 +297,11 @@ Note the same probe on `CacheIOContext` and on `LimitSeparatePreLoadIOContext` r
 for all four offsets — the accessors that touch them by constant immediate belong to
 `PreLoadIOContext`. Probe every class in the chain, not just the one the method is declared on.
 
-**ONLY 0x48 REMAINS.** No named accessor of any class in the chain touches it by constant immediate,
-so this route cannot name it. Its use is distinctive and should make it identifiable from a
+**ONLY 0x48 REMAINS, and its unrecoverability by this route is MEASURED, not assumed.** Probed with
+`recover_field_offsets.py --offset 0x48` against every class in the chain — `CacheIOContext`,
+`PreLoadIOContext`, `LimitPreLoadIOContext`, `LimitSeparatePreLoadIOContext`, `AbstractAVIOContext`,
+`ReadCacheIOContext`, `HLSCacheIOContext` — and all seven return NOT RECOVERED. Do not re-run those
+seven probes. Its use is distinctive and should make it identifiable from a
 sibling body: after a successful read it is a running maximum —
 `self[0x48] = max(self[0x48], newPos)` — i.e. a high-water mark updated only on the success path,
 immediately before `updateSpeedSample(newPos:)`. Name it from an anchor site in another body, then
