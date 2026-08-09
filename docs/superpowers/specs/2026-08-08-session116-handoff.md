@@ -580,9 +580,23 @@ protocol, and ObjC conformances do not appear in Swift conformance records — w
 the gate itself reports it as `source-extra (noted, not flagged)` rather than flagging it. So the
 verdict drew a placement conclusion from an oracle that cannot see the thing it is about.
 
-Re-derive with the ObjC route (the class's `__objc_protolist` / `objc_trampoline_oracle`) before
-moving anything. As it stands the divergence's *premise* is unverified and its *fix* is contradicted
-by the tool it rests on.
+I then ran the ObjC route, and it does NOT settle it either:
+
+    objc_trampoline_oracle --class KSPlayerLayer         -> objc method list entries=0
+    objc_trampoline_oracle --class KSComplexPlayerLayer  -> objc method list entries=0
+
+Neither class exposes an ObjC method list, so neither oracle places this conformance. Note also that
+the two addresses the MEMBER_MISSING ranking labels
+`KSComplexPlayerLayer.pictureInPictureControlle…` — 0x1019d62ec and 0x1019d600c — are both
+**NOT_IN_TRIE** (the ranking marks 0x1019d62ec a thunk), so they cannot be used to anchor the
+placement either; their names in that JSON come from the pin_sweep row, not from the trie at those
+addresses.
+
+**Net: the divergence's premise is unverified and its proposed fix is unsupported, by all three
+routes tried.** Do not move the conformance on the strength of the verdict. Whoever takes it needs a
+route none of these tools provide — most likely reading the class's protocol list out of the ObjC
+metadata directly. And note the file cannot flip on D2 alone regardless: D1 is the 11-field
+`l2_field_gate` debt sweep on KSPlayerLayer, which is its own unit.
 
 **`AudioDescriptor.audioFormat(...)` @0x101a68c44** — pinned at the declaration in `240952a`.
 Forward's helper does not switch on sampleFormat: no `br x` in the extent, and
