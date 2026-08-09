@@ -60,9 +60,18 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     // 4  hlsCacheDir: on-disk cache dir (tmpDir/videoCache/<mediaId>/hls). init-derived
     //    + createDirectory. ⚑ optionality inferred.
     public let hlsCacheDir: URL? // ⚑ (optionality inferred; gate UNCHECKED)
-    // 5  m3u8Buffer: the downloaded m3u8 manifest bytes. init nil. ⚑ name + type inferred
-    //    (two-word optional zeroed in the inner).
-    private var m3u8Buffer: Data? = nil // ⚑ (name + type inferred; gate UNCHECKED)
+    // 5  m3u8Buffer: the downloaded m3u8 manifest bytes.
+    //    TYPE AND DEFAULT ARE BOTH READ. Field record 5 is `symref->__got 0x104109c60` =
+    //    `_$s10Foundation4DataVMn` with an EMPTY tail, so the field is `Data`, NOT `Data?`
+    //    (the same reader prints `Sg` where it is present — CacheIOContext's
+    //    `formatContextOptions` is `SDySSypGSg`). The declaration default is the vpfi at
+    //    0x1001871f8, which is `mov x0,#0 / mov x1,#-0x4000000000000000 / ret`. A swiftc probe
+    //    compiling `Data()` at -O emits that byte-for-byte —
+    //    `mov x0,#0 / mov x1,#-4611686018427387904 (=0xc000000000000000) / ret` — so the
+    //    expression is `Data()`. ⚠️ It is NOT "two zeroed words": word 1 is 0xc000000000000000,
+    //    which is also why the tag-3 arm of parseM3U8's isEmpty switch is the empty case.
+    //    ⚑[tool=vpfi_initializer_oracle ref=HLSCacheIOContext.m3u8Buffer:0x1001871f8 result=Data()]
+    private var m3u8Buffer: Data = Data()
     // 6  m3u8Parsed: whether the manifest has been parsed into `segments`. init false.
     private var m3u8Parsed: Bool = false
     // 7  segments: the parsed HLS segment list. init [].
@@ -187,6 +196,84 @@ public class HLSCacheIOContext: AbstractAVIOContext {
     }
 
     // --- methods (only the 4 cached small methods; names devirt→inferred) ---
+
+    // @0x101b99ce8 — 798 instr (0x101b99ce8-0x101b9a960), vtable slot 20, a NEW `Method` slot and
+    //   NOT an override (none of the 7 override-table impls is this address). Trie-named
+    //   `$s16PreLoadIOContext08HLSCacheC0C9parseM3U8yyF`, one symbol (no ICF fold).
+    //
+    // ⚠️ PLACEMENT IS A KNOWN DIVERGENCE AND IS NOT FAKED. The four KSLog sites carry
+    //   `#line` 285, 318, 320 and 323 (`mov w6,#0x11d / #0x13e / #0x140 / #0x143`) in
+    //   `PreLoadIOContext/HLSCacheIOContext.swift` (the 40-byte `#fileID` at 0x103d3f0f0), so in
+    //   Forward this body sits far earlier in the file than it does here. Hitting those lines
+    //   exactly would mean restructuring the whole file; the line evidence is recorded instead of
+    //   silently discarded, and the body itself is unaffected.
+    //
+    // Verified against the binary rather than accepted from the derivation: the guard order
+    //   (`tbnz w8,#0` on m3u8Parsed @0x101b99ea0 → epilogue, then the 4-way `Data._Representation`
+    //   tag switch on m3u8Buffer, whose tag-3 arm — the one `Data()` produces — also returns), and
+    //   `m3u8Parsed = true` landing AFTER both guards at 0x101b99f18. The two CharacterSet globals
+    //   were bound individually: 0x1041094f0 is `.newlines` and 0x104109460 is **`.whitespaces`**,
+    //   NOT `.whitespacesAndNewlines`.
+    //
+    // ⚠️ THE TAG INVENTORY IS EXACTLY FOUR LITERALS — `"#EXTINF:"`, `"#"`, `"http://"`,
+    //   `"https://"`. There is no `#EXTM3U` and no `#EXT-X-…` anywhere in the body; a reader
+    //   expecting them will look for code that does not exist. Each was re-derived by hand from
+    //   its `mov`/`movk` immediates plus the 0xE0|n discriminator byte (`#EXTINF:` is
+    //   `23 45 58 54 49 4e 46 3a` with disc 0xE8 = 8; `#` is disc 0xE1 = 1; `http://` 0xE7 = 7;
+    //   `https://` 0xE8 = 8).
+    //
+    // Argument order at the `hasPrefix` sites is settled by a swiftc probe, not by reading:
+    //   `b.hasPrefix(a)` compiles to a tail-branch with ZERO register moves, so x0/x1 is the
+    //   prefix and x2/x3 is `self` — i.e. at every site here the LITERAL is the prefix and the
+    //   trimmed line is the receiver.
+    //
+    // KSLog is the bare 3-argument form deliberately: `KSLog(level: LogLevel = .warning, …)`
+    //   defaults to `.warning`, whose case index is 3, and the binary's inlined gate compares
+    //   `KSOptions.logLevel` against 3 and passes `mov w0,#0x3` to the handler.
+    //
+    // ⟨No local identifier in this body is recoverable — the trie carries only `parseM3U8yyF` and
+    //  the sole in-body identifier literal is the `#function` default "parseM3U8()". The local
+    //  names below are CHOSEN, not derived.⟩
+    // ⟨The `#EXTINF:` flag assignment is written as one unconditional tail assignment; an
+    //  if/else-if chain assigning in both arms lowers identically, so the source form is not
+    //  decidable from the machine code.⟩
+    func parseM3U8() {
+        guard !m3u8Parsed, !m3u8Buffer.isEmpty else {
+            return
+        }
+        m3u8Parsed = true
+        guard let content = String(data: m3u8Buffer, encoding: .utf8) else {
+            KSLog("[HLSCache] parseM3U8 failed: cannot decode m3u8 content as UTF-8") // #line 285
+            return
+        }
+        let lines = content.components(separatedBy: .newlines)
+        var urls: [URL] = []
+        var isSegmentLine = false
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isEXTINF = trimmed.hasPrefix("#EXTINF:")
+            if !isEXTINF, isSegmentLine, !trimmed.isEmpty, !trimmed.hasPrefix("#") {
+                let segmentURL: URL?
+                if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+                    segmentURL = URL(string: trimmed)
+                } else {
+                    segmentURL = URL(string: trimmed, relativeTo: baseURL)?.absoluteURL
+                }
+                if let segmentURL {
+                    urls.append(segmentURL)
+                }
+            }
+            isSegmentLine = isEXTINF
+        }
+        segments = urls
+        KSLog("[HLSCache] parseM3U8 completed: \(segments.count) segments found") // #line 318
+        if let first = segments.first {
+            KSLog("[HLSCache] first segment: \(first.absoluteString)") // #line 320
+        }
+        if let last = segments.last {
+            KSLog("[HLSCache] last segment: \(last.absoluteString)") // #line 323
+        }
+    }
 
     // s22 @0x101b9a960 — 101 instr (0x101b9a960-0x101b9aaf4). THE NAME IS READ, NOT INFERRED:
     //   the trie carries `$s16PreLoadIOContext08HLSCacheC0C12segmentIndex3forSiSg10Foundation3URLV_tF`
