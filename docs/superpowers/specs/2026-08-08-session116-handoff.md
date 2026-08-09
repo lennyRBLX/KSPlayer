@@ -100,6 +100,26 @@ So the whole `.right` arm is: `av_malloc(ctx.bufferSize)` (bufferSize = `Abstrac
 0x1019e2628 / 0x1019e2684 / 0x1019e26e0, then `avio.pointee.av_class = <that static AVClass>` and
 `formatCtx.pointee.pb = avio`. Nothing in D2 is unread any more.
 
+The three callbacks and `child_next` are all NOT_IN_TRIE hoisted closures and all return
+**INLINE-INSTEAD** from the gate (0x1019e237c: "Called from 0 site(s)" — it is only ever taken as a
+function pointer), so they are written as `@convention(c)` closure literals at the call site.
+`AbstractAVIOContext` already declares `read(buffer:size:)`, `write(buffer:size:)` and
+`seek(offset:whence:)` (PlayerDefines.swift:680/684/693), so each closure is an
+`Unmanaged.fromOpaque(...).takeUnretainedValue()` plus one method call.
+
+⛔ **D2'S ONE REMAINING BLOCKER IS AN INVENTED NAME, and it needs sign-off.** The `AVClass` itself is
+a `swift_once`-guarded STATIC at 0x104c63590. Swift cannot express that as a local — `av_class` must
+point at storage that outlives the call — so writing it requires declaring a global/static, and that
+global needs a NAME. 0x104c63590 is a DATA address and NOT_IN_TRIE, so no naming route reaches it,
+and `name_exhaustion_gate` only operates on function addresses. Its `class_name` is
+"AbstractAVIOContext", which suggests something like `AbstractAVIOContext.avClass`, but that is a
+guess about the identifier, not a reading.
+
+Per `invented-names-need-the-exhaustion-gate`, an invented identifier requires explicit human
+`approved=`. So D2 is complete except for that one decision. Everything else — the AVClass field
+layout, the decoded class_name, the three callbacks, `child_next`, the malloc size, and the `pb`
+store — is read.
+
 **`KSPlayerLayer_structural_placement_s76` D1 — THE COUNT IS STALE BY NINE.** The verdict says
 "KSPlayerLayer carries 11 pre-existing l2_field_gate REAL_FLAGs (subtitleView, _state,
 playerTickClock, playerTickTask, bufferingStartTime, subtitleModel,
