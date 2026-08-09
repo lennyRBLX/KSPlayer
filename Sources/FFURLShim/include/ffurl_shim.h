@@ -8,15 +8,26 @@
 //  WHY THIS EXISTS
 //  ---------------
 //  Forward built against full FFmpeg sources, so its field records type
-//  `URLContextDownload.context` as `UnsafeMutablePointer<__C.URLContext>?`. FFmpegKit
-//  ships PUBLIC headers only: `FFmpeg/ios/thin/arm64/include/libavformat/` carries
+//  `URLContextDownload.context` as `UnsafeMutablePointer<__C.URLContext>?` — read directly
+//  from the record as `Spy<symref>Sg` (Sp = UnsafeMutablePointer, trailing Sg = Optional).
+//  FFmpegKit ships PUBLIC headers only: `FFmpeg/ios/thin/arm64/include/libavformat/` carries
 //  avformat.h, avio.h, config.h, os_support.h, version.h and version_major.h — but not
-//  url.h. The type was therefore unnameable in Swift and two derived bodies could not be
-//  written at all:
-//    PreLoadIOContext_download_existential
-//    LimitSeparatePreLoadIOContext_more_idx30_101ba5398_s104
-//  Session 116 fully derived `URLContextDownload.init(url:flags:options:interrupt:isReadComplete:)`
-//  @0x101b90c58 before hitting that wall.
+//  url.h. The type was therefore unnameable in Swift, and the consequence is that the class
+//  `URLContextDownload` cannot be DECLARED at all: it has four fields and the first one needs
+//  this type. Session 116 fully derived
+//  `URLContextDownload.init(url:flags:options:interrupt:isReadComplete:)` @0x101b90c58 before
+//  hitting that wall.
+//
+//  CORRECTION (this comment was wrong when first committed at 2af6f9e). It previously named
+//  two body ids — `PreLoadIOContext_download_existential` and
+//  `LimitSeparatePreLoadIOContext_more_idx30_101ba5398_s104` — as the bodies this unblocks.
+//  That was inherited from a handoff and never checked. `LimitSeparatePreLoadIOContext.more()`
+//  @0x101ba5398 calls NO FFmpeg function of any kind: its 433 instructions contain 48 `bl`
+//  sites across 21 distinct targets, none in the FFmpeg band, and the only occurrence of
+//  "ffurl_seek2" anywhere in it is TEXT inside the log literal at 0x103d3fa40,
+//  '[CacheIOContext] more ffurl_seek2 '. That body is blocked on three undeclared members
+//  (addEntry, findDiscontinuousPos, updateSpeedSample), not on this header. The real
+//  beneficiary of this shim is `URLContextDownload` itself.
 //
 //  This follows the DOVIRPUShim precedent exactly: re-declare the private surface so the
 //  linker resolves it against the statically linked archive. It does NOT patch the
