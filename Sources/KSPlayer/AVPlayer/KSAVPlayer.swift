@@ -767,7 +767,12 @@ extension KSAVPlayer {
 }
 
 extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
-    public var subtitleDataSource: (any SubtitleDataSource)? { nil }
+    // ⚑ RETYPED to the refined protocol, from this getter's own mangled name:
+    //   `$s8KSPlayer10KSAVPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`
+    //   = `KSAVPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. Getter-only — the
+    //   binary carries no `vs`/`vM` for it. The body stays `nil`; returning nil needs no conformance.
+    // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
+    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { nil }
     public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
     public var view: UIView { playerView }
     public var currentPlaybackTime: TimeInterval {

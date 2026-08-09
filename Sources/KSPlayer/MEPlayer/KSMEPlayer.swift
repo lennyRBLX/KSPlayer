@@ -440,12 +440,56 @@ extension KSMEPlayer: MEPlayerDelegate {
     }
 }
 
+// ⚑ CONFORMANCE RECOVERED FROM THE BINARY. KSMEPlayer conforms to `ConstantSubtitleDataSource`
+//   (witness table 0x1041d76d8, conformance descriptor 0x10356a3e8); slot +0x8 holds the base
+//   `KSMEPlayer : SubtitleDataSource` table 0x1041d76f0, which `conformance_walker.py` reports
+//   independently, and slot +0x10 holds the async function pointer for `infos()`. That +0x10 slot
+//   is exactly what `KSPlayerLayer.readyToPlay`'s Task awaits. Source carried neither the
+//   conformance nor the method; `subtitleDataSource` returning `self` requires both.
+// ⚑[tool=conformance_walker ref=SubtitleDataSource:0x1039f1a68 result=KSMEPlayer-wt-0x1041d76f0]
+extension KSMEPlayer: ConstantSubtitleDataSource {
+    /// @0x101a18f68 — a 6-instruction async entry into a single readable funclet
+    /// 0x101a18f80-0x101a19144 (113 instr, two funclets total). It reads no field of `self`, holds
+    /// no literal, and never actually throws — but the trie carries the `K`, so the declaration is
+    /// `async throws`: `$s8KSPlayer10KSMEPlayerC5infosSayAA12SubtitleInfo_pGyYaKF`.
+    ///
+    ///   · `bl 0x101a3ccd0` = `tracks(mediaType:)`, its argument loaded from `_AVMediaTypeSubtitle`.
+    ///   · the survivors are boxed with witness table 0x1041d7668 = `FFmpegAssetTrack : SubtitleInfo`
+    ///     (declared in source at EmbedDataSouce.swift:11).
+    ///
+    /// The FILTER is settled by swiftc probe, not by eye — three candidate spellings were compiled
+    /// and compared against the extent. `filter { $0 is T }.map` is refuted: it emits TWO
+    /// `object_getClass` calls and an intermediate buffer, at 153 instructions. `for` + `if let` is
+    /// refuted: it emits `swift_unknownObjectRetain_n`, while the binary calls the plain
+    /// `swift_unknownObjectRetain` (stub 0x10345d12c → __got 0x1041130b0) and also
+    /// `swift_isUniquelyReferenced_nonNull_native` (0x10345cf88 → __got 0x104113000), both of which
+    /// `compactMap` emits. The local array-growth helper 0x1019acc10 is called twice, matching
+    /// `compactMap`'s two buffer-growth calls.
+    ///
+    /// The exact-class test this lowers to — `object_getClass(elem) == FFmpegAssetTrack metadata`
+    /// then `ccmp x21, #0x0, #0x4, eq`, where x21 is the element's instance word at stride 16 from
+    /// base+0x20 — appears ONLY when the cast target is `final`, which is why FFmpegAssetTrack
+    /// carries that keyword. See the pin at its declaration.
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.infos:0x101a18f68 result=async-throws-SubtitleInfo-array]
+    /// ⚑[tool=bind_oracle ref=swift_unknownObjectRetain:0x1041130b0 result=plain-retain-not-_n]
+    ///   Full derivation: reconstruction/derivations/s118_infos_cast_lowering_probe.md (UNGROUNDED 0).
+    public func infos() async throws -> [any SubtitleInfo] {
+        tracks(mediaType: .subtitle).compactMap { $0 as? FFmpegAssetTrack }
+    }
+}
+
 extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     public var chapters: [Chapter] {
         playerItem.chapters
     }
 
-    public var subtitleDataSource: (any SubtitleDataSource)? { self }
+    // ⚑ RETYPED to the refined protocol. The getter's own mangled name carries the refined type:
+    //   `$s8KSPlayer10KSMEPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`
+    //   = `KSMEPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. The binary has no
+    //   `vs` and no `vM` symbol for it, so it is getter-only, which the protocol requirement's
+    //   `{ get }` already matches. Returning `self` is what forces the conformance below.
+    // ⚑[tool=export_trie_oracle ref=KSMEPlayer.subtitleDataSource.getter:0x101a42408 result=ConstantSubtitleDataSource-optional]
+    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { self }
     public var playbackVolume: Float {
         get {
             audioOutput.volume

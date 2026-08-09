@@ -21,7 +21,21 @@ import Libavformat
 // ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter:vpMV result=public ⇒ BitStreamFilter public by the type-visibility rule]
 public protocol BitStreamFilter {}
 
-public class FFmpegAssetTrack: MediaPlayerTrack {
+// ⚑ `final` is DERIVED, not stylistic, and it is load-bearing for KSMEPlayer.infos().
+//   KSMEPlayer.infos() @0x101a18f80-0x101a19144 filters its tracks with an EXACT class-identity
+//   test — `bl 0x10345c520` (= libobjc `_object_getClass`, via __got 0x10410bae0) then
+//   `cmp x0, x28` against this class's metadata 0x1044e91c8, then `ccmp x21, #0x0, #0x4, eq`.
+//   A swiftc probe over the three candidate spellings shows that sequence is emitted ONLY when the
+//   cast target is `final`: a NON-final target lowers `as?` to `swift_dynamicCastClass` instead,
+//   whether it is `public` or `internal` under whole-module optimisation. So the binary's own
+//   codegen fixes this keyword — without it `infos()` cannot be written faithfully.
+//   Corroborated on an independent axis by this class's vtable, which carries ONE `Init` slot and
+//   NO method slots (VTableSize=1, override_table=False) — a non-final public class with this many
+//   members could not produce that. Nothing in the tree subclasses FFmpegAssetTrack.
+// ⚑[tool=vtable_walk ref=FFmpegAssetTrack:0x1039ef114 result=vtable-size-1-Init-only-no-method-slots]
+// ⚑[tool=bind_oracle ref=object_getClass:0x10410bae0 result=libobjc-_object_getClass]
+//   Full derivation: reconstruction/derivations/s118_infos_cast_lowering_probe.md (UNGROUNDED 0).
+public final class FFmpegAssetTrack: MediaPlayerTrack {
     // ⚑ Field-layout migration (session 37, commit-1): the 37 stored properties in Forward binary order
     //   (scripts/dump_binary_field_types.py FFmpegAssetTrack). NEW fields carry safe defaults = the
     //   confirmed unconditional prologue init values (scale 1.0, translateY 0) or ⚑ nil/false pending

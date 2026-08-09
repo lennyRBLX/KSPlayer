@@ -297,7 +297,13 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     var playbackRate: Float { get set }
     var playbackVolume: Float { get set }
     var contentMode: UIViewContentMode { get set }
-    var subtitleDataSource: (any SubtitleDataSource)? { get }
+    // ⚑ RETYPED to the refined protocol. Requirement index 28 of this protocol's 45; byte +0xe8 of
+    //   BOTH conformer witness tables holds the getter DIRECTLY with no reabstraction thunk, so the
+    //   requirement's own type is the refined one, not `SubtitleDataSource` with a thunked witness.
+    //   `SubtitleDataSource` is a true empty marker in the binary (NumRequirements 0, 8 conformers);
+    //   `ConstantSubtitleDataSource` refines it with the single `infos()` method, which is what
+    //   `KSPlayerLayer.readyToPlay` awaits through witness +0x10.
+    var subtitleDataSource: (any ConstantSubtitleDataSource)? { get }
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
     var playbackCoordinator: AVPlaybackCoordinator { get }
     @available(tvOS 14.0, *)
