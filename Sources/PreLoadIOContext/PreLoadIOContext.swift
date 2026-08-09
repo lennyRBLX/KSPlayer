@@ -510,17 +510,74 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     // at #line 84 whose #fileID is "PreLoadIOContext/PreLoadIOContext.swift" and #function
     // "addTimeIndex(position:time:)".
     //
-    // UNRESOLVED → P8: the search/insert interior. Its Array machinery runs through unnamed
-    // helpers (0x101babf50 insert, 0x101bac23c COW) that are real trie negatives, and transcribing
-    // by FUN-address is forbidden. The leading guard IS read and is expressed.
+    // The search/insert interior is now READ, statement by statement, from the 301 instructions.
+    // The unnamed helpers 0x101babf50 / 0x101bac23c are NOT transcribed by FUN-address: they are
+    // the emitted-out-of-line bodies of `Array.insert(_:at:)` and its COW re-buffer, identified by
+    // shape rather than by name — 0x101babf50 is entered with x0 == x1 == idx (a degenerate
+    // replaceSubrange range), x2 = position, v0 = time and x20 re-pointed at `&self._timeIndex`,
+    // and 0x101bac23c sits behind the not-unique edge of
+    // swift_isUniquelyReferenced_nonNull_native.
     // ⚑[tool=export_trie_oracle ref=addTimeIndex_insert_helper:0x101babf50 result=NOT_IN_TRIE]
+    // ⚑[tool=export_trie_oracle ref=addTimeIndex_cow_helper:0x101bac23c result=NOT_IN_TRIE]
+    //
+    // The `defer { _timeIndexLock.unlock() }` this body used to carry is REFUTED by the binary and
+    // has been replaced with explicit unlocks. A function-scope defer unlocks after the KSLog; the
+    // binary unlocks BEFORE it — 0x101ba7b18 `bl unlock` precedes 0x101ba7b1c `bl logLevel
+    // .unsafeMutableAddressor`. There are exactly two unlock call sites, 0x101ba7ac0 (every
+    // reject/no-op exit, which the compiler merges) and 0x101ba7b18 (the mutation exit), and the
+    // pre-lock guard exit at 0x101ba7d34 unlocks nothing because it never locked.
+    //
+    // Element layout is read off the indexing arithmetic, not assumed: stride 16 (`lsl x11,x10,#4`
+    // @0x101ba79dc), buffer base object+0x20, count at object+0x10, `.position` at +0 and `.time`
+    // at +8 — which is exactly the existing `TimeIndexEntry`.
     public func addTimeIndex(position: UInt64, time: Double) {
         guard !time.isNaN, !time.isInfinite, time >= 0 else {
             return
         }
         _timeIndexLock.lock()
-        defer { _timeIndexLock.unlock() }
-        // UNRESOLVED → P8: binary-search insertion with monotonicity rejection.
+        let count = _timeIndex.count
+        // Lower-bound partition on `position`. The loop is bottom-tested (`cmp x22,x9 / b.lt`
+        // @0x101ba79f0) and `mid` is a trapping signed add plus a round-toward-zero halve
+        // (`adds/b.vs` then `add x10,x10,x10,lsr #63 / asr x10,x10,#1`), i.e. `(lo + hi) / 2`.
+        var lo = 0
+        var hi = count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if _timeIndex[mid].position < position {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        let idx = lo
+        let isExact = idx < count && _timeIndex[idx].position == position
+        // Monotonicity, enforced on both sides of the insertion point. Both rejections converge on
+        // 0x101ba7abc, which unlocks and returns without touching the array.
+        if idx > 0, time <= _timeIndex[idx - 1].time {
+            _timeIndexLock.unlock()
+            return
+        }
+        let next = isExact ? idx + 1 : idx
+        if next < count, _timeIndex[next].time <= time {
+            _timeIndexLock.unlock()
+            return
+        }
+        if isExact {
+            // Exact position hit: no-op when the stored time already equals `time`
+            // (`fcmp d0,d8 / b.ne` @0x101ba7ab4 — the EQUAL case falls through to the unlock).
+            if _timeIndex[idx].time == time {
+                _timeIndexLock.unlock()
+                return
+            }
+            _timeIndex[idx] = TimeIndexEntry(position: position, time: time)
+        } else {
+            _timeIndex.insert(TimeIndexEntry(position: position, time: time), at: idx)
+        }
+        // The count is re-read AFTER the mutation (`ldr x8,[x20,x24] / ldr x25,[x8,#0x10]`
+        // @0x101ba7b0c) and it is that post-mutation value the log reports.
+        let total = _timeIndex.count
+        _timeIndexLock.unlock()
+        KSLog(level: .verbose, "[PreLoadIOContext] addTimeIndex position=\(position) time=\(String(format: "%.2f", time))s, total=\(total)")
     }
 
     // Requirement 7, overriding CacheIOContext's entryList-based implementation with a
