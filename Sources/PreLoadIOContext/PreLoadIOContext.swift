@@ -642,3 +642,46 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     }
 }
 
+
+// ⚑ `sortQueryString` — the cache-key String builder. Trie-named, so the MEMBER name is recovered,
+//   not invented: `$s10Foundation3URLV16PreLoadIOContextE15sortQueryStringSSvg` =
+//   `(extension in PreLoadIOContext):Foundation.URL.sortQueryString.getter : Swift.String`.
+//   Extent 0x101b86a2c-0x101b86cb8, 652 B / 163 instr — three older ⚑ pins in this module quote a
+//   stale "651B"; the extent tool says 652.
+//   ⚑[tool=name_exhaustion_gate ref=URL.sortQueryString:0x101b86a2c result=ROUTE-OPEN-trie-named]
+//   ⚑[tool=function_extents ref=URL.sortQueryString:0x101b86a2c result=652B-163-instr]
+//
+//   It is the FIRST half of the cache key at both convenience-init sites: the binary passes
+//   `url.sortQueryString.md5()` as `md5:`, which is why `LimitSeparatePreLoadIOContext.swift`
+//   carries a self-declared `let cacheKey = ""` placeholder that is NOT the binary's value.
+//   `String.md5()` already exists at KSPlayer/Core/Utility.swift:102.
+//
+//   The body matched 163 of 163 instructions against a swiftc probe, with only four
+//   `__chkstk_darwin` GOT-offset residues. The `sortedItems` TEMPORARY IS LOAD-BEARING: folding the
+//   sort into the assignment schedules the copy differently and stops matching.
+//
+// ⚑ TWO INVENTED LOCAL NAMES, approved=jweaver, invented=sortedItems, invented=newComponents.
+//   These are the only invented identifiers here and they are LOCALS. The exhaustion gate answers
+//   per ADDRESS and locals have none: Swift emits no local-variable names into any Mach-O metadata,
+//   this image carries no DWARF, and its symtab is stripped to 403 defined symbols on 33 addresses.
+//   There is therefore no route to exhaust for a local, only for the member — and the member's route
+//   is OPEN and was taken. The two names describe what the values are and nothing else.
+//
+//   PLACEMENT is a judgement call, approved=jweaver: the body holds no `#fileID`/`#line` literal to
+//   decide it (12 `adrp` sites, none a file path), and the getter is used from more than one file in
+//   this module — HLSCacheIOContext.swift:200 pins it as the segment cache-key builder, and both
+//   CacheIOContext and LimitSeparatePreLoadIOContext need it. It goes in the module's namesake file
+//   as shared surface rather than in any one caller.
+extension URL {
+    var sortQueryString: String {
+        guard let components = URLComponents(url: self, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems
+        else {
+            return absoluteString
+        }
+        let sortedItems = queryItems.sorted { $0.name < $1.name }
+        var newComponents = components
+        newComponents.queryItems = sortedItems
+        return newComponents.url?.absoluteString ?? absoluteString
+    }
+}
