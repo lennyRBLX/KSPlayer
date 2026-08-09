@@ -78,11 +78,27 @@ doc says "If this AVIOContext is manually allocated, then av_class may be set by
 which is exactly this call path. So the statement is `avio.pointee.av_class = …`, and no FFmpeg
 FUNCTION symbol needs provenancing at all.
 
-WHAT REMAINS for D2 is only the VALUE: 0x104c63590 is a Swift static behind `swift_once` (token
-0x1044e6908), initialised by 0x1019e22c0 — 47 instructions, NOT_IN_TRIE. Read that initialiser to
-name what AVClass is being installed; everything else in the arm is already derived
-(`av_malloc(ctx.bufferSize)` — bufferSize is `AbstractAVIOContext` +0x14 per its own declaration
-comment — plus the three C callbacks 0x1019e2628 / 0x1019e2684 / 0x1019e26e0).
+✅ **AND THE VALUE IS NOW DERIVED TOO — D2 IS FULLY READ.** The once-initialiser 0x1019e22c0
+(47 instr, NOT_IN_TRIE) builds a static `AVClass` at 0x104c63590 and stores exactly two fields,
+zeroing every other byte:
+
+    1019e22d4  adrp/add 0x103568b30 ; sub #0x20    a Swift String -> C string bridge
+    1019e2300  str  x8, [x9]                       AVClass.class_name  (+0x00)
+    1019e2304  movi.2d v0, #0 ; stur q0,[x9,#0x8] / [#0x18] / [#0x28]   zero 0x08-0x37
+    1019e2320  str  x8, [x9, #0x38]                AVClass.child_next  (+0x38) = 0x1019e237c
+    1019e231c  stp  xzr, xzr, [x9, #0x40]          zero 0x40-0x4f
+
+Field names are from `Libavutil.framework/Headers/log.h` — `class_name` +0x00, then item_name,
+option, version, log_level_offset_offset, parent_log_context_offset, category (int, +0x24),
+get_category +0x28, query_ranges +0x30, **child_next +0x38**, child_class_iterate +0x40.
+
+`class_name` decodes to **"AbstractAVIOContext"** (the C string at 0x103568b30; note the `sub #0x20`
+is the Swift String bridging bias, so decode at the RAW address, not the biased one).
+
+So the whole `.right` arm is: `av_malloc(ctx.bufferSize)` (bufferSize = `AbstractAVIOContext` +0x14),
+`avio_alloc_context(buf, size, 0, ctx, <read>, <write>, <seek>)` with the three C callbacks
+0x1019e2628 / 0x1019e2684 / 0x1019e26e0, then `avio.pointee.av_class = <that static AVClass>` and
+`formatCtx.pointee.pb = avio`. Nothing in D2 is unread any more.
 
 **`KSPlayerLayer_structural_placement_s76` D1 — THE COUNT IS STALE BY NINE.** The verdict says
 "KSPlayerLayer carries 11 pre-existing l2_field_gate REAL_FLAGs (subtitleView, _state,
