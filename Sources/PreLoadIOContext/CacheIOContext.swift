@@ -440,6 +440,84 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
         true
     }
 
+    /// @0x101b8c178-0x101b8c83c, 1732 B / 433 instructions, one trie symbol, no ICF fold.
+    /// `override` is proven twice, not assumed: the base descriptor 0x1039edc78's impl 0x10047dae8
+    /// is `AbstractAVIOContext.fileSize()`, and this class's metadata+0x98 holds 0x101b8c178 against
+    /// the base's 0x10047dae8 — an inherited slot, no new one. The mangle ends in `F`, so it does
+    /// NOT throw.
+    ///
+    /// ⚑ THE PIN BELOW WAS RIGHT THAT THE BLOCKER WAS `download`'s OPTIONALITY, and that blocker is
+    /// gone. But its eleven-statement description was INCOMPLETE in four ways, each of which would
+    /// have produced a plausible wrong body if written from the prose:
+    ///   · the `isFirstFileSize` false path returns `Int64(end)` WITHOUT taking the lock
+    ///     (0x101b8c248 → 0x101b8c7fc, bypassing the unlock at 0x101b8c7f4);
+    ///   · `eof = true` is stored inside `isJudgeEOF` BEFORE `!saveFile` is tested, and the prose
+    ///     omitted it entirely;
+    ///   · `onCacheUpdated?()` is NOT flat — it is reached only from inside the
+    ///     `isJudgeEOF && !saveFile` arm, after the sweep;
+    ///   · a seek result of exactly 0 returns 0 with no `end`/`eof` work at all (0x101b8c678).
+    ///
+    /// The witness offsets are resolved, not guessed: `AbstractAVIOContext : DownloadProtocol` (WT
+    /// 0x1041d5330) has 8 requirements with word 0 the conformance descriptor, so WT+0x38 is req6 =
+    /// `fileSize()` (thunk → metadata+0x98) and WT+0x30 is req5 = `seek(offset:whence:)` (thunk →
+    /// metadata+0x90). The existential is projected and called through with NO nil test — load
+    /// 0x101b8c25c, projection 0x101b8c274, indirect call 0x101b8c288, and no `cbz`/`cmp` between —
+    /// which is exactly why the non-optional `download` was the precondition for writing this.
+    ///
+    /// The return register is x22 on every path that reaches the single epilogue, so the tail
+    /// returns `size`, NOT `Int64(end)`; the two early exits carry their own value into x22 first.
+    /// `end = max(end, UInt64(size))` is an UNSIGNED `csel …, hi` on self+0x48, with no conversion
+    /// trap because `size > 0` is already established there.
+    ///
+    /// Both KSLog sites are inlined and gated on `KSOptions.logLevel`'s one-byte CASE INDEX (not the
+    /// Int32 rawValue): tag 5 is `.verbose`, tag 3 is `.warning`. Their `#fileID` is this file and
+    /// their `#line`s are 511 and 516.
+    /// ⚑ approved=jweaver: the sweep's error handling is spelled `try?`. The CFG proves the thrown
+    ///   error is discarded and no user statement runs on that edge, which `try?` and an empty
+    ///   `do/catch` both produce identically — the image does not separate them.
+    /// ⚑[tool=override_table ref=CacheIOContext.fileSize:0x101b8c178 result=entry2-base-0x1039edc78]
+    /// ⚑[tool=decode_witness_table ref=AbstractAVIOContext.DownloadProtocol:0x1041d5330 result=WT+0x38-fileSize-WT+0x30-seek]
+    override public func fileSize() -> Int64 {
+        guard isFirstFileSize else {
+            return Int64(end)
+        }
+        isFirstFileSize = false
+        downloadLock.lock()
+        if _isClosed {
+            downloadLock.unlock()
+            return Int64(end)
+        }
+        var size = download.fileSize()
+        KSLog(level: .verbose, "[CacheIOContext] ffurl_seek2 \(size)")
+        if size <= 0 {
+            size = download.seek(offset: -1, whence: 2)
+            if size < 0 {
+                KSLog(level: .warning, "[CacheIOContext] Inner protocol failed to seekback end")
+                downloadLock.unlock()
+                return size
+            }
+            if size == 0 {
+                downloadLock.unlock()
+                return 0
+            }
+        }
+        end = max(end, UInt64(size))
+        if isJudgeEOF {
+            eof = true
+            if !saveFile {
+                entryList = []
+                if let contents = try? FileManager.default.contentsOfDirectory(at: tmpURL, includingPropertiesForKeys: nil, options: []) {
+                    for url in contents {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                }
+                onCacheUpdated?()
+            }
+        }
+        downloadLock.unlock()
+        return size
+    }
+
     // ⚑ `fileSize()` IS NOT DECLARED HERE, AND THIS IS THE PIN THAT SAYS WHY — it is a blocked
     // unit, not an oversight. The body is at 0x101b8c178, 1732 B / 433 instructions, one trie
     // symbol, no ICF fold, and it is override-table index 2 against AbstractAVIOContext's base
