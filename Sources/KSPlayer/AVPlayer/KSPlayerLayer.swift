@@ -1756,7 +1756,17 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         guard let index = urls.firstIndex(of: url), index >= 1 else {
             return
         }
-        isPictureInPictureStoped = true
+        // ⚑ FIELD REBOUND. This store goes through offset global 0x104c63520, and that global is
+        //   `KSPlayerLayer.isAutoPlay`, NOT `KSComplexPlayerLayer.isPictureInPictureStoped`. The
+        //   proof is structural rather than a tie-break: `KSPlayerLayer.play()` @0x1019cc5f8 — a
+        //   SUPERCLASS method, which cannot address a subclass field — writes `mov w9,#0x1 /
+        //   strb w9,[x20,x8]` through it, and `pause()` writes `wzr` through the same global.
+        //   Both fields are real and DISTINCT: KSPlayerLayer record 10 `isAutoPlay: Sb` (17 fields)
+        //   versus KSComplexPlayerLayer record 1 `isPictureInPictureStoped: Sb` (3 fields).
+        //   The old binding came from a `recover_field_by_access` UNIQUE whose byte-class tie-break
+        //   was run against the WRONG class's field set.
+        // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.play:0x1019cc5f8 result=superclass-writes-0x104c63520]
+        isAutoPlay = true
         set(url: urls[index - 1], options: nil)
     }
 
@@ -1767,7 +1777,9 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         guard let index = urls.firstIndex(of: url), index < urls.count - 1 else {
             return
         }
-        isPictureInPictureStoped = true
+        // ⚑ Same rebinding as playPreviousURL above — this body writes 0x104c63520 too, verified in
+        //   its own extent (0x1019d27a8), so it is `isAutoPlay`, not `isPictureInPictureStoped`.
+        isAutoPlay = true
         set(url: urls[index + 1], options: nil)
     }
 
