@@ -346,7 +346,14 @@ public struct KSVideoPlayerView: View {
     public func openURL(_ url: URL, options: KSOptions?) {
         if url.isSubtitle {
             let info = URLSubtitleInfo(url: url)
-            playerCoordinator.subtitleModel.selectedSubtitleInfo = info
+            // ⚑ CORRECTED — this never went through a subtitle model. openURL @0x101ac99ac spells
+            //   `playerLayer?.select(subtitleInfo:isSecondary:)` @0x1019ceb00, and both exclusivity
+            //   accesses in that branch are READ (w2=0): nothing is stored. The old spelling wrote
+            //   `Coordinator.subtitleModel`, a field that does not exist on Coordinator in the
+            //   binary at all — `subtitleModel` lives on KSPlayerLayer. The callee is already
+            //   `public` at KSPlayerLayer.swift:872.
+            // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.select(subtitleInfo:isSecondary:):0x1019ceb00 result=LOCATED]
+            playerCoordinator.playerLayer?.select(subtitleInfo: info, isSecondary: false)
         } else {
             self.url = url
             title = url.lastPathComponent
@@ -618,11 +625,16 @@ struct VideoTimeShowView: View {
     fileprivate var config: KSVideoPlayer.Coordinator
     @ObservedObject
     fileprivate var model: ControllerTimeModel
-    fileprivate var timeFont: Font?
+    // ⚑ NON-OPTIONAL. The binary's field mangle carries no trailing `Sg`, so this is `Font`, not
+    //   `Font?`. The default below is the value the two `?? .caption2.monospacedDigit()` fallbacks
+    //   were already supplying, so the observable result at every call site is unchanged — including
+    //   the one construction that passes no `timeFont:` at all. ⚑ default spelling approved=jweaver:
+    //   the binary fixes the TYPE, not which Font literal the declaration defaults to.
+    fileprivate var timeFont: Font = .caption2.monospacedDigit()
     public var body: some View {
         if config.playerLayer?.player.seekable ?? false {
             HStack {
-                Text(model.currentTime.toString(for: .minOrHour)).font(timeFont ?? .caption2.monospacedDigit())
+                Text(model.currentTime.toString(for: .minOrHour)).font(timeFont)
                 Slider(value: Binding {
                     Float(model.currentTime)
                 } set: { newValue, _ in
@@ -638,7 +650,7 @@ struct VideoTimeShowView: View {
                 #if os(xrOS)
                     .tint(.white.opacity(0.8))
                 #endif
-                Text((model.totalTime).toString(for: .minOrHour)).font(timeFont ?? .caption2.monospacedDigit())
+                Text((model.totalTime).toString(for: .minOrHour)).font(timeFont)
             }
             .font(.system(.title2))
         } else {
