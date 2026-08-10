@@ -72,9 +72,16 @@ extension KSVideoPlayer: UIViewRepresentable {
 
     @MainActor
     public final class Coordinator: ObservableObject {
-        public var state: KSPlayerState {
-            playerLayer?.state ?? .initialized
-        }
+        // ⚑ STORED, NOT COMPUTED — a type-SHAPE change read from the field records. `_state` is
+        //   field record 0 of 15 and its typeref is `Published<KSPlayerState>`, so the binary keeps
+        //   a stored `@Published`; a computed property emits no field record and no Published
+        //   machinery at all. The default is proven, not assumed: `_state`'s `vpfi` @0x10002dab0 is
+        //   `mov w0,#0`, and `.initialized` is case 0.
+        //   It has TWO writers, which is what makes a stored property viable — `init(playerLayer:)`
+        //   below, and `player(layer:state:)`, which writes it as its FIRST statement.
+        // ⚑[tool=fieldrec ref=Coordinator._state:0x1039ed33c result=rec0-Published-KSPlayerState]
+        @Published
+        public var state: KSPlayerState = .initialized
 
         @Published
         public var isMuted: Bool = false {
@@ -97,6 +104,12 @@ extension KSVideoPlayer: UIViewRepresentable {
             }
         }
 
+        // ⚑ BINARY HAS THIS, SOURCE DID NOT — field record 4, `Published<Bool>`, with a complete
+        //   public accessor set plus the `$isRecord` projected value. Default false is proven: its
+        //   `vpfi` @0x10002dab0 is `mov w0,#0`, ICF-folded with `_isMuted`/`_isScaleAspectFill`/`_state`.
+        @Published
+        public var isRecord: Bool = false
+
         @Published
         public var playbackRate: Float = 1.0 {
             didSet {
@@ -114,6 +127,12 @@ extension KSVideoPlayer: UIViewRepresentable {
             }
         }
 
+        // ⚑ SOURCE HAS THIS, THE BINARY DOES NOT — absent from all 15 field records AND from all
+        //   146 Coordinator trie symbols, so it is a real divergence, not a naming gap. NOT removed
+        //   here: `subtitleModel` genuinely exists on KSPlayerLayer (field 15, `let`, type
+        //   `KSPlayer.SubtitleModel`, offset global 0x104c63500), and the five KSVideoPlayerView
+        //   sites reading it cannot be re-rooted onto `config`, which is a Coordinator. Two of those
+        //   sites live in view types that are themselves divergent. Removing it is a view-layer unit.
         public var subtitleModel = SubtitleModel()
         public var timemodel = ControllerTimeModel()
         // 在SplitView模式下，第二次进入会先调用makeUIView。然后在调用之前的dismantleUIView.所以如果进入的是同一个View的话，就会导致playerLayer被清空了。最准确的方式是在onDisappear清空playerLayer
@@ -142,6 +161,21 @@ extension KSVideoPlayer: UIViewRepresentable {
         #endif
 
         public init() {}
+
+        /// ⚑ RECOVERED — the binary declares this and source did not. Trie-named at BOTH entries:
+        /// allocating `0x1019d6ec8`, initializing `0x1019da958`; the shared body they call,
+        /// `0x1019dd320` (988 B / 247 instr), is itself NOT_IN_TRIE — unnamed, not unread.
+        /// The body performs exactly 15 stores, one per field record, with no literals and no error
+        /// path: the seven `@Published` backing stores take their declared defaults, `timemodel`
+        /// gets a fresh `ControllerTimeModel()`, `delayHide` and the five closures are nil, then
+        /// `playerLayer` is stored, the layer's delegate is set to self (a WEAK store, witness
+        /// 0x1041d4d18), and `state` is seeded from the layer.
+        /// ⚑[tool=export_trie_oracle ref=Coordinator.init(playerLayer:):0x1019da958 result=OWNER_MATCH]
+        public init(playerLayer: KSPlayerLayer) {
+            self.playerLayer = playerLayer
+            playerLayer.delegate = self
+            state = playerLayer.state
+        }
 
         public func makeView(url: URL, options: KSOptions) -> UIView {
             defer {
@@ -261,36 +295,42 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
 
     public func playerDidStopPip() {}
 
+    /// @0x1019db4f0. TWO of this body's source arms are REFUTED by the extent, so the arm shape
+    /// below is the binary's rather than the previous reconstruction's:
+    ///   · raw {1 preparing, 3 buffering, 4 bufferFinished} — NO store at all. Source's
+    ///     `.bufferFinished -> isMaskShow = false` has no counterpart; raw 4 exits cleanly.
+    ///   · raw {2 readyToPlay} — `playbackRate = layer.player.playbackRate`, then
+    ///     `timemodel.fileSize = layer.player.fileSize`. The old `subtitleDataSource` stub was
+    ///     wrong: there is no `subtitleDataSource` read anywhere in this body.
+    ///   · raw {0 initialized, 5 paused, 6 playedToTheEnd, 7 error} — `if !isMaskShow { isMaskShow = true }`.
+    ///
+    /// The `_state` store is the FIRST statement, ahead of `onStateChanged?`, through the
+    /// `Published._enclosingInstance` SETTER 0x1034532f8 with the `\.state` / `\._state` keypath
+    /// pair (storage keypath -> 0x1044e62b0), inside a DISCARDED `Task` whose operation hops to
+    /// MainActor (entry 0x1019dd9b0 -> 0x1019db7cc -> 0x1019db860).
+    /// ⚑ SPELLING, approved=jweaver: this class is already `@MainActor`, so a bare `Task { }`
+    ///   inherits that isolation and emits exactly this hop. `Task { @MainActor in }` is
+    ///   observationally identical here and the two are not separable in this image.
+    ///
+    /// ⚑ The `#if canImport(UIKit)` swipe-gesture block that stood in this method is GONE, and its
+    ///   absence is exhaustive rather than inferred: the else-arm is 22 instructions with no ObjC
+    ///   selector references, and the selector `swipeGestureAction:` occurs ZERO times in the image
+    ///   while four sibling KSPlayer `@objc` selectors each occur once — a real absence, not an
+    ///   `@objc` trie-visibility gap. `onSwipe` and `swipeGestureAction(_:)` are left DECLARED for
+    ///   now because `onSwipe` still has four source users including a public builder API; removing
+    ///   them is a view-layer unit.
     public func player(layer: KSPlayerLayer, state: KSPlayerState) {
+        Task {
+            self.state = state
+        }
         onStateChanged?(layer, state)
         if state == .readyToPlay {
             playbackRate = layer.player.playbackRate
-            if let subtitleDataSource = layer.player.subtitleDataSource {
-                // ⚑ UNRESOLVED → P4 M2: attach embedded subtitles — recon addSubtitle(dataSouce:)/.infos removed;
-                //   the new model collects via searchSubtitle / the async pipeline (§5.1).
-                _ = subtitleDataSource
-            }
-        } else if state == .bufferFinished {
-            isMaskShow = false
-        } else {
+            timemodel.fileSize = layer.player.fileSize
+        } else if state == .preparing || state == .buffering || state == .bufferFinished {
+            // binary: these three raw tags exit with no store.
+        } else if !isMaskShow {
             isMaskShow = true
-            #if canImport(UIKit)
-            if state == .preparing {
-                let view = layer.player.view
-                let swipeDown = UISwipeGestureRecognizer(target: self, action: #selector(swipeGestureAction(_:)))
-                swipeDown.direction = .down
-                view.addGestureRecognizer(swipeDown)
-                let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(swipeGestureAction(_:)))
-                swipeLeft.direction = .left
-                view.addGestureRecognizer(swipeLeft)
-                let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(swipeGestureAction(_:)))
-                swipeRight.direction = .right
-                view.addGestureRecognizer(swipeRight)
-                let swipeUp = UISwipeGestureRecognizer(target: self, action: #selector(swipeGestureAction(_:)))
-                swipeUp.direction = .up
-                view.addGestureRecognizer(swipeUp)
-            }
-            #endif
         }
     }
 
