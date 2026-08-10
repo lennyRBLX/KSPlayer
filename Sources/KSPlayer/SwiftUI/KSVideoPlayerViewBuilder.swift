@@ -55,7 +55,8 @@ enum KSVideoPlayerViewBuilder {
                 Text(track.name).tag(track.subtitleID as String?)
             }
         } label: {
-            Image(systemName: "text.bubble.fill")
+            // ⚑ `.fill` DROPPED — the label closure loads "text.bubble".
+            Image(systemName: "text.bubble")
         }
     }
 
@@ -96,7 +97,8 @@ enum KSVideoPlayerViewBuilder {
         Button {
             showVideoSetting.wrappedValue.toggle()
         } label: {
-            Image(systemName: "info.circle.fill")
+            // ⚑ `.fill` DROPPED — the label closure loads "info.circle".
+            Image(systemName: "info.circle")
         }
         // iOS 模拟器加keyboardShortcut会导致KSVideoPlayer.Coordinator无法释放。真机不会有这个问题
         #if !os(tvOS)
@@ -107,37 +109,17 @@ enum KSVideoPlayerViewBuilder {
 
 @available(iOS 16.0, macOS 13.0, tvOS 16.0, *)
 private extension KSVideoPlayerViewBuilder {
-    static var playSystemName: String {
-        #if os(xrOS)
-        "play.fill"
-        #else
-        "play.circle.fill"
-        #endif
-    }
+    // ⚑ ALL FOUR ARE UNCONDITIONAL IN THE BINARY. The `#if os(xrOS)` split was the
+    //   reconstruction's own: the label closures load ONE literal each, with no platform branch and
+    //   no second candidate anywhere in the extent. Three of the four resolve to what the xrOS arm
+    //   already said; `speakerSystemName` resolves to a value NEITHER arm carried.
+    static var playSystemName: String { "play.fill" }
 
-    static var pauseSystemName: String {
-        #if os(xrOS)
-        "pause.fill"
-        #else
-        "pause.circle.fill"
-        #endif
-    }
+    static var pauseSystemName: String { "pause.fill" }
 
-    public static var speakerSystemName: String {
-        #if os(xrOS)
-        "speaker.fill"
-        #else
-        "speaker.wave.2.circle.fill"
-        #endif
-    }
+    public static var speakerSystemName: String { "speaker.wave.2.fill" }
 
-    public static var speakerDisabledSystemName: String {
-        #if os(xrOS)
-        "speaker.slash.fill"
-        #else
-        "speaker.slash.circle.fill"
-        #endif
-    }
+    public static var speakerDisabledSystemName: String { "speaker.slash.fill" }
 
     @MainActor
     @ViewBuilder
@@ -180,7 +162,11 @@ private extension KSVideoPlayerViewBuilder {
                 config.playerLayer?.play()
             }
         } label: {
-            Image(systemName: config.state == .error ? "play.slash.fill" : (config.state.isPlaying ? pauseSystemName : playSystemName))
+            // ⚑ FOUR arms, not three — `.playedToTheEnd` selects "restart.circle.fill", which the
+            //   three-arm spelling had no way to reach.
+            Image(systemName: config.state == .error ? "play.slash.fill"
+                : config.state == .playedToTheEnd ? "restart.circle.fill"
+                : (config.state.isPlaying ? pauseSystemName : playSystemName))
                 .font(.largeTitle)
         }
         #if os(xrOS)

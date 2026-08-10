@@ -552,22 +552,21 @@ struct VideoControllerView: View {
 
     private var pipButton: some View {
         Button {
-            // ⚑ PATTERNED, NOT READ. `isPipActive` had to go — it has zero symbols image-wide — and
-            //   this is the same operation VideoPlayerView.onButtonPressed performs, where the shape
-            //   IS read in full (0x101b2abe4). THIS body has not been located or read, so the
-            //   spelling here is OURS: it is the derived mechanism applied to the SwiftUI call site,
-            //   not a claim about a Forward body. Locating it is its own unit.
-            if let layer = config.playerLayer as? KSComplexPlayerLayer,
-               let pipController = layer.player.pipController
-            {
-                if pipController.isPictureInPictureActive {
+            // ⚑ THE PIN IS DISCHARGED — this body IS located and read now, at 0x101ad0438, and it
+            //   DIFFERS from the patterned spelling that stood here. A nil `pipController` does not
+            //   fall through doing nothing: it takes the START branch, same as a non-active one.
+            //   The old `let pipController = …` binding made nil a no-op, which is the one shape the
+            //   binary does not have.
+            if let layer = config.playerLayer as? KSComplexPlayerLayer {
+                if layer.player.pipController?.isPictureInPictureActive == true {
                     layer.player.pipController?.stop(restoreUserInterface: true)
                 } else {
                     layer.pipStart()
                 }
             }
         } label: {
-            Image(systemName: "rectangle.on.rectangle.circle.fill")
+            // ⚑ The glyph is the three-character small string "pip", not this SF name.
+            Image(systemName: "pip")
         }
     }
 
