@@ -79,15 +79,17 @@ public class PlaneDisplayModel: DisplayEnum {
     // declaration order. The previous `(planeCount:bitDepth:)` spelling is a real trie negative.
     // The selection itself is unchanged; only the parameter shape moved.
     private func pipeline(pixelBuffer: PixelBufferProtocol) -> MTLRenderPipelineState {
-        switch pixelBuffer.planeCount {
+        let planeCount = pixelBuffer.planeCount
+        let bitDepth = pixelBuffer.bitDepth
+        switch planeCount {
         case 3:
-            if pixelBuffer.bitDepth == 10 {
+            if bitDepth == 10 {
                 return yuvp010LE
             } else {
                 return yuv
             }
         case 2:
-            if pixelBuffer.bitDepth == 10 {
+            if bitDepth == 10 {
                 return p010LE
             } else {
                 return nv12
@@ -112,19 +114,19 @@ public class SphereDisplayModel: DisplayEnum {
     // so the two classes genuinely spell these differently and the unsuffixed spelling here was
     // wrong.
     // ⚑[tool=fieldrec ref=SphereDisplayModel:0x1039f134c result=suffixed-names-confirmed]
-    private lazy var yuvSphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture")
-    private lazy var yuvp010LESphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayYUVTexture", bitDepth: 10)
-    private lazy var nv12Sphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture")
-    private lazy var p010LESphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayNV12Texture", bitDepth: 10)
-    private lazy var bgraSphere = MetalRender.makePipelineState(vertexFunction: "mapSphereTexture", fragmentFunction: "displayTexture")
+    private lazy var yuvSphere = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", isSphere: true)
+    private lazy var yuvp010LESphere = MetalRender.makePipelineState(fragmentFunction: "displayYUVTexture", isSphere: true, bitDepth: 10)
+    private lazy var nv12Sphere = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", isSphere: true)
+    private lazy var p010LESphere = MetalRender.makePipelineState(fragmentFunction: "displayNV12Texture", isSphere: true, bitDepth: 10)
+    private lazy var bgraSphere = MetalRender.makePipelineState(fragmentFunction: "displayTexture", isSphere: true)
 
     // DisplayEnum requirement 0, stored at offset 0x38 with a declaration default, exactly as on
     // PlaneDisplayModel. NOTE its getter is NOT in the trie — only Plane's is — so the address
     // 0x10002c740 (`mov w0,#1; ret`) is anchored solely by this class's witness table.
     public nonisolated let isSphere = true
-    private var fingerRotationX = Float(0)
-    private var fingerRotationY = Float(0)
-    fileprivate var modelViewMatrix = matrix_identity_float4x4
+    @exclusivity(unchecked) private var fingerRotationX = Float(0)
+    @exclusivity(unchecked) private var fingerRotationY = Float(0)
+    @exclusivity(unchecked) fileprivate var modelViewMatrix = matrix_identity_float4x4
     let indexCount: Int
     let indexType = MTLIndexType.uint16
     let primitiveType = MTLPrimitiveType.triangle
@@ -144,6 +146,30 @@ public class SphereDisplayModel: DisplayEnum {
             MotionSensor.shared.start()
         }
         #endif
+    }
+
+    // Slot 50 @0x101a8c134 — the identical 51-instruction shape as Plane's helper, same
+    // parameter change. Unlike Plane's, this one is a trie negative, so its name comes from the
+    // structural match rather than from a symbol.
+    private func pipeline(pixelBuffer: PixelBufferProtocol) -> MTLRenderPipelineState {
+        let planeCount = pixelBuffer.planeCount
+        let bitDepth = pixelBuffer.bitDepth
+        switch planeCount {
+        case 3:
+            if bitDepth == 10 {
+                return yuvp010LESphere
+            } else {
+                return yuvSphere
+            }
+        case 2:
+            if bitDepth == 10 {
+                return p010LESphere
+            } else {
+                return nv12Sphere
+            }
+        default:
+            return bgraSphere
+        }
     }
 
     // Slot 51 @0x101a8c200, 88 instructions. Its first five statements are Plane's, then the two
@@ -195,7 +221,7 @@ public class SphereDisplayModel: DisplayEnum {
         modelViewMatrix = matrix_identity_float4x4.rotateX(radians: fingerRotationX).rotateY(radians: fingerRotationY)
     }
 
-    func reset() {
+    @used func reset() {
         fingerRotationX = 0
         fingerRotationY = 0
         modelViewMatrix = matrix_identity_float4x4
@@ -244,27 +270,6 @@ public class SphereDisplayModel: DisplayEnum {
         return (indices, positions, uvs)
     }
 
-    // Slot 50 @0x101a8c134 — the identical 51-instruction shape as Plane's helper, same
-    // parameter change. Unlike Plane's, this one is a trie negative, so its name comes from the
-    // structural match rather than from a symbol.
-    private func pipeline(pixelBuffer: PixelBufferProtocol) -> MTLRenderPipelineState {
-        switch pixelBuffer.planeCount {
-        case 3:
-            if pixelBuffer.bitDepth == 10 {
-                return yuvp010LESphere
-            } else {
-                return yuvSphere
-            }
-        case 2:
-            if pixelBuffer.bitDepth == 10 {
-                return p010LESphere
-            } else {
-                return nv12Sphere
-            }
-        default:
-            return bgraSphere
-        }
-    }
 }
 
 public class VRDisplayModel: SphereDisplayModel {

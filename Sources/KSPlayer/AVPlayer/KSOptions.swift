@@ -254,7 +254,7 @@ open class KSOptions {
     // Field 47. The reflection record's type mangle ends `_p`, i.e. an EXISTENTIAL, not an enum
     // tag — which is what settles that DisplayEnum is a protocol. The property carries getter,
     // setter AND modify in the trie, so it is a `var`.
-    public var display: any DisplayEnum = PlaneDisplayModel()
+    public var display: any DisplayEnum = KSOptions.defaultDisplayEnumPlane
     public var videoPipeline: VideoPipeline?
     public var videoDelay: Double = 0.0 // s
     public var isRotateByFilter: Bool = false
@@ -576,11 +576,12 @@ open class KSOptions {
                             isPlayable: isPlayable, isFirst: isFirst, isSeek: isSeek)
     }
 
-    open func adaptable(state: VideoAdaptationState?) -> (Int64, Int64)? {
-        guard let state, let last = state.bitRateStates.last, CACurrentMediaTime() - last.time > maxBufferDuration / 2, let index = state.bitRates.firstIndex(of: last.bitRate) else {
+    open func adaptable(state: VideoAdaptationState) -> (Int64, Int64)? {
+        guard let last = state.bitRateStates.last, CACurrentMediaTime() - last.time > maxBufferDuration / 2, let index = state.bitRates.firstIndex(of: last.bitRate) else {
             return nil
         }
-        let isUp = state.loadedCount > Int(Double(state.fps) * maxBufferDuration / 2)
+        let limit = Int(Double(state.fps) * maxBufferDuration / 2)
+        let isUp = limit < 0 || UInt(bitPattern: state.loadedCount) > UInt(limit)
         if isUp != state.isPlayable {
             return nil
         }
@@ -749,29 +750,22 @@ open class KSOptions {
     }
 
     // 虽然只有iOS才支持PIP。但是因为AVSampleBufferDisplayLayer能够支持HDR10+。所以默认还是推荐用AVSampleBufferDisplayLayer
-    // SIGNATURE AND BODY BOTH RECOVERED. The trie prints
-    // `KSOptions.isUseDisplayLayer(frame: KSPlayer.VideoVTBFrame, isHDRScreen: Swift.Bool) -> Bool`;
-    // the source had a no-argument one-liner. Both parameters are load-bearing — x0 is dereferenced
-    // at frame+0x18 (pixelBuffer) and x1 is bit-tested at 0x1019beca0.
-    //
-    // The binary body is 121 instructions in six steps, and the RETURN VALUE is not the display test
-    // the source returned — it is `videoPipeline == nil`. The final `cset w21, eq` reads the word at
-    // +0x18 of the copied `VideoPipeline?` existential (its metadata word, carrying the Optional
-    // discriminator) and returns == 0. The display comparison is a mid-body guard, four conditions
-    // earlier.
-    //
-    // GUARDS 2 AND 3 ARE PINNED, NOT WRITTEN. Step 2 rejects when a pixelBuffer-derived Double (the
-    // second lane) is >= 6000, and step 3 rejects when `!isHDRScreen` and a pixelBuffer-derived
-    // optional ObjC reference is non-nil. Both reach through requirements this reconstruction cannot
-    // name, so guessing them would fabricate two conditions in the middle of a guard ladder.
-    // ⚑[tool=export_trie_oracle ref=KSOptions.isUseDisplayLayer:0x1019bec28 result=guards-2-3-pinned]
-    open func isUseDisplayLayer(frame _: VideoVTBFrame, isHDRScreen _: Bool) -> Bool {
+    // Forward 0x1019bec28 checks pixelBuffer.size.height before asking the pixelBuffer's HDR
+    // requirements for CAEDRMetadata. The metadata helper at 0x101a88500 uses the pixelBuffer,
+    // not VideoVTBFrame.edrMetaData; its HLG transfer path requires an available HLG mode.
+    open func isUseDisplayLayer(frame: VideoVTBFrame, isHDRScreen: Bool) -> Bool {
         if forceDisableDisplayLayer {
             return false
         }
-        // UNRESOLVED → P8: guard 2 (pixelBuffer Double lane 2 >= 6000 -> false)
-        // UNRESOLVED → P8: guard 3 (!isHDRScreen && pixelBuffer optional ref != nil -> false)
-        guard !display.isSphere else {
+        if frame.pixelBuffer.size.height >= 6000 {
+            return false
+        }
+        #if !os(tvOS)
+        if !isHDRScreen, pixelBufferEDRMetadata(frame.pixelBuffer) != nil {
+            return false
+        }
+        #endif
+        guard display === KSOptions.defaultDisplayEnumPlane else {
             return false
         }
         guard brightness == 1, contrast == 1, saturation == 1 else {
@@ -779,6 +773,31 @@ open class KSOptions {
         }
         return videoPipeline == nil
     }
+
+    #if !os(tvOS)
+    @available(iOS 16, *)
+    private func pixelBufferEDRMetadata(_ pixelBuffer: PixelBufferProtocol) -> CAEDRMetadata? {
+        if let displayInfo = pixelBuffer.displayInfo, let contentInfo = pixelBuffer.contentInfo {
+            return CAEDRMetadata.hdr10(displayInfo: displayInfo, contentInfo: contentInfo, opticalOutputScale: 10000)
+        }
+        if let ambientViewingEnvironment = pixelBuffer.ambientViewingEnvironment {
+            if #available(macOS 14.0, iOS 17.0, *) {
+                return CAEDRMetadata.hlg(ambientViewingEnvironment: ambientViewingEnvironment)
+            }
+            return CAEDRMetadata.hlg
+        }
+        if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+            return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
+        }
+        if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+            if DynamicRange.availableHDRModes.contains(.hlg) {
+                return CAEDRMetadata.hlg
+            }
+            return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
+        }
+        return nil
+    }
+    #endif
 
     open func urlIO(log: String) {
         if log.starts(with: "Original list of addresses"), dnsStartTime == 0 {
@@ -848,18 +867,18 @@ open class KSOptions {
     //   then append the "idet" literal (built @0x1019b6770 = 0x74656469); (c) yadifMode and
     //   deInterlaceAddIdet are read as STORED INSTANCE properties (`[x19,off]`), not statics;
     //   (d) yadifMode decremented when nominalFrameRate>30 (`ldr s0,[x20,#0x58]`; fcmp #30.0);
-    //   (e) append "yadif=mode=\(yadifMode)" + ":parity=-1:deint=1" (18-char literal @0x103d34540);
-    //   (f) tail sets `isDoubleRefreshRate = true` when yadifMode∈{1,3}. Verdict flipped FAITHFUL.
+    //   (e) `grow(0x1c)` = 24 literal bytes + 2 interps ⇒ "\(yadif)=mode=\(yadifMode):parity=-1:deint=1"; (f) isDoubleRefreshRate.
     open func deinterlace(assetTrack: FFmpegAssetTrack) {
         hardwareDecode = false
+        let yadif = hardwareDecode ? "yadif_videotoolbox" : "yadif"
+        var yadifMode = self.yadifMode
         if deInterlaceAddIdet {
             videoFilters.append("idet")
         }
-        var yadifMode = self.yadifMode
         if assetTrack.nominalFrameRate > 30, yadifMode == 1 || yadifMode == 3 {
             yadifMode -= 1
         }
-        videoFilters.append("yadif=mode=\(yadifMode):parity=-1:deint=1")
+        videoFilters.append("\(yadif)=mode=\(yadifMode):parity=-1:deint=1")
         if yadifMode == 1 || yadifMode == 3 {
             isDoubleRefreshRate = true
         }
@@ -1324,7 +1343,8 @@ public extension KSOptions {
     //   with a `vpZMV`, so public) in a KSPlayer extension on `__C.UIApplication`. Its OWNER is a
     //   divergence in its own right, and it needs its own row before it is used as evidence here.
     //   ⚑[tool=export_trie_oracle ref=UIApplication.sceneSize:0x101a01d1c result=owner-is-UIApplication-not-KSOptions]
-    nonisolated(unsafe) static var displayEnumPlane = PlaneDisplayModel()
+    private nonisolated(unsafe) static let defaultDisplayEnumPlane = PlaneDisplayModel()
+    nonisolated(unsafe) static var displayEnumPlane = defaultDisplayEnumPlane
     /// ⚑ s107: NOW DECLARED. The blocker recorded above — "`DoviDisplayModel` does not exist in
     /// Sources at all; it needs standing up first" — is cleared: that class is stood up in
     /// DisplayModel.swift, with its superclass read from the descriptor's SuperclassType symbolic
@@ -1497,7 +1517,7 @@ public extension KSOptions {
     nonisolated(unsafe) static var useMACaptionAppearance: Bool = false
     nonisolated(unsafe) static var isPipPopViewController = false
     nonisolated(unsafe) static var canStartPictureInPictureAutomaticallyFromInline = true
-    nonisolated(unsafe) static var preferredFrame = true
+    nonisolated(unsafe) static var preferredFrame = false
     nonisolated(unsafe) static var useSystemHTTPProxy = true
     /// 日志级别
     // default = .error: the logLevel global byte @0x1044e5173 = 2, the CASE INDEX of .error

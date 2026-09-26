@@ -12,6 +12,10 @@ import Foundation
 // decoded via the FFmpeg subtitle pipeline, not the Scanner text-parse path.
 public class FFmpegSubtitleParse: KSParseProtocol {
     public init() {}
+
+    public func parse(url: URL, scanner _: Scanner) throws -> KSSubtitleProtocol {
+        try FFmpegSubtitle(url: url)
+    }
     // ⚑ s105: the binary declares this member ON THIS CLASS — the trie carries
     // `KSPlayer.FFmpegSubtitleParse.parsePart(scanner: __C.NSScanner) -> [KSPlayer.SubtitlePart]`
     // directly, not as a protocol-witness thunk, so it is an explicit declaration rather than the

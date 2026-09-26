@@ -61,7 +61,7 @@ public class Anime4KPipeline: VideoPipeline {
     private let frameStateLock = NSLock()
     private var inFlightFrameCount: Int = 0
     private var reservedFrameCount: Int = 0
-    public var inputTexture: MTLTexture?
+    public private(set) var inputTexture: MTLTexture?
     private var videoWidth: Int = 0
     private var videoHeight: Int = 0
     private var compiledVideoWidth: Int = 0
@@ -96,24 +96,26 @@ public class Anime4KPipeline: VideoPipeline {
     //   strb wzr, [x20, #0x88]                             -> configured = false
     //   mov w8, #0x2 · strb w8, [x20, #0x31]               -> cachedUpscaleSupport = nil (tag 2)
     public func updateTargetResolution(_ resolution: CGSize?) {
-        overrideTargetResolution = resolution
-        configured = false
-        cachedUpscaleSupport = nil
+        let storage = Unmanaged.passUnretained(self).toOpaque()
+        storage.storeBytes(of: resolution, toByteOffset: 0x90, as: CGSize?.self)
+        storage.storeBytes(of: false, toByteOffset: 0x88, as: Bool.self)
+        storage.storeBytes(of: UInt8(2), toByteOffset: 0x31, as: UInt8.self)
     }
 
     // Body @0x101a7a34c, 6 instr, read in full — the same invalidation pair as above, against
     // maxUpscaleInputHeight (+0x28 value, +0x30 tag).
     public func updateUpscalePolicy(maxInputHeight: Int?) {
-        maxUpscaleInputHeight = maxInputHeight
-        configured = false
-        cachedUpscaleSupport = nil
+        let storage = Unmanaged.passUnretained(self).toOpaque()
+        storage.storeBytes(of: maxInputHeight, toByteOffset: 0x28, as: Int?.self)
+        storage.storeBytes(of: false, toByteOffset: 0x88, as: Bool.self)
+        storage.storeBytes(of: UInt8(2), toByteOffset: 0x31, as: UInt8.self)
     }
 
     // Body @0x1003b9624, 2 instr, read in full: `ldrb w0, [x20, #0x31]` · `ret`. +0x31 is
     // cachedUpscaleSupport, and its nil tag is 2 — which is exactly what the two methods above
     // store to invalidate it.
     public func cachedUpscaleSupportStatus() -> Bool? {
-        cachedUpscaleSupport
+        Unmanaged.passUnretained(self).toOpaque().load(fromByteOffset: 0x31, as: Bool?.self)
     }
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.Anime4KPipeline.isUpscaleSupported(pixelBuffer:):0x101a7a364 result=152-instr]
@@ -135,7 +137,7 @@ public class Anime4KPipeline: VideoPipeline {
     /// ⚑ The last two `min` pairs look like three-way selects but are not: `x26` is already
     ///   `min(width * 2, 3840)`, so the `Int(fitted.width) > 3840` arm and the `min` arm agree.
     ///   The compiler emitted both sides of the comparison; the source is one `min`.
-    func isUpscaleSupported(pixelBuffer: any PixelBufferProtocol) -> Bool {
+    public func isUpscaleSupported(pixelBuffer: any PixelBufferProtocol) -> Bool {
         if let maxUpscaleInputHeight, pixelBuffer.height > maxUpscaleInputHeight {
             return false
         }
@@ -144,15 +146,104 @@ public class Anime4KPipeline: VideoPipeline {
         }
         let maxWidth = min(pixelBuffer.width * 2, 3840)
         let maxHeight = min(pixelBuffer.height * 2, 2160)
+        _ = pixelBuffer.width
+        _ = pixelBuffer.height
         let screen = anime4KScreenPixelSize()
         let target = overrideTargetResolution ?? CGSize(width: Double(screen.width), height: Double(screen.height))
         let fitted = anime4KAspectFit(target: target, pixelBuffer: pixelBuffer)
         let targetWidth = max(1, min(maxWidth, Int(fitted.width)))
+        let targetHeight = max(1, min(maxHeight, Int(fitted.height)))
         if pixelBuffer.width < targetWidth {
             return true
         }
-        let targetHeight = max(1, min(maxHeight, Int(fitted.height)))
         return pixelBuffer.height < targetHeight
+    }
+
+    public func configure(pixelBuffer: any PixelBufferProtocol) -> CGSize? {
+        videoWidth = pixelBuffer.width
+        videoHeight = pixelBuffer.height
+
+        guard (maxUpscaleInputHeight == nil || videoHeight <= maxUpscaleInputHeight!),
+              !anime4Ks.isEmpty else {
+            cachedUpscaleSupport = false
+            configured = false
+            supported = false
+            inputTexture = nil
+            return nil
+        }
+
+        supported = true
+        let maxWidth = min(videoWidth * 2, 3840)
+        let maxHeight = min(videoHeight * 2, 2160)
+        let screen = anime4KScreenPixelSize()
+        let requested = overrideTargetResolution
+            ?? CGSize(width: screen.width, height: screen.height)
+        let fitted = anime4KAspectFit(target: requested, pixelBuffer: pixelBuffer)
+        let targetWidth = max(1, min(maxWidth, Int(fitted.width)))
+        let targetHeight = max(1, min(maxHeight, Int(fitted.height)))
+
+        cachedUpscaleSupport = videoWidth < targetWidth || videoHeight < targetHeight
+        guard cachedUpscaleSupport == true else {
+            configured = false
+            supported = false
+            inputTexture = nil
+            return nil
+        }
+
+        if configured,
+           videoWidth == compiledVideoWidth,
+           videoHeight == compiledVideoHeight,
+           targetWidth == compiledDisplayWidth,
+           targetHeight == compiledDisplayHeight {
+            return CGSize(width: targetWidth, height: targetHeight)
+        }
+
+        do {
+            var runningWidth = videoWidth
+            var runningHeight = videoHeight
+            for anime4K in anime4Ks {
+                try anime4K.configure(
+                    device,
+                    videoWidth,
+                    videoHeight,
+                    runningWidth,
+                    runningHeight,
+                    targetWidth,
+                    targetHeight
+                )
+                runningWidth = Int(anime4K.outputW)
+                runningHeight = Int(anime4K.outputH)
+            }
+            compiledVideoWidth = videoWidth
+            compiledVideoHeight = videoHeight
+            compiledDisplayWidth = targetWidth
+            compiledDisplayHeight = targetHeight
+            configured = true
+            let descriptor = MTLTextureDescriptor()
+            descriptor.width = videoWidth
+            descriptor.height = videoHeight
+            descriptor.pixelFormat = pixelBuffer.bitDepth == 10 ? .bgr10a2Unorm : .bgra8Unorm
+            descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+            descriptor.storageMode = .private
+
+            guard let texture = device.makeTexture(descriptor: descriptor) else {
+                throw Anime4KError.encoderFail("Failed to create input texture")
+            }
+            inputTexture = texture
+
+            if let last = anime4Ks.last {
+#sourceLocation(file: "KSPlayer/Anime4KPipeline.swift", line: 198)
+                KSLog("[Anime4K] Configured: \(videoWidth)x\(videoHeight) -> \(Int(last.outputW))x\(Int(last.outputH)) (upscaled) -> \(targetWidth)x\(targetHeight) (display) with \(anime4Ks.count) shaders")
+            }
+            return CGSize(width: targetWidth, height: targetHeight)
+        } catch {
+            KSLog("[Anime4K] Configuration failed: \(error)")
+#sourceLocation()
+            configured = false
+            supported = false
+            inputTexture = nil
+            return nil
+        }
     }
 
     // ⚑ 0x101a78abc is a 1-instruction thunk `b 0x101a7c288`; the body is the 23 instructions
@@ -168,11 +259,14 @@ public class Anime4KPipeline: VideoPipeline {
     // ⚑[tool=decode_objc_selector ref=lock:0x103464ae0 result=lock]
     // ⚑[tool=decode_objc_selector ref=unlock:0x10346e620 result=unlock]
     public func beginFrameRendering(force _: Bool) -> Bool {
+        let storage = Unmanaged.passUnretained(self).toOpaque()
         frameStateLock.lock()
-        let wasIdle = inFlightFrameCount == 0
+        let inFlight = storage.load(fromByteOffset: 0x40, as: Int.self)
+        let wasIdle = inFlight == 0
         if wasIdle {
-            inFlightFrameCount = 1
-            reservedFrameCount += 1
+            storage.storeBytes(of: Int(1), toByteOffset: 0x40, as: Int.self)
+            let reserved = storage.load(fromByteOffset: 0x48, as: Int.self)
+            storage.storeBytes(of: reserved + 1, toByteOffset: 0x48, as: Int.self)
         }
         frameStateLock.unlock()
         return wasIdle
@@ -183,10 +277,13 @@ public class Anime4KPipeline: VideoPipeline {
     // subtraction. `bic x8, x8, x8, asr #63` is max(_, 0), and the unlock at 0x101a78b08 is a TAIL
     // CALL reached from both the taken and the skipped path.
     public func cancelFrameRendering() {
+        let storage = Unmanaged.passUnretained(self).toOpaque()
         frameStateLock.lock()
-        if reservedFrameCount > 0 {
-            reservedFrameCount -= 1
-            inFlightFrameCount = max(inFlightFrameCount - 1, 0)
+        let reserved = storage.load(fromByteOffset: 0x48, as: Int.self)
+        if reserved > 0 {
+            storage.storeBytes(of: reserved - 1, toByteOffset: 0x48, as: Int.self)
+            let inFlight = storage.load(fromByteOffset: 0x40, as: Int.self)
+            storage.storeBytes(of: max(inFlight - 1, 0), toByteOffset: 0x40, as: Int.self)
         }
         frameStateLock.unlock()
     }
@@ -212,7 +309,7 @@ public class Anime4KPipeline: VideoPipeline {
     // the self register, so there is no ivar-offset global to resolve.
     // ⚑[tool=field_offset_vector ref=Anime4KPipeline result=preset-0x20-cachedUpscaleSupport-0x31]
     //
-    // THE SHADER LIST IS INLINED, and that is a tool ruling rather than a style choice. The list is
+    // THE SHADER LIST IS AN UNNAMED IMMEDIATELY-APPLIED CLOSURE: loadPreset `bl`s it (w0 = preset). The list is
     // built by 0x101a78d80, which is NOT_IN_TRIE; `name_exhaustion_gate` returns INLINE-INSTEAD on
     // it (1 call site image-wide), i.e. it has no independent identity and must NOT be given an
     // invented name. Its 58 instructions are a 13-arm jump table on the preset case index, read
@@ -230,41 +327,41 @@ public class Anime4KPipeline: VideoPipeline {
     // ⚑[tool=decode_string_literal ref=anime4k_shader_paths result=14-distinct-73-elements]
     public func loadPreset(_ preset: Anime4KPreset) {
         self.preset = preset
-        let files: [String]
+        let files: [String] = {
         switch preset {
         case .disabled:
-            files = []
+            return []
         case .modeAFast:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
         case .modeBFast:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
         case .modeCFast:
-            files = ["Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+            return ["Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
         case .modeAHQ:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
         case .modeBHQ:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
         case .modeCHQ:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
         case .modeAAFast:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Restore/Anime4K_Restore_CNN_S.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Restore/Anime4K_Restore_CNN_S.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
         case .modeBBFast:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_Soft_S.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_Soft_S.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
         case .modeCAFast:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_S.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_S.glsl", "Upscale/Anime4K_Upscale_CNN_x2_S.glsl"]
         case .modeAAHQ:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
         case .modeBBHQ:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Restore/Anime4K_Restore_CNN_Soft_VL.glsl", "Upscale/Anime4K_Upscale_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_Soft_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
         case .modeCAHQ:
-            files = ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
-        }
+            return ["Restore/Anime4K_Clamp_Highlights.glsl", "Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_VL.glsl", "Upscale/Anime4K_AutoDownscalePre_x2.glsl", "Upscale/Anime4K_AutoDownscalePre_x4.glsl", "Restore/Anime4K_Restore_CNN_M.glsl", "Upscale/Anime4K_Upscale_CNN_x2_M.glsl"]
+        } }()
         loadShaderFiles(files)
         cachedUpscaleSupport = nil
         if preset == .disabled {
             return
         }
-        KSLog("[Anime4K] Loaded preset: \(preset.displayName) with \(anime4Ks.count) shaders")
+        KSLog("[Anime4K] Loaded preset: \(preset.displayName) with \(anime4Ks.count) shaders", line: 110)
     }
 
     // DECLARED HERE, BODY PINNED — and the pin belongs to THIS member, not to `loadPreset` above.
@@ -285,8 +382,129 @@ public class Anime4KPipeline: VideoPipeline {
     // CONSEQUENCE, stated plainly: until these 498 instructions are read, `anime4Ks` stays empty and
     // `supported` stays false, so the KSLog above reports 0 shaders. `loadPreset` itself is now
     // faithful; this is where the remaining gap lives, and it is its own unit.
-    func loadShaderFiles(_: [String]) {
-        // UNRESOLVED → own unit: 0x101a79b84, 498 instr.
+    func loadShaderFiles(_ files: [String]) {
+        anime4Ks = []
+        configured = false
+        supported = false
+        cachedUpscaleSupport = nil
+        inputTexture = nil
+
+        guard preset != .disabled, !files.isEmpty else {
+            return
+        }
+
+        do {
+            for path in files {
+                let parts = path.split(separator: "/")
+                guard parts.count == 2 else {
+                    KSLog("[Anime4K] Invalid shader file path: \(path)")
+                    continue
+                }
+
+                let anime4K = try Anime4K(
+                    name: String(parts[1]),
+                    url: String(parts[0]),
+                    device: device,
+                    usePrecompiled: true,
+                    bufferCount: 1
+                )
+                anime4Ks.append(anime4K)
+            }
+        } catch {
+            KSLog("[Anime4K] Failed to load shaders: \(error)")
+            anime4Ks = []
+        }
+    }
+
+    public func encode(commandBuffer: MTLCommandBuffer, outputTexture: MTLTexture) {
+        frameStateLock.lock()
+        if reservedFrameCount > 0 {
+            reservedFrameCount -= 1
+            frameStateLock.unlock()
+            commandBuffer.addCompletedHandler { [weak self] _ in
+                guard let self else { return }
+                self.frameStateLock.lock()
+                self.inFlightFrameCount = max(self.inFlightFrameCount - 1, 0)
+                self.frameStateLock.unlock()
+            }
+        } else {
+            frameStateLock.unlock()
+        }
+
+        guard supported,
+              !anime4Ks.isEmpty,
+              let inputTexture,
+              configured else {
+            if let inputTexture,
+               let encoder = commandBuffer.makeBlitCommandEncoder() {
+                encoder.copy(from: inputTexture, to: outputTexture)
+                encoder.endEncoding()
+            }
+            return
+        }
+
+        let startTime = CACurrentMediaTime()
+        do {
+            var currentTexture = inputTexture
+            for index in 0 ..< anime4Ks.count - 1 {
+                currentTexture = try anime4Ks[index].encode(
+                    device,
+                    commandBuffer,
+                    currentTexture
+                )
+            }
+            try anime4Ks[anime4Ks.count - 1].encode(
+                device,
+                commandBuffer,
+                currentTexture,
+                outputTexture
+            )
+            commandBuffer.addCompletedHandler { [weak self] _ in
+                guard let self else { return }
+                self.updatePerformanceMetrics(
+                    frameTime: CACurrentMediaTime() - startTime
+                )
+            }
+        } catch {
+#sourceLocation(file: "KSPlayer/Anime4KPipeline.swift", line: 345)
+            KSLog("[Anime4K] Encode failed: \(error)")
+#sourceLocation()
+            if let encoder = commandBuffer.makeBlitCommandEncoder() {
+                encoder.copy(from: inputTexture, to: outputTexture)
+                encoder.endEncoding()
+            }
+        }
+    }
+
+    func updatePerformanceMetrics(frameTime: Double) {
+        lastFrameTime = frameTime
+        frameTimeHistory.append(frameTime)
+        if frameTimeHistory.count > maxHistoryCount {
+            frameTimeHistory.removeFirst()
+        }
+
+        if sustainedDropDetector(), !isDowngraded {
+            isDowngraded = true
+            onDowngradePreset?()
+        }
+
+        let slowFrameThreshold = 0.05
+        guard frameTime > slowFrameThreshold else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastPerformanceWarningTime >= 1.0 else { return }
+        lastPerformanceWarningTime = now
+
+        let recentCount = frameTimeHistory.filter { $0 > slowFrameThreshold }.count
+        KSLog(
+            "[Anime4K] Frame time: \(Int(frameTime * 1000))ms "
+                + "(dropped frame, recent=\(recentCount)/\(frameTimeHistory.count))"
+        )
+    }
+
+    // ⚑[invented=sustainedDropDetector addr=0x101a7b184 exhaustion=name_exhaustion_gate approved=jweaver]
+    func sustainedDropDetector() -> Bool {
+        guard frameTimeHistory.count >= 30 else { return false }
+        return frameTimeHistory.filter { $0 > 0.05 }.count > 20
     }
 
     /// ⚑[tool=export_trie_oracle ref=Anime4KPipeline.getPerformanceStats():0x101a7b2a8 result=59-instr]

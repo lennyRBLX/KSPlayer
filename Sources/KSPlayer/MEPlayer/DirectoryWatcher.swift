@@ -78,7 +78,7 @@ public actor DirectoryWatcher {
     // 0x101a06150 `cancel()` and carries exactly ONE symbol there, and no `stop` symbol
     // exists on this class. Body unchanged — only the name was invented.
     // ⚑[tool=export_trie_oracle ref=DirectoryWatcher.cancel:0x101a06150 result=name-recovered]
-    func cancel() {
+    @used func cancel() {
         source?.cancel()                          // guarded cancel on the live source
         source = nil                              // *(self+0x70) = 0; release old
     }
@@ -94,7 +94,7 @@ public actor DirectoryWatcher {
     /// The old third parameter `qos: DispatchQoS` did not exist: the note above admitted it came
     /// from decompiler `param_3`, but the demangled signature takes two parameters and the
     /// `DispatchQoS` in the body is the argument to `DispatchQueue.global(qos:)`, not an input.
-    func watchModify(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
+    @used func watchModify(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
         // Tear down any existing source first (identical to stop()'s body —
         // binary inlines it at the top: cancel live source, then *(self+0x70)=0).
         source?.cancel()
@@ -149,7 +149,7 @@ public actor DirectoryWatcher {
     /// `KSPlayer.DirectoryWatcher.watchNew(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ())`.
     /// Name, labels, completion type and arity were all inferred and all wrong; there is no
     /// `qos:` parameter.
-    func watchNew(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
+    @used func watchNew(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
         // Tear down any existing source first (inlined cancel + clear).
         source?.cancel()
         source = nil

@@ -28,6 +28,20 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     private var hasEndOfStream: Bool = false
     private var seekToTime: CMTime? = nil
 
+    /// Forward `ProAVPlayer.reset` @ `0x101b7c6e4`; body and cleanup refs: `5cf964654b0ad471a415f6404bd514a97c30a397dffc0b7d65ddc40fa73cae6e`, `b43bbafa67d940027f9762caf377baafec4e7b0423910732f64792d97fa30fe2`.
+    override func reset() {
+        task?.cancel()
+        if let m3u8Info {
+            self.m3u8Info = nil
+            Task { @MainActor in
+                m3u8Info.server.keepAliveBlockMap.removeValue(forKey: m3u8Info.remuxerIOAction.dir.path)
+                await m3u8Info.demuxerIO.send(.close)
+            }
+        }
+        options.context = ""
+        super.reset()
+    }
+
     // Adds no designated init + all 4 stored props defaulted ⇒ inherits KSAVPlayer's
     // `required init(url:options:)`. vtable=16; slot15 (replaceCurrentItem) reconstructed below.
 
@@ -107,7 +121,7 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     /// req2 witness `FUN_101b7d3b4` = a thunk to `KSAVPlayer.prepareToPlay()` (FUN_1019a9e20) — on conversion  ⚑[tool=resolve_fun_pins ref=FUN_101b7d3b4:0x101b7d3b4 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.failed(error: Swift.Error) -> ()  ⚑[tool=resolve_fun_pins ref=FUN_1019a9e20:0x1019a9e20 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.prepareToPlay() -> ()
     /// failure, re-prepare the player. `error` is received by the protocol req but unused (the witness thunk
     /// drops it; `prepareToPlay()` takes no args).
-    func conversionDidFail(_ error: any Error) {
+    @used func conversionDidFail(_ error: any Error) {
         prepareToPlay()
     }
 }

@@ -111,20 +111,25 @@ open class KSAVPlayer {
     // DIVERGENCE DISCHARGED (opened s16, closed s98). Binary field 11 is
     // `(any KSPictureInPictureProtocol)?` — field record `KSPictureInPictureProtocol_pSg`, and the
     // trie prints the same for this class's accessors. The protocol it needed is now declared.
-    public private(set) var pipController: (any KSPictureInPictureProtocol)?
+    public var pipController: (any KSPictureInPictureProtocol)?
     public weak var delegate: MediaPlayerDelegate?
     public private(set) var duration: TimeInterval = 0
     // Forward 1.3.17: `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via Foundation.Progress / Alamofire
     //   byte-count fields). MediaPlayback.fileSize migrated Double→Int64 (session 16b); l2 UNCHECKED (GOT-external field-record).
     public private(set) var fileSize: Int64 = 0
     public private(set) var playableTime: TimeInterval = 0
-    // ⚑[tool=vtable_walk ref=KSAVPlayer.nominalTypeDescriptor:0x1039ec148 result=LOCATED] Forward declares ONE MORE
-    //   member between `playableTime` and `chapters` that has no counterpart here: vtable slot 45, a lone live getter
-    //   @0x1019a1244 (get-only — no setter/_modify slot follows it, and the playableTime triple 42–44 and the chapters
-    //   triple 46–48 bracket it). What the body establishes without guessing: it returns an Array (one path returns
-    //   `__swiftEmptyArrayStorage`), it reads the stored `duration` field and takes the empty-array path when
-    //   `duration <= 0`, it performs a `swift_dynamicCast`, and it dispatches a method at metadata offset +0x458 on
-    //   self. Type and name are not established — a genuinely un-reconstructed computed property, not an artifact.
+    /// cachedTimeRanges.getter @0x1019a1244, Forward idx45 / absolute metadata slot83.
+    /// It sits between playableTime and chapters. The ioContext virtual call at metadata +0x458
+    /// is slot139 / index101. Exact access spelling remains unresolved; current public access is retained.
+    /// The cast, duration check, and witness call are established; this placement
+    /// does not claim full-body faithfulness.
+    public var cachedTimeRanges: [CachedTimeRange] {
+        guard let ioContext = ioContext as? PreLoadProtocol, duration > 0 else {
+            return []
+        }
+        return ioContext.cachedTimeRanges(duration: duration)
+    }
+
     // Forward stores `chapters` MUTABLY, not as a `let`: the vtable carries a live setter (slot 47 @0x1019a1380,
     // tail-calling the module-shared outlined accessor @0x1005a07d4, fan-in 14) AND a live `_modify` coroutine
     // (slot 48 @0x1019a138c, `swift_beginAccess` flags 0x21 = Modify|Tracking on the `chapters` ivar-offset global
@@ -141,7 +146,7 @@ open class KSAVPlayer {
     // (Superseded reasoning, recorded so it is not re-derived: `private(set)` had been chosen on convention —
     //  MediaPlayerProtocol asks only for `{ get }` and the sibling MEPlayerItem.chapters is spelled that way —
     //  on the false premise that both spellings emit the same three slots. Convention lost to compilation.)
-    public var chapters: [Chapter] = []
+    nonisolated(unsafe) public var chapters: [Chapter] = []
     public var naturalSize: CGSize = .zero
     var shouldResumePlayback: Bool = false
     public var options: KSOptions {
@@ -161,27 +166,13 @@ open class KSAVPlayer {
         }
     }
 
-    // binary `$__lazy_storage_$_dynamicInfo` (reflection-filtered lazy backing); recon had `let dynamicInfo = nil`.
-    // ⚑ UNRESOLVED → KSAVPlayer M2: the binary builds a DynamicInfo lazily (metadata/bytesRead/bitrate blocks).
-    // The lazy triple is vtable slots 61–63; the getter @0x1019a1a3c is 0x4d4 bytes (vs. the 16-instruction generated
-    // getters around it), i.e. it holds the whole lazy initialiser — that body is the M2 target.
-    // ⚠️ s97 — THE DECLARED TYPE IS WRONG HERE, and the fix is NOT a one-line edit. All three of
-    // Forward's accessors mangle the type as a CLASS with no `Sg`, i.e. NON-optional:
-    //   getter @0x1019a1a3c  $s8KSPlayer10KSAVPlayerC11dynamicInfoAA07DynamicD0Cvg
-    //   setter @0x1019a1f10  …Cvs        modify @0x1019a1f28  …CvM
-    // all demangling to `dynamicInfo… : KSPlayer.DynamicInfo`. The lazy backing field carries
-    // exactly ONE `Sg` (`$__lazy_storage_$_dynamicInfo … tail=b'Sg'`) — that `Sg` is the lazy
-    // wrapper itself; a declared `DynamicInfo?` would put a SECOND one there. So the binary says
-    // `DynamicInfo`, this file says `DynamicInfo?`.
-    // NOT CHANGED HERE, and the blocker is not effort: `MediaPlayerProtocol` requires
-    // `var dynamicInfo: DynamicInfo? { get }` (MediaPlayerProtocol.swift:191), and a non-optional
-    // property cannot satisfy an optional property requirement — flipping this line alone does not
-    // compile. The migration is protocol requirement + KSAVPlayer + KSMEPlayer:360 + 22 call sites
-    // under Sources/ that use `?.`/`if let`. The protocol requirement's own optionality has NOT
-    // been read from the binary yet (KSMEPlayer's vtable carries no dynamicInfo accessor to read it
-    // off), and writing a type we have not read is the one thing this project never does.
-    // ⚑[tool=export_trie_oracle ref=KSPlayer.KSAVPlayer.dynamicInfo:0x1019a1a3c result=type-divergence-pinned]
-    public lazy var dynamicInfo: DynamicInfo? = nil
+    // Ref getter 0x1019a1a3c uses two weak captures; only lazy backing storage is optional.
+    // Evidence: M05-DynamicInfo-init35-helpers-disasm.json and M05-protocol-reference-contract.json.
+    public lazy var dynamicInfo: DynamicInfo = DynamicInfo(displayFPSBlock: { [weak self] in
+        self?.player.currentItem?.tracks.first { $0.assetTrack?.mediaType == .video }?.currentVideoFrameRate ?? 0
+    }, accessLogEvent: { [weak self] in
+        self?.player.currentItem?.accessLog()?.events ?? []
+    })
 
     // Declared HERE, between `dynamicInfo` and `bufferingProgress` — Forward's vtable puts this lone getter at slot 64,
     // after the dynamicInfo triple (61–63) and before the bufferingProgress triple (65–67, getter live / setter+_modify
@@ -196,7 +187,10 @@ open class KSAVPlayer {
 
     public private(set) var bufferingProgress: UInt8 = 0 {
         didSet {
-            delegate?.changeBuffering(player: self, progress: bufferingProgress)
+            runOnMainThread { [weak self] in
+                guard let self else { return }
+                self.delegate?.changeBuffering(player: self, progress: self.bufferingProgress)
+            }
         }
     }
 
@@ -218,12 +212,7 @@ open class KSAVPlayer {
 
     public private(set) var loadState: MediaLoadState = .idle {
         didSet {
-            if loadState != oldValue {
-                playOrPause()
-                if loadState == .loading || loadState == .idle {
-                    bufferingProgress = 0
-                }
-            }
+            update(loadState: loadState, oldValue: oldValue)
         }
     }
 
@@ -288,118 +277,9 @@ open class KSAVPlayer {
         // ⚑ UNRESOLVED → KSAVPlayer M2: currentItem observation (was `itemObservation` KVO → observer(playerItem:)) via observerCancellables
     }
 
-    // ── s106: KSAVPlayer members read from their own bodies ────────────────────────
-    // These are the class's OWN members, not MediaPlayerProtocol requirements (none of
-    // `ioContext`, `startRecord`, `stopRecord` or `nominalFrameRate(track:)` appears in that
-    // protocol), so they are declared in the class body where they take a vtable slot rather
-    // than in an extension where they would take none.
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.ioContext.getter:0x10002d9d4 result=mov-x0-0/ret]
-    /// The whole body is `mov x0, #0x0` / `ret` — it returns nil unconditionally.
-    /// The address is the image's 605-symbol ICF fold, so it carries nothing unique to this
-    /// property; the two instructions are still genuinely this getter's code. The
-    /// MetalRender.swift:26 note that also cites 0x10002d9d4 is another symbol at the same
-    /// folded address, NOT a second name for this one.
-    /// ⚑[tool=export_trie_oracle ref=0x10002d9d4 result=ICF-FOLD-605-symbols]
-    public var ioContext: AbstractAVIOContext? {
-        nil
-    }
-
-    /// cachedTimeRanges.getter @0x1019a1244, 76 instr, vtable slot 45 — so it belongs in the class
-    /// body, not an extension. `public` is proven by the property descriptor
-    /// $s8KSPlayer10KSAVPlayerC16cachedTimeRangesSayAA06CachedD5RangeVGvpMV @0x103566da0; there is
-    /// no `…vs` and no `…vM`, so it is get-only.
-    ///
-    /// ⚑ Distinct from `PreLoadProtocol.cachedTimeRanges(duration:)` despite the shared name —
-    /// different type, different arity. This getter CALLS that method.
-    ///
-    /// Every step is read:
-    ///  · a vtable call at metadata `+0x458`; KSAVPlayer's VTableOffset is 38 words (0x130), so the
-    ///    slot is (0x458-0x130)/8 = 101, whose Impl 0x10002d9d4 is `ioContext`'s own getter — the
-    ///    same address this file already cites two declarations above. `cbz` on the result is the
-    ///    optional test.
-    ///  · `swift_dynamicCast` with `w4 = 6` (CONDITIONAL) from `AbstractAVIOContext` (metadata
-    ///    accessor 0x1019e4db4) to the existential whose mangle at 0x103566c50 ends `_p`; `tbz` on
-    ///    failure falls to the empty return.
-    ///  · `duration` (offset global 0x104c63070, named) under a read access, then
-    ///    `fcmp d8, #0.0` / `b.le` — the `> 0` test, ordered AFTER the cast.
-    ///  · success calls witness slot **+0x40** with `d0 = duration`. PreLoadProtocol has 9
-    ///    requirements, so +0x40 is requirement index 7 — which PreLoadProtocol.swift numbers
-    ///    explicitly as `cachedTimeRanges(duration:)`, a Method, matching the descriptor's kind.
-    ///  · both failure paths return `__swiftEmptyArrayStorage` (__got 0x104112d00), i.e. `[]`.
-    /// ⚑[tool=conformance_walker ref=PreLoadProtocol:0x1039ede48 result=9-requirements]
-    /// ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
-    public var cachedTimeRanges: [CachedTimeRange] {
-        guard let ioContext = ioContext as? PreLoadProtocol, duration > 0 else {
-            return []
-        }
-        return ioContext.cachedTimeRanges(duration: duration)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.startRecord(url:):0x10000e52c result=single-ret]
-    /// The body IS 0x10000e52c, whose only instruction is `ret`. Empty, not unimplemented —
-    /// this is the empty-body fold, distinct from the deleted-method stub at 0x10198eb18 which
-    /// would have carried `bl swift_deletedMethodError` / `brk`.
-    public func startRecord(url _: URL) {}
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.stopRecord():0x10000e52c result=single-ret]
-    /// Same empty-body fold as `startRecord` above.
-    public func stopRecord() {}
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.nominalFrameRate(track:):0x1019a5128 result=12-instr]
-    /// `bl swift_getObjectType` on the incoming track to get its Self metadata, then
-    /// `ldr x8,[x19,#0x20]` — word 4 of the track's MediaPlayerTrack witness table, i.e.
-    /// requirement 3 — and calls it with self in x20, metadata in x0 and the table in x1.
-    /// Requirement 3 is DECODED, not counted: FFmpegAssetTrack's table at 0x1041d78b8 gives
-    /// req3 = 0x101a1f5bc, which the trie names `FFmpegAssetTrack.nominalFrameRate.getter`.
-    /// ⚑[tool=bind_oracle ref=__got:0x104112f08 result=_swift_getObjectType]
-    /// ⚑[tool=decode_witness_table ref=FFmpegAssetTrack:MediaPlayerTrack@0x1041d78b8 result=req3-nominalFrameRate]
-    public func nominalFrameRate(track: some MediaPlayerTrack) -> Float {
-        track.nominalFrameRate
-    }
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.thumbnailImage(atTime:handler:):0x1019a9a1c result=32-instr]
-    /// ⚠️ The two paths are ASYMMETRIC, and that is read, not inferred. `ldrb` of the
-    /// `isReadyToPlay` ivar (offset global 0x104c630d0) then `cmp w8,#0x1`:
-    ///   · NOT ready — `mov x0,#0` and `blr` the handler, i.e. `handler(nil)`;
-    ///   · ready — builds a CMTime from the incoming seconds with timescale 600
-    ///     (`mov w0,#0x258` into CMTime.init(seconds:preferredTimescale:)) and then branches
-    ///     STRAIGHT to the epilogue. The handler is never invoked on that path and the CMTime is
-    ///     discarded.
-    /// The construction survives dead-code elimination only because that initialiser can trap, so
-    /// it is genuine evidence the conversion is in the source — but whatever consumed it (an
-    /// AVAssetImageGenerator path, by analogy with the AVAsset extension at the bottom of this
-    /// file) is NOT in this binary. Transcribed as read rather than completed by analogy.
-    /// ⚑[tool=bind_oracle ref=__got:0x1041132c8 result=CMTime.init(seconds:preferredTimescale:)]
-    public func thumbnailImage(atTime: TimeInterval, handler: @escaping @Sendable (CGImage?) -> Void) {
-        guard isReadyToPlay else {
-            handler(nil)
-            return
-        }
-        _ = CMTime(seconds: atTime, preferredTimescale: 600)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.checkShouldResume():0x1019aaa10 result=38-instr]
-    /// Reads `options` (offset global 0x104c63098) then the Bool at `options + 0x46`. If that bit
-    /// is set the result is 1 immediately and the second read is skipped — that short-circuit IS
-    /// the `||`. Otherwise it reads `playbackState` (0x104c630b8) and compares against 1. The
-    /// result is stored through 0x104c630d8.
-    ///
-    /// Three names, none guessed:
-    ///   · `options + 0x46` = `enterForgeResumePlay`. KSOptions has metadata_init=1 so its offset
-    ///     vector is unreadable, and this is a constant-immediate touch so no global names it.
-    ///     Recovered instead from KSOptions' own trie-named accessors, 21 of which open
-    ///     `add x0, x20, #IMM`; the resulting map is strictly increasing in field-record order.
-    ///   · `playbackState == 1` is the CASE TAG. MediaPlaybackState is
-    ///     idle/playing/paused/seeking/finished/stopped, so tag 1 is `.playing`.
-    ///   · the store target 0x104c630d8 is `shouldResumePlayback`, by elimination: it is the only
-    ///     KSAVPlayer offset global with no trie symbol, and the other Bool field
-    ///     (`isReadyToPlay`) is already claimed by 0x104c630d0.
-    /// ⚑[tool=recover_field_offsets ref=KSOptions:+0x46 result=enterForgeResumePlay]
-    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer:0x104c630d8 result=unnamed-only-Bool-left]
-    public func checkShouldResume() {
-        shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
-    }
+    // ── s106: existing tail declarations follow Forward order. `init(io:options:)` and
+    // `createPlayerItem()` remain pending separate body reconstruction; this note does not claim
+    // complete layout or faithfulness.
 
     /// @0x1019a402c, 130 instructions, vtable slot 93 (kind Method). It is NOT an override —
     /// ⚑[tool=override_table ref=KSAVPlayer.readyToPlay:0x1019a402c result=NO-override-table]
@@ -470,14 +350,281 @@ open class KSAVPlayer {
     ///   its own unit, and this statement waits for it rather than being half-written here.
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.runOnMainThread:0x101a03e88 result=block-is-MainActor-Sendable]
     /// ⚑[tool=function_extents ref=KSAVPlayer.readyToPlay.closure:0x1019a4234 result=51-instr]
-    func readyToPlay() {
+    @used func readyToPlay() {
         options.readyTime = CACurrentMediaTime()
+        runOnMainThread { [weak self] in
+            guard let self else {
+                return
+            }
+            self.delegate?.readyToPlay(player: self)
+        }
+    }
+
+    // The completion carries @MainActor and @Sendable in the binary symbol; the source declared a
+    // bare escaping closure.
+    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
+        let time = max(time, 0)
+        // AN ENTIRE KSLog STATEMENT WAS MISSING. The binary opens with this gated log, and the
+        // shouldSeekTo-vs-currentTime coalesce exists only to build the message — which is also why
+        // it has to run BEFORE the `shouldSeekTo = time` store below, or it would read the new value
+        // and the "from" half would always equal the "to" half.
+        KSLog("\(self) seek from \(shouldSeekTo ?? player.currentTime().seconds) to \(time)")
+        shouldSeekTo = time
+        playbackState = .seeking
+        runOnMainThread { [weak self] in
+            self?.bufferingProgress = 0
+        }
+        let tolerance: CMTime = options.isAccurateSeek ? .zero : .positiveInfinity
+        player.seek(to: CMTime(seconds: time), toleranceBefore: tolerance, toleranceAfter: tolerance) {
+            [weak self] finished in
+            guard let self else { return }
+            self.shouldSeekTo = 0
+            completion(finished)
+        }
+    }
+    public func play() {
+#sourceLocation(file: "KSPlayer/KSAVPlayer.swift", line: 286)
+        KSLog("play \(self)")
+#sourceLocation()
+        playbackState = .playing }
+
+    public func changePlaybackTime(time: TimeInterval) { delegate?.changePlaybackTime(player: self, time: time) }
+
+    // KSPlayer.KSAVPlayer.update(loadState:oldValue:) @0x1019a4db8 — 167 instr, vtable slot 97.
+    //   Trie-named `$s8KSPlayer10KSAVPlayerC6update9loadState8oldValueyAA09MediaLoadE0O_AHtF`, one
+    //   symbol at the address, and the class's 281 trie symbols carry ZERO `33_<32hex>LL` manglings,
+    //   so it is not file-private. The name is doubly grounded: the inlined KSLog's own `#function`
+    //   literal decodes to "update(loadState:oldValue:)".
+    //
+    // ⚠️ THE `loadState` didSet ABOVE INLINES THIS BODY — and drops half of it. The didSet runs
+    //   `playOrPause()` then `bufferingProgress = 0` for the non-playable states, but has NO
+    //   `.playable` arm at all, so the firstPlayableTime stamp and its KSLog are simply absent from
+    //   the reconstruction. (The two spellings of the other arm ARE equivalent: MediaLoadState is
+    //   `idle, loading, playable`, so `else` and `.loading || .idle` cover the same cases.)
+    //   Rewiring the didSet to CALL this is a separate unit — the didSet itself was not derived here,
+    //   and this session has been bitten by assuming a caller's shape.
+    //
+    // Read from the binary: `cmp w19, w1, uxtb` / `b.eq` epilogue is the guard; `cmp w19, #0x2` picks
+    //   the `.playable` arm (MediaLoadState tag 2); both `fcmp d0, #0.0` tests are on KSOptions fields
+    //   (`firstPlayableTime` global 0x104c63490, `prepareTime` 0x104c63438) under a MODIFY access;
+    //   the timestamp is `bl` QuartzCore `CACurrentMediaTime`. The body contains NO arithmetic at all
+    //   — only `cmp`/`fcmp` against constants, no checked add, no CMTime.
+    // ⚑ The logged value is `options.firstTimeLog()` @0x1019c0938, the member reconstructed earlier
+    //   in this same session — an independent derivation arriving at it is a real cross-check.
+    // ⚑ KSLog level constant is 3 = `.warning`, which is KSLog's declared default, so the bare form
+    //   is the faithful spelling. Tag 3 is derived from the BINARY, not from source order: the
+    //   `LogLevel.description` getter's `csel` ladder maps 0→panic 1→fatal 2→error 3→warning.
+    // ⟨UNGROUNDED: `if a == 0, b != 0 { … }` versus two `guard … else { return }` — both arms exit to
+    //  the same epilogue, so the source form is not separable from the codegen.⟩
+    func update(loadState: MediaLoadState, oldValue: MediaLoadState) {
+        guard loadState != oldValue else { return }
+        playOrPause()
+        if loadState == .playable {
+            if options.firstPlayableTime == 0, options.prepareTime != 0 {
+                options.firstPlayableTime = CACurrentMediaTime()
+                KSLog(options.firstTimeLog(), line: 303)
+            }
+        } else {
+            bufferingProgress = 0
+        }
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSAVPlayer.updatePlaybackBuffer():0x1019a5054 result=53-instr]
+    /// `guard let` is the `cbz` after `objc_retainAutoreleasedReturnValue`; the receiver chain is
+    /// `playerView.player` — `+0x38` is `playerView` (the fixed instance offset this file already
+    /// records at :188) and 0x1044e46b0 is `direct field offset for KSAVPlayerView.player`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440af28 result='currentItem']
+    /// ⚑[tool=decode_objc_selector ref=0x10440be68 result='isPlaybackLikelyToKeepUp']
+    /// ⚑[tool=decode_objc_selector ref=0x10440be60 result='isPlaybackBufferFull']
+    /// `tbnz` on the first and `cbnz` on the second both jump to `mov w21, #2`; the fall-through
+    /// stores 1. `MediaLoadState` is `idle`/`loading`/`playable`, so 2 is `.playable` and 1 is
+    /// `.loading`. The trailing vtable call is `loadState`'s own `didSet`, not a statement here.
+    ///
+    /// ⚑ `isPlaybackBufferEmpty` (0x10440be58) IS called, into x21, and its result provably does
+    ///   NOT reach the outcome: the two `csel`s that consume it select between `#1` and `#1` and
+    ///   between `sp+8` and `sp+8` — identical operands on both arms. So the branch value is
+    ///   `.loading` either way. Whatever source expression consumed that flag was collapsed by the
+    ///   optimizer and is NOT recoverable from this body; declaring a use for it would be
+    ///   invention, and dropping the call is the only spelling the binary supports.
+    ///
+    /// ⚑ NOT `private`, unlike the siblings around it: the trie carries
+    ///   `…20updatePlaybackBufferyyFTq`, a method descriptor, i.e. a real vtable slot — and a
+    ///   `private` method takes none. The mangled name also carries no `33_…LL` discriminator.
+    @used func updatePlaybackBuffer() {
+        guard let item = playerView.player.currentItem else {
+            return
+        }
+        _ = item.isPlaybackBufferEmpty
+        let likely = item.isPlaybackLikelyToKeepUp
+        let full = item.isPlaybackBufferFull
+        loadState = likely || full ? .playable : .loading
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.nominalFrameRate(track:):0x1019a5128 result=12-instr]
+    /// `bl swift_getObjectType` on the incoming track to get its Self metadata, then
+    /// `ldr x8,[x19,#0x20]` — word 4 of the track's MediaPlayerTrack witness table, i.e.
+    /// requirement 3 — and calls it with self in x20, metadata in x0 and the table in x1.
+    /// Requirement 3 is DECODED, not counted: FFmpegAssetTrack's table at 0x1041d78b8 gives
+    /// req3 = 0x101a1f5bc, which the trie names `FFmpegAssetTrack.nominalFrameRate.getter`.
+    /// ⚑[tool=bind_oracle ref=__got:0x104112f08 result=_swift_getObjectType]
+    /// ⚑[tool=decode_witness_table ref=FFmpegAssetTrack:MediaPlayerTrack@0x1041d78b8 result=req3-nominalFrameRate]
+    public func nominalFrameRate(track: any MediaPlayerTrack) -> Float {
+        track.nominalFrameRate
+    }
+
+    // process(error:) @0x1019a5158, 81 instr, vtable slot 100. No ICF fold. `public` on the same
+    // basis as reset(): the method descriptor $s8KSPlayer10KSAVPlayerC7process5errorys5Error_p_tFTq
+    // exists @0x1039ec4a8. ⚑ access is the weakest claim here, as it is for reset().
+    //
+    // The body itself does exactly ONE thing and takes no branch — control flow is fully linear
+    // with a single `ret` — so every effect below is inside the closure:
+    //  · swift_allocObject(0x1041d3e70, 0x18, 7) then swift_weakInit(box+0x10, self) — `[weak self]`.
+    //  · MainActor.shared ($sScM6sharedScMvgZ) plus the MainActor:Actor witness table built from
+    //    conformance descriptor 0x104113870 — the `@MainActor` isolation, not a hop written by hand.
+    //  · swift_errorRetain(error) — the error is captured STRONGLY, unlike self.
+    //  · swift_allocObject(0x1041d3f10, 0x30, 7) for the 48-byte context, filled
+    //    `stp x20,x23,[x0,#0x10]` / `stp x22,x19,[x0,#0x20]` = MainActor.shared, its witness table,
+    //    the weak-self box, the error.
+    //  · the Task is created through 0x101a03fd4 with the async function pointer 0x103566c80, and
+    //    the returned handle is immediately swift_release'd — a bare `Task { }` statement, never a
+    //    stored handle.
+    //
+    // The operation resumes at 0x1019a529c (the @MainActor hop, ending in swift_task_switch) and
+    // continues at 0x1019a532c, where the two `?`s are both explicit:
+    //  · swift_weakLoadStrong on the box then `cbz` — `guard let self else { return }`.
+    //  · swift_unknownObjectWeakLoadStrong on delegate (offset global 0x104c63068) then `cbz`.
+    //  · the call is witness slot +0x38 with x1 = the captured error. This file's own requirement
+    //    table maps +0x38 to req6 `finish(player:error:)`, and self is handed over as the
+    //    (object, metadata, witness) triple 0x1041d3f78 — the `some MediaPlayerProtocol` form.
+    // Both beginAccess sites pass flags 0, so both are reads and no endAccess is emitted.
+    // ⚑[tool=bind_oracle ref=MainActor.shared:0x104113860 result=libswift_Concurrency]
+    // ⚑[tool=bind_oracle ref=_swift_errorRetain:0x104112e50 result=libswiftCore]
+    // ⚑[tool=bind_oracle ref=_swift_unknownObjectWeakLoadStrong:0x1041130e8 result=libswiftCore]
+    public func process(error: Error) {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            delegate?.finish(player: self, error: error)
+        }
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.ioContext.getter:0x10002d9d4 result=mov-x0-0/ret]
+    /// The whole body is `mov x0, #0x0` / `ret` — it returns nil unconditionally.
+    /// The address is the image's 605-symbol ICF fold, so it carries nothing unique to this
+    /// property; the two instructions are still genuinely this getter's code. The
+    /// MetalRender.swift:26 note that also cites 0x10002d9d4 is another symbol at the same
+    /// folded address, NOT a second name for this one.
+    /// ⚑[tool=export_trie_oracle ref=0x10002d9d4 result=ICF-FOLD-605-symbols]
+    public var ioContext: AbstractAVIOContext? {
+        nil
+    }
+
+    // reset() @0x1019a5410, 139 instr, vtable slot 102. Exactly one symbol at the address (no ICF
+    // fold). `public` rests on the method descriptor $s8KSPlayer10KSAVPlayerC5resetyyFTq existing
+    // @0x1039ec4b8 — a cross-module vtable entry. It is NOT `open`: no ProAVPlayer override of
+    // this selector is in the trie. ⚑ access is the weakest claim here; the ACCESS bucket, not
+    // this unit, is where it gets settled.
+    //
+    // Ten steps, in instruction order 0x1019a542c -> 0x1019a5618, each re-read from the binary:
+    //  1 self.options (offset global 0x104c63098) then a VIRTUAL `ldr x8,[x20]; ldr x21,[x8,#0x310]`
+    //    — KSOptions VTableOffset is 94 words (0x2f0), so (0x310-0x2f0)/8 = slot 4 = KSOptions.reset().
+    //  2 isReadyToPlay (0x104c630d0) `strb wzr` = false.
+    //  3 playbackState (0x104c630b8) read-then-write `mov w8,#0x5`. MediaPlaybackState's own
+    //    descriptor 0x1039ed96c lists 6 cases, index 5 = .stopped. The old value then goes to the
+    //    compiler-emitted didSet observer at 0x1019a24a8, which has no source spelling.
+    //  4 loadState (0x104c630c8) read-then-write `strb wzr`. Descriptor 0x1039ed988, 3 cases,
+    //    index 0 = .idle. Followed by the didSet's virtual call to update(loadState:oldValue:).
+    //  5 duration (0x104c63070) `str xzr` = 0.
+    //  6 subtitleTracks (0x104c63058) = the __swiftEmptyArrayStorage singleton, i.e. [].
+    //  7 the same singleton into the UNEXPORTED global 0x1044e46f8. That is mediaPlayerTracks by
+    //    a CLOSED elimination, not by position: the field records give KSAVPlayer 28 fields, of
+    //    which exactly three are Arrays — mediaPlayerTracks (6) and subtitleTracks (7) share one
+    //    element type, chapters (16) has another — and subtitleTracks (0x104c63058) and chapters
+    //    (0x104c63088) are both independently named. mediaPlayerTracks is `internal`, which is
+    //    precisely why it emits no vpWvd global to be named by.
+    //    ⚑[tool=fieldrec ref=KSAVPlayer.mediaPlayerTracks:0x1044e46f8 result=elimination-over-28-field-records]
+    //  8 playerView (the fixed instance offset +0x38) -> KSAVPlayerView.player (offset global
+    //    0x1044e46b0) -> selectors 'currentItem', 'asset', 'cancelLoading', with the `cbz` after
+    //    currentItem supplying the `?`.
+    //  9 replaceCurrentItem with x0 = 0 — the nil literal, calling this file's own member @0x1019a563c.
+    // 10 delegate (0x104c63068) is loaded with swift_weakLoadStrong and `cbz`-guarded, which is the
+    //    `?`; field record 12 carries the `Xw` tail, so the weak-ness is reflection-visible. The
+    //    call is witness slot +0x40 — which MediaPlayerProtocol.swift already pins as req7
+    //    playerDidClear(player:) — and self is passed as the (object, metadata, witness) triple
+    //    0x1041d3f78, matching that requirement's `some MediaPlayerProtocol` parameter.
+    // ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
+    // ⚑[tool=export_trie_oracle ref=KSAVPlayerView.player:0x1044e46b0 result=player]
+    open func reset() {
+        options.reset()
+        isReadyToPlay = false
+        playbackState = .stopped
+        loadState = .idle
+        duration = 0
+        subtitleTracks = []
+        mediaPlayerTracks = []
+        playerView.player.currentItem?.asset.cancelLoading()
+        replaceCurrentItem(playerItem: nil)
+        delegate?.playerDidClear(player: self)
     }
 }
 
 extension KSAVPlayer {
     public var player: AVQueuePlayer { playerView.player }
     public var playerLayer: AVPlayerLayer { playerView.playerLayer }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.startRecord(url:):0x10000e52c result=single-ret]
+    /// The body IS 0x10000e52c, whose only instruction is `ret`. Empty, not unimplemented —
+    /// this is the empty-body fold, distinct from the deleted-method stub at 0x10198eb18 which
+    /// would have carried `bl swift_deletedMethodError` / `brk`.
+    public func startRecord(url _: URL) {}
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.stopRecord():0x10000e52c result=single-ret]
+    /// Same empty-body fold as `startRecord` above.
+    public func stopRecord() {}
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.thumbnailImage(atTime:handler:):0x1019a9a1c result=32-instr]
+    /// ⚠️ The two paths are ASYMMETRIC, and that is read, not inferred. `ldrb` of the
+    /// `isReadyToPlay` ivar (offset global 0x104c630d0) then `cmp w8,#0x1`:
+    ///   · NOT ready — `mov x0,#0` and `blr` the handler, i.e. `handler(nil)`;
+    ///   · ready — builds a CMTime from the incoming seconds with timescale 600
+    ///     (`mov w0,#0x258` into CMTime.init(seconds:preferredTimescale:)) and then branches
+    ///     STRAIGHT to the epilogue. The handler is never invoked on that path and the CMTime is
+    ///     discarded.
+    /// The construction survives dead-code elimination only because that initialiser can trap, so
+    /// it is genuine evidence the conversion is in the source — but whatever consumed it (an
+    /// AVAssetImageGenerator path, by analogy with the AVAsset extension at the bottom of this
+    /// file) is NOT in this binary. Transcribed as read rather than completed by analogy.
+    /// ⚑[tool=bind_oracle ref=__got:0x1041132c8 result=CMTime.init(seconds:preferredTimescale:)]
+    public func thumbnailImage(atTime: TimeInterval, handler: @escaping @Sendable (CGImage?) -> Void) {
+        guard isReadyToPlay else {
+            handler(nil)
+            return
+        }
+        _ = CMTime(seconds: atTime, preferredTimescale: 600)
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.checkShouldResume():0x1019aaa10 result=38-instr]
+    /// Reads `options` (offset global 0x104c63098) then the Bool at `options + 0x46`. If that bit
+    /// is set the result is 1 immediately and the second read is skipped — that short-circuit IS
+    /// the `||`. Otherwise it reads `playbackState` (0x104c630b8) and compares against 1. The
+    /// result is stored through 0x104c630d8.
+    ///
+    /// Three names, none guessed:
+    ///   · `options + 0x46` = `enterForgeResumePlay`. KSOptions has metadata_init=1 so its offset
+    ///     vector is unreadable, and this is a constant-immediate touch so no global names it.
+    ///     Recovered instead from KSOptions' own trie-named accessors, 21 of which open
+    ///     `add x0, x20, #IMM`; the resulting map is strictly increasing in field-record order.
+    ///   · `playbackState == 1` is the CASE TAG. MediaPlaybackState is
+    ///     idle/playing/paused/seeking/finished/stopped, so tag 1 is `.playing`.
+    ///   · the store target 0x104c630d8 is `shouldResumePlayback`, by elimination: it is the only
+    ///     KSAVPlayer offset global with no trie symbol, and the other Bool field
+    ///     (`isReadyToPlay`) is already claimed by 0x104c630d0.
+    /// ⚑[tool=recover_field_offsets ref=KSOptions:+0x46 result=enterForgeResumePlay]
+    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer:0x104c630d8 result=unnamed-only-Bool-left]
+    public func checkShouldResume() {
+        shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
+    }
 
     /// @0x1019a9a9c, 116 instructions.
     ///
@@ -543,83 +690,18 @@ extension KSAVPlayer {
         // ⚑ UNRESOLVED → KSAVPlayer M2: playableTime / bufferingProgress(UInt8) / loadState buffering computation.
     }
 
-    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSAVPlayer.updatePlaybackBuffer():0x1019a5054 result=53-instr]
-    /// `guard let` is the `cbz` after `objc_retainAutoreleasedReturnValue`; the receiver chain is
-    /// `playerView.player` — `+0x38` is `playerView` (the fixed instance offset this file already
-    /// records at :188) and 0x1044e46b0 is `direct field offset for KSAVPlayerView.player`.
-    /// ⚑[tool=decode_objc_selector ref=0x10440af28 result='currentItem']
-    /// ⚑[tool=decode_objc_selector ref=0x10440be68 result='isPlaybackLikelyToKeepUp']
-    /// ⚑[tool=decode_objc_selector ref=0x10440be60 result='isPlaybackBufferFull']
-    /// `tbnz` on the first and `cbnz` on the second both jump to `mov w21, #2`; the fall-through
-    /// stores 1. `MediaLoadState` is `idle`/`loading`/`playable`, so 2 is `.playable` and 1 is
-    /// `.loading`. The trailing vtable call is `loadState`'s own `didSet`, not a statement here.
-    ///
-    /// ⚑ `isPlaybackBufferEmpty` (0x10440be58) IS called, into x21, and its result provably does
-    ///   NOT reach the outcome: the two `csel`s that consume it select between `#1` and `#1` and
-    ///   between `sp+8` and `sp+8` — identical operands on both arms. So the branch value is
-    ///   `.loading` either way. Whatever source expression consumed that flag was collapsed by the
-    ///   optimizer and is NOT recoverable from this body; declaring a use for it would be
-    ///   invention, and dropping the call is the only spelling the binary supports.
-    ///
-    /// ⚑ NOT `private`, unlike the siblings around it: the trie carries
-    ///   `…20updatePlaybackBufferyyFTq`, a method descriptor, i.e. a real vtable slot — and a
-    ///   `private` method takes none. The mangled name also carries no `33_…LL` discriminator.
-    func updatePlaybackBuffer() {
-        guard let item = playerView.player.currentItem else {
-            return
-        }
-        loadState = item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull ? .playable : .loading
-    }
-
-    // KSPlayer.KSAVPlayer.update(loadState:oldValue:) @0x1019a4db8 — 167 instr, vtable slot 97.
-    //   Trie-named `$s8KSPlayer10KSAVPlayerC6update9loadState8oldValueyAA09MediaLoadE0O_AHtF`, one
-    //   symbol at the address, and the class's 281 trie symbols carry ZERO `33_<32hex>LL` manglings,
-    //   so it is not file-private. The name is doubly grounded: the inlined KSLog's own `#function`
-    //   literal decodes to "update(loadState:oldValue:)".
-    //
-    // ⚠️ THE `loadState` didSet ABOVE INLINES THIS BODY — and drops half of it. The didSet runs
-    //   `playOrPause()` then `bufferingProgress = 0` for the non-playable states, but has NO
-    //   `.playable` arm at all, so the firstPlayableTime stamp and its KSLog are simply absent from
-    //   the reconstruction. (The two spellings of the other arm ARE equivalent: MediaLoadState is
-    //   `idle, loading, playable`, so `else` and `.loading || .idle` cover the same cases.)
-    //   Rewiring the didSet to CALL this is a separate unit — the didSet itself was not derived here,
-    //   and this session has been bitten by assuming a caller's shape.
-    //
-    // Read from the binary: `cmp w19, w1, uxtb` / `b.eq` epilogue is the guard; `cmp w19, #0x2` picks
-    //   the `.playable` arm (MediaLoadState tag 2); both `fcmp d0, #0.0` tests are on KSOptions fields
-    //   (`firstPlayableTime` global 0x104c63490, `prepareTime` 0x104c63438) under a MODIFY access;
-    //   the timestamp is `bl` QuartzCore `CACurrentMediaTime`. The body contains NO arithmetic at all
-    //   — only `cmp`/`fcmp` against constants, no checked add, no CMTime.
-    // ⚑ The logged value is `options.firstTimeLog()` @0x1019c0938, the member reconstructed earlier
-    //   in this same session — an independent derivation arriving at it is a real cross-check.
-    // ⚑ KSLog level constant is 3 = `.warning`, which is KSLog's declared default, so the bare form
-    //   is the faithful spelling. Tag 3 is derived from the BINARY, not from source order: the
-    //   `LogLevel.description` getter's `csel` ladder maps 0→panic 1→fatal 2→error 3→warning.
-    // ⟨UNGROUNDED: `if a == 0, b != 0 { … }` versus two `guard … else { return }` — both arms exit to
-    //  the same epilogue, so the source form is not separable from the codegen.⟩
-    func update(loadState: MediaLoadState, oldValue: MediaLoadState) {
-        guard loadState != oldValue else { return }
-        playOrPause()
-        if loadState == .playable {
-            if options.firstPlayableTime == 0, options.prepareTime != 0 {
-                options.firstPlayableTime = CACurrentMediaTime()
-                KSLog(options.firstTimeLog())
-            }
-        } else {
-            bufferingProgress = 0
-        }
-    }
-
     private func playOrPause() {
-        if playbackState == .playing {
-            if loadState == .playable {
-                player.play()
-                player.rate = playbackRate
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            if self.playbackState == .playing {
+                if self.loadState == .playable {
+                    self.player.playImmediately(atRate: self.playbackRate)
+                }
+            } else {
+                self.player.pause()
             }
-        } else {
-            player.pause()
+            self.delegate?.changeLoadState(player: self)
         }
-        delegate?.changeLoadState(player: self)
     }
 
     public func replaceCurrentItem(playerItem: AVPlayerItem?) {   // public (was private, P34): ProAVPlayer (separate module) slot15 item-swap closure installs its ProPlayerItem via this cross-module call (FUN_1019a563c)  ⚑[tool=resolve_fun_pins ref=FUN_1019a563c:0x1019a563c result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.replaceCurrentItem(playerItem: __C.AVPlayerItem?) -> ()
@@ -634,91 +716,6 @@ extension KSAVPlayer {
             // ⚑ UNRESOLVED → KSAVPlayer M2: loopCount/loopStatus observation (was 2 KVO NSKeyValueObservations → observerLoopCancellables)
         } else {
             player.replaceCurrentItem(with: playerItem)
-        }
-    }
-
-    // reset() @0x1019a5410, 139 instr, vtable slot 102. Exactly one symbol at the address (no ICF
-    // fold). `public` rests on the method descriptor $s8KSPlayer10KSAVPlayerC5resetyyFTq existing
-    // @0x1039ec4b8 — a cross-module vtable entry. It is NOT `open`: no ProAVPlayer override of
-    // this selector is in the trie. ⚑ access is the weakest claim here; the ACCESS bucket, not
-    // this unit, is where it gets settled.
-    //
-    // Ten steps, in instruction order 0x1019a542c -> 0x1019a5618, each re-read from the binary:
-    //  1 self.options (offset global 0x104c63098) then a VIRTUAL `ldr x8,[x20]; ldr x21,[x8,#0x310]`
-    //    — KSOptions VTableOffset is 94 words (0x2f0), so (0x310-0x2f0)/8 = slot 4 = KSOptions.reset().
-    //  2 isReadyToPlay (0x104c630d0) `strb wzr` = false.
-    //  3 playbackState (0x104c630b8) read-then-write `mov w8,#0x5`. MediaPlaybackState's own
-    //    descriptor 0x1039ed96c lists 6 cases, index 5 = .stopped. The old value then goes to the
-    //    compiler-emitted didSet observer at 0x1019a24a8, which has no source spelling.
-    //  4 loadState (0x104c630c8) read-then-write `strb wzr`. Descriptor 0x1039ed988, 3 cases,
-    //    index 0 = .idle. Followed by the didSet's virtual call to update(loadState:oldValue:).
-    //  5 duration (0x104c63070) `str xzr` = 0.
-    //  6 subtitleTracks (0x104c63058) = the __swiftEmptyArrayStorage singleton, i.e. [].
-    //  7 the same singleton into the UNEXPORTED global 0x1044e46f8. That is mediaPlayerTracks by
-    //    a CLOSED elimination, not by position: the field records give KSAVPlayer 28 fields, of
-    //    which exactly three are Arrays — mediaPlayerTracks (6) and subtitleTracks (7) share one
-    //    element type, chapters (16) has another — and subtitleTracks (0x104c63058) and chapters
-    //    (0x104c63088) are both independently named. mediaPlayerTracks is `internal`, which is
-    //    precisely why it emits no vpWvd global to be named by.
-    //    ⚑[tool=fieldrec ref=KSAVPlayer.mediaPlayerTracks:0x1044e46f8 result=elimination-over-28-field-records]
-    //  8 playerView (the fixed instance offset +0x38) -> KSAVPlayerView.player (offset global
-    //    0x1044e46b0) -> selectors 'currentItem', 'asset', 'cancelLoading', with the `cbz` after
-    //    currentItem supplying the `?`.
-    //  9 replaceCurrentItem with x0 = 0 — the nil literal, calling this file's own member @0x1019a563c.
-    // 10 delegate (0x104c63068) is loaded with swift_weakLoadStrong and `cbz`-guarded, which is the
-    //    `?`; field record 12 carries the `Xw` tail, so the weak-ness is reflection-visible. The
-    //    call is witness slot +0x40 — which MediaPlayerProtocol.swift already pins as req7
-    //    playerDidClear(player:) — and self is passed as the (object, metadata, witness) triple
-    //    0x1041d3f78, matching that requirement's `some MediaPlayerProtocol` parameter.
-    // ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
-    // ⚑[tool=export_trie_oracle ref=KSAVPlayerView.player:0x1044e46b0 result=player]
-    public func reset() {
-        options.reset()
-        isReadyToPlay = false
-        playbackState = .stopped
-        loadState = .idle
-        duration = 0
-        subtitleTracks = []
-        mediaPlayerTracks = []
-        playerView.player.currentItem?.asset.cancelLoading()
-        replaceCurrentItem(playerItem: nil)
-        delegate?.playerDidClear(player: self)
-    }
-
-    // process(error:) @0x1019a5158, 81 instr, vtable slot 100. No ICF fold. `public` on the same
-    // basis as reset(): the method descriptor $s8KSPlayer10KSAVPlayerC7process5errorys5Error_p_tFTq
-    // exists @0x1039ec4a8. ⚑ access is the weakest claim here, as it is for reset().
-    //
-    // The body itself does exactly ONE thing and takes no branch — control flow is fully linear
-    // with a single `ret` — so every effect below is inside the closure:
-    //  · swift_allocObject(0x1041d3e70, 0x18, 7) then swift_weakInit(box+0x10, self) — `[weak self]`.
-    //  · MainActor.shared ($sScM6sharedScMvgZ) plus the MainActor:Actor witness table built from
-    //    conformance descriptor 0x104113870 — the `@MainActor` isolation, not a hop written by hand.
-    //  · swift_errorRetain(error) — the error is captured STRONGLY, unlike self.
-    //  · swift_allocObject(0x1041d3f10, 0x30, 7) for the 48-byte context, filled
-    //    `stp x20,x23,[x0,#0x10]` / `stp x22,x19,[x0,#0x20]` = MainActor.shared, its witness table,
-    //    the weak-self box, the error.
-    //  · the Task is created through 0x101a03fd4 with the async function pointer 0x103566c80, and
-    //    the returned handle is immediately swift_release'd — a bare `Task { }` statement, never a
-    //    stored handle.
-    //
-    // The operation resumes at 0x1019a529c (the @MainActor hop, ending in swift_task_switch) and
-    // continues at 0x1019a532c, where the two `?`s are both explicit:
-    //  · swift_weakLoadStrong on the box then `cbz` — `guard let self else { return }`.
-    //  · swift_unknownObjectWeakLoadStrong on delegate (offset global 0x104c63068) then `cbz`.
-    //  · the call is witness slot +0x38 with x1 = the captured error. This file's own requirement
-    //    table maps +0x38 to req6 `finish(player:error:)`, and self is handed over as the
-    //    (object, metadata, witness) triple 0x1041d3f78 — the `some MediaPlayerProtocol` form.
-    // Both beginAccess sites pass flags 0, so both are reads and no endAccess is emitted.
-    // ⚑[tool=bind_oracle ref=MainActor.shared:0x104113860 result=libswift_Concurrency]
-    // ⚑[tool=bind_oracle ref=_swift_errorRetain:0x104112e50 result=libswiftCore]
-    // ⚑[tool=bind_oracle ref=_swift_unknownObjectWeakLoadStrong:0x1041130e8 result=libswiftCore]
-    public func process(error: Error) {
-        Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-            delegate?.finish(player: self, error: error)
         }
     }
 
@@ -802,39 +799,11 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         nil
     }
 
-    // The completion carries @MainActor and @Sendable in the binary symbol; the source declared a
-    // bare escaping closure.
-    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
-        let time = max(time, 0)
-        // AN ENTIRE KSLog STATEMENT WAS MISSING. The binary opens with this gated log, and the
-        // shouldSeekTo-vs-currentTime coalesce exists only to build the message — which is also why
-        // it has to run BEFORE the `shouldSeekTo = time` store below, or it would read the new value
-        // and the "from" half would always equal the "to" half.
-        KSLog("\(self) seek from \(shouldSeekTo ?? player.currentTime().seconds) to \(time)")
-        shouldSeekTo = time
-        playbackState = .seeking
-        runOnMainThread { [weak self] in
-            self?.bufferingProgress = 0
-        }
-        let tolerance: CMTime = options.isAccurateSeek ? .zero : .positiveInfinity
-        player.seek(to: CMTime(seconds: time), toleranceBefore: tolerance, toleranceAfter: tolerance) {
-            [weak self] finished in
-            guard let self else { return }
-            self.shouldSeekTo = 0
-            completion(finished)
-        }
-    }
-
     public func prepareToPlay() {
         KSLog("prepareToPlay \(self)")
         options.prepareTime = CACurrentMediaTime()
         // ⚑ UNRESOLVED → KSAVPlayer M2: build AVPlayerItem from `io` (was AVPlayerItem(asset: urlAsset)) on the main thread,
         //   install via replaceCurrentItem, set openTime / actionAtItemEnd / volume / bufferingProgress.
-    }
-
-    public func play() {
-        KSLog("play \(self)")
-        playbackState = .playing
     }
 
     public func pause() {
@@ -843,18 +812,25 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func stop() {
-        KSLog("shutdown \(self)")
-        isReadyToPlay = false
-        playbackState = .stopped
-        loadState = .idle
-        // ⚑ M2: cancelLoading on the `io` asset (was urlAsset.cancelLoading())
-        replaceCurrentItem(playerItem: nil)
+        KSLog("stop \(self)", line: 674)
+        reset()
+        if let periodicTimeObserver {
+            player.removeTimeObserver(periodicTimeObserver)
+            self.periodicTimeObserver = nil
+        }
     }
 
-    public func replace(url: URL, options: KSOptions) {
+    // Ref 0x1019aa5d4 ignores custom IO and forwards URL to the asset path.
+    public func replace(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
+        if case let .left(url) = io {
+            replace(io: Either<URL, AVAsset>.left(url), options: options)
+        }
+    }
+
+    public func replace(io: Either<URL, AVAsset>, options: KSOptions) {
         KSLog("replaceUrl \(self)")
         stop()
-        io = .left(url) // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset
+        self.io = io
         self.options = options
     }
 

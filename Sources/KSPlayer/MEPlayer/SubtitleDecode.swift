@@ -282,7 +282,7 @@ class SubtitleDecode: DecodeProtocol {
     //   async-reset the incremental ASS renderer — but that renderer method does NOT yet exist
     //   (AssIncrementImageRenderer is a Batch-5 skeleton with only `search` stubbed). Reconstruct the Task
     //   body together with the renderer in Batch 5; NOT fabricated here.
-    func doFlushCodec() {
+    @used func doFlushCodec() {
         if let codecContext {
             avcodec_flush_buffers(codecContext)
         }
@@ -292,7 +292,7 @@ class SubtitleDecode: DecodeProtocol {
     // VideoSwresample `scale.shutdown()` — Forward dropped the `scale` field, §8.3). Frees the decoded
     // subtitle then the codec context. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avsubtitle_free
     // @0x10294d330 (self+0x20 `subtitle`), avcodec_free_context @0x102d53ac8 (self+0x18 `codecContext`).
-    func shutdown() {
+    @used func shutdown() {
         avsubtitle_free(&subtitle)
         if codecContext != nil {
             avcodec_free_context(&self.codecContext)

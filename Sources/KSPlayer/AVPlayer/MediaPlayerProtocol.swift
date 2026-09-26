@@ -13,21 +13,21 @@ import UIKit
 import AppKit
 #endif
 
+@MainActor
 public protocol MediaPlayback: AnyObject {
     var duration: TimeInterval { get }
     var fileSize: Int64 { get }
     var naturalSize: CGSize { get }
     var chapters: [Chapter] { get }
     var currentPlaybackTime: TimeInterval { get }
+    var playbackRate: Float { get set }
+    var dynamicInfo: DynamicInfo { get }
+    var ioContext: AbstractAVIOContext? { get }
     func prepareToPlay()
-    // NAMED `stop()` in the binary, not `shutdown()`. This is MediaPlayback requirement 14, and the
-    // trie names both implementations — KSAVPlayer.stop() and KSMEPlayer.stop(); neither class has a
-    // `shutdown` symbol at all. The other shutdown() methods in this tree belong to different
-    // protocols (CircularBuffer, FFmpegDecode, MEPlayerItemTrack, VideoSwresample) and are untouched.
-    func stop()
-    // The completion carries @MainActor and @Sendable — read off KSAVPlayer's seek symbol, whose
-    // implementation satisfies this requirement.
     func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void))
+    func startRecord(url: URL)
+    func stopRecord()
+    func stop()
 }
 
 // 14 stored fields; the source order below IS the binary reflection order (scripts/dump_field_bindings.py
@@ -153,7 +153,7 @@ public class DynamicInfo: ObservableObject {
     /// ⚑ OPEN: slot 35 @0x1019de4a8 is a SECOND, DISTINCT DESIGNATED init (it allocates and forwards to
     /// initializing entry 0x1019df2f0, which writes every stored property itself and never delegates to
     /// this one; arity = 4 words in x0-x3). Not reconstructed here — it is its own unit.
-    init(metadata: @escaping () -> [String: String], bytesRead: @escaping () -> Int64, audioBitrate: @escaping () -> Int, videoBitrate: @escaping () -> Int) {
+    @used init(metadata: @escaping () -> [String: String], bytesRead: @escaping () -> Int64, audioBitrate: @escaping () -> Int, videoBitrate: @escaping () -> Int) {
         metadataBlock = metadata
         bytesReadBlock = bytesRead
         audioBitrateBlock = audioBitrate
@@ -179,21 +179,21 @@ public class DynamicInfo: ObservableObject {
     //                    (⚑ bind_oracle 0x104112d00); the builder's `cbz` empty path returns
     //                    `__swiftEmptyDictionarySingleton` (⚑ bind_oracle 0x104112d08) ⇒ [:]
     //   bytesReadBlock   0x1019df4b4 sums `numberOfBytesTransferred` (Int64, `adds` with overflow trap)
-    //   audioBitrateBlock 0x1019df598 sums `averageAudioBitrate` — selref 0x10440a7d8 →
+    //   audioBitrateBlock 0x1019df598 reads last `averageAudioBitrate` — selref 0x10440a7d8 →
     //                    __objc_methname 0x10397b1c0 = "averageAudioBitrate"
-    //   videoBitrateBlock 0x1019df6b8 sums `averageVideoBitrate`
-    // Both bitrate helpers accumulate in `d8` as a DOUBLE and convert ONCE at the end
-    // (`fcvtzs x0, d8`, guarded by the Swift Int(_:) range `fcmp` against 2^63), so the
-    // conversion wraps the sum, not each element.
+    //   videoBitrateBlock 0x1019df6b8 reads last `averageVideoBitrate`
+    // Ref helpers 0x1019df598/0x1019df6b8 read only the last event, then convert
+    // its Double bitrate to Int with checked range/NaN guards. Empty events yield zero.
+    // Evidence: M05-DynamicInfo-init35-helpers-disasm.json and M05-DynamicInfo-event-getters.json.
     init(displayFPSBlock: @escaping @MainActor @Sendable () -> Float,
          accessLogEvent: @escaping () -> [AVPlayerItemAccessLogEvent])
     {
         metadataBlock = { [:] }
-        bytesReadBlock = { accessLogEvent().reduce(0) { $0 + $1.numberOfBytesTransferred } }
-        audioBitrateBlock = { Int(accessLogEvent().reduce(0.0) { $0 + $1.averageAudioBitrate }) }
-        videoBitrateBlock = { Int(accessLogEvent().reduce(0.0) { $0 + $1.averageVideoBitrate }) }
-        self.accessLogEvent = accessLogEvent
         self.displayFPSBlock = displayFPSBlock
+        bytesReadBlock = { accessLogEvent().reduce(0) { $0 + $1.numberOfBytesTransferred } }
+        audioBitrateBlock = { Int(accessLogEvent().last?.averageAudioBitrate ?? 0) }
+        videoBitrateBlock = { Int(accessLogEvent().last?.averageVideoBitrate ?? 0) }
+        self.accessLogEvent = accessLogEvent
     }
 
     /// @0x1019df7d8, 204 instructions — the "slot-36 updater" the field notes above already refer to.
@@ -248,9 +248,11 @@ public class DynamicInfo: ObservableObject {
             return
         }
         if let accessLogEvent {
+            #sourceLocation(file: "KSPlayer/MediaPlayerProtocol.swift", line: 138)
             droppedVideoFrameCount = accessLogEvent().reduce(0) {
                 $0 + UInt32(max(0, $1.numberOfDroppedVideoFrames))
             }
+            #sourceLocation()
         }
         if let displayFPSBlock {
             displayFPS = displayFPSBlock()
@@ -271,6 +273,7 @@ public struct Chapter {
     public let title: String
 }
 
+@MainActor
 public protocol MediaPlayerProtocol: MediaPlayback {
     var delegate: MediaPlayerDelegate? { get set }
     /// ⚑ NON-OPTIONAL, corrected from `UIView?`. Witness slot 4 of
@@ -284,6 +287,7 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot4=view.getter:UIView]
     var view: UIView { get }
     var playableTime: TimeInterval { get }
+    var cachedTimeRanges: [CachedTimeRange] { get }
     var isReadyToPlay: Bool { get }
     var playbackState: MediaPlaybackState { get }
     var loadState: MediaLoadState { get }
@@ -294,7 +298,6 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     var allowsExternalPlayback: Bool { get set }
     var usesExternalPlaybackWhileExternalScreenIsActive: Bool { get set }
     var isExternalPlaybackActive: Bool { get }
-    var playbackRate: Float { get set }
     var playbackVolume: Float { get set }
     var contentMode: UIViewContentMode { get set }
     // ⚑ RETYPED to the refined protocol. Requirement index 28 of this protocol's 45; byte +0xe8 of
@@ -312,20 +315,27 @@ public protocol MediaPlayerProtocol: MediaPlayback {
     // `KSPlayer.KSPictureInPictureProtocol?` on getter, setter, modify, property descriptor
     // and direct field offset. Rippled only after verifying BOTH conformers, which is the
     // precondition this migration carries.
-    var pipController: (any KSPictureInPictureProtocol)? { get }
-    var dynamicInfo: DynamicInfo? { get }
+    var pipController: (any KSPictureInPictureProtocol)? { get set }
     init(url: URL, options: KSOptions)
-    func replace(url: URL, options: KSOptions)
+    func replace(io: Either<URL, AbstractAVIOContext>, options: KSOptions)
     func play()
     func pause()
+    func reset()
     func enterBackground()
+    func checkShouldResume()
     func enterForeground()
     @MainActor func thumbnailImageAtCurrentTime() async -> CGImage?
     func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack]
     func select(track: some MediaPlayerTrack)
+    func configPIP()
 }
 
 public extension MediaPlayerProtocol {
+    // Ref 0x1019de7f8 wraps URL, then calls requirement 34.
+    func replace(url: URL, options: KSOptions) {
+        replace(io: .left(url), options: options)
+    }
+
     var nominalFrameRate: Float {
         tracks(mediaType: .video).first { $0.isEnabled }?.nominalFrameRate ?? 0
     }
@@ -576,15 +586,14 @@ public extension MediaPlayerProtocol {
 /// A requirement's index IS its witness-table slot, so the two added below sit at 5 and 7 rather
 /// than being appended.
 ///
-/// ⚑ `changePlaybackTime(player:time:)` (req3) is READ but deliberately NOT added yet:
-///   `KSPlayerLayer` does not implement it — that member is still an open MEMBER_MISSING row
-///   (0x1019cc2b8, 208 instr) — so declaring the requirement now would break the build. Add it in
-///   the same commit that lands that body, between `changeBuffering` and `playBack`.
+/// ⚑ req3 `changePlaybackTime(player:time:)` is the `KSPlayerLayer` witness at slot 59
+/// (body 0x1019cc2b8..0x1019cc5f8); its declaration and implementation are paired below.
 public protocol MediaPlayerDelegate: AnyObject {
     func readyToPlay(player: some MediaPlayerProtocol)
     func changeLoadState(player: some MediaPlayerProtocol)
     // 缓冲加载进度，0-100
     func changeBuffering(player: some MediaPlayerProtocol, progress: UInt8)
+    func changePlaybackTime(player: some MediaPlayerProtocol, time: TimeInterval)
     func playBack(player: some MediaPlayerProtocol, loopCount: Int)
     func reachEndOfStream(player: some MediaPlayerProtocol)
     func finish(player: some MediaPlayerProtocol, error: Error?)

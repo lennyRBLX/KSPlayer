@@ -11,72 +11,67 @@ import SwiftUI
 @available(iOS 16.0, macOS 13.0, tvOS 16.0, *)
 @MainActor
 public struct KSVideoPlayerView: View {
-    private let subtitleDataSource: (any SubtitleDataSource)?
-    @State
-    private var title: String
     @StateObject
-    private var playerCoordinator: KSVideoPlayer.Coordinator
+    private var model: KSVideoPlayerModel
+    private let subtitleDataSource: (any SubtitleDataSource)?
+    private let liftCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> ())?
     @Environment(\.dismiss)
     private var dismiss
-    @FocusState
-    private var focusableField: FocusableField? {
-        willSet {
-            isDropdownShow = newValue == .info
-        }
-    }
-
-    public let options: KSOptions
     @State
-    private var isDropdownShow = false
-    @State
-    private var showVideoSetting = false
-    @State
-    public var url: URL {
-        didSet {
-            #if os(macOS)
-            NSDocumentController.shared.noteNewRecentDocumentURL(url)
-            #endif
-        }
-    }
+    private var longPressSuccess = false
 
-    public init(url: URL, options: KSOptions, title: String? = nil) {
-        self.init(coordinator: KSVideoPlayer.Coordinator(), url: url, options: options, title: title, subtitleDataSource: nil)
-    }
-
-    public init(coordinator: KSVideoPlayer.Coordinator, url: URL, options: KSOptions, title: String? = nil, subtitleDataSource: (any SubtitleDataSource)? = nil) {
-        self.init(coordinator: coordinator, url: .init(wrappedValue: url), options: options, title: .init(wrappedValue: title ?? url.lastPathComponent), subtitleDataSource: subtitleDataSource)
-    }
-
-    public init(coordinator: KSVideoPlayer.Coordinator, url: State<URL>, options: KSOptions, title: State<String>, subtitleDataSource: (any SubtitleDataSource)?) {
-        _url = url
-        _playerCoordinator = .init(wrappedValue: coordinator)
-        _title = title
-        #if os(macOS)
-        NSDocumentController.shared.noteNewRecentDocumentURL(url.wrappedValue)
-        #endif
-        self.options = options
+    public init(model: StateObject<KSVideoPlayerModel>, subtitleDataSource: (any SubtitleDataSource)?, liftCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> ())?) {
+        _model = model
         self.subtitleDataSource = subtitleDataSource
+        self.liftCycleBlock = liftCycleBlock
+    }
+
+    public init(model: StateObject<KSVideoPlayerModel>, subtitleURLs: [URL], liftCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> ())?) {
+        let subtitleDataSource: (any SubtitleDataSource)?
+        if let url = model.wrappedValue.url, !subtitleURLs.isEmpty {
+            subtitleDataSource = ConstantURLSubtitleDataSource(url: url, subtitleURLs: subtitleURLs)
+        } else {
+            subtitleDataSource = nil
+        }
+        self.init(model: model, subtitleDataSource: subtitleDataSource, liftCycleBlock: liftCycleBlock)
+    }
+
+    public init(url: URL, options: KSOptions, title: String?, liftCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> ())?) {
+        self.init(
+            model: .init(wrappedValue: KSVideoPlayerModel(title: title ?? url.lastPathComponent, config: nil, options: options, url: .some(url))),
+            subtitleDataSource: nil,
+            liftCycleBlock: liftCycleBlock
+        )
+    }
+
+    public init(coordinator: KSVideoPlayer.Coordinator?, url: URL, options: KSOptions, title: String?, subtitleDataSource: (any SubtitleDataSource)?, liftCycleBlock: ((KSVideoPlayer.Coordinator, Bool) -> ())?) {
+        self.init(
+            model: .init(wrappedValue: KSVideoPlayerModel(title: title ?? url.lastPathComponent, config: coordinator, options: options, url: .some(url))),
+            subtitleDataSource: subtitleDataSource,
+            liftCycleBlock: liftCycleBlock
+        )
+    }
+
+    public init(playerLayer: KSPlayerLayer) {
+        self.init(
+            model: .init(wrappedValue: KSVideoPlayerModel(playerLayer: playerLayer)),
+            subtitleDataSource: nil,
+            liftCycleBlock: nil
+        )
     }
 
     public var body: some View {
         ZStack {
             GeometryReader { proxy in
                 playView
-                HStack {
-                    Spacer()
-                    VideoSubtitleView(model: playerCoordinator.subtitleModel)
-                        .allowsHitTesting(false) // 禁止字幕视图交互，以免抢占视图的点击事件或其它手势事件
-                    Spacer()
-                }
-                .padding()
                 controllerView(playerWidth: proxy.size.width)
                 #if os(tvOS)
                     .ignoresSafeArea()
                 #endif
                 #if os(tvOS)
-                if isDropdownShow {
-                    VideoSettingView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, subtitleTitle: title)
-                        .focused($focusableField, equals: .info)
+                if model.showVideoSetting {
+                    VideoSettingView(config: model.config, subtitleModel: model.config.subtitleModel, subtitleTitle: model.title)
+                        .modifier(FocusModifier(binding: $model.focusableView, value: .controller, focused: FocusState<Bool>()))
                 }
                 #endif
             }
@@ -87,21 +82,21 @@ public struct KSVideoPlayerView: View {
         .toolbar(.hidden, for: .automatic)
         #if os(tvOS)
             .onPlayPauseCommand {
-                if playerCoordinator.state.isPlaying {
-                    playerCoordinator.playerLayer?.pause()
+                if model.config.state.isPlaying {
+                    model.config.playerLayer?.pause()
                 } else {
-                    playerCoordinator.playerLayer?.play()
+                    model.config.playerLayer?.play()
                 }
             }
             .onExitCommand {
-                if playerCoordinator.isMaskShow {
-                    playerCoordinator.isMaskShow = false
+                if model.config.isMaskShow {
+                    model.config.isMaskShow = false
                 } else {
-                    switch focusableField {
+                    switch model.focusableView {
                     case .play:
                         dismiss()
                     default:
-                        focusableField = .play
+                        model.focusableView = .play
                     }
                 }
             }
@@ -109,11 +104,11 @@ public struct KSVideoPlayerView: View {
     }
 
     private var playView: some View {
-        KSVideoPlayer(coordinator: playerCoordinator, url: url, options: options)
+        KSVideoPlayer(coordinator: model.config, url: model.url!, options: model.options)
             .onStateChanged { playerLayer, state in
                 if state == .readyToPlay {
-                    if let movieTitle = playerLayer.player.dynamicInfo?.metadata["title"] {
-                        title = movieTitle
+                    if let movieTitle = playerLayer.player.dynamicInfo.metadata["title"] {
+                        model.title = movieTitle
                     }
                 }
             }
@@ -122,17 +117,17 @@ public struct KSVideoPlayerView: View {
             }
         #if canImport(UIKit)
             .onSwipe { _ in
-                playerCoordinator.isMaskShow = true
+                model.config.isMaskShow = true
             }
         #endif
             .ignoresSafeArea()
             .onAppear {
-                focusableField = .play
+                model.focusableView = .play
                 if let subtitleDataSource {
                     // ⚑ → P4 M2: addSubtitle(dataSouce:) removed; subtitle attach is M2 (§5.1)
                     _ = subtitleDataSource
                 }
-                // 不要加这个，不然playerCoordinator无法释放，也可以在onDisappear调用removeMonitor释放
+                // 不要加这个，不然model.config无法释放，也可以在onDisappear调用removeMonitor释放
                 //                    #if os(macOS)
                 //                    NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) {
                 //                        isMaskShow = overView
@@ -145,27 +140,27 @@ public struct KSVideoPlayerView: View {
             .navigationBarTitleDisplayMode(.inline)
         #endif
         #if !os(iOS)
-            .focusable(!playerCoordinator.isMaskShow)
-        .focused($focusableField, equals: .play)
+            .focusable(!model.config.isMaskShow)
+            .modifier(FocusModifier(binding: $model.focusableView, value: .play, focused: FocusState<Bool>()))
         #endif
         #if !os(xrOS)
             .onKeyPressLeftArrow {
-            playerCoordinator.skip(interval: -15)
+            model.config.skip(interval: -15)
         }
         .onKeyPressRightArrow {
-            playerCoordinator.skip(interval: 15)
+            model.config.skip(interval: 15)
         }
         .onKeyPressSapce {
-            if playerCoordinator.state.isPlaying {
-                playerCoordinator.playerLayer?.pause()
+            if model.config.state.isPlaying {
+                model.config.playerLayer?.pause()
             } else {
-                playerCoordinator.playerLayer?.play()
+                model.config.playerLayer?.play()
             }
         }
         #endif
         #if os(macOS)
             .onTapGesture(count: 2) {
-                guard let view = playerCoordinator.playerLayer?.player.view else {
+                guard let view = model.config.playerLayer?.player.view else {
                     return
                 }
                 view.window?.toggleFullScreen(nil)
@@ -173,45 +168,45 @@ public struct KSVideoPlayerView: View {
                 view.layoutSubtreeIfNeeded()
         }
         .onExitCommand {
-            playerCoordinator.playerLayer?.player.view.exitFullScreenMode()
+            model.config.playerLayer?.player.view.exitFullScreenMode()
         }
         .onMoveCommand { direction in
             switch direction {
             case .left:
-                playerCoordinator.skip(interval: -15)
+                model.config.skip(interval: -15)
             case .right:
-                playerCoordinator.skip(interval: 15)
+                model.config.skip(interval: 15)
             case .up:
-                playerCoordinator.playerLayer?.player.playbackVolume += 0.2
+                model.config.playerLayer?.player.playbackVolume += 0.2
             case .down:
-                playerCoordinator.playerLayer?.player.playbackVolume -= 0.2
+                model.config.playerLayer?.player.playbackVolume -= 0.2
             @unknown default:
                 break
             }
         }
         #else
         .onTapGesture {
-                playerCoordinator.isMaskShow.toggle()
+                model.config.isMaskShow.toggle()
             }
         #endif
         #if os(tvOS)
             .onMoveCommand { direction in
             switch direction {
             case .left:
-                playerCoordinator.skip(interval: -15)
+                model.config.skip(interval: -15)
             case .right:
-                playerCoordinator.skip(interval: 15)
+                model.config.skip(interval: 15)
             case .up:
-                playerCoordinator.mask(show: true, autoHide: false)
+                model.config.mask(show: true, autoHide: false)
             case .down:
-                focusableField = .info
+                model.focusableView = .slider
             @unknown default:
                 break
             }
         }
         #else
         .onHover { _ in
-                playerCoordinator.isMaskShow = true
+                model.config.isMaskShow = true
             }
             .onDrop(of: ["public.file-url"], isTargeted: nil) { providers -> Bool in
                 providers.first?.loadDataRepresentation(forTypeIdentifier: "public.file-url") { data, _ in
@@ -229,27 +224,27 @@ public struct KSVideoPlayerView: View {
 
     private func controllerView(playerWidth: Double) -> some View {
         VStack {
-            VideoControllerView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, title: $title, volumeSliderSize: playerWidth / 4)
+            VideoControllerView(config: model.config, subtitleModel: model.config.subtitleModel, title: $model.title, volumeSliderSize: playerWidth / 4)
             #if !os(xrOS)
             // 设置opacity为0，还是会去更新View。所以只能这样了
-            if playerCoordinator.isMaskShow {
-                VideoTimeShowView(config: playerCoordinator, model: playerCoordinator.timemodel)
+            if model.config.isMaskShow {
+                VideoTimeShowView(config: model.config, model: model.config.timemodel)
                     .onAppear {
-                        focusableField = .controller
+                        model.focusableView = .controller
                     }
                     .onDisappear {
-                        focusableField = .play
+                        model.focusableView = .play
                     }
             }
             #endif
         }
         #if os(xrOS)
-        .ornament(visibility: playerCoordinator.isMaskShow ? .visible : .hidden, attachmentAnchor: .scene(.bottom)) {
+        .ornament(visibility: model.config.isMaskShow ? .visible : .hidden, attachmentAnchor: .scene(.bottom)) {
             ornamentView(playerWidth: playerWidth)
         }
-        .sheet(isPresented: $showVideoSetting) {
+        .sheet(isPresented: $model.showVideoSetting) {
             NavigationStack {
-                VideoSettingView(config: playerCoordinator, subtitleModel: playerCoordinator.subtitleModel, subtitleTitle: title)
+                VideoSettingView(config: model.config, subtitleModel: model.config.subtitleModel, subtitleTitle: model.title)
             }
             .buttonStyle(.plain)
         }
@@ -258,8 +253,8 @@ public struct KSVideoPlayerView: View {
         .padding(.bottom, 80)
         .background(overlayGradient)
         #endif
-        .focused($focusableField, equals: .controller)
-        .opacity(playerCoordinator.isMaskShow ? 1 : 0)
+        .modifier(FocusModifier(binding: $model.focusableView, value: .controller, focused: FocusState<Bool>()))
+        .opacity(model.config.isMaskShow ? 1 : 0)
         .padding()
     }
 
@@ -273,7 +268,7 @@ public struct KSVideoPlayerView: View {
     )
     private func ornamentView(playerWidth: Double) -> some View {
         VStack(alignment: .leading) {
-            KSVideoPlayerViewBuilder.titleView(title: title, config: playerCoordinator)
+            KSVideoPlayerViewBuilder.titleView(title: model.title, config: model.config)
             ornamentControlsView(playerWidth: playerWidth)
         }
         .frame(width: playerWidth / 1.5)
@@ -287,15 +282,15 @@ public struct KSVideoPlayerView: View {
 
     private func ornamentControlsView(playerWidth _: Double) -> some View {
         HStack {
-            KSVideoPlayerViewBuilder.playbackControlView(config: playerCoordinator, spacing: 16)
+            KSVideoPlayerViewBuilder.playbackControlView(config: model.config, spacing: 16)
             Spacer()
-            VideoTimeShowView(config: playerCoordinator, model: playerCoordinator.timemodel, timeFont: .title3.monospacedDigit())
+            VideoTimeShowView(config: model.config, model: model.config.timemodel, timeFont: .title3.monospacedDigit())
             Spacer()
             Group {
-                KSVideoPlayerViewBuilder.contentModeButton(config: playerCoordinator)
-                KSVideoPlayerViewBuilder.subtitleButton(config: playerCoordinator)
-                KSVideoPlayerViewBuilder.playbackRateButton(playbackRate: $playerCoordinator.playbackRate)
-                KSVideoPlayerViewBuilder.infoButton(showVideoSetting: $showVideoSetting)
+                KSVideoPlayerViewBuilder.contentModeButton(config: model.config)
+                KSVideoPlayerViewBuilder.subtitleButton(config: model.config)
+                KSVideoPlayerViewBuilder.playbackRateButton(playbackRate: $model.config.playbackRate)
+                KSVideoPlayerViewBuilder.infoButton(showVideoSetting: $model.showVideoSetting)
             }
             .font(.largeTitle)
         }
@@ -353,10 +348,13 @@ public struct KSVideoPlayerView: View {
             //   binary at all — `subtitleModel` lives on KSPlayerLayer. The callee is already
             //   `public` at KSPlayerLayer.swift:872.
             // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.select(subtitleInfo:isSecondary:):0x1019ceb00 result=LOCATED]
-            playerCoordinator.playerLayer?.select(subtitleInfo: info, isSecondary: false)
+            model.config.playerLayer?.select(subtitleInfo: info, isSecondary: false)
         } else {
-            self.url = url
-            title = url.lastPathComponent
+            if let options {
+                model.options = options
+            }
+            model.url = url
+            model.title = url.lastPathComponent
         }
     }
 }
@@ -796,7 +794,7 @@ public struct PlatformView<Content: View>: View {
 struct KSVideoPlayerView_Previews: PreviewProvider {
     static var previews: some View {
         let url = URL(string: "http://clips.vorwaerts-gmbh.de/big_buck_bunny.mp4")!
-        KSVideoPlayerView(coordinator: KSVideoPlayer.Coordinator(), url: url, options: KSOptions())
+        KSVideoPlayerView(coordinator: KSVideoPlayer.Coordinator(), url: url, options: KSOptions(), title: nil, subtitleDataSource: nil, liftCycleBlock: nil)
     }
 }
 

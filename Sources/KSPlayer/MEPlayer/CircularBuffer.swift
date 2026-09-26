@@ -41,9 +41,9 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     public internal(set) var fps: Float = 24
     // ⚑[tool=export_trie_oracle ref=CircularBuffer.__allocating_init:$s8KSPlayer14CircularBufferC15initialCapacity6sorted9expanding11isClearItemACyxGSu_S3btcfC result=initialCapacity:UInt,sorted:Bool,expanding:Bool,isClearItem:Bool]
     //   All four labels and their order are read from the export trie, not inferred. The four DEFAULTS below are
-    //   NOT binary-readable: a golden control over all 57138 trie names returns ZERO `default argument N of …`
-    //   symbols anywhere, so their presence and value are undecidable from the trie either way.
+    //   NOT binary-readable (ZERO `default argument N of …` trie symbols). 0x101a16238 `cbz x0→brk` precedes the stores; the later `sub` is flagless.
     public init(initialCapacity: UInt = 256, sorted: Bool = false, expanding: Bool = true, isClearItem: Bool = false) {
+        precondition(initialCapacity > 0)
         self.expanding = expanding
         self.sorted = sorted
         self.isClearItem = isClearItem

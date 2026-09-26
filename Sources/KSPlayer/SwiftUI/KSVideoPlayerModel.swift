@@ -54,6 +54,15 @@ public class KSVideoPlayerModel: ObservableObject {
     @Published var showVideoSetting: Bool = false                          // rec6, internal, vpfi = 0
     private var cancellables: Set<AnyCancellable> = []                     // rec7, __swiftEmptySetSingleton
 
+    public convenience init(playerLayer: KSPlayerLayer) {
+        self.init(
+            title: playerLayer.url.lastPathComponent,
+            config: KSVideoPlayer.Coordinator(playerLayer: playerLayer),
+            options: playerLayer.options,
+            url: .some(playerLayer.url)
+        )
+    }
+
     // `config` is NON-optional in the field record (offset global 0x104c63810 demangles to
     // `... .config : KSPlayer.KSVideoPlayer.Coordinator`, no `Sg`) even though the init PARAMETER
     // is optional. The init supplies a fresh Coordinator when the argument is nil — the
@@ -90,7 +99,7 @@ public class KSVideoPlayerModel: ObservableObject {
     // The dispatch is virtual, through metadata byte-offset 0x3e0 = slot 124 = KSComplexPlayerLayer
     // idx12, whose Impl 0x1019d27a8 the trie names `playNextURL()`.
     // ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.playNextURL:0x1019d27a8 result=named]
-    func next() {
+    @used func next() {
         if let layer = config.playerLayer as? KSComplexPlayerLayer {
             layer.playNextURL()
         }
@@ -102,7 +111,7 @@ public class KSVideoPlayerModel: ObservableObject {
     // That target already carries its own invented-name marker at KSPlayerLayer.swift:1342, landed
     // by an earlier session and reasoned from this exact next/previous pairing.
     // ⚑[tool=export_trie_oracle ref=KSVideoPlayerModel.previous:0x101accdb0 result=named]
-    func previous() {
+    @used func previous() {
         if let layer = config.playerLayer as? KSComplexPlayerLayer {
             layer.playPreviousURL()
         }

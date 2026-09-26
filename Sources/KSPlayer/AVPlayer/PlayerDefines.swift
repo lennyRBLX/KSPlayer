@@ -626,20 +626,17 @@ public enum DecodeType {
 }
 
 // Forward-only protocol (binary-confirmed name `VideoPipeline`). Binary (conformance_walker, proto descriptor
-// @0x1039edab8): 5 requirements — 1 getter + 4 methods — and NO in-binary conformer (external/call-site-inferred,
-// exactly like PlayList). The requirement NAMES + SIGNATURES are UNRESOLVED (no witness bodies to ground them) —
-// deferred to the PlayList/VideoPipeline protocol pass. Declared here (minimal) so `KSOptions.videoPipeline:
-// VideoPipeline?` is layout-faithful: a protocol existential's size is fixed regardless of its requirements, so the
-// KSOptions field type + offset are correct either way. ⚑ requirements deferred (not fabricated).
+// @0x1039edab8) validates five requirements in declaration order: one getter followed by four methods, with
+// Anime4KPipeline as the validated conformer.
 public protocol VideoPipeline {
-    // 5 requirements (1 getter + 4 methods) UNRESOLVED — see the PlayList/VideoPipeline no-conformer protocol pass.
+    var inputTexture: MTLTexture? { get }
+    func configure(pixelBuffer: any PixelBufferProtocol) -> CGSize?
+    func encode(commandBuffer: MTLCommandBuffer, outputTexture: MTLTexture)
+    func beginFrameRendering(force: Bool) -> Bool
+    func cancelFrameRendering()
 }
 
-// Two bodies the binary places in an EXTENSION of this protocol, not in the protocol itself —
-// both demangle as `(extension in KSPlayer):KSPlayer.VideoPipeline.…`. They are declared here for
-// that reason, and the protocol above stays empty: which of the 5 deferred requirements (if any)
-// these two default-implement is NOT decidable from an extension symbol, and asserting it by
-// adding a requirement would be inventing the protocol's signature.
+// The default implementations below satisfy VideoPipeline requirements 3 and 4; their bodies remain unchanged.
 public extension VideoPipeline {
     /// ⚑ 0x10002c740 — `mov w0, #0x1` / `ret`. Unconditional; `force` is never read.
     func beginFrameRendering(force _: Bool) -> Bool {

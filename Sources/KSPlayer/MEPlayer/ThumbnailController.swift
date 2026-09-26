@@ -107,7 +107,7 @@ public class ThumbnailController {
     /// there is no in-binary call site to read a literal 100 out of, and an uncalled generator is
     /// dead-stripped under -O WMO. The label `thumbnailCount:` is likewise upstream, not recovered: this
     /// init contains no logging, so it materializes no `#function` literal to read a signature from.
-    /// ⚑ NO dependency on the ABSENT sibling types (ThumbnailQueue / ThumbnailSession) — this init
+    /// ⚑ No dependency on the sibling types (ThumbnailQueue / ThumbnailSession) — this init
     /// allocates nothing and calls nothing but `_swift_allocObject` and `_swift_unknownObjectWeakInit`.
     /// Checked deliberately: standing up a type that has no source declaration would be a different and
     /// much larger unit than reconstructing an init.
@@ -230,5 +230,177 @@ public class ThumbnailController {
         av_packet_unref(&packet)
         reScale.shutdown()
         return thumbnails
+    }
+}
+
+/// Forward's field record and initializer put these fields at +0x10 through +0x48.
+/// The other queue methods remain separate reconstruction units.
+public class ThumbnailQueue {
+    private var pendingIndices: [Int]
+    private var generatedSet: Set<Int> = []
+    private var skippedSet: Set<Int> = []
+    private let lock = NSLock()
+    public let id: String
+    public let count: Int
+    public let duration: Double
+
+    public init(id: String, count: Int, duration: Double) {
+        self.id = id
+        self.count = max(count, 1)
+        self.duration = duration
+        pendingIndices = Array(0 ..< self.count)
+    }
+
+    public func clear() {
+        lock.lock()
+        pendingIndices = []
+        lock.unlock()
+    }
+
+    public func markGenerated(_ index: Int) {
+        lock.lock()
+        generatedSet.insert(index)
+        lock.unlock()
+    }
+
+    public func isGenerated(_ index: Int) -> Bool {
+        lock.lock()
+        let result = generatedSet.contains(index)
+        lock.unlock()
+        return result
+    }
+
+    public func isSkipped(_ index: Int) -> Bool {
+        lock.lock()
+        let result = skippedSet.contains(index)
+        lock.unlock()
+        return result
+    }
+
+    public func putBack(_ index: Int) {
+        lock.lock()
+        if !generatedSet.contains(index) {
+            skippedSet.insert(index)
+        }
+        lock.unlock()
+    }
+
+    public func next() -> Int? {
+        lock.lock()
+        let result: Int?
+        if pendingIndices.isEmpty {
+            result = nil
+        } else {
+            result = pendingIndices.removeFirst()
+        }
+        lock.unlock()
+        return result
+    }
+
+    public func skipAllPending() {
+        lock.lock()
+        for index in pendingIndices {
+            skippedSet.insert(index)
+        }
+        pendingIndices = []
+        lock.unlock()
+    }
+
+    public func retrySkipped() {
+        lock.lock()
+        for index in skippedSet {
+            if !generatedSet.contains(index) && !pendingIndices.contains(index) {
+                pendingIndices.append(index)
+            }
+        }
+        skippedSet = []
+        lock.unlock()
+    }
+
+    public func reset() {
+        lock.lock()
+        pendingIndices = Array(0 ..< count)
+        generatedSet = []
+        lock.unlock()
+    }
+
+    public func restoreCached(_ cached: Set<Int>) {
+        lock.lock()
+        generatedSet.formUnion(cached)
+        pendingIndices.removeAll { cached.contains($0) }
+        lock.unlock()
+    }
+
+    public func restoreCached(where predicate: (Int) -> Bool) {
+        lock.lock()
+        for index in 0 ..< count {
+            if predicate(index) {
+                generatedSet.insert(index)
+            }
+        }
+        pendingIndices.removeAll { generatedSet.contains($0) }
+        lock.unlock()
+    }
+
+    public func seek(toIndex index: Int) {
+        lock.lock()
+        guard index >= 0, index < count else {
+            lock.unlock()
+            return
+        }
+
+        do {
+            var after: [Int] = []
+            var before: [Int] = []
+            var found = false
+            pendingIndices.forEach { pending in
+                if pending == index {
+                    found = true
+                } else if index < pending {
+                    after.append(pending)
+                } else {
+                    before.append(pending)
+                }
+            }
+            after.sort()
+            before.sort(by: >)
+
+            var reordered: [Int] = []
+            if found {
+                reordered.append(index)
+            }
+            reordered.append(contentsOf: after)
+            reordered.append(contentsOf: before)
+            before = []
+            after = []
+            pendingIndices = reordered
+        }
+        lock.unlock()
+    }
+
+    public func seek(toTime time: Double) {
+        guard duration > 0 else { return }
+        let clampedTime = max(0, min(time, duration))
+        let scaledIndex = Int(clampedTime / duration * Double(count))
+        let index = min(count - 1, scaledIndex)
+        seek(toIndex: index)
+    }
+
+    public func index(forTime time: Double) -> Int {
+        guard duration > 0 else { return 0 }
+        let clampedTime = max(0, min(time, duration))
+        let scaledIndex = Int(clampedTime / duration * Double(count))
+        return min(count - 1, scaledIndex)
+    }
+
+    public func isGenerated(atTime time: Double) -> Bool {
+        guard duration > 0 else { return false }
+        let clampedTime = max(0, min(time, duration))
+        let scaledIndex = Int(clampedTime / duration * Double(count))
+        let index = min(count - 1, scaledIndex)
+        lock.lock()
+        let result = generatedSet.contains(index)
+        lock.unlock()
+        return result
     }
 }

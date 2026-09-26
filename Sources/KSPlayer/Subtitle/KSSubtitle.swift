@@ -296,10 +296,10 @@ public protocol KSSubtitleProtocol {
     func search(with query: KSSubtitleQuery) async -> [SubtitlePart]
 }
 
-public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifiable {
+public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject {
     var subtitleID: String { get }
     var name: String { get }
-    var delay: TimeInterval { get set }
+    var delay: TimeInterval { get }
     // Order pinned to the URLSubtitleInfo:SubtitleInfo witness table getters (+0x10..+0x38 =
     // subtitleID / name / delay / languageCode / subtitleLanguage / isEnabled): languageCode (witness
     // 0x100c55b00, String? getter @self+0x40) then subtitleLanguage (witness +0x30, FUN_101aa3cc8) sit
@@ -313,6 +313,8 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject, Hashable, Identifia
     //    var subtitleDataSouce: SubtitleDataSouce? { get set }
 //    var comment: String? { get }
     var isEnabled: Bool { get set }
+    var isSrt: Bool { get }
+    var renderMode: SubtitleRenderMode { get }
 }
 
 public extension SubtitleInfo {
@@ -677,10 +679,12 @@ open class SubtitleModel: ObservableObject {
             subtitleInfos.append(info)
         }
         if rebindSelection {
-            if let sel = selectedSubtitleInfo, sel.subtitleID == info.subtitleID, sel !== info {
+            if selectedSubtitleInfo?.subtitleID == info.subtitleID,
+               selectedSubtitleInfo !== info {
                 selectedSubtitleInfo = info
             }
-            if let sec = secondarySubtitleInfo, sec.subtitleID == info.subtitleID, sec !== info {
+            if secondarySubtitleInfo?.subtitleID == info.subtitleID,
+               secondarySubtitleInfo !== info {
                 secondarySubtitleInfo = info
             }
         }
@@ -742,125 +746,127 @@ open class SubtitleModel: ObservableObject {
     }
     #endif
 
-    // FUN_101ab9d00 (async fn, async-FP @0x10506e8dd) → FUN_101ab4338 (arg-spill + executor hop) →
-    // FUN_101ab438c (entry body) + funclets 4c04/4c54/53e0/5430 (+ deferred translate 5a34/5aa8/664c). §8:
-    // subtitle(currentTime:) migrated the base sync `-> Bool` to async Void — the Bool "did-change" signal was
-    // dropped (observers react to @Published `parts`; every terminal tail-calls the continuation with NO
-    // return-value store, e.g. 5430@0x101ab5a0c `ldr x0,[x22,#8]; br x0`). The two per-track
-    // SubtitleActor.search(with:generation:) results MERGE into `parts` (FUN_1019c7b9c = Array append), are
-    // validated against the CURRENT latest query time on the half-open interval [start,end) (fcmp-proven
-    // 5430@0x5804 `fcmp start,t;b.hi` + @0x5810 `fcmp t,end;b.pl`), then published via the Combine keypath
-    // subscript (d1e8/d210 → `parts`, FUN_101b163b0 = `[SubtitlePart] ==` change-guard). The model's `sequence`
-    // snapshot is passed as the actor's reentrancy `generation`.
-    // ⚑ DEFERRED (translate follow-up, needs `import Translation`): the iOS-18 TranslationSession.translate
-    //   branch (setup inside 438c/4c54/5430 + funclets 5a34/5aa8/664c). Omitted here so the non-translate core
-    //   builds on all platforms; the translate region of 438c/4c54/5430 is a known-divergence pending that pass.
-    public func subtitle(currentTime: TimeInterval) async {
-        // pre-hop (FUN_101ab9d00 → 4338): snapshot the invalidation tokens + per-track adjusted times/skip gates
-        // BEFORE the executor hop; the 5 core funclets read these back as spilled async-frame slots.
-        let generation = subtitleSearchGeneration        // x22+0x9d0  (4338@0x101ab4344)
-        let sequence = subtitleSearchSequence            // x22+0x9b0  (4338@0x101ab4358)
-        let size = playSize                 // fit(playRatio, screenSize) — computed in 438c/4c54@0x469c
-        var newParts = [SubtitlePart]()                  // x22+0x980, initialised empty (438c@0x101ab43c0)
-
-        // PRIMARY (438c → glue 4c04 → resume 4c54): firstSubtitleActor != nil (0x988) && !skipPrimary (char 0x92)
-        if let firstSubtitleActor, let primaryTime = primarySubtitleQueryTime(currentTime) {
-            let query = KSSubtitleQuery(time: primaryTime, size: size,
-                                        verticalAlign: nil, textPosition: nil, textRole: .primary)   // 438c@0x48ac
-            newParts += await firstSubtitleActor.search(with: query, generation: sequence)           // → 0x101ab8864
-        }
-        // SECONDARY (4c54 → glue 53e0 → resume 5430; or from 438c when primary absent): secondarySubtitleActor
-        // != nil (0x9b8) && !skipSecondary (char 0x93). query.textPosition = static SubtitleModel.textPosition.
-        if let secondarySubtitleActor, let secondaryTime = secondarySubtitleQueryTime(currentTime) {
-            let position = SubtitleModel.textPosition                                                 // 438c@0x493c
-            let query = KSSubtitleQuery(time: secondaryTime, size: size,
-                                        verticalAlign: position.verticalAlign,
-                                        textPosition: position, textRole: .secondary)
-            newParts += await secondarySubtitleActor.search(with: query, generation: sequence)
+    // FUN_101ab3fec (synchronous producer) prepares the actor snapshots, adjusted times and
+    // invalidation tokens before creating the inherited task. The task merges both actor results,
+    // validates the current query windows, and publishes through the existing guarded path.
+    public func subtitle(currentTime: TimeInterval, playRatio: Double, screenSize: CGSize) {
+        guard currentTime.isFinite else { return }
+        self.playRatio = playRatio
+        let currentScreenSize = self.screenSize
+        if currentScreenSize.width != screenSize.width || currentScreenSize.height != screenSize.height {
+            self.screenSize = screenSize
         }
 
-        // re-guard + validate + publish (resume-2 FUN_101ab5430; the same tail is inlined into 438c/4c54).
-        // A *selection* change during our await bumps `generation` → abandon, keep current parts. (5430@0x5490)
-        guard generation == subtitleSearchGeneration else { return }
-        // A *newer query* during our await bumps `sequence` → publish only if every gathered part is still valid
-        // against the CURRENT latest query time; any miss abandons without publishing. (5430@0x54ac → loop)
-        if sequence != subtitleSearchSequence {
-            // A newer query ran AND no fresh parts were gathered → abandon WITHOUT publishing, so a superseding
-            // time-query race doesn't spuriously clear still-valid `parts`. (438c@0x4844 `count==0 → LAB_101ab4bb0`
-            // = release + async-return, no _set_subscript; scoped to the seq!=cur branch only.)
-            guard !newParts.isEmpty else { return }
-            for part in newParts {
-                // per-part query time selected by the part's stamped styleRole (csel 5430@0x57d8: role byte at
-                // text +0x201 / image +0x228; secondary(1) → latestSecondary…, else latestPrimary…).
-                let role: SubtitleTextRole
-                switch part.render {
-                case let .left(image):
-                    role = image.styleRole
-                case let .right(text):
-                    if text.text.string.isEmpty { return }     // empty-text part → abandon (5430@0x57b8 `cbz`)
-                    role = text.styleRole
+        let firstActor = firstSubtitleActor
+        let secondaryActor = secondarySubtitleActor
+        let primaryTime: Double?
+        if let firstActor {
+            primaryTime = currentTime - firstActor.info.delay - subtitleDelay
+        } else {
+            primaryTime = nil
+        }
+        let secondaryTime: Double?
+        if let secondaryActor {
+            secondaryTime = currentTime - secondaryActor.info.delay - subtitleDelay
+        } else {
+            secondaryTime = nil
+        }
+        let generation = subtitleSearchGeneration
+        let sequence = subtitleSearchSequence &+ 1
+        subtitleSearchSequence = sequence
+        latestPrimarySubtitleQueryTime = primaryTime
+        latestSecondarySubtitleQueryTime = secondaryTime
+        let capturedPlayRatio = playRatio
+        let capturedScreenSize = screenSize
+        nonisolated(unsafe) let strongSelf = self
+        Task {
+            var newParts = [SubtitlePart]()
+
+            if let firstActor, let primaryTime {
+                var size = capturedScreenSize
+                if !firstActor.info.isSrt || (capturedPlayRatio > 1) != (capturedScreenSize.height < capturedScreenSize.width) {
+                    size = capturedScreenSize.within(ratio: capturedPlayRatio)
+                } else {
+                    let aspect = capturedScreenSize.width == 0 || capturedScreenSize.height == 0
+                        ? 16.0 / 9.0
+                        : capturedScreenSize.width / capturedScreenSize.height
+                    if capturedPlayRatio < aspect {
+                        size = capturedScreenSize.within(ratio: capturedPlayRatio)
+                    }
                 }
-                let queryTime = role == .secondary ? latestSecondarySubtitleQueryTime
-                                                   : latestPrimarySubtitleQueryTime
-                // KEEP iff queryTime != nil && start <= t < end  (half-open [start,end); base NumericComparable
-                // `==` is the CLOSED [start,end] — the binary corrects it to half-open, so it is inlined here).
-                guard let queryTime, part.start <= queryTime, queryTime < part.end else { return }
+                let query = KSSubtitleQuery(time: primaryTime, size: size,
+                                            verticalAlign: nil, textPosition: nil, textRole: .primary)
+                newParts += await firstActor.search(with: query, generation: sequence)
             }
-        }
-        // Skip a redundant publish (and its objectWillChange) when nothing changed. (FUN_101b163b0, 5430@0x5508)
-        guard newParts != parts else { return }
 
-        // iOS-18 TranslationSession.translate (SETUP in 438c/4c54/5430 @0x551c–56e8; await cont FUN_101ab5a34): if
-        // the first gathered part is text and a translation session is configured (self._translationSession,
-        // self+0x38), await the translation and republish — success → FUN_101ab5aa8 (config source-adapt + attributed
-        // build + a fresh translated part), error → FUN_101ab664c (untranslated fallback). Both re-run the resume
-        // tail since generation/sequence can move during the await. ⚑ residual: the size-fit actor.info witness
-        // (subtitleDisplaySize) and the pre-hop skip/time (FUN_101ab9d00) remain deferred — the translate path is done.
-        #if canImport(Translation) && !os(tvOS) && !os(watchOS)
-        if #available(iOS 18, macOS 15, *),
-           let first = newParts.first,
-           case let .right(textInfo) = first.render,                    // first render must be text (byte@0x779==1)
-           let session = _translationSession as? TranslationSession {    // self._translationSession (self+0x38)
-            // FUN_101ab5a34: `try? await` → success(response) [x20==0 → 5aa8] vs error(nil) [swift_errorRelease → 664c].
-            guard let response = try? await session.translate(textInfo.text.string) else {
-                // 664c error fallback: RE-RUN the resume tail (generation/sequence can move during the translate
-                // await), then publish the UNTRANSLATED parts (0x101ab664c → 674c).
-                publishIfCurrent(newParts, generation: generation, sequence: sequence)
+            if let secondaryActor, let secondaryTime {
+                var size = capturedScreenSize
+                if !secondaryActor.info.isSrt || (capturedPlayRatio > 1) != (capturedScreenSize.height < capturedScreenSize.width) {
+                    size = capturedScreenSize.within(ratio: capturedPlayRatio)
+                } else {
+                    let aspect = capturedScreenSize.width == 0 || capturedScreenSize.height == 0
+                        ? 16.0 / 9.0
+                        : capturedScreenSize.width / capturedScreenSize.height
+                    if capturedPlayRatio < aspect {
+                        size = capturedScreenSize.within(ratio: capturedPlayRatio)
+                    }
+                }
+                let position = KSOptions.secondaryTextPosition
+                let query = KSSubtitleQuery(time: secondaryTime, size: size,
+                                            verticalAlign: position.verticalAlign,
+                                            textPosition: position, textRole: .secondary)
+                newParts += await secondaryActor.search(with: query, generation: sequence)
+            }
+
+            guard generation == strongSelf.subtitleSearchGeneration else { return }
+            if sequence != strongSelf.subtitleSearchSequence {
+                guard !newParts.isEmpty else { return }
+                for part in newParts {
+                    let role: SubtitleTextRole
+                    switch part.render {
+                    case let .left(image):
+                        role = image.styleRole
+                    case let .right(text):
+                        if text.text.string.isEmpty { return }
+                        role = text.styleRole
+                    }
+                    let queryTime = role == .secondary ? strongSelf.latestSecondarySubtitleQueryTime
+                                                       : strongSelf.latestPrimarySubtitleQueryTime
+                    guard let queryTime, part.start <= queryTime, queryTime < part.end else { return }
+                }
+            }
+            guard newParts != strongSelf.parts else { return }
+
+            #if canImport(Translation) && !os(tvOS) && !os(watchOS)
+            if #available(iOS 18, macOS 15, *),
+               let first = newParts.first,
+               case let .right(textInfo) = first.render,
+               let session = strongSelf._translationSession as? TranslationSession {
+                guard let response = try? await session.translate(textInfo.text.string) else {
+                    strongSelf.publishIfCurrent(newParts, generation: generation, sequence: sequence)
+                    return
+                }
+                guard strongSelf.stillCurrent(newParts, generation: generation, sequence: sequence) else { return }
+                if strongSelf.translationSessionConf?.source != response.sourceLanguage {
+                    strongSelf.translationSessionConf?.source = response.sourceLanguage
+                }
+                let attributed = NSMutableAttributedString()
+                if KSOptions.showTranslateSourceText {
+                    attributed.append(textInfo.text)
+                    attributed.append(NSAttributedString(string: "\n"))
+                }
+                let translated = response.targetText.replacingOccurrences(of: "\n\n", with: "\n")
+                attributed.append(NSAttributedString(string: translated))
+                var newTextInfo = textInfo
+                newTextInfo.text = attributed
+                let translatedPart = SubtitlePart(first.start, first.end, render: .right(newTextInfo))
+                strongSelf.publishIfCurrent([translatedPart], generation: generation, sequence: sequence)
                 return
             }
-            // 5aa8 entry (0x101ab5aa8–5d58): re-validate the FULL gathered set against the CURRENT query time
-            // BEFORE any translation work — a supersession race during the translate await abandons here.
-            guard stillCurrent(newParts, generation: generation, sequence: sequence) else { return }
-            // 5aa8 success. Adapt the stored config's source language to the detected one when they differ
-            // (self._translationSessionConf, self+0x18, via a _modify coroutine FUN_101ab03c8; get/set_source  ⚑[tool=resolve_fun_pins ref=FUN_101ab03c8:0x101ab03c8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.translationSessionConf.modify : Translation.TranslationSession.Configuration?
-            // 0x103452c98/ca4, Response.get_sourceLanguage 0x103452cd4, Locale.Language ==_infix 0x1034573f0@0x6448).
-            if var conf = _translationSessionConf as? TranslationSession.Configuration,
-               conf.source != response.sourceLanguage {
-                conf.source = response.sourceLanguage                    // set_source @0x6100
-                _translationSessionConf = conf
-            }
-            // Build the display attributed string (0x101ab6118): when the static flag is set, prepend the ORIGINAL
-            // text + "\n"; then append the translated targetText with "\n\n" collapsed to "\n".
-            let attributed = NSMutableAttributedString()
-            if SubtitleModel.showsOriginalWithTranslation {              // ⚑ DAT_104c63248 @0x6148 (see static above)
-                attributed.append(textInfo.text)                         // original (appendAttributedString @0x6160)
-                attributed.append(NSAttributedString(string: "\n"))      // separator (@0x6198)
-            }
-            let translated = response.targetText.replacingOccurrences(of: "\n\n", with: "\n")   // @0x61ec/@0x6250
-            attributed.append(NSAttributedString(string: translated))    // @0x62a8
-            // Build the translated part = copy of the first text part with only `text` replaced, then publish a
-            // FRESH 1-element array (0x101ab62b0–63cc _set_subscript keypaths d1e8/d210 → @Published parts).
-            var newTextInfo = textInfo
-            newTextInfo.text = attributed
-            let translatedPart = SubtitlePart(first.start, first.end, render: .right(newTextInfo))
-            // 5aa8: RE-RUN the resume tail after the translate await, then publish the fresh 1-element array
-            // (0x101ab6360 re-guard → 0x63cc _set_subscript).
-            publishIfCurrent([translatedPart], generation: generation, sequence: sequence)
-            return
-        }
-        #endif
+            #endif
 
-        parts = newParts     // publish — set_subscript on keypaths d1e8/d210 → @Published `parts` (5430@0x58c0)
+            strongSelf.publishIfCurrent(newParts, generation: generation, sequence: sequence)
+        }
     }
 
     // Slot 99 @0x101ab68d4 — a 4-byte, ONE-instruction body: `b 0x101ab68d8`, i.e. a tail call into

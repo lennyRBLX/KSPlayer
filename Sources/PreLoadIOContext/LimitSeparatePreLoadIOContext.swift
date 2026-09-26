@@ -40,10 +40,10 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
 
     // 0  maxFileSize: byte cap for this context. Designated init param-fed (param_7,
     //    8-byte store at +maxFileSize).
-    public var maxFileSize: UInt64 = 0
+    public var maxFileSize: UInt64
     // 1  maxReadedFileSize: cap on bytes read. Designated init param-fed (param_8,
     //    8-byte store at +maxReadedFileSize).
-    public var maxReadedFileSize: UInt64 = 0
+    public var maxReadedFileSize: UInt64
     // 2  loadMoreBuffer: scratch buffer for the separate "load-more" download path.
     //    Designated init zeroes it (nil). ⚑ (element/optionality inferred; pointer width).
     var loadMoreBuffer: UnsafeMutablePointer<UInt8>? // ⚑
@@ -504,7 +504,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     //   to be duplicated source. Nothing in the binary distinguishes the two spellings, so
     //   the literal form is kept and the alternative is recorded rather than chosen. — P2
     // ⚑[tool=vtable_walk ref=LimitSeparatePreLoadIOContext.slot29:0x101ba4e30 result=Method; NAME inferred]
-    func loadMorePosition() -> UInt64? { // name inferred (devirt)
+    private func findDiscontinuousPos() -> UInt64? {
         let position = urlPos == 0 ? logicalPos : min(urlPos, logicalPos)
         var index: Int?
         if !entryList.isEmpty {
@@ -560,8 +560,47 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
         return end
     }
 
-    // UNRESOLVED → P8 (IO-completion): s30 @101ba5398 (433 instr) — the limit IO engine.
-    //   NOT reconstructed; declare nothing beyond this marker. — P2
+    public override func reuseEntry(pos: UInt64, size _: Int32) -> CacheFileEntry? {
+        guard entryList.count >= 9 else {
+            return nil
+        }
+
+        var readedSize: UInt64 = 0
+        var moreSize: UInt64 = 0
+        for entry in entryList {
+            if urlPos < entry.position {
+                moreSize += UInt64(entry.size)
+            } else {
+                readedSize += UInt64(entry.size)
+            }
+        }
+
+        if moreSize > maxFileSize {
+            let index = entryList.count - 3
+            let candidate = entryList[index]
+            guard pos < candidate.position else {
+                return nil
+            }
+            let selectedMax = candidate.maxSize ?? candidate.size
+            entryList.remove(at: index)
+            onCacheUpdated?()
+            return try? CacheFileEntry(dir: tmpURL, position: pos, maxSize: selectedMax)
+        }
+
+        guard readedSize > maxReadedFileSize else {
+            return nil
+        }
+        let candidate = entryList[1]
+        guard candidate.position + UInt64(candidate.size) < urlPos else {
+            return nil
+        }
+        let selectedMax = candidate.maxSize ?? candidate.size
+        entryList.remove(at: 1)
+        onCacheUpdated?()
+        return try? CacheFileEntry(dir: tmpURL, position: pos, maxSize: selectedMax)
+    }
+
+    // s30 @101ba5398 — the limit IO engine.
 
     // s31 @101ba5a5c — `func canPreload(_ position: UInt64) -> Bool` (name inferred,
     //   devirt; 250 instr). FAITHFUL (full). Also NO FFmpeg — same three inherited fields
@@ -606,10 +645,10 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
         var readedSize: UInt64 = 0
         var moreSize: UInt64 = 0
         for entry in entryList {
-            if logicalPos < entry.position {
-                moreSize += UInt64(entry.size)
-            } else {
+            if entry.position <= logicalPos {
                 readedSize += UInt64(entry.size)
+            } else {
+                moreSize += UInt64(entry.size)
             }
         }
         if moreSize > maxFileSize {
@@ -729,14 +768,65 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
     // (0x101babf50, 0x101bac23c, 0x101b94710) and transcribing by FUN-address is forbidden.
     // ⚑[tool=export_trie_oracle ref=more_insert_helper:0x101babf50 result=NOT_IN_TRIE]
     //
-    // NOTE on the -1 guard: the binary calls a PRIVATE `canContinuePreload(at:)` @0x101ba5a5c.
-    // Our source has no member of that name — it declares `canPreload(_:)` at :524, which is a
-    // DIFFERENT symbol — so the call is NOT written here rather than being bent onto the wrong
-    // member. Reconciling those two names is its own unit.
     public func more() -> Int32 {
-        // UNRESOLVED → P8: the canContinuePreload guard, the seek / cache-read split and its
-        // bookkeeping. Only the result contract above is read.
-        0
+        let buffer: UnsafeMutablePointer<UInt8>
+        if let existingBuffer = loadMoreBuffer {
+            buffer = existingBuffer
+        } else {
+            let allocatedBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Int(bufferSize))
+            loadMoreBuffer = allocatedBuffer
+            buffer = allocatedBuffer
+        }
+
+        if let position = findDiscontinuousPos() {
+            let seekResult = moreDownload.seek(offset: Int64(position), whence: 0)
+            KSLog("[CacheIOContext] more ffurl_seek2 \(position)")
+            if seekResult >= 0 {
+                urlPos = UInt64(seekResult)
+                fakeUrlPos = urlPos
+                moreUrlPos = urlPos
+            }
+            return 1
+        }
+
+        let target = urlPos == .max ? logicalPos : urlPos
+        guard canContinuePreload(at: target) else {
+            return -1
+        }
+
+        var requestedSize = bufferSize
+        if let nextPosition = firstEntryAfter(logicalPos: target)?.position {
+            let gap = nextPosition - target
+            if requestedSize >= 1, gap < UInt64(requestedSize) {
+                requestedSize = Int32(gap)
+            }
+        }
+
+        if urlPos != moreUrlPos {
+            let seekResult = moreDownload.seek(offset: Int64(urlPos), whence: 0)
+            KSLog("[CacheIOContext] more ffurl_seek2 \(urlPos)")
+            if seekResult < 0 {
+                return Int32(seekResult)
+            }
+            moreUrlPos = urlPos
+        }
+
+        let result = moreDownload.read(buffer: buffer, size: requestedSize)
+        let eofResult: Int32 = -0x2046_4F45
+        if result == eofResult, requestedSize >= 1 {
+            if isJudgeEOF {
+                eof = true
+            }
+            return eofResult
+        }
+        guard result >= 1 else {
+            return result
+        }
+
+        try? addEntry(logicalPos: target, buffer: buffer, size: result)
+        urlPos = target + UInt64(result)
+        fakeUrlPos = urlPos
+        moreUrlPos = urlPos
+        return result
     }
 }
-

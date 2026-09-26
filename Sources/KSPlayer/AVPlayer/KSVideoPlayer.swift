@@ -334,24 +334,33 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
         }
     }
 
-    public func player(layer _: KSPlayerLayer, currentTime: TimeInterval, totalTime: TimeInterval) {
+    public func player(layer: KSPlayerLayer, currentTime: TimeInterval, totalTime: TimeInterval) {
         onPlay?(currentTime, totalTime)
-        if currentTime >= Double(Int.max) || currentTime <= Double(Int.min) || totalTime >= Double(Int.max) || totalTime <= Double(Int.min) {
+        guard var current = Int(exactly: ceil(currentTime)),
+              var total = Int(exactly: ceil(totalTime)),
+              let playableTime = Int(exactly: ceil(layer.player.playableTime))
+        else {
             return
         }
-        let current = Int(currentTime)
-        let total = Int(max(0, totalTime))
-        if timemodel.currentTime != current {
-            timemodel.currentTime = current
+        if layer.state.isPlaying {
+            current = max(0, current)
+            total = max(0, total)
+            if total < 1 {
+                total = current
+            } else {
+                current = min(total, current)
+            }
+            if timemodel.currentTime != current {
+                timemodel.currentTime = current
+            }
+            if timemodel.totalTime != total {
+                timemodel.totalTime = total
+            }
         }
-        if timemodel.totalTime != total {
-            timemodel.totalTime = total
+        let bufferTime = max(0, playableTime)
+        if timemodel.bufferTime != bufferTime {
+            timemodel.bufferTime = bufferTime
         }
-        // ⚑ consumer-ripple: subtitle(currentTime:) migrated sync `-> Bool` → async Void; laundered per the
-        //   base `nonisolated(unsafe) let strongSelf = self` idiom (searchSubtitle) + Task. Faithful
-        //   reconstruction of this delegate method is separate scope.
-        nonisolated(unsafe) let model = subtitleModel
-        Task { await model.subtitle(currentTime: currentTime) }
     }
 
     public func player(layer: KSPlayerLayer, finish error: Error?) {

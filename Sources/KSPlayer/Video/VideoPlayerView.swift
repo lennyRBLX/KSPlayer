@@ -320,23 +320,6 @@ open class VideoPlayerView: PlayerView {
     override open func player(layer: KSPlayerLayer, currentTime: TimeInterval, totalTime: TimeInterval) {
         guard !isSliderSliding else { return }
         super.player(layer: layer, currentTime: currentTime, totalTime: totalTime)
-        // ⚑ consumer-ripple: subtitle(currentTime:) migrated sync `-> Bool` → async Void (parts now
-        //   @Published-observed). Base `nonisolated(unsafe)` launder (searchSubtitle idiom) + Task; the
-        //   parts-driven UI runs after the await. Faithful reconstruction of this delegate is separate scope.
-        nonisolated(unsafe) let model = srtControl
-        Task { @MainActor in
-            await model.subtitle(currentTime: currentTime)
-            if let part = model.parts.first {
-                // ⚑ UNRESOLVED → P4 M2: render `part.render` (Either<SubtitleImageInfo,SubtitleTextInfo>) —
-                //   recon part.image/part.text removed (payload consolidated into render, §8.6).
-                _ = part
-                subtitleBackView.isHidden = false
-            } else {
-                subtitleBackView.image = nil
-                subtitleLabel.attributedText = nil
-                subtitleBackView.isHidden = true
-            }
-        }
     }
 
     override open func player(layer: KSPlayerLayer, state: KSPlayerState) {
@@ -1010,7 +993,7 @@ public extension KSOptions {
     /// 开启音量手势 默认true
     internal nonisolated(unsafe) static var enableVolumeGestures = true
     /// 开启进度滑动手势 默认true
-    internal nonisolated(unsafe) static var enablePlaytimeGestures = true
+    nonisolated(unsafe) static var enablePlaytimeGestures = true
     /// 播放内核选择策略 先使用firstPlayer，失败了自动切换到secondPlayer，播放内核有KSAVPlayer、KSMEPlayer两个选项
     /// 是否能后台播放视频
     nonisolated(unsafe) static var canBackgroundPlay = false

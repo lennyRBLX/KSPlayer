@@ -42,12 +42,17 @@ extension KSAVPlayerTest: MediaPlayerDelegate {
     func changeLoadState(player _: some MediaPlayerProtocol) {}
 
     func changeBuffering(player _: some MediaPlayerProtocol, progress _: UInt8) {}
+    func changePlaybackTime(player _: some MediaPlayerProtocol, time _: TimeInterval) {}
 
     func playBack(player _: some MediaPlayerProtocol, loopCount _: Int) {}
+
+    func reachEndOfStream(player _: some MediaPlayerProtocol) {}
 
     func finish(player _: some MediaPlayerProtocol, error: Error?) {
         if error != nil {
             readyToPlayExpectation?.fulfill()
         }
     }
+
+    func playerDidClear(player _: some MediaPlayerProtocol) {}
 }

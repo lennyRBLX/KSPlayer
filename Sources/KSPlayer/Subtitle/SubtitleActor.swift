@@ -10,7 +10,7 @@ import Foundation
 // (primary/secondary) SubtitleModel search. Fields reflection-ordered; conforms KSSubtitleProtocol (§8.5).
 public actor SubtitleActor: KSSubtitleProtocol {
     var parts: [SubtitlePart] = []
-    let info: any SubtitleInfo
+    nonisolated(unsafe) let info: any SubtitleInfo
     // UInt64. NOT read from this class's own field records — dump_binary_field_types reports
     // searchGeneration as `unmapped` here — but it is assigned to and from SubtitleModel's
     // subtitleSearchGeneration, which IS record-read as UInt64, so the pair must agree. The old
@@ -26,8 +26,8 @@ public actor SubtitleActor: KSSubtitleProtocol {
     //   it appears only as the TYPE of SubtitleModel's private firstSubtitleActor/secondarySubtitleActor
     //   fields. The "no init symbol" negative is now VERIFIED, not merely unfalsified.
     // ⚑[tool=export_trie_oracle ref=SubtitleActor result=0 owner-position symbols — VERIFIED negative]
-    // `info` is stored once and never reassigned (could be `let`; a `nonisolated let` would additionally enable the
-    // deferred size-fit's synchronous `actor.info` read in SubtitleModel.subtitle(currentTime:)).
+    // `info` is stored once and never reassigned. `nonisolated(unsafe)` enables the synchronous
+    // size-fit reads in SubtitleModel.subtitle(currentTime:playRatio:screenSize:).
     init(info: any SubtitleInfo) {
         self.info = info
     }
@@ -52,9 +52,13 @@ public actor SubtitleActor: KSSubtitleProtocol {
 
     // 9a5c (isolated) — the on-actor realization of the req: bump the generation, delegate to the gen-search.
     // ⚑ recon-named (P28): the 9a44→9a5c hop implies this isolated worker; source name unrecoverable.
-    private func bumpAndSearch(with query: KSSubtitleQuery) async -> sending [SubtitlePart] {
-        searchGeneration += 1
-        return await search(with: query, generation: searchGeneration)
+    @used private func bumpAndSearch(with query: KSSubtitleQuery) async -> sending [SubtitlePart] {
+        // Forward reads and writes the actor's generation at +0x88 directly.
+        let generationSlot = Unmanaged.passUnretained(self).toOpaque()
+            .advanced(by: 0x88).assumingMemoryBound(to: UInt64.self)
+        let generation = generationSlot.pointee &+ 1
+        generationSlot.pointee = generation
+        return await search(with: query, generation: generation)
     }
 
     // Internal generation-guarded search (0x101ab8864 → 8884 → 8938 → 898c; three call sites: bumpAndSearch

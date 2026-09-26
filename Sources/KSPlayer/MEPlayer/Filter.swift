@@ -38,10 +38,10 @@ class MEFilter {
     //   1. isAudio + params are PARAMETERS (param_4 low-bit, param_3) — not self.isAudio/self.params.
     //   2. hw_frames_ctx block DROPPED — avfilter_link → avfilter_graph_config directly.
     //   3. setup()-shape only (no setup2 swap logic).
-    private func setup(filters: String, params: UnsafeMutablePointer<AVBufferSrcParameters>, isAudio: Bool) -> Bool {
+    private func setup(filters: String, params: UnsafeMutablePointer<AVBufferSrcParameters>, isVideo: Bool) -> Bool {
         var inputs = avfilter_inout_alloc()
         var outputs = avfilter_inout_alloc()
-        // Divergence 4 (vs upstream): free both inout lists on ALL exit paths via `defer`
+        // Divergence 4 (vs upstream): free both inout lists on ALL exit paths via defer
         // (upstream frees only inside the first guard-fail).
         defer {
             avfilter_inout_free(&inputs)
@@ -51,15 +51,12 @@ class MEFilter {
         guard ret >= 0, let graph, let inputs, let outputs else {
             return false
         }
-        // Divergence 5: filter-name selection is inverted vs upstream (per the slot22 decompile).
-        // ⚑ POLARITY UNRESOLVED→P3: this isAudio→name mapping is opposite upstream's; the canonical
-        // polarity is set by the (devirt) caller filter() — reconcile in P3.
-        let bufferSink = avfilter_get_by_name(isAudio ? "buffersink" : "abuffersink")
+        let bufferSink = avfilter_get_by_name(isVideo ? "buffersink" : "abuffersink")
         ret = avfilter_graph_create_filter(&bufferSinkContext, bufferSink, "out", nil, nil, graph)
         guard ret >= 0 else { return false }
         ret = avfilter_link(outputs.pointee.filter_ctx, UInt32(outputs.pointee.pad_idx), bufferSinkContext, 0)
         guard ret >= 0 else { return false }
-        let buffer = avfilter_get_by_name(isAudio ? "buffer" : "abuffer")
+        let buffer = avfilter_get_by_name(isVideo ? "buffer" : "abuffer")
         bufferSrcContext = avfilter_graph_alloc_filter(graph, buffer, "in")
         guard bufferSrcContext != nil else { return false }
         av_buffersrc_parameters_set(bufferSrcContext, params)
@@ -73,23 +70,30 @@ class MEFilter {
     }
 
     // UNRESOLVED→P3: filter() devirt — not binary-anchored; isAudio source + exact dedup unverified
-    public func filter(options: KSOptions, inputFrame: UnsafeMutablePointer<AVFrame>, completionHandler: (UnsafeMutablePointer<AVFrame>) -> Void) {
-        // FLAGGED placeholder — isAudio unrecoverable here (devirt). Named `audioFlag`
-        // to avoid re-introducing the removed `isAudio` member.
-        let audioFlag = false
+    public func filter(
+        options: KSOptions,
+        inputFrame: UnsafeMutablePointer<AVFrame>,
+        _ isVideo: Bool,
+        completionHandler: (UnsafeMutablePointer<AVFrame>) -> Void
+    ) {
         let filters: String
-        if audioFlag {
-            filters = options.audioFilters.joined(separator: ",")
-        } else {
-            // ⚑ Forward dropped options.autoDeInterlace (field absent) + the idet auto-detection (KSOptions.filter),
-            //   so the base idet-filter auto-append is Forward-removed. Verify Forward's de-interlace path.
+        if isVideo {
             filters = options.videoFilters.joined(separator: ",")
+        } else {
+            filters = options.audioFilters.joined(separator: ",")
         }
         guard !filters.isEmpty else {
+            if self.filters != nil {
+                av_buffersrc_close(
+                    bufferSrcContext,
+                    inputFrame.pointee.pts,
+                    UInt32(AV_BUFFERSRC_FLAG_PUSH)
+                )
+                self.filters = nil
+            }
             completionHandler(inputFrame)
             return
         }
-        // Local builder; named `srcParams` to avoid re-introducing the removed `params` member.
         var srcParams = AVBufferSrcParameters()
         srcParams.format = inputFrame.pointee.format
         srcParams.time_base = timebase.rational
@@ -107,18 +111,21 @@ class MEFilter {
             width = srcParams.width
             height = srcParams.height
             self.filters = filters
-            if !setup(filters: filters, params: &srcParams, isAudio: audioFlag) {
+            if !setup(filters: filters, params: &srcParams, isVideo: isVideo) {
                 completionHandler(inputFrame)
                 return
             }
         }
+        let duration = inputFrame.pointee.duration
         let ret = av_buffersrc_add_frame_flags(bufferSrcContext, inputFrame, 0)
         if ret < 0 {
             return
         }
         while av_buffersink_get_frame_flags(bufferSinkContext, inputFrame, 0) >= 0 {
+            if !isVideo {
+                inputFrame.pointee.duration = duration
+            }
             completionHandler(inputFrame)
-            // 一定要加av_frame_unref，不然会内存泄漏。
             av_frame_unref(inputFrame)
         }
     }

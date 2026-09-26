@@ -228,6 +228,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     //    itself independent confirmation that no such second init exists in the original —
     //    this one is ours. The literals below are scaffold values, NOT binary-grounded.
     init(formatCtx: UnsafeMutablePointer<AVFormatContext>,   // ⚑ test scaffold, not in binary
+         outPacket: UnsafeMutablePointer<AVPacket>,
          streamMapping: [Int32: Int32] = [:],
          timeBaseMap: [Int32: AVRational] = [:],
          removeADTS: Bool = false) {
@@ -238,6 +239,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         self.url = ""            // ⚑ scaffold-only value
         self.frameRate = 0       // ⚑ scaffold-only value
         self.formatName = ""     // ⚑ scaffold-only value
+        self.outPacket = outPacket
     }
 
     // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────

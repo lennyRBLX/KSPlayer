@@ -363,11 +363,9 @@ func - (left: CGSize, right: CGSize) -> CGSize {
 }
 
 @inline(__always)
-@preconcurrency
-// @MainActor
-public func runOnMainThread(block: @escaping @Sendable () -> Void) {
+public func runOnMainThread(block: @escaping @MainActor @Sendable () -> Void) {
     if Thread.isMainThread {
-        block()
+        MainActor.assumeIsolated(block, file: "KSPlayer/Utility.swift", line: 22)
     } else {
         Task {
             await MainActor.run(body: block)

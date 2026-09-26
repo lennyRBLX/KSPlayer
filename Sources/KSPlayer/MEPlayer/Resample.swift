@@ -10,6 +10,7 @@ import CoreGraphics
 import CoreMedia
 import DOVIRPUShim
 import Libavcodec
+import Libavutil
 import Libswresample
 import Libswscale
 
@@ -85,14 +86,11 @@ class VideoSwresample: FrameChange {
     //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
     //   reconstruction/binding_refuted_s61.json
     private var dovi: DOVIDecoderConfigurationRecord?
-    // P3a: KSDOVIMetadata = the serializer's flattened 3008-byte DV GPU buffer (DOVIRPUShim,
-    // opaque). Binary +0x60 is EXACTLY 3008 B (=0xBC0), leaving no room for a nil tag in an
-    // opaque blob → field reconstructed NON-optional (field-record name is `KSDOVIMetadata?`;
-    // optionality flagged → DV-render, where the real layout may expose a spare-bit inhabitant).
-    // The field record types this `KSDOVIMetadata?` (l2_field_gate, field 11 of 14). Unannotated
-    // `var x = …` inferred it NON-optional, and the gate could then only report UNCHECKED — so the
-    // annotation is what makes the field verifiable at all, and VideoSwresample's REAL_FLAG 0 was
-    // masking the same defect Model.swift:478 was flagged for.
+    // P3a: KSDOVIMetadata is the serializer's imported-C 3008-byte DV metadata layout.
+    // Its nested Bool at metadata offset 0x457 supplies Optional's extra inhabitant; keep this
+    // field optional so MemoryLayout<KSDOVIMetadata?> remains 0xbc0.
+    // The field record identifies this as KSDOVIMetadata? (l2_field_gate, field 11 of 14).
+    // The declaration default remains unchanged pending the initializer check below.
     // ⚑[tool=export_trie_oracle ref=VideoSwresample.doviData:vpfi result=NO_SUBTREE] The DEFAULT is
     //   NOT verifiable: VideoSwresample is internal and has no trie subtree ("no orphan subtree
     //   found"); exactly 1 of 57138 trie names mentions the type, and that is ThumbnailSession.reScale's
@@ -117,18 +115,16 @@ class VideoSwresample: FrameChange {
     // That ~12-requirement protocol layer is unverifiable with current tools (no witness-table verifier) →
     // DEFERRED as a unit with transfer (slot30). Kept upstream with isDovi → `dovi != nil` to compile.
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
-        // The binary obtains the buffer BEFORE allocating the frame, and passes it in: the
-        // _swift_allocObject for VideoVTBFrame @0x101a661d0 follows the buffer work at
-        // 0x101a6615c. It also does NOT nil-test transfer's result — after `bl 0x101a666f8` it
-        // takes both existential words straight into x20/x23 and calls swift_getObjectType on
-        // them, which a nil would crash. The only test is `cbnz x21`, the swifterror check.
-        let pixelBuffer: PixelBufferProtocol
-        if avframe.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue {
-            pixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
-        } else {
-            pixelBuffer = try transfer(frame: avframe.pointee)
-        }
-        return VideoVTBFrame(pixelBuffer: pixelBuffer, fps: fps, isDovi: dovi != nil)
+        let pixelBuffer = try transfer(frame: avframe.pointee)
+        pixelBuffer.hdr10PlusData = hdr10PlusData
+        configureColorSpace(dovi: dovi, pixelBuffer: pixelBuffer)
+        let frame = VideoVTBFrame(pixelBuffer: pixelBuffer, fps: fps, isDovi: dovi != nil)
+        frame.isKeyFrame = avframe.pointee.flags & AV_FRAME_FLAG_KEY != 0
+        frame.dovi = dovi
+        frame.edrMetaData = edrMetaData
+        frame.doviData = doviData
+        frame.rpuBuffer = rpuBuffer
+        return frame
     }
 
     // T2 — slot29 @0x101a662e8. sws spine FAITHFUL (body-audited).
@@ -194,28 +190,33 @@ class VideoSwresample: FrameChange {
     // the `KSPlayerError: Error` conformance witness table.
     func transfer(frame: AVFrame) throws -> PixelBufferProtocol {
         let format = AVPixelFormat(rawValue: frame.format)
-        let width = frame.width
-        let height = frame.height
-        if format.leftShift > 0 {
-            return PixelBuffer(frame: frame)
-        }
-        let pbuf = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize))
-        guard let pbuf else {
-            throw KSPlayerError(code: 0, description: "pixelBufferPool Create fail. format=\(format), width=\(width) height=\(height)")
+        let pbuf: PixelBufferProtocol
+        if format == AV_PIX_FMT_VIDEOTOOLBOX {
+            pbuf = unsafeBitCast(frame.data.3, to: CVPixelBuffer.self)
+        } else if dstWidth == nil, dstHeight == nil,
+                  format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_YUV420P10LE
+                  || format == AV_PIX_FMT_YUV422P10LE || format == AV_PIX_FMT_YUV444P10LE {
+            pbuf = PixelBuffer(frame: frame)
+        } else {
+            let width = frame.width
+            let height = frame.height
+            guard let pixelBuffer = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize)) else {
+                throw KSPlayerError(code: 0, description: "pixelBufferPool Create fail. format=\(format), width=\(width) height=\(height)")
+            }
+            pixelBuffer.yCbCrMatrix = frame.colorspace.ycbcrMatrix
+            pixelBuffer.colorPrimaries = frame.color_primaries.colorPrimaries
+            pixelBuffer.transferFunction = frame.color_trc.transferFunction
+            if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_UseGamma {
+                let gamma = NSNumber(value: frame.color_trc == AVCOL_TRC_GAMMA22 ? 2.2 : 2.8)
+                CVBufferSetAttachment(pixelBuffer, kCVImageBufferGammaLevelKey, gamma, .shouldPropagate)
+            }
+            if let chroma = frame.chroma_location.chroma {
+                CVBufferSetAttachment(pixelBuffer, kCVImageBufferChromaLocationTopFieldKey, chroma, .shouldPropagate)
+            }
+            pbuf = pixelBuffer
         }
         pbuf.aspectRatio = frame.sample_aspect_ratio.size
-        pbuf.yCbCrMatrix = frame.colorspace.ycbcrMatrix
-        pbuf.colorPrimaries = frame.color_primaries.colorPrimaries
-        pbuf.transferFunction = frame.color_trc.transferFunction
-        // vt_pixbuf_set_colorspace
-        if pbuf.transferFunction == kCVImageBufferTransferFunction_UseGamma {
-            let gamma = NSNumber(value: frame.color_trc == AVCOL_TRC_GAMMA22 ? 2.2 : 2.8)
-            CVBufferSetAttachment(pbuf, kCVImageBufferGammaLevelKey, gamma, .shouldPropagate)
-        }
-        if let chroma = frame.chroma_location.chroma {
-            CVBufferSetAttachment(pbuf, kCVImageBufferChromaLocationTopFieldKey, chroma, .shouldPropagate)
-        }
-        pbuf.colorspace = KSOptions.colorSpace(ycbcrMatrix: pbuf.yCbCrMatrix, transferFunction: pbuf.transferFunction)
+        configureColorSpace(dovi: dovi, pixelBuffer: pbuf)
         return pbuf
     }
 
@@ -291,9 +292,156 @@ class VideoSwresample: FrameChange {
     // Cached: VideoSwresample_slot32.
 
     // UNRESOLVED → DV-render: Forward may also free the DV buffer/rpuBuffer (devirt; not verifiable here).
+    // ⚑[invented=processSideData addr=0x101a67274 exhaustion=name_exhaustion_gate approved=orchestrator]
+    func processSideData(frame: AVFrame, assetTrack: FFmpegAssetTrack, options: KSOptions, packet: UnsafeMutablePointer<AVPacket>?) {
+        edrMetaData = nil
+        hdr10PlusData = nil
+        rpuBuffer = nil
+
+        var displayData: MasteringDisplayMetadata?
+        var contentData: ContentLightMetadata?
+        var ambientViewingEnvironment: AmbientViewingEnvironment?
+        var isVIVID = false
+
+        if frame.nb_side_data > 0 {
+            for i in 0 ..< frame.nb_side_data {
+                guard let sideData = frame.side_data[Int(i)]?.pointee else {
+                    continue
+                }
+                if sideData.type == AV_FRAME_DATA_A53_CC {
+                    if let closedCaptionsTrack = assetTrack.closedCaptionsTrack,
+                       let subtitle = closedCaptionsTrack.subtitle {
+                        let closedCaptionsPacket = Packet()
+                        if let sourcePacket = packet,
+                           let destinationPacket = closedCaptionsPacket.corePacket {
+                            destinationPacket.pointee.pts = sourcePacket.pointee.pts
+                            destinationPacket.pointee.dts = sourcePacket.pointee.dts
+                            destinationPacket.pointee.pos = sourcePacket.pointee.pos
+                            destinationPacket.pointee.time_base = sourcePacket.pointee.time_base
+                            destinationPacket.pointee.stream_index = sourcePacket.pointee.stream_index
+                        }
+                        if let destinationPacket = closedCaptionsPacket.corePacket {
+                            destinationPacket.pointee.flags |= AV_PKT_FLAG_KEY
+                            destinationPacket.pointee.size = Int32(sideData.size)
+                            let buffer = av_buffer_ref(sideData.buf)
+                            destinationPacket.pointee.data = buffer?.pointee.data
+                            destinationPacket.pointee.buf = buffer
+                        }
+                        closedCaptionsPacket.assetTrack = closedCaptionsTrack
+                        subtitle.putPacket(packet: closedCaptionsPacket)
+                    }
+                } else if sideData.type == AV_FRAME_DATA_SEI_UNREGISTERED {
+                    if sideData.size >= 17 {
+                        let str = String(cString: sideData.data.advanced(by: Int(AV_UUID_LEN)))
+                        var timestamp = frame.best_effort_timestamp
+                        if timestamp < 0 {
+                            timestamp = frame.pts
+                        }
+                        if timestamp < 0 {
+                            timestamp = frame.pkt_dts
+                        }
+                        options.sei(string: str, time: assetTrack.timebase.cmtime(for: max(0, timestamp)) - assetTrack.startTime)
+                    }
+                } else if sideData.type == AV_FRAME_DATA_DOVI_METADATA {
+                    sideData.data.withMemoryRebound(to: AVDOVIMetadata.self, capacity: 1) { data in
+                        doviData = convertAVDOVIToKSDOVIMetadata(data)
+                    }
+                    if assetTrack.dovi == nil,
+                       frame.color_trc == AVCOL_TRC_UNSPECIFIED,
+                       options.hardwareDecode {
+                        options.display = KSOptions.displayEnumDovi
+                    }
+                } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
+                    if assetTrack.dovi?.dv_profile != 7 {
+                        rpuBuffer = Data(bytes: sideData.data, count: Int(sideData.size))
+                    }
+                } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_PLUS {
+                    var output: UnsafeMutablePointer<UInt8>?
+                    var outputSize = 0
+                    let result = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { data in
+                        av_dynamic_hdr_plus_to_t35(data, &output, &outputSize)
+                    }
+                    if result >= 0, let output, outputSize >= 1 {
+                        hdr10PlusData = Data(bytes: output, count: outputSize)
+                        av_free(output)
+                    }
+                } else if sideData.type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA {
+                    let data = sideData.data.withMemoryRebound(to: AVMasteringDisplayMetadata.self, capacity: 1) { $0 }.pointee
+                    displayData = MasteringDisplayMetadata(
+                        display_primaries_r_x: UInt16(truncatingIfNeeded: data.display_primaries.0.0.num),
+                        display_primaries_r_y: UInt16(truncatingIfNeeded: data.display_primaries.0.1.num),
+                        display_primaries_g_x: UInt16(truncatingIfNeeded: data.display_primaries.1.0.num),
+                        display_primaries_g_y: UInt16(truncatingIfNeeded: data.display_primaries.1.1.num),
+                        display_primaries_b_x: UInt16(truncatingIfNeeded: data.display_primaries.2.1.num),
+                        display_primaries_b_y: UInt16(truncatingIfNeeded: data.display_primaries.2.1.num),
+                        white_point_x: UInt16(truncatingIfNeeded: data.white_point.0.num),
+                        white_point_y: UInt16(truncatingIfNeeded: data.white_point.1.num),
+                        minLuminance: UInt32(truncatingIfNeeded: data.min_luminance.num),
+                        maxLuminance: UInt32(truncatingIfNeeded: data.max_luminance.num)
+                    )
+                } else if sideData.type == AV_FRAME_DATA_CONTENT_LIGHT_LEVEL {
+                    let data = sideData.data.withMemoryRebound(to: AVContentLightMetadata.self, capacity: 1) { $0 }.pointee
+                    contentData = ContentLightMetadata(
+                        MaxCLL: UInt16(data.MaxCLL),
+                        MaxFALL: UInt16(data.MaxFALL)
+                    )
+                } else if sideData.type == AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT {
+                    let data = sideData.data.withMemoryRebound(to: AVAmbientViewingEnvironment.self, capacity: 1) { $0 }.pointee
+                    ambientViewingEnvironment = AmbientViewingEnvironment(
+                        ambient_illuminance: UInt32(truncatingIfNeeded: data.ambient_illuminance.num),
+                        ambient_light_x: UInt16(truncatingIfNeeded: data.ambient_light_x.num),
+                        ambient_light_y: UInt16(truncatingIfNeeded: data.ambient_light_y.num)
+                    )
+                } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_VIVID {
+                    isVIVID = true
+                }
+            }
+        }
+
+        if displayData != nil || contentData != nil || ambientViewingEnvironment != nil {
+            edrMetaData = EDRMetaData(
+                displayData: displayData,
+                contentData: contentData,
+                ambientViewingEnvironment: ambientViewingEnvironment,
+                isVIVID: isVIVID
+            )
+        }
+    }
+
     func shutdown() {
         sws_freeContext(imgConvertCtx)
         imgConvertCtx = nil
+    }
+}
+
+// ⚑[invented=configureColorSpace addr=0x101a88b68 exhaustion=name_exhaustion_gate approved=orchestrator]
+private func configureColorSpace(dovi: DOVIDecoderConfigurationRecord?, pixelBuffer: PixelBufferProtocol) {
+    if pixelBuffer.transferFunction == nil, let dovi {
+        switch dovi.dv_bl_signal_compatibility_id {
+        case 0, 1:
+            pixelBuffer.transferFunction = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+        case 4:
+            pixelBuffer.transferFunction = kCVImageBufferTransferFunction_ITU_R_2100_HLG
+        default:
+            break
+        }
+    }
+    if let colorPrimaries = pixelBuffer.colorPrimaries {
+        pixelBuffer.colorspace = KSOptions.colorSpace(
+            colorPrimaries: colorPrimaries,
+            transferFunction: pixelBuffer.transferFunction,
+            dovi: dovi
+        )
+    }
+    if pixelBuffer.colorspace == nil, let dovi {
+        switch dovi.dv_bl_signal_compatibility_id {
+        case 0, 1:
+            pixelBuffer.colorspace = KSOptions.colorSpace2020PQ
+        case 4:
+            pixelBuffer.colorspace = KSOptions.colorSpace2020HLG
+        default:
+            break
+        }
     }
 }
 
@@ -492,41 +640,41 @@ public class AudioDescriptor: Equatable {
             }
         }
         KSLog("[audio] out channelLayout: \(outChannel)")
-        var commonFormat: AVAudioCommonFormat
-        var interleaved: Bool
-        switch sampleFormat {
-        case AV_SAMPLE_FMT_S16:
-            commonFormat = .pcmFormatInt16
-            interleaved = true
-        case AV_SAMPLE_FMT_S32:
-            commonFormat = .pcmFormatInt32
-            interleaved = true
-        case AV_SAMPLE_FMT_FLT:
-            commonFormat = .pcmFormatFloat32
-            interleaved = true
-        case AV_SAMPLE_FMT_DBL:
-            commonFormat = .pcmFormatFloat64
-            interleaved = true
-        case AV_SAMPLE_FMT_S16P:
-            commonFormat = .pcmFormatInt16
-            interleaved = false
-        case AV_SAMPLE_FMT_S32P:
-            commonFormat = .pcmFormatInt32
-            interleaved = false
-        case AV_SAMPLE_FMT_FLTP:
-            commonFormat = .pcmFormatFloat32
-            interleaved = false
-        case AV_SAMPLE_FMT_DBLP:
-            commonFormat = .pcmFormatFloat64
-            interleaved = false
-        default:
-            commonFormat = .pcmFormatFloat32
-            interleaved = false
-        }
-        interleaved = KSOptions.audioPlayerType == AudioRendererPlayer.self
-        if !(KSOptions.audioPlayerType == AudioRendererPlayer.self || KSOptions.audioPlayerType == AudioUnitPlayer.self) {
-            commonFormat = .pcmFormatFloat32
-        }
+        let commonFormat = AVAudioCommonFormat.pcmFormatFloat32 // 0x101a68eb8 `mov w2,#0x1`: unconditional
+        // No sampleFormat switch in Forward (header above); upstream switch kept commented for reference:
+        // switch sampleFormat {
+        // case AV_SAMPLE_FMT_S16:
+        //     commonFormat = .pcmFormatInt16
+        //     interleaved = true
+        // case AV_SAMPLE_FMT_S32:
+        //     commonFormat = .pcmFormatInt32
+        //     interleaved = true
+        // case AV_SAMPLE_FMT_FLT:
+        //     commonFormat = .pcmFormatFloat32
+        //     interleaved = true
+        // case AV_SAMPLE_FMT_DBL:
+        //     commonFormat = .pcmFormatFloat64
+        //     interleaved = true
+        // case AV_SAMPLE_FMT_S16P:
+        //     commonFormat = .pcmFormatInt16
+        //     interleaved = false
+        // case AV_SAMPLE_FMT_S32P:
+        //     commonFormat = .pcmFormatInt32
+        //     interleaved = false
+        // case AV_SAMPLE_FMT_FLTP:
+        //     commonFormat = .pcmFormatFloat32
+        //     interleaved = false
+        // case AV_SAMPLE_FMT_DBLP:
+        //     commonFormat = .pcmFormatFloat64
+        //     interleaved = false
+        // default:
+        //     commonFormat = .pcmFormatFloat32
+        //     interleaved = false
+        // }
+        let interleaved = KSOptions.audioPlayerType == AudioRendererPlayer.self
+        // if !(KSOptions.audioPlayerType == AudioRendererPlayer.self || KSOptions.audioPlayerType == AudioUnitPlayer.self) {
+        //     commonFormat = .pcmFormatFloat32
+        // }
         return AVAudioFormat(commonFormat: commonFormat, sampleRate: Double(sampleRate), interleaved: interleaved, channelLayout: AVAudioChannelLayout(layoutTag: layoutTag)!)
         //        AVAudioChannelLayout(layout: outChannel.layoutTag.channelLayout)
     }

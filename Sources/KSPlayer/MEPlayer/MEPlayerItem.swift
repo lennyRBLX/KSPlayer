@@ -223,8 +223,13 @@ public final class MEPlayerItem: @unchecked Sendable {
         }
     }()
 
-    public init(url: URL, options: KSOptions) {
-        io = .left(url) // ⚑ Forward io: Either<URL, AbstractAVIOContext>; init wraps url (sibling KSAVPlayer.io = .left(url)); Forward init may take io: directly (caller builds the Either)
+    public convenience init(url: URL, options: KSOptions) {
+        self.init(io: .left(url), options: options)
+    }
+
+    // Ref designated entry 0x101a4bae0 copies the supplied Either directly.
+    public init(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
+        self.io = io
         self.options = options
         _ = MEPlayerItem.onceInitial
     }
@@ -524,7 +529,7 @@ extension MEPlayerItem {
 
 // MARK: MediaPlayback
 
-extension MEPlayerItem: MediaPlayback {
+extension MEPlayerItem {
     /// The four-arm predicate below is READ, not designed. It is transcribed from
     /// `KSMEPlayer.sourceDidOpenedSync()` @0x101a3bd64, whose statement 2 assigns
     /// `KSMEPlayer.seekable` (offset global 0x1044ea148) from an expression over
@@ -911,26 +916,31 @@ extension AbstractAVIOContext {
     //   (@0x103568b30) and child_next (AVClass+0x38) = the thunk @0x1019e237c. child_next(obj,prev):
     //   nil unless prev==nil, then reads obj->opaque (AVIOContext+0x28), casts to AbstractAVIOContext,
     //   returns its urlContext (vtable +0xa8; retained/released around blr @0x1019e23b0), else nil.
-    private nonisolated(unsafe) static var avClass = AVClass(
-        class_name: "AbstractAVIOContext",
-        item_name: nil,
-        option: nil,
-        version: 0,
-        log_level_offset_offset: 0,
-        parent_log_context_offset: 0,
-        category: AV_CLASS_CATEGORY_NA,
-        get_category: nil,
-        query_ranges: nil,
-        child_next: { obj, prev in
-            guard let obj, prev == nil else { return nil }
-            let context = Unmanaged<AbstractAVIOContext>.fromOpaque(obj).takeUnretainedValue()
-            return context.nextAVOptions()
-        },
-        child_class_iterate: nil,
-        state_flags_offset: 0
-    )
+    private nonisolated(unsafe) static var avClass: AVClass = makeAVClass()
 
-    func getContext(writable: Bool) -> UnsafeMutablePointer<AVIOContext>? {
+    @inline(never)
+    private static func makeAVClass() -> AVClass {
+        AVClass(
+            class_name: "AbstractAVIOContext",
+            item_name: nil,
+            option: nil,
+            version: 0,
+            log_level_offset_offset: 0,
+            parent_log_context_offset: 0,
+            category: AV_CLASS_CATEGORY_NA,
+            get_category: nil,
+            query_ranges: nil,
+            child_next: { obj, prev in
+                guard let obj, prev == nil else { return nil }
+                let context = Unmanaged<AbstractAVIOContext>.fromOpaque(obj).takeUnretainedValue()
+                return context.nextAVOptions()
+            },
+            child_class_iterate: nil,
+            state_flags_offset: 0
+        )
+    }
+
+    @used func getContext(writable: Bool) -> UnsafeMutablePointer<AVIOContext>? {
         // 需要持有ioContext，不然会被释放掉,等到shutdown在清空
         // ⚑[tool=ffmpeg_name_oracle ref=av_malloc:0x103253d30 result=CONFIRMED] (avutil/mem.o — buffer for the io context)
         let context = avio_alloc_context(av_malloc(Int(bufferSize)), bufferSize, writable ? 1 : 0, Unmanaged.passUnretained(self).toOpaque()) { opaque, buffer, size -> Int32 in

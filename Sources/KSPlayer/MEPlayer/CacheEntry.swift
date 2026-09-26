@@ -5,7 +5,7 @@
 //  Reconstructed binary-faithful from Forward 1.3.17 (KSPlayer module).
 //
 
-// In-memory cache record of the IO foundation. `final class` (the binary's
+// In-memory cache record of the IO foundation. NOT final: vtable slots 9-12 (the binary's
 // inits call `_swift_allocObject`; `init(from:)` calls
 // `_swift_deallocPartialClassInstance`). Conforms to `Codable` — slots 11
 // (`encode(to:)`) and 12 (`init(from:)`) are Swift's AUTO-SYNTHESIZED Codable
@@ -31,7 +31,7 @@ public protocol CacheEntryProtocol {
     var size: UInt32 { get }
 }
 
-final class CacheEntry: CacheEntryProtocol, Codable {
+public class CacheEntry: CacheEntryProtocol, Codable {
     // field types pinned from mangled property descriptors (authoritative — demangled):
     //   CacheEntry.logicalPos : Swift.Int64   ·  .physicalPos : Swift.UInt64
     //   CacheEntry.size : Swift.UInt32  ·  .maxSize : Swift.UInt32?  ·  .eof : Swift.Bool
@@ -51,18 +51,18 @@ final class CacheEntry: CacheEntryProtocol, Codable {
     public let logicalPos: Int64    // +0x10, 8B  (mangled: logicalPoss5Int64Vv)
     public let physicalPos: UInt64  // +0x18, 8B  (mangled: physicalPoss6UInt64Vv)
     public var size: UInt32         // +0x20, 4B  (mangled: size...s6UInt32V; bounds-check compares UNSIGNED)
-    public var eof: Bool            // +0x24, 1B  (reflection `Sb`; init writes 0 = false)
+    public var eof: Bool = false    // +0x24, 1B  (reflection `Sb`; initial value: 0x1019e2928 strb wzr precedes the param stores)
     public var maxSize: UInt32?     // +0x28 value / +0x2c discriminator (mangled: maxSizes6UInt32VSgv; encodeIfPresent)
 
     // Slot 9 memberwise init @0x1019e28dc: stores logicalPos(+0x10),
     // physicalPos(+0x18), size(+0x20) from params; eof(+0x24) defaults to
     // false (init writes 0); maxSize(+0x28/+0x2c) stored from the Optional
     // param. There is no `eof` parameter — the binary always initialises it false.
-    init(logicalPos: Int64, physicalPos: UInt64, size: UInt32, maxSize: UInt32?) {
+    @used init(logicalPos: Int64, physicalPos: UInt64, size: UInt32, maxSize: UInt32?) {
         self.logicalPos = logicalPos
         self.physicalPos = physicalPos
         self.size = size
-        self.eof = false
+        // eof: declaration default. maxSize: assigned after full init (0x1019e294c swift_beginAccess, flags 1).
         self.maxSize = maxSize
     }
 

@@ -29,9 +29,35 @@
 // The reconstructed Swift fields embed these types BY VALUE; their sizes MUST equal the
 // binary's inline reservations (VideoToolboxDecode: doviData@+0x50 = 3008 B; doviContext@
 // +0xc10 = 224 B, i.e. the span to the next field `frames`@+0xcf0). If a future FFmpegKit
-// bump changes the real sizeof(DOVIContext), guard (2) fires at build time, before any
+// bump changes one of these imported layouts, a guard fires at build time, before any
 // silent class-layout drift.
-_Static_assert(sizeof(KSDOVIMetadata) == 3008, "KSDOVIMetadata must be 3008 B (binary inline 0xBC0)");
+_Static_assert(sizeof(KSDOVIDMData) == 0x28, "KSDOVIDMData must be 0x28 B");
+_Static_assert(_Alignof(KSDOVIDMData) == 4, "KSDOVIDMData must be 4-byte aligned");
+
+_Static_assert(sizeof(KSDOVIReshapeData) == 0x3b0, "KSDOVIReshapeData must be 0x3b0 B");
+_Static_assert(_Alignof(KSDOVIReshapeData) == 16, "KSDOVIReshapeData must be 16-byte aligned");
+_Static_assert(offsetof(KSDOVIReshapeData, coeffs) == 0x000, "KSDOVIReshapeData.coeffs offset");
+_Static_assert(offsetof(KSDOVIReshapeData, mmr) == 0x080, "KSDOVIReshapeData.mmr offset");
+_Static_assert(offsetof(KSDOVIReshapeData, pivots) == 0x380, "KSDOVIReshapeData.pivots offset");
+_Static_assert(offsetof(KSDOVIReshapeData, lo) == 0x39c, "KSDOVIReshapeData.lo offset");
+_Static_assert(offsetof(KSDOVIReshapeData, hi) == 0x3a0, "KSDOVIReshapeData.hi offset");
+_Static_assert(offsetof(KSDOVIReshapeData, min_order) == 0x3a4, "KSDOVIReshapeData.min_order offset");
+_Static_assert(offsetof(KSDOVIReshapeData, max_order) == 0x3a5, "KSDOVIReshapeData.max_order offset");
+_Static_assert(offsetof(KSDOVIReshapeData, num_pivots) == 0x3a6, "KSDOVIReshapeData.num_pivots offset");
+_Static_assert(offsetof(KSDOVIReshapeData, has_poly) == 0x3a7, "KSDOVIReshapeData.has_poly offset");
+_Static_assert(offsetof(KSDOVIReshapeData, has_mmr) == 0x3a8, "KSDOVIReshapeData.has_mmr offset");
+_Static_assert(offsetof(KSDOVIReshapeData, mmr_single) == 0x3a9, "KSDOVIReshapeData.mmr_single offset");
+
+_Static_assert(sizeof(KSDOVIMetadata) == 0xbc0, "KSDOVIMetadata must be 0xbc0 B (binary inline)");
+_Static_assert(_Alignof(KSDOVIMetadata) == 16, "KSDOVIMetadata must be 16-byte aligned");
+_Static_assert(offsetof(KSDOVIMetadata, disable_residual_flag) == 0x00, "KSDOVIMetadata.disable_residual_flag offset");
+_Static_assert(offsetof(KSDOVIMetadata, nonlinear) == 0x10, "KSDOVIMetadata.nonlinear offset");
+_Static_assert(offsetof(KSDOVIMetadata, linear) == 0x40, "KSDOVIMetadata.linear offset");
+_Static_assert(offsetof(KSDOVIMetadata, nonlinear_offset) == 0x70, "KSDOVIMetadata.nonlinear_offset offset");
+_Static_assert(offsetof(KSDOVIMetadata, minLuminance) == 0x80, "KSDOVIMetadata.minLuminance offset");
+_Static_assert(offsetof(KSDOVIMetadata, maxLuminance) == 0x84, "KSDOVIMetadata.maxLuminance offset");
+_Static_assert(offsetof(KSDOVIMetadata, dm) == 0x88, "KSDOVIMetadata.dm offset");
+_Static_assert(offsetof(KSDOVIMetadata, comp) == 0xb0, "KSDOVIMetadata.comp offset");
 _Static_assert(sizeof(DOVIContext) == 224,     "DOVIContext must be 224 B (binary inline 0xE0; dovi_rpu.h sizeof)");
 
 // ── Private FFmpeg API declarations ──

@@ -29,6 +29,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
+#include <simd/simd.h>
 
 // DOVIContext: FFmpeg's private DV parser context (real def: libavcodec/dovi_rpu.h).
 // The binary embeds it BY VALUE inline — 224 B at VideoToolboxDecode's +0xc10
@@ -41,15 +43,45 @@
 typedef struct DOVIContext { uint8_t _opaque[224]; } DOVIContext;
 
 // KSDOVIMetadata: the KS-side flattened DV-metadata GPU buffer the serializer
-// convertAVDOVIToKSDOVIMetadata (@0x101b31c6c) produces. The binary embeds it BY VALUE
-// inline — 3008 B (= 0xBC0) at the class's +0x50; confirmed by the serializer's
-// memcpy(…, 0xBC0) at all 5 decode-body call sites. Held OPAQUE: its field layout is
-// consumed only by the DV-render path (ThumbnailDoviDisplayModel + Metal) and is
-// reconstructed THERE (deferred → DV-render). We mirror only the SIZE here for a faithful
-// inline field. NOTE: the binary field type is `KSDOVIMetadata?` (optional); an opaque
-// byte-blob has no extra inhabitant for the nil tag within 3008 B, so the Swift field is
-// reconstructed NON-optional with the optionality flagged → DV-render (Step 2 body work).
-typedef struct KSDOVIMetadata { uint8_t _opaque[3008]; } KSDOVIMetadata;
+// convertAVDOVIToKSDOVIMetadata (@0x101b31c6c) produces. The imported C layout is
+// embedded inline by Swift and retains the nested metadata fields used by the renderer.
+typedef struct KSDOVIDMData {
+    float min_pq;
+    float max_pq;
+    float avg_pq;
+    float target_max_pq;
+    float slope;
+    float offset;
+    float power;
+    float chroma_weight;
+    float saturation_gain;
+    float ms_weight;
+} KSDOVIDMData;
+
+typedef struct KSDOVIReshapeData {
+    simd_float4 coeffs[8];
+    simd_float4 mmr[8 * 6];
+    float pivots[7];
+    float lo;
+    float hi;
+    uint8_t min_order;
+    uint8_t max_order;
+    uint8_t num_pivots;
+    bool has_poly;
+    bool has_mmr;
+    bool mmr_single;
+} KSDOVIReshapeData;
+
+typedef struct KSDOVIMetadata {
+    uint8_t disable_residual_flag;
+    simd_float3x3 nonlinear;
+    simd_float3x3 linear;
+    simd_float3 nonlinear_offset;
+    float minLuminance;
+    float maxLuminance;
+    KSDOVIDMData dm;
+    KSDOVIReshapeData comp[3];
+} KSDOVIMetadata;
 
 // AVDOVIMetadata from libavutil/dovi_meta.h (public).
 // Try framework-style include first, fall back to bare header.

@@ -130,16 +130,16 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
                 }
                 self.request()
             }
-            if case let .left(render)? = renderSource?.getAudioOutputRender() {
-                currentRender = render
+            currentRender = if case let .left(render)? = renderSource?.getAudioOutputRender() {
+                render
             } else {
-                currentRender = nil
+                nil
             }
             if let render = currentRender {
                 startTime = render.cmtime.convertScale(1_000_000_000, method: .default)
                 var audioTime = startTime
                 if outputLatency != 0 {
-                    audioTime = audioTime - CMTime(seconds: outputLatency, preferredTimescale: 1_000_000_000)
+                    audioTime = audioTime - CMTime(seconds: outputLatency, preferredTimescale: audioTime.timescale)
                 }
                 renderSource?.setAudio(time: audioTime, position: -1)
             }
@@ -156,29 +156,29 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
     // flush-pending flag, then on the requestQueue tears down the in-flight render + renderer state.
     override public func flush() {
         flushTime = true
+#sourceLocation(file: "KSPlayer/AudioRendererPlayer.swift", line: 123)
         requestQueue.sync {
             currentRender = nil
             renderer.stopRequestingMediaData()
             synchronizer.rate = 0
             startTime = .zero
         }
+#sourceLocation()
     }
 
-    // stop() @0x101a144d0 — flush-work + observer teardown. This body is fully reconstructed. It is
-    // NOT yet a FrameOutput requirement in source (the binary FrameOutput has {pause,flush,play,stop};
-    // the source has {renderSource,pause,flush,play}); formalizing stop()/renderSource on the protocol
-    // belongs to the render-output protocol subsystem reconstruction (a separate follow-on unit).
-    // ⚑ s105 RENAME: was `stop()`, an inferred name. The trie names 0x101a144d0
-    // `invalidate()` and carries exactly ONE symbol there, so it is not an ICF fold; there is
-    // no `stop` symbol on this class at all. Body unchanged — only the name was invented.
+    // stop() @0x101a144d0 — flush-work + observer teardown. NOT yet a FrameOutput requirement in source
+    // (binary FrameOutput {pause,flush,play,stop}; source {renderSource,pause,flush,play}) — follow-on unit.
+    // ⚑ s105 RENAME: was `stop()`, an inferred name. The trie names 0x101a144d0 `invalidate()` (ONE
+    // symbol, not an ICF fold; there is no `stop` symbol on this class at all). Only the name was
+    // invented; the body below is read end to end from 0x101a144d0.
     public func invalidate() {
-        flushTime = true
-        requestQueue.sync {
-            currentRender = nil
-            renderer.stopRequestingMediaData()
-            synchronizer.rate = 0
-            startTime = .zero
-        }
+        flush()
+        // The flush work is flush() INLINED, not a copy: invalidate's register allocation and its
+        // early `swift_release(self)` @0x101a145b4 (right after the escape check, before the
+        // observer teardown) reproduce only with the call; a duplicated body releases self at the
+        // function end. The inlined closure's `swift_isEscapingClosureAtFileLocation` @0x101a145a8
+        // carries line 0x7b = 123 (col 0x1b) — flush's sync closure, remapped above; the filename
+        // length operand (0x53) is the build machine's absolute path and is not source-controlled.
         if let periodicTimeObserver {
             synchronizer.removeTimeObserver(periodicTimeObserver)
             self.periodicTimeObserver = nil

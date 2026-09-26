@@ -129,11 +129,23 @@ public final class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible {
         file = try FileHandle(forUpdating: url)
     }
 
-    // UNRESOLVED: s9 @101b881f8 → inner FUN_101b8fb0c — the DESIGNATED init (3 args: param_1 = a  ⚑[tool=resolve_fun_pins ref=FUN_101b8fb0c:0x101b8fb0c result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(dir: Foundation.URL, position: Swift.UInt64, maxSize: Swift.UInt32?) throws -> PreLoadIOContext.CacheFileEntry
-    //   url-derivation base [1-word, CustomStringConvertible; TYPE NOT deterministically resolvable],
-    //   position: UInt64 = param_2, maxSize: UInt32? = param_3 packed). Derives url via
-    //   appendingPathComponent + creates a new FileHandle (deep Foundation IO). param_1 type unpinnable
-    //   without guessing → do NOT declare. Real designated init deferred. — P2
+    init(dir: URL, position: UInt64, maxSize: UInt32?) throws {
+        self.position = position
+        self.maxSize = maxSize
+        self.url = dir.appendingPathComponent(position.description)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            _ = FileManager.default.createFile(atPath: url.path, contents: nil, attributes: nil)
+        } else {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let fileSize = values.fileSize {
+                size = UInt32(fileSize)
+                if self.maxSize == nil {
+                    self.maxSize = size
+                }
+            }
+        }
+        file = try FileHandle(forUpdating: url)
+    }
 
     // --- description (vtable slot 11, between the two inits at 9/10 and the three
     //     methods at 12/13/14 — so it is declared here, after the inits) ---

@@ -8,6 +8,10 @@ import Combine
 import CoreGraphics
 import Foundation
 import MetalKit
+import QuartzCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MetalDrawable — KSPlayer protocol (§8.6, descriptor-named). ⚑ requirements → P4 M2 (marker assumed for the M1 compile).
 protocol MetalDrawable {}
@@ -54,7 +58,29 @@ protocol MetalDrawable {}
 // ⚑[tool=field_offset_vector ref=MetalSubtitleView:0x1044230b8 result=offsets-0x8-0x30-0x38-0x40-0x48-0x50-0x58]
 class MetalSubtitleView: MTKView {
     public var metalDrawable: (any MetalDrawable)? // §8.6 — offset global 0x1044ef5a8 (vpWvd)
-    public var dynamicRange: DynamicRange = .sdr // ⚑ default inferred → M2; offset global 0x1044ef5b8 (vpWvd)
+    public var dynamicRange: DynamicRange = .sdr { // ⚑ default inferred → M2; offset global 0x1044ef5b8 (vpWvd)
+        didSet {
+            #if os(iOS)
+            guard oldValue != dynamicRange else { return }
+            guard KSOptions.enableHDRSubtitle else { return }
+            let selectedName: CFString
+            switch dynamicRange {
+            case .sdr:
+                selectedName = CGColorSpace.sRGB
+            case .hdr10:
+                selectedName = CGColorSpace.itur_2100_PQ
+            case .hlg, .dolbyVision:
+                selectedName = CGColorSpace.itur_2100_HLG
+            }
+            let colorLayer = layer as! CAMetalLayer
+            colorLayer.colorspace = CGColorSpace(name: selectedName)
+            let currentDynamicRange = dynamicRange
+            let edrLayer = layer as! CAMetalLayer
+            edrLayer.wantsExtendedDynamicRangeContent = currentDynamicRange != .sdr
+                && (window?.windowScene?.screen.currentEDRHeadroom ?? 0) > 1.0
+            #endif
+        }
+    }
     private var cancellables: Set<AnyCancellable> = [] // offset global 0x1044ef5d0 (empty-set singleton)
     private var subtitleImages: [SubtitleImageInfo] = [] // offset global 0x1044ef5c0 -> field offset 0x40
     private var pendingTexts: [SubtitleTextInfo] = [] // offset global 0x1044ef5c8 -> field offset 0x48

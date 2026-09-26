@@ -28,29 +28,33 @@
 
 import AVFoundation
 
+@_silgen_name("swift_release")
+private func releaseDisplacedFrame(_ object: UnsafeMutableRawPointer?)
+
+#if !os(macOS)
+@inline(never)
+private func audioSessionOutputLatencyForFlush() -> Double {
+    AVAudioSession.sharedInstance().outputLatency
+}
+#endif
+
 public class AudioBaseOutput {
     // Fields in __swift5_fieldmd (field-record) order — dump_binary_field_types.
     public weak var renderSource: AudioOutputRenderSourceDelegate?
     // internal, not private: AudioEnginePlayer.prepare(audioFormat:) both reads this
     // (the early-out compare) and writes it, and it lives in another file.
-    var sourceNodeAudioFormat: AVAudioFormat?
+    @exclusivity(unchecked) var sourceNodeAudioFormat: AVAudioFormat?
     // internal, not private: AudioUnitPlayer.isMuted's didSet mirrors the mute
     // state into this flag from another file (its setter writes self+0x28
     // directly — no accessor call — which requires at least `internal` access).
     // The sample-copy loop reads it to swap the memmove for a bzero. Same reason
     // as sourceNodeAudioFormat above.
     var memsetZero: Bool = false
-    private var outputLatencySystem: Double = 0
-    private var _outputLatency: Double = 0
+    @exclusivity(unchecked) private var outputLatencySystem: Double = 0
+    @exclusivity(unchecked) private var _outputLatency: Double = 0
     private var renderLock: os_unfair_lock_s = os_unfair_lock_s()
-    private var currentRenderReadOffset: UInt32 = 0
-    private var currentRender: AudioFrame? {
-        didSet {
-            if currentRender == nil {
-                currentRenderReadOffset = 0
-            }
-        }
-    }
+    @exclusivity(unchecked) private var currentRenderReadOffset: UInt32 = 0
+    @exclusivity(unchecked) private var currentRender: AudioFrame?
 
     // outputLatency (computed, slots 3-5): the public latency = the system
     // baseline (outputLatencySystem, seeded in init) + the app-set delta
@@ -63,21 +67,35 @@ public class AudioBaseOutput {
     // init @0x101a127c8 (slot 27): zero/nil all storage, then seed
     // outputLatencySystem from the system output latency (iOS/tvOS only —
     // AVAudioSession is unavailable on macOS).
-    public init() {
+    @inline(__always) public init() {
         #if !os(macOS)
         outputLatencySystem = AVAudioSession.sharedInstance().outputLatency
         #endif
     }
 
-    // flush (slot 30 @0x101a117b0): drop the in-flight frame under renderLock
-    // (the didSet resets currentRenderReadOffset), then re-read the system
-    // output latency (iOS/tvOS only).
+    // flush (slot 30 @0x101a117b0): clear the frame and read offset under
+    // renderLock, then release the displaced frame after reading system latency.
     public func flush() {
-        os_unfair_lock_lock(&renderLock)
-        currentRender = nil
-        os_unfair_lock_unlock(&renderLock)
+        let previousRender = withUnsafeMutablePointer(to: &renderLock) { lock in
+            // Forward stores these fields directly while the lock access is live.
+            let fields = UnsafeMutableRawPointer(lock)
+            let readOffset = fields.advanced(by: 4).assumingMemoryBound(to: UInt32.self)
+            let frame = fields.advanced(by: 8).assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+            os_unfair_lock_lock(lock)
+            let previous = frame.move()
+            frame.initialize(to: nil)
+            readOffset.pointee = 0
+            os_unfair_lock_unlock(lock)
+            return previous
+        }
         #if !os(macOS)
-        outputLatencySystem = AVAudioSession.sharedInstance().outputLatency
+        let latency = audioSessionOutputLatencyForFlush()
+        releaseDisplacedFrame(previousRender)
+        // The stored Double is at self+0x30 in the checked class layout.
+        Unmanaged.passUnretained(self).toOpaque().advanced(by: 0x30)
+            .assumingMemoryBound(to: Double.self).pointee = latency
+        #else
+        releaseDisplacedFrame(previousRender)
         #endif
     }
 
@@ -122,7 +140,7 @@ public class AudioBaseOutput {
             os_unfair_lock_unlock(&renderLock)
             return
         }
-        let currentPreparePosition = currentRender.timestamp + currentRender.duration * Int64(currentRenderReadOffset) / Int64(currentRender.numberOfSamples)
+        let currentPreparePosition = currentRender.timestamp + currentRender.duration * Int64(currentRenderReadOffset) / Int64(currentRender.dataSize)
         os_unfair_lock_unlock(&renderLock)
         if currentPreparePosition > 0 {
             var time = currentRender.timebase.cmtime(for: currentPreparePosition)
@@ -131,6 +149,7 @@ public class AudioBaseOutput {
             }
             renderSource.setAudio(time: time, position: currentRender.position)
         }
+        withExtendedLifetime(renderSource) {}
     }
 
     // audioPlayerShouldInputData (@0x101a12b28) — the sample-copy engine, reached
@@ -167,6 +186,7 @@ public class AudioBaseOutput {
             // emits no borrow trap here, so the subtraction cannot underflow.
             guard currentRenderReadOffset < render.numberOfSamples else {
                 currentRender = nil
+                currentRenderReadOffset = 0
                 os_unfair_lock_unlock(&renderLock)
                 continue
             }
@@ -174,9 +194,11 @@ public class AudioBaseOutput {
             // Optional != non-optional: a nil sourceNodeAudioFormat is unequal by
             // construction, so an unconfigured engine takes the re-prepare edge.
             if sourceNodeAudioFormat != render.audioFormat {
+                nonisolated(unsafe) let audioFormat = render.audioFormat
                 os_unfair_lock_unlock(&renderLock)
-                runOnMainThread { [weak self] in
-                    self?.prepare(audioFormat: render.audioFormat)
+                nonisolated(unsafe) weak var weakSelf = self
+                runOnMainThread {
+                    weakSelf?.prepare(audioFormat: audioFormat)
                 }
                 break
             }

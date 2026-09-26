@@ -23,7 +23,9 @@
 //      non-`final` from the 46-slot accessor vtable (a final class emits none).
 //
 import Foundation
+import CryptoKit
 import Metal
+import simd
 
 public class Anime4K {
     let intermediatePixelFormat: MTLPixelFormat = .rgba16Float
@@ -47,7 +49,8 @@ public class Anime4K {
     var displayActualW: Float = 0
     var displayActualH: Float = 0
 
-    init(name: String, url: URL, device: MTLDevice, usePrecompiled: Bool, bufferCount: Int) throws {
+    // ⚑[invented=init(name:url:device:usePrecompiled:bufferCount:) addr=0x101a70318 exhaustion=name_exhaustion_gate approved=jweaver]
+    init(name: String, url: String, device: MTLDevice, usePrecompiled: Bool, bufferCount: Int) throws {
         self.name = name
         self.bufferCount = max(bufferCount, 1)
         // ⚑[tool=decompile ref=Anime4K.init:0x101a70318 result=pinned] `parseShaders` IS reconstructed
@@ -96,7 +99,326 @@ public class Anime4K {
     ///   • ⚑ the `String(describing:)` spelling is the one detail the decompile does not discriminate:
     ///     a CustomStringConvertible `description` witness IS invoked (so it is not `String(_: Int)`,
     ///     which would not call it), but interpolation `"\(…)"` is an equivalent-codegen alternative.
-    private func parseShaders(_ text: String) throws -> [MPVShader] {
+    // ⚑[invented=configure addr=0x101a71b00 exhaustion=name_exhaustion_gate approved=jweaver]
+    func configure(
+        _ device: MTLDevice,
+        _ nativeWidth: Int,
+        _ nativeHeight: Int,
+        _ mainWidth: Int,
+        _ mainHeight: Int,
+        _ displayLimitWidth: Int,
+        _ displayLimitHeight: Int
+    ) throws {
+        enabledShaders = []
+        nearestSamplerStates = []
+        linearSamplerStates = []
+        pipelineStates = []
+        textureMap = []
+        sizeMap = [:]
+        bufferIndex = -1
+
+        textureInW = Float(mainWidth)
+        textureInH = Float(mainHeight)
+        outputW = textureInW
+        outputH = textureInH
+
+        let scale = min(Float(displayLimitWidth) / Float(nativeWidth),
+                        Float(displayLimitHeight) / Float(nativeHeight))
+        displayActualW = (scale * Float(nativeWidth)).rounded()
+        displayActualH = (scale * Float(nativeHeight)).rounded()
+
+        sizeMap["MAIN"] = (Float(mainWidth), Float(mainHeight))
+        sizeMap["NATIVE"] = (Float(nativeWidth), Float(nativeHeight))
+        sizeMap["OUTPUT"] = (displayActualW, displayActualH)
+        print("[Anime4K] Size map: MAIN=\(mainWidth)x\(mainHeight), NATIVE=\(nativeWidth)x\(nativeHeight), OUTPUT=\(displayActualW)x\(displayActualH)")
+
+        for (index, shader) in shaders.enumerated() {
+            if let when = shader.when {
+                print("[Anime4K] Evaluating WHEN for \(when)")
+                print("[Anime4K] Current sizeMap: MAIN=\(sizeMap["MAIN"]?.0 ?? 0)x\(sizeMap["MAIN"]?.1 ?? 0), OUTPUT=\(sizeMap["OUTPUT"]?.0 ?? 0)x\(sizeMap["OUTPUT"]?.1 ?? 0)")
+
+                let tokens = when.split(separator: " ").map(String.init).filter { $0 != "WHEN" }
+                var stack = [Float]()
+                for token in tokens {
+                    switch token {
+                    case "+", "-", "*", "/", "<", ">":
+                        let rhs = stack.removeLast()
+                        let lhs = stack.removeLast()
+                        let result: Float
+                        switch token {
+                        case "+":
+                            result = lhs + rhs
+                        case "-":
+                            result = lhs - rhs
+                        case "*":
+                            result = lhs * rhs
+                        case "/":
+                            result = lhs / rhs
+                        case "<":
+                            result = lhs < rhs ? 1 : 0
+                        case ">":
+                            result = lhs > rhs ? 1 : 0
+                        default:
+                            fatalError("Should not reach here", line: 201)
+                        }
+                        print("[Anime4K]   \(lhs) \(token) \(rhs) = \(result)")
+                        stack.append(result)
+                    default:
+                        if token.hasSuffix(".w") {
+                            let key = String(token.dropLast(2))
+                            let value = sizeMap[key]!.0
+                            print("[Anime4K]   Push \(key).w = \(value)")
+                            stack.append(value)
+                        } else if token.hasSuffix(".h") {
+                            let key = String(token.dropLast(2))
+                            let value = sizeMap[key]!.1
+                            print("[Anime4K]   Push \(key).h = \(value)")
+                            stack.append(value)
+                        } else {
+                            let number = Float(token)!
+                            print("[Anime4K]   Push number: \(number)")
+                            stack.append(number)
+                        }
+                    }
+                }
+
+                guard stack.count == 1 else {
+                    throw Anime4KError.encoderFail("Failed to evaluate WHEN condition: \(when), stack count: \(stack.count)")
+                }
+                let result = stack.removeLast()
+                print("[Anime4K] WHEN condition result for \(when): \(result)")
+                if result == 0 {
+                    print("[Anime4K] ❌ Skip shader \(shader.name) - WHEN condition failed")
+                    continue
+                }
+                print("[Anime4K] ✅ Enable shader \(shader.name) - WHEN condition passed")
+            }
+
+            enabledShaders.append(shader)
+            let library = libraries[index]
+            outputW = textureInW
+            outputH = textureInH
+
+            if let hook = shader.hook {
+                sizeMap["HOOKED"] = sizeMap[hook]!
+            }
+            if let width = shader.width {
+                outputW = width.1 * sizeMap[width.0]!.0
+            }
+            if let height = shader.height {
+                outputH = height.1 * sizeMap[height.0]!.1
+            }
+            if let save = shader.save, save != "MAIN" {
+                sizeMap[save] = (outputW, outputH)
+            }
+
+            var function = library.makeFunction(name: shader.name)
+            var functionName = shader.name
+            if function == nil {
+                if shaders.count < 2 {
+                    throw Anime4KError.encoderFail("Function '\(shader.name)' not found in library")
+                }
+
+                let nameWithoutGLSLSuffix = shader.name.replacingOccurrences(of: ".glsl", with: "")
+                let hashInput = Data("\(nameWithoutGLSLSuffix)_\(index)".utf8)
+                let digest = Insecure.MD5.hash(data: hashInput)
+                    .map { String(format: "%02X", $0) }
+                    .joined()
+                functionName = shader.name + "_" + digest
+                function = library.makeFunction(name: functionName)
+                if function == nil {
+                    throw Anime4KError.encoderFail("Function '\(shader.name)' or '\(functionName)' not found in library")
+                }
+            }
+
+            let pipelineState = try device.makeComputePipelineState(function: function!)
+            pipelineStates.append(pipelineState)
+        }
+    }
+
+    // ⚑[invented=encode addr=0x101a7448c exhaustion=name_exhaustion_gate approved=jweaver]
+    func encode(
+        _ device: MTLDevice,
+        _ commandBuffer: MTLCommandBuffer,
+        _ inputTexture: MTLTexture
+    ) throws -> MTLTexture {
+        guard pipelineStates.count == enabledShaders.count else {
+            throw Anime4KError.encoderFail("Pipeline state count \(pipelineStates.count) mismatch shader count \(shaders.count)")
+        }
+        if pipelineStates.isEmpty {
+            return inputTexture
+        }
+
+        bufferIndex = (bufferIndex + 1) % bufferCount
+        if textureMap.count <= bufferIndex {
+            textureMap.append([:])
+            let samplerDescriptor = MTLSamplerDescriptor()
+            samplerDescriptor.magFilter = .nearest
+            samplerDescriptor.minFilter = .nearest
+            samplerDescriptor.sAddressMode = .clampToEdge
+            samplerDescriptor.tAddressMode = .clampToEdge
+            nearestSamplerStates.append(device.makeSamplerState(descriptor: samplerDescriptor)!)
+            samplerDescriptor.magFilter = .linear
+            samplerDescriptor.minFilter = .linear
+            linearSamplerStates.append(device.makeSamplerState(descriptor: samplerDescriptor)!)
+        }
+
+        textureMap[bufferIndex]["MAIN"] = inputTexture
+        textureMap[bufferIndex]["NATIVE"] = inputTexture
+
+        let outputWidth = Int(outputW)
+        let outputHeight = Int(outputH)
+        if let output = textureMap[bufferIndex]["output"],
+           output.width == outputWidth,
+           output.height == outputHeight,
+           output.pixelFormat == intermediatePixelFormat {
+        } else {
+            let descriptor = MTLTextureDescriptor()
+            descriptor.width = outputWidth
+            descriptor.height = outputHeight
+            descriptor.pixelFormat = intermediatePixelFormat
+            descriptor.usage = [.shaderRead, .shaderWrite]
+            descriptor.storageMode = .private
+            textureMap[bufferIndex]["output"] = device.makeTexture(descriptor: descriptor)
+        }
+
+        for (index, shader) in enabledShaders.enumerated() {
+            var stageWidth = textureInW
+            var stageHeight = textureInH
+            if let hook = shader.hook {
+                sizeMap["HOOKED"] = sizeMap[hook]!
+            }
+            if let width = shader.width {
+                stageWidth = width.1 * sizeMap[width.0]!.0
+            }
+            if let height = shader.height {
+                stageHeight = height.1 * sizeMap[height.0]!.1
+            }
+
+            guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
+                let filteredName = shader.name.filter { !".-()".contains($0) }
+                throw Anime4KError.encoderCreationFail(filteredName)
+            }
+            encoder.setComputePipelineState(pipelineStates[index])
+            let sampler = textureInW <= stageWidth
+                ? nearestSamplerStates[bufferIndex]
+                : linearSamplerStates[bufferIndex]
+            encoder.setSamplerState(sampler, index: 0)
+
+            var binds = shader.binds
+            if shader.hook == "MAIN", !binds.contains("MAIN") {
+                binds.append("MAIN")
+            }
+            for (bindIndex, bind) in binds.enumerated() {
+                let effectiveKey = bind == "HOOKED" ? shader.hook! : bind
+                if let texture = textureMap[bufferIndex][effectiveKey] {
+                    encoder.setTexture(texture, index: bindIndex)
+                } else if effectiveKey == shader.save {
+                    let descriptor = MTLTextureDescriptor()
+                    descriptor.width = Int(stageWidth)
+                    descriptor.height = Int(stageHeight)
+                    descriptor.pixelFormat = intermediatePixelFormat
+                    descriptor.usage = [.shaderRead, .shaderWrite]
+                    descriptor.storageMode = .private
+                    textureMap[bufferIndex][effectiveKey] = device.makeTexture(descriptor: descriptor)
+                    encoder.setTexture(textureMap[bufferIndex][effectiveKey], index: bindIndex)
+                } else {
+                    throw Anime4KError.encoderFail("texture \(effectiveKey) is missing")
+                }
+            }
+
+            let outputKey: String
+            if let save = shader.save, save != "MAIN" {
+                outputKey = save
+            } else {
+                outputKey = "output"
+            }
+            if binds.contains(outputKey) {
+                if let output = textureMap[bufferIndex][outputKey],
+                   output.width == Int(stageWidth),
+                   output.height == Int(stageHeight),
+                   output.pixelFormat == intermediatePixelFormat {
+                } else {
+                    let descriptor = MTLTextureDescriptor()
+                    descriptor.width = Int(stageWidth)
+                    descriptor.height = Int(stageHeight)
+                    descriptor.pixelFormat = intermediatePixelFormat
+                    descriptor.usage = [.shaderRead, .shaderWrite]
+                    descriptor.storageMode = .private
+                    textureMap[bufferIndex][outputKey] = device.makeTexture(descriptor: descriptor)
+                }
+            } else if textureMap[bufferIndex][outputKey] == nil {
+                let descriptor = MTLTextureDescriptor()
+                descriptor.width = Int(stageWidth)
+                descriptor.height = Int(stageHeight)
+                descriptor.pixelFormat = intermediatePixelFormat
+                descriptor.usage = [.shaderRead, .shaderWrite]
+                descriptor.storageMode = .private
+                textureMap[bufferIndex][outputKey] = device.makeTexture(descriptor: descriptor)
+            }
+
+            let outputTexture = textureMap[bufferIndex][outputKey]!
+            encoder.setTexture(outputTexture, index: binds.count)
+            let threadgroups = MTLSize(
+                width: (outputTexture.width + 15) / 16,
+                height: (outputTexture.height + 15) / 16,
+                depth: outputTexture.arrayLength
+            )
+            let threadsPerThreadgroup = MTLSize(width: 16, height: 16, depth: 1)
+            encoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadsPerThreadgroup)
+            encoder.endEncoding()
+        }
+
+        return textureMap[bufferIndex]["output"]!
+    }
+
+    // ⚑[invented=encode addr=0x101a76090 exhaustion=name_exhaustion_gate approved=jweaver]
+    func encode(
+        _ device: MTLDevice,
+        _ commandBuffer: MTLCommandBuffer,
+        _ inputTexture: MTLTexture,
+        _ outputTexture: MTLTexture
+    ) throws {
+        let resizedTexture = try encode(device, commandBuffer, inputTexture)
+        let pixelFormat = outputTexture.pixelFormat
+
+        if finalResizePSCache[pixelFormat] == nil {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = defaultLibrary.makeFunction(name: "CenterResizeVertex")
+            descriptor.fragmentFunction = defaultLibrary.makeFunction(name: "CenterResizeFragment")
+            descriptor.colorAttachments[0]!.pixelFormat = pixelFormat
+            finalResizePSCache[pixelFormat] = try device.makeRenderPipelineState(descriptor: descriptor)
+        }
+
+        guard let pipelineState = finalResizePSCache[pixelFormat] else {
+            throw Anime4KError.encoderFail(
+                "Failed to create render pipeline for format: \(pixelFormat)"
+            )
+        }
+
+        var sizes = SIMD4<Float>(
+            Float(resizedTexture.width),
+            Float(resizedTexture.height),
+            Float(outputTexture.width),
+            Float(outputTexture.height)
+        )
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0]!.texture = outputTexture
+        pass.colorAttachments[0]!.loadAction = .dontCare
+        pass.colorAttachments[0]!.storeAction = .store
+
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
+            throw Anime4KError.encoderCreationFail("RenderCommandEncoder for CenterResize")
+        }
+        encoder.setRenderPipelineState(pipelineState)
+        encoder.setFragmentTexture(resizedTexture, index: 0)
+        encoder.setFragmentBytes(&sizes, length: 16, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        encoder.endEncoding()
+    }
+
+    private final func parseShaders(_ text: String) throws -> [MPVShader] {
         var shaders = [MPVShader]()
         var current: MPVShader?
         let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

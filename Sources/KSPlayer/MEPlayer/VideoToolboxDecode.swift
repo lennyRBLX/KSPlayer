@@ -22,12 +22,12 @@ class VideoToolboxDecode: DecodeProtocol {
     private var maxTimestamp: Int64 = 0
     private var lastTimestamp: Int64 = -1
     private var needReconfig: Bool = false
-    // P3a (Phase A): KSDOVIMetadata = opaque 3008-byte inline DV buffer (DOVIRPUShim). Field-record name
-    // `KSDOVIMetadata?`; an opaque blob has no nil-tag inhabitant in 3008B → NON-optional + optionality flagged → DV-render.
-    // ⚑[tool=vpfi_initializer_oracle ref=VideoToolboxDecode.doviData:0x10199afc8 result=CONFIRMED]
+    // P3a: KSDOVIMetadata uses the imported-C 3008-byte inline DV metadata layout. The nested Bool
+    // at metadata offset 0x457 supplies Optional's extra inhabitant; keep doviData optional.
+    // ⚑[tool=vpfi_initializer_oracle ref=VideoToolboxDecode.doviData:0x10199afc result=CONFIRMED]
     // Field record says `KSDOVIMetadata?` (Optional); the declaration default is NOT nil — its vpfi
     // is a 15-instruction body that constructs a value and memcpys 0xbc0 bytes, so the Optional is
-    // initialised non-nil. Both halves are needed: the `?` alone would imply `= nil`.
+    // initialised non-nil. Both halves are needed: the `?` and its non-nil declaration default.
     private var doviData: KSDOVIMetadata? = KSDOVIMetadata()
     // P3a (Phase A): DOVIContext = FFmpeg's private DV parser context, opaque 224-byte inline @+0xc10 (DOVIRPUShim).
     // Caller-owned inline value that the raw ff_dovi_*(&doviContext) calls populate/release (decodeFrame crash-loop → Phase B).
@@ -235,14 +235,17 @@ class VideoToolboxDecode: DecodeProtocol {
     // ⚑ 0x1b = 27 = AV_CODEC_ID_H264, counted from AV_CODEC_ID_NONE in FFmpeg-n8.1.1
     // libavcodec/codec_id.h:79 — written symbolically below, never as the raw ordinal.
     func doFlushCodec() {
-        startTime = 0
-        maxTimestamp = 0
-        lastTimestamp = -1
+        let storage = Unmanaged.passUnretained(self).toOpaque()
+        storage.storeBytes(of: (Int64(0), Int64(0)), toByteOffset: 0x30, as: (Int64, Int64).self)
+        storage.storeBytes(of: Int64(-1), toByteOffset: 0x40, as: Int64.self)
         VTDecompressionSessionFinishDelayedFrames(session.decompressionSession)
         VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
         frames = []
-        if session.assetTrack.codecpar.pointee.codec_id == AV_CODEC_ID_H264 {
-            needReconfig = true
+        let sessionStorage = storage.load(fromByteOffset: 0xcf8, as: UnsafeRawPointer.self)
+        let trackStorage = sessionStorage.load(fromByteOffset: 0x20, as: UnsafeRawPointer.self)
+        let codecParameters = trackStorage.load(fromByteOffset: 0xb8, as: UnsafeRawPointer.self)
+        if codecParameters.load(fromByteOffset: 0x4, as: AVCodecID.self) == AV_CODEC_ID_H264 {
+            storage.storeBytes(of: UInt8(1), toByteOffset: 0x48, as: UInt8.self)
         }
     }
 
@@ -262,10 +265,10 @@ class VideoToolboxDecode: DecodeProtocol {
     // so these three are Int64, NOT the Double that l2_field_gate's unscoped symbol lookup
     // reports for startTime (the gate itself marks that UNCHECKED / "verify via field-record mangle").
     // NAME PROVEN by the DecodeProtocol witness table, req0 → this address directly (see doFlushCodec).
-    func decode() {
-        startTime = 0
-        maxTimestamp = 0
-        lastTimestamp = -1
+    @used func decode() {
+        let storage = Unmanaged.passUnretained(self).toOpaque()
+        storage.storeBytes(of: (Int64(0), Int64(0)), toByteOffset: 0x30, as: (Int64, Int64).self)
+        storage.storeBytes(of: Int64(-1), toByteOffset: 0x40, as: Int64.self)
     }
 }
 

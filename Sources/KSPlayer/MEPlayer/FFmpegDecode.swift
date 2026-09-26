@@ -8,6 +8,7 @@
 import AVFoundation
 import Foundation
 import Libavcodec
+import Libavformat
 
 class FFmpegDecode: DecodeProtocol {
     private let options: KSOptions
@@ -75,9 +76,37 @@ class FFmpegDecode: DecodeProtocol {
         // ⚑[tool=ffmpeg_name_oracle ref=avcodec_receive_frame:0x10294dba0 result=CONFIRMED]
         // ⚑[tool=ffmpeg_name_oracle ref=avcodec_flush_buffers:0x10294d260 result=CONFIRMED]
         // ⚑[tool=ffmpeg_name_oracle ref=avcodec_free_context:0x102d53ac8 result=CONFIRMED]
-        guard let codecContext, avcodec_send_packet(codecContext, packet) == 0 else {
+        guard let codecContext = self.codecContext else {
             return
         }
+        let sendResult = avcodec_send_packet(codecContext, packet)
+        if sendResult != 0 {
+            guard isVideo,
+                  options.hardwareDecode,
+                  codecContext.pointee.hw_device_ctx != nil,
+                  options.recreateContext(
+                      hasDecodeSuccess: hasDecodeSuccess,
+                      isKeyFrame: packet.pointee.flags & AV_PKT_FLAG_KEY != 0
+                  )
+            else {
+                return
+            }
+            avcodec_free_context(&self.codecContext)
+            if sendResult != AVError.unknown.code, sendResult != AVError.tryAgain.code {
+                options.hardwareDecode = false
+            }
+            KSLog(level: .error, "[video] videoToolbox ffmpeg decode failedCode=\(sendResult), hasDecodeSuccess=\(hasDecodeSuccess), isKeyFrame=\(packet.pointee.flags & AV_PKT_FLAG_KEY != 0). change to hardwareDecode=\(options.hardwareDecode)")
+            do {
+                let replacement = try assetTrack.createContext(options: options)
+                replacement.pointee.time_base = assetTrack.stream?.pointee.time_base ?? assetTrack.timebase.rational
+                self.codecContext = replacement
+                _ = avcodec_send_packet(self.codecContext, packet)
+            } catch {
+                completionHandler(.failure(error))
+                return
+            }
+        }
+        var deliveredFrame = false
         // 需要avcodec_send_packet之后，properties的值才会变成FF_CODEC_PROPERTY_CLOSED_CAPTIONS
         // ⚠️ D2 CLOSED, and it is forced by D1 — with a raw pointer there is no `packet.assetTrack`
         // to ask. The binary asks SELF, and it asks a precomputed Bool rather than re-deriving the
@@ -91,7 +120,8 @@ class FFmpegDecode: DecodeProtocol {
             //   to match the binary (FUN_101a23404 L33-38: alloc-fail skips the block, not a return).
             //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_alloc:0x1029f543c result=CONFIRMED]
             //   ⚑ ownership/free deferred to the FFmpegAssetTrack lifecycle audit (the alloc'd params are now owned by the track; the base value-copy had no free step).
-            if Int32(codecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0,
+            if let currentCodecContext = self.codecContext,
+               Int32(currentCodecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0,
                assetTrack.closedCaptionsTrack == nil,
                let codecpar = avcodec_parameters_alloc() {
                 codecpar.pointee.codec_type = AVMEDIA_TYPE_SUBTITLE
@@ -115,114 +145,48 @@ class FFmpegDecode: DecodeProtocol {
             }
         }
         while true {
-            let result = avcodec_receive_frame(codecContext, coreFrame)
+            let result = avcodec_receive_frame(self.codecContext, coreFrame)
             if result == 0, let inputFrame = coreFrame {
-                var displayData: MasteringDisplayMetadata?
-                var contentData: ContentLightMetadata?
-                var ambientViewingEnvironment: AmbientViewingEnvironment?
-                // filter之后，side_data信息会丢失，所以放在这里
-                if inputFrame.pointee.nb_side_data > 0 {
-                    for i in 0 ..< inputFrame.pointee.nb_side_data {
-                        if let sideData = inputFrame.pointee.side_data[Int(i)]?.pointee {
-                            if sideData.type == AV_FRAME_DATA_A53_CC {
-                                if let closedCaptionsTrack = assetTrack.closedCaptionsTrack,
-                                   let subtitle = closedCaptionsTrack.subtitle
-                                {
-                                    let closedCaptionsPacket = Packet()
-                                    // The `if let corePacket = packet.corePacket` that used to wrap
-                                    // these five copies is gone with D1: the parameter IS the core
-                                    // pointer now and is non-Optional, so the copies are
-                                    // unconditional. Only the unwrap disappeared — the five fields
-                                    // and their order are unchanged.
-                                    closedCaptionsPacket.corePacket?.pointee.pts = packet.pointee.pts
-                                    closedCaptionsPacket.corePacket?.pointee.dts = packet.pointee.dts
-                                    closedCaptionsPacket.corePacket?.pointee.pos = packet.pointee.pos
-                                    closedCaptionsPacket.corePacket?.pointee.time_base = packet.pointee.time_base
-                                    closedCaptionsPacket.corePacket?.pointee.stream_index = packet.pointee.stream_index
-                                    closedCaptionsPacket.corePacket?.pointee.flags |= AV_PKT_FLAG_KEY
-                                    closedCaptionsPacket.corePacket?.pointee.size = Int32(sideData.size)
-                                    let buffer = av_buffer_ref(sideData.buf)
-                                    closedCaptionsPacket.corePacket?.pointee.data = buffer?.pointee.data
-                                    closedCaptionsPacket.corePacket?.pointee.buf = buffer
-                                    closedCaptionsPacket.assetTrack = closedCaptionsTrack
-                                    subtitle.putPacket(packet: closedCaptionsPacket)
-                                }
-                            } else if sideData.type == AV_FRAME_DATA_SEI_UNREGISTERED {
-                                let size = sideData.size
-                                if size > AV_UUID_LEN {
-                                    let str = String(cString: sideData.data.advanced(by: Int(AV_UUID_LEN)))
-                                    // `time` is READ, not chosen. Forward's only call to sei(string:time:) is the sole
-                                    // slot-283 dispatch in the image, @0x101a6754c, inside the same
-                                    // relocated side-data loop this method is pinned above as DEFERRED (VideoSwresample.s32,
-                                    // 0x101a67274). There the argument is built @0x101a674fc-0x101a67544: best_effort_timestamp
-                                    // (AVFrame+0x130), falling back on a sign-bit test to pts (+0x88) then pkt_dts (+0x90) —
-                                    // offsets taken by NAME with offsetof against the ios-arm64 n8.1.1 headers that built the
-                                    // image, and corroborated in the same body by nb_side_data(+0x110)/side_data(+0x108);
-                                    // `bic x8,x8,x8,asr #63` = max(0,·); then Timebase.cmtime(for:) (the CMTime.init(value:
-                                    // timescale:) bind at __got 0x1041132c0 over track.timebase num/den at +0xc0/+0xc4) minus
-                                    // the track's startTime CMTime at +0xa0 (CMTime.- infix, __got 0x1041132b8). +0xa0/+0xc0
-                                    // are FFmpegAssetTrack.startTime/timebase per field_offset_vector.py.
-                                    var seiTimestamp = inputFrame.pointee.best_effort_timestamp
-                                    if seiTimestamp < 0 {
-                                        seiTimestamp = inputFrame.pointee.pts
-                                    }
-                                    if seiTimestamp < 0 {
-                                        seiTimestamp = inputFrame.pointee.pkt_dts
-                                    }
-                                    options.sei(string: str, time: assetTrack.timebase.cmtime(for: max(0, seiTimestamp)) - assetTrack.startTime)
-                                }
-                            } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
-                                let data = sideData.data.withMemoryRebound(to: [UInt8].self, capacity: 1) { $0 }
-                            } else if sideData.type == AV_FRAME_DATA_DOVI_METADATA { // AVDOVIMetadata
-                                let data = sideData.data.withMemoryRebound(to: AVDOVIMetadata.self, capacity: 1) { $0 }
-                                let header = av_dovi_get_header(data)
-                                let mapping = av_dovi_get_mapping(data)
-                                let color = av_dovi_get_color(data)
-//                                frame.pixelBuffer?.transferFunction = kCVImageBufferTransferFunction_ITU_R_2020
-                            } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_PLUS { // AVDynamicHDRPlus
-                                let data = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { $0 }.pointee
-                            } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_VIVID { // AVDynamicHDRVivid
-                                let data = sideData.data.withMemoryRebound(to: AVDynamicHDRVivid.self, capacity: 1) { $0 }.pointee
-                            } else if sideData.type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA {
-                                let data = sideData.data.withMemoryRebound(to: AVMasteringDisplayMetadata.self, capacity: 1) { $0 }.pointee
-                                displayData = MasteringDisplayMetadata(
-                                    display_primaries_r_x: UInt16(data.display_primaries.0.0.num).bigEndian,
-                                    display_primaries_r_y: UInt16(data.display_primaries.0.1.num).bigEndian,
-                                    display_primaries_g_x: UInt16(data.display_primaries.1.0.num).bigEndian,
-                                    display_primaries_g_y: UInt16(data.display_primaries.1.1.num).bigEndian,
-                                    display_primaries_b_x: UInt16(data.display_primaries.2.1.num).bigEndian,
-                                    display_primaries_b_y: UInt16(data.display_primaries.2.1.num).bigEndian,
-                                    white_point_x: UInt16(data.white_point.0.num).bigEndian,
-                                    white_point_y: UInt16(data.white_point.1.num).bigEndian,
-                                    minLuminance: UInt32(data.min_luminance.num).bigEndian,
-                                    maxLuminance: UInt32(data.max_luminance.num).bigEndian
-                                )
-                            } else if sideData.type == AV_FRAME_DATA_CONTENT_LIGHT_LEVEL {
-                                let data = sideData.data.withMemoryRebound(to: AVContentLightMetadata.self, capacity: 1) { $0 }.pointee
-                                contentData = ContentLightMetadata(
-                                    MaxCLL: UInt16(data.MaxCLL).bigEndian,
-                                    MaxFALL: UInt16(data.MaxFALL).bigEndian
-                                )
-                            } else if sideData.type == AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT {
-                                let data = sideData.data.withMemoryRebound(to: AVAmbientViewingEnvironment.self, capacity: 1) { $0 }.pointee
-                                ambientViewingEnvironment = AmbientViewingEnvironment(
-                                    ambient_illuminance: UInt32(data.ambient_illuminance.num).bigEndian,
-                                    ambient_light_x: UInt16(data.ambient_light_x.num).bigEndian,
-                                    ambient_light_y: UInt16(data.ambient_light_y.num).bigEndian
-                                )
-                            }
+                if isVideo,
+                   (inputFrame.pointee.repeat_pict == 1 || inputFrame.pointee.flags & AV_FRAME_FLAG_INTERLACED != 0),
+                   assetTrack.fieldOrder.rawValue <= FFmpegFieldOrder.progressive.rawValue {
+                    assetTrack.fieldOrder = inputFrame.pointee.flags & AV_FRAME_FLAG_TOP_FIELD_FIRST != 0 ? .tt : .bb
+                    if options.context != "ReadCacheIOContext" {
+                        options.deinterlace(assetTrack: assetTrack)
+                        if !options.hardwareDecode,
+                           self.codecContext?.pointee.hw_device_ctx != nil {
+                            self.codecContext = try? assetTrack.createContext(options: options)
+                            self.codecContext?.pointee.time_base = assetTrack.stream?.pointee.time_base ?? assetTrack.timebase.rational
+                            _ = avcodec_send_packet(self.codecContext, packet)
+                            continue
                         }
                     }
                 }
-                filter.filter(options: options, inputFrame: inputFrame) { avframe in
+                if !isVideo {
+                    if assetTrack.codecpar.pointee.frame_size == 0,
+                       inputFrame.pointee.sample_rate != 0,
+                       inputFrame.pointee.nb_samples != 0 {
+                        assetTrack.nominalFrameRate = Float(inputFrame.pointee.sample_rate) /
+                            Float(inputFrame.pointee.nb_samples)
+                    }
+                    if inputFrame.pointee.ch_layout.nb_channels > 24 {
+                        continue
+                    }
+                }
+                hasDecodeSuccess = true
+                deliveredFrame = true
+                if packet.pointee.flags & AV_PKT_FLAG_DISCARD != 0 {
+                    continue
+                }
+                if let videoSwresample = frameChange as? VideoSwresample {
+                    videoSwresample.processSideData(frame: inputFrame.pointee, assetTrack: assetTrack, options: options, packet: packet)
+                }
+                filter.filter(options: options, inputFrame: inputFrame, isVideo) { avframe in
                     do {
                         var frame = try frameChange.change(avframe: avframe)
                         if let videoFrame = frame as? VideoVTBFrame {
                             if let pixelBuffer = videoFrame.pixelBuffer as? PixelBuffer {
                                 pixelBuffer.formatDescription = assetTrack.formatDescription
-                            }
-                            if displayData != nil || contentData != nil || ambientViewingEnvironment != nil {
-                                videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment)
                             }
                         }
                         frame.timebase = filter.timebase
@@ -262,23 +226,30 @@ class FFmpegDecode: DecodeProtocol {
                 }
             } else {
                 if result == AVError.eof.code {
-                    avcodec_flush_buffers(codecContext)
+                    avcodec_flush_buffers(self.codecContext)
                     break
                 } else if result == AVError.tryAgain.code {
-                    break
+                    if assetTrack.isImage,
+                       !hasDecodeSuccess,
+                       avcodec_send_packet(self.codecContext, nil) == 0 {
+                        continue
+                    }
+                    return
                 } else {
-                    // ⚑ THE ONE SITE IN THE IMAGE THAT CALLS A KSPlayerError INITIALIZER — every
-                    //   other error is constructed inline. The call is at 0x101a229fc, into the real
-                    //   body 0x1019e429c behind the 1-instruction forwarder.
-                    //   The ternary survives verbatim as arithmetic on the CASE INDEX rather than a
-                    //   branch: `cmp w28,#0 / mov w8,#0xb / cinc w8,w8,eq` — base 11 is
-                    //   `codecVideoReceiveFrame`, incremented to 12 `codecAudioReceiveFrame` when the
-                    //   media-type discriminant is 0. `avErrorCode` is the live decode result.
-                    //   The returned (code, message) pair is then boxed TWICE — once for KSLog and
-                    //   once into the `.failure` payload — which is why both statements below stand.
-                    let error = KSPlayerError(errorCode: assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
+                    if deliveredFrame {
+                        return
+                    }
+                    let error = KSPlayerError(errorCode: isVideo ? .codecVideoReceiveFrame : .codecAudioReceiveFrame, avErrorCode: result)
                     KSLog(error)
+                    if isVideo, options.hardwareDecode {
+                        avcodec_free_context(&self.codecContext)
+                        options.hardwareDecode = false
+                        self.codecContext = try? assetTrack.createContext(options: options)
+                        self.codecContext?.pointee.time_base = assetTrack.stream?.pointee.time_base ?? assetTrack.timebase.rational
+                        return
+                    }
                     completionHandler(.failure(error))
+                    return
                 }
             }
         }
@@ -292,7 +263,7 @@ class FFmpegDecode: DecodeProtocol {
         }
     }
 
-    func shutdown() {
+    @used func shutdown() {
         av_frame_free(&coreFrame)
         avcodec_free_context(&codecContext)
         frameChange.shutdown()

@@ -136,7 +136,7 @@ public protocol SearchSubtitleDataSource: SubtitleDataSource {
     // loadDetails builds concrete URLSubtitleInfo (FUN_101aa7290); result.append(contentsOf:) uses element stride 8
     // (class refs, FUN_1019c7d88); the result array is returned directly (no array-map / existential boxing);
     // corroborated by SubtitleModel [URLSubtitleInfo] collectors (§7.3). Same requirement for both conformers (Assrt/Open).
-    func searchSubtitle(query: String?, languages: [String]) async throws -> [URLSubtitleInfo]
+    func searchSubtitle(query: String, languages: [String]) async throws -> [URLSubtitleInfo]
 }
 
 public protocol URLSubtitleDataSource: SubtitleDataSource { // was recon `FileURLSubtitleDataSouce`
@@ -364,10 +364,7 @@ public class AssrtSubtitleDataSource: SearchSubtitleDataSource {
     // `infos` → RETURNS [URLSubtitleInfo] (§5.1/§7.5, P60). Internal choices deep-pinned from the binary (P59/P61):
     //   URL host+"/sub/search" · query ["q":query] · header Authorization: Bearer <token> · JSON status/sub/subs ·
     //   per-sub sub["fileid"] as? String → Int → .description (base was sub["id"] as? Int; get_description @101aae404:264).
-    public func searchSubtitle(query: String?, languages _: [String]) async throws -> [URLSubtitleInfo] {
-        guard let query else {
-            return []
-        }
+    public func searchSubtitle(query: String, languages _: [String]) async throws -> [URLSubtitleInfo] {
         guard let searchApi = URL(string: host + "/sub/search")?.add(queryItems: ["q": query]) else {
             return []
         }
@@ -457,15 +454,13 @@ public class OpenSubtitleDataSource: SearchSubtitleDataSource {
     //   host+"/subtitles" (search) · host+"/download" (loadDetails) · queryItems query/imdb_id/tmdb_id/languages
     //   (base typo "imbd_id" → Forward-corrected "imdb_id") · headers Api-Key + optional Bearer (NO Accept/Content-Type —
     //   the earlier chain-scan hits were spurious pairings) · JSON data[].attributes.files[].file_id → link/file_name.
-    public func searchSubtitle(query: String?, languages: [String]) async throws -> [URLSubtitleInfo] {
+    public func searchSubtitle(query: String, languages: [String]) async throws -> [URLSubtitleInfo] {
         try await searchSubtitle(query: query, imdbID: 0, tmdbID: 0, languages: languages)
     }
 
-    public func searchSubtitle(query: String?, imdbID: Int, tmdbID: Int, languages: [String]) async throws -> [URLSubtitleInfo] {
+    public func searchSubtitle(query: String, imdbID: Int, tmdbID: Int, languages: [String]) async throws -> [URLSubtitleInfo] {
         var queryItems = [String: String]()
-        if let query {
-            queryItems["query"] = query
-        }
+        queryItems["query"] = query
         if imdbID != 0 {
             queryItems["imdb_id"] = String(imdbID)
         }

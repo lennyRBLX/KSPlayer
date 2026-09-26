@@ -234,22 +234,44 @@ open class KSPlayerLayer: NSObject {
                 // the new one — and then calls change(state:), a real KSPlayerLayer method the
                 // source did not declare. The delegate notification moves into it: the observer's
                 // only two acts in the binary are this log and that call.
-                KSLog("state change \(state) -> \(newValue)")
+                KSLog("state change \(state) -> \(newValue)", file: "KSPlayer/KSPlayerLayer.swift", function: "state", line: 148)
                 change(state: newValue)
             }
         }
     }
 
-    // Slot 58 @0x1019cc0ac, exported as `KSPlayer.KSPlayerLayer.change(state:)` — note the mangling
-    // is `$s8KSPlayer0A5LayerC6change5state...`, with `0A5Layer` word-substituting "KSPlayer", which
-    // is why a hand-built `13KSPlayerLayerC` spelling reads as a false trie negative.
-    // OVERRIDDEN by KSComplexPlayerLayer, which carries its own change(state:).
-    // UNRESOLVED → P8: the interior. All three of this body's callees — 0x10002d984, 0x101a04674
-    // and 0x101a03fd4 — are real trie negatives, so what it does beyond notifying the delegate is
-    // not read.
-    // ⚑[tool=export_trie_oracle ref=change_state_callee:0x101a04674 result=NOT_IN_TRIE]
+    // Slot 58 @0x1019cc0ac, `$s8KSPlayer0A5LayerC6change5state...`; OVERRIDDEN by KSComplexPlayerLayer.
+    // Read: `cbnz w22` skips to the delegate unless .initialized; str xzr via 0x1044e6190 = shouldSeekTo
+    // (the [weak self] seek-completion closure 0x1019ce420 clears the same global); 0x101a04674 and
+    // 0x101a03fd4 are runOnMainThread's inlined assumeIsolated("KSPlayer/Utility.swift", 22) / Task arms; closure 0x1019cc278 = setIdleTimerDisabled:NO.
     open func change(state: KSPlayerState) {
+        if state == .initialized {
+            shouldSeekTo = 0
+            runOnMainThread { UIApplication.shared.isIdleTimerDisabled = false }
+        }
         delegate?.player(layer: self, state: state)
+    }
+
+    public func changePlaybackTime(player: some MediaPlayerProtocol, time: TimeInterval) {
+        if player.isPlaying {
+            // outlined literal array object 0x1044e61c0: count 2, elements [5, 4] = [.paused, .bufferFinished]
+            if [KSPlayerState.paused, .bufferFinished].contains(state) {
+                subtitleView.dynamicRange = options.dynamicRange
+                var size = subtitleView.frame.size
+                if size.width == 0 || size.height == 0 {
+                    size = player.view.frame.size
+                }
+                let naturalSize = player.naturalSize
+                let ratio = naturalSize.width == 0 || naturalSize.height == 0
+                    ? 16.0 / 9.0
+                    : naturalSize.width / naturalSize.height
+                subtitleModel.subtitle(currentTime: time, playRatio: ratio, screenSize: size)
+            }
+        }
+        delegate?.player(layer: self, currentTime: time, totalTime: player.duration)
+        if player.playbackState == .playing, player.loadState == .playable, state == .buffering {
+            state = .bufferFinished
+        }
     }
 
     private lazy var timer: Timer = .scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -475,10 +497,10 @@ open class KSPlayerLayer: NSObject {
         }
         if player.isReadyToPlay {
             if state == .playedToTheEnd {
-                player.seek(time: 0) { [weak self] finished in
-                    guard let self else { return }
+                // 0x1019cc8e0: strong self in a 0x18 box; the weak box feeds runOnMainThread (0x1019cca90).
+                player.seek(time: 0) { finished in
                     if finished {
-                        self.player.play()
+                        runOnMainThread { [weak self] in self?.player.play() }
                     }
                 }
             } else {
@@ -500,14 +522,14 @@ open class KSPlayerLayer: NSObject {
     // THE LOG ARGUMENT DIFFERS: the binary builds "stop " + self.description — it sends objc
     // `description` to self and bridges the NSString before appending — not a plain literal.
     public func stop() {
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 406)
         KSLog("stop \(self)")
+#sourceLocation()
         state = .initialized
-        player.stop()
-        // UNRESOLVED → P8: the subtitleModel call the binary makes here with (nil, nil). Its callee
-        // 0x101ab2540 is 507 instructions and a real trie negative, so it is pinned, not named.
-        // ⚑[tool=export_trie_oracle ref=subtitle_clear:0x101ab2540 result=NOT_IN_TRIE]
+        // 0x101ab2540 (nil, nil) is SubtitleModel.selectedSubtitleInfo's willSet; player.stop() follows the removal.
         subtitleModel.selectedSubtitleInfo = nil
         subtitleView.removeFromSuperview()
+        player.stop()
         options.playerLayerDeinit()
     }
 
@@ -893,21 +915,21 @@ open class KSPlayerLayer: NSObject {
     // further statements are absent too — `timer.fireDate = Date.distantFuture`, `bufferedCount = 1`
     // (the extent stores to no field of self except through the Published setter) and the
     // `if error == nil { nextPlayer() }` tail.
-    // ORDER: on the nil arm the binary writes state BEFORE reading player.duration and calling the
-    // delegate; the source had it the other way round.
-    // LOG OVERLOAD: the binary converts with Foundation._convertErrorToNSError and logs through the
-    // __C.NSObject : CustomStringConvertible conformance — that is `KSLog(_ error: Error)`
-    // (KSOptions.swift:985), not the `CustomStringConvertible` overload the source used, which would
-    // have carried the error existential directly.
+    // ORDER: both arms write state first; player.duration is then read on BOTH arms (the error arm's
+    // result is dead: `blr` via [[x24,#8],#8] @0x1019cea60), and only the nil arm reaches the
+    // currentTime delegate call. LOG OVERLOAD: _convertErrorToNSError → `KSLog(_ error: Error)`.
+    // Log line 565 (0x235) is the #line Forward passes.
     public func finish(player: some MediaPlayerProtocol, error: Error?) {
         if let error {
             state = .error
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 565)
             KSLog(error)
+#sourceLocation()
         } else {
             state = .playedToTheEnd
-            let duration = player.duration
-            delegate?.player(layer: self, currentTime: duration, totalTime: duration)
         }
+        let duration = player.duration
+        if error == nil { delegate?.player(layer: self, currentTime: duration, totalTime: duration) }
         delegate?.player(layer: self, finish: error)
     }
 
@@ -932,12 +954,12 @@ open class KSPlayerLayer: NSObject {
         else {
             return
         }
-        // The binary logs the interruption before switching on it; the source had no KSLog here at all.
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 623)
         KSLog("[audio] audioInterrupted \(type)")
         switch type {
         case .began:
             pause()
-
+#sourceLocation()
         case .ended:
             // An interruption ended. Resume playback, if appropriate.
 
@@ -1105,10 +1127,10 @@ extension KSPlayerLayer {
         } else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] = player.duration
         }
-        if MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] == nil, let title = player.dynamicInfo?.metadata["title"] {
+        if MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] == nil, let title = player.dynamicInfo.metadata["title"] {
             MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] = title
         }
-        if MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtist] == nil, let artist = player.dynamicInfo?.metadata["artist"] {
+        if MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtist] == nil, let artist = player.dynamicInfo.metadata["artist"] {
             MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtist] = artist
         }
         var current: [MPNowPlayingInfoLanguageOption] = []
@@ -1278,7 +1300,7 @@ extension KSPlayerLayer {
 // one" — the PIP-error callback below is that body: its KSLog passes the literal
 // 'KSPlayer/KSPlayerLayer.swift' (count 28), which is this file.
 // ⚑[tool=decode_string_literal ref=KSComplexPlayerLayer.pictureInPictureController:0x1019d6430 result='KSPlayer/KSPlayerLayer.swift']
-public class KSComplexPlayerLayer: KSPlayerLayer {
+open class KSComplexPlayerLayer: KSPlayerLayer {
     public var urls: [URL] = []
     public var isPictureInPictureStoped: Bool = false
     // private, and the trie prints the module-hash discriminator on all three accessors:
@@ -1770,7 +1792,7 @@ public class KSComplexPlayerLayer: KSPlayerLayer {
         set(url: urls[index - 1], options: nil)
     }
 
-    public func playNextURL() {
+    open func playNextURL() {
         guard urls.count >= 2 else {
             return
         }

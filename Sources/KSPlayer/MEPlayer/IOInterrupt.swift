@@ -48,7 +48,7 @@ public final class IOInterruptContext {
 
     /// Designated init — reconstructed from FUN_101a391bc (vtable slot 0).
     /// Allocating thunk @0x101a33658 calls this then balances ARC on the closure.
-    init(_ block: (@Sendable () -> Bool)?) {
+    @used init(_ block: (@Sendable () -> Bool)?) {
         self.flag = false                              // *(self+0x10) = 0
         let reg = IOInterruptRegistry.shared           // _swift_once → DAT_1044e9ac0
         reg.lock.lock()                                // objc_stub::lock(reg+0x10)

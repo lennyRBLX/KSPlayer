@@ -166,9 +166,10 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     // slots 0-2 (setter @0x101a0dc20 — getter/_modify were eliminated). Not private:
     // a private stored property gets no vtable entry, and this one has a triple.
     // The setter stores the node then mirrors the current volume into it.
-    private var sourceNode: AVAudioSourceNode? {
-        didSet {
-            sourceNode?.volume = volume
+    @exclusivity(unchecked) private var sourceNode: AVAudioSourceNode? {
+        @used didSet {
+            Unmanaged.passUnretained(self).toOpaque()
+                .load(fromByteOffset: 0x58, as: AVAudioSourceNode?.self)?.volume = volume
         }
     }
 
@@ -176,7 +177,7 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
 
     // slots 3-5, all eliminated. Written by prepare(audioFormat:) and read by play();
     // it is the timestamp the play() debounce measures against.
-    private var lastPrepareTime: Double = 0
+    @exclusivity(unchecked) private var lastPrepareTime: Double = 0
 
     // ⚑ `let` (IsVar flag clear) initialised to 0.15 — init seeds both Doubles from one
     // 16-byte constant @0x103564560 (0.0, 0.15). Because it is a `let`, every read is
@@ -206,7 +207,8 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     // seeded to 1.0 by init and mirrored into the source node on write.
     public var volume: Float = 1 {
         didSet {
-            sourceNode?.volume = volume
+            Unmanaged.passUnretained(self).toOpaque()
+                .load(fromByteOffset: 0x58, as: AVAudioSourceNode?.self)?.volume = volume
         }
     }
 
@@ -304,9 +306,9 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
         try? AVAudioSession.sharedInstance().setPreferredSampleRate(audioFormat.sampleRate)
-        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)")
+        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)", line: 69)
         #endif
-        KSLog("[audio] outputFormat AudioFormat=\(audioFormat)")
+        KSLog("[audio] outputFormat AudioFormat=\(audioFormat)", line: 71)
         // Bind through `.layout` deliberately. `channelDescriptions` is overloaded:
         // AVAudioChannelLayout's returns a String ("tag: …, channelDescriptions: …") and
         // would emit a layoutTag call, while UnsafePointer<AudioChannelLayout>'s returns
@@ -316,7 +318,7 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
         // hoisted above a branch, so `.layout` executing first is evidence it is a source
         // access dominating the KSLog rather than something inside its autoclosure.
         if let layout = audioFormat.channelLayout?.layout {
-            KSLog("[audio] outputFormat channelLayout \(layout.channelDescriptions)")
+            KSLog("[audio] outputFormat channelLayout \(layout.channelDescriptions)", line: 73)
         }
         sourceNode = AVAudioSourceNode(format: audioFormat) { [weak self] _, timestamp, _, audioBufferList in
             if timestamp.pointee.mSampleTime == 0 {
@@ -328,7 +330,7 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
         guard let sourceNode else {
             return
         }
-        KSLog("[audio] new sourceNode inputFormat=\(sourceNode.inputFormat(forBus: 0))")
+        KSLog("[audio] new sourceNode inputFormat=\(sourceNode.inputFormat(forBus: 0))", line: 86)
         engine.attach(sourceNode)
         var nodes: [AVAudioNode] = [sourceNode]
         nodes.append(contentsOf: audioNodes())
@@ -369,8 +371,9 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     public func play() {
         let elapsed = CFAbsoluteTimeGetCurrent() - lastPrepareTime
         if lastPrepareTime > 0, elapsed < minDelayAfterPrepare {
+            let deadline = DispatchTime.now() + (minDelayAfterPrepare - elapsed)
             nonisolated(unsafe) weak var weakSelf = self
-            DispatchQueue.main.asyncAfter(deadline: .now() + (minDelayAfterPrepare - elapsed)) { @MainActor in
+            DispatchQueue.main.asyncAfter(deadline: deadline) { @MainActor in
                 weakSelf?.doPlay()
             }
         } else {
@@ -393,7 +396,7 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
             do {
                 try engine.start()
             } catch {
-                KSLog(error)
+                KSLog(error, line: 128)
             }
         }
     }

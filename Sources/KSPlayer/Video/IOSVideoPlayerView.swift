@@ -690,11 +690,13 @@ extension IOSVideoPlayerView {
     // block @0x101b0d84c (line 1290) sets alpha 0, and the completion block @0x101b0d8fc
     // (line 1292) stamps the identity transform. The completion takes the `Bool` UIKit passes.
     @objc private func hidePrompt() {
+        #sourceLocation(file: "KSPlayer/IOSVideoPlayerView.swift", line: 1290)
         UIView.animate(withDuration: 0.3) {
             self.promptLabel.alpha = 0
         } completion: { _ in
             self.promptLabel.transform = .identity
         }
+        #sourceLocation()
     }
 
     @objc private func orientationChanged(notification _: Notification) {

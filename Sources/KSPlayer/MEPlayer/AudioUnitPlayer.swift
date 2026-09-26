@@ -40,10 +40,10 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     public var playbackRate: Float = 1
     public var isMuted: Bool = false {
         didSet {
-            // Mirror into the inherited flag the sample-copy loop reads (setter writes
-            // self+0x70 then self+0x28). memsetZero was made `internal` on AudioBaseOutput
-            // for this cross-file write.
-            memsetZero = isMuted
+            // Mirror into the inherited flag the sample-copy loop reads. Forward
+            // writes self+0x70 under tracked access, then writes self+0x28 directly.
+            Unmanaged.passUnretained(self).toOpaque()
+                .storeBytes(of: isMuted, toByteOffset: 0x28, as: Bool.self)
         }
     }
 
@@ -189,8 +189,11 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
 
     // pause() @0x101a150dc (FrameOutput requirement 1).
     public func pause() {
-        if isPlaying {
-            isPlaying = false
+        if Unmanaged.passUnretained(self).toOpaque()
+            .load(fromByteOffset: 0x68, as: UInt8.self) == 1
+        {
+            Unmanaged.passUnretained(self).toOpaque()
+                .storeBytes(of: false, toByteOffset: 0x68, as: Bool.self)
             AudioOutputUnitStop(audioUnitForOutput)
         }
     }

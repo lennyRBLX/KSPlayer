@@ -3,6 +3,16 @@
 import Foundation
 import XCTest
 
+private final class Phase1DownloadDouble: DownloadProtocol {
+    var readLimit: Int32 = 0
+    let bufferSize: Int32 = 32 * 1024
+
+    func read(buffer _: UnsafeMutablePointer<UInt8>?, size _: Int32) -> Int32 { 0 }
+    func seek(offset _: Int64, whence _: Int32) -> Int64 { 0 }
+    func fileSize() -> Int64 { 0 }
+    func close() {}
+}
+
 /// Phase-1 foundation tests.
 /// - 1C.1: IO-cancellation primitives (construction + registration path). Cancel/
 ///   isCancelled behavior is NOT in the Forward 1.3.17 binary → deferred to 1C.9.
@@ -69,19 +79,19 @@ final class Phase1FoundationTest: XCTestCase {
 
     /// Bounds-check (slot 10 @0x1019e29e4): true when size > 16MB, or maxSize present
     /// and maxSize < size + length; else false.
-    func testCacheEntryIsExceeded() {
+    func testCacheEntryIsOut() {
         // size > 16MB → true regardless of maxSize
         XCTAssertTrue(CacheEntry(logicalPos: 0, physicalPos: 0,
-                                 size: 0x100_0001, maxSize: nil).isExceeded(0))
+                                 size: 0x100_0001, maxSize: nil).isOut(size: 0))
         // size <= 16MB, no maxSize → false
         XCTAssertFalse(CacheEntry(logicalPos: 0, physicalPos: 0,
-                                  size: 100, maxSize: nil).isExceeded(0))
+                                  size: 100, maxSize: nil).isOut(size: 0))
         // maxSize < size + length → true
         XCTAssertTrue(CacheEntry(logicalPos: 0, physicalPos: 0,
-                                 size: 100, maxSize: 150).isExceeded(60))   // 160 > 150
+                                 size: 100, maxSize: 150).isOut(size: 60))   // 160 > 150
         // maxSize >= size + length → false
         XCTAssertFalse(CacheEntry(logicalPos: 0, physicalPos: 0,
-                                  size: 100, maxSize: 150).isExceeded(40))  // 140 <= 150
+                                  size: 100, maxSize: 150).isOut(size: 40))  // 140 <= 150
     }
 
     // MARK: 1C.3 — DirectoryWatcher
@@ -105,20 +115,22 @@ final class Phase1FoundationTest: XCTestCase {
     /// (`interrupt: AVIOInterruptCB?` — NOT the plan's draft `interruptContext.makeToken()`)
     /// is present, and the inherited `getContext()` bridges to an FFmpeg AVIOContext without
     /// crashing. Functional read-returns->0 / cancel-returns--1 → P2.
-    func testCacheIOContextConstructsAndBridges() {
-        let ctx = CacheIOContext(cacheKey: "phase1-l3",
-                                 formatContextOptions: nil,
-                                 interrupt: nil,
-                                 saveFile: false,
-                                 isReadComplete: false)
+    func testCacheIOContextConstructsAndBridges() throws {
+        let ctx = try CacheIOContext(download: Phase1DownloadDouble(),
+                                     md5: "phase1-l3",
+                                     saveFile: false,
+                                     isReadComplete: false)
         XCTAssertEqual(ctx.bytesRead, 0)        // init default (UInt64)
         XCTAssertTrue(ctx.entryList.isEmpty)     // init default [] ([CacheFileEntry])
-        XCTAssertNil(ctx.interrupt)              // cancellation surface present, nil as passed
+        let interruptIsNil = Mirror(reflecting: ctx).children
+            .first(where: { $0.label == "interrupt" })
+            .map { Mirror(reflecting: $0.value).children.isEmpty } ?? false
+        XCTAssertTrue(interruptIsNil)            // designated init leaves private cancellation field nil
         XCTAssertFalse(ctx.isReadComplete)       // init param
         // getContext() (inherited AbstractAVIOContext, 1C.4) allocs an FFmpeg AVIOContext
         // wrapping this context's IO callbacks — the L3 IO-bridge capability. Calling it
         // without crashing is the assertion (reading THROUGH it is the P2 functional path).
         // (One-time AVIOContext alloc; intentionally not freed — test-process-scoped.)
-        _ = ctx.getContext()
+        _ = ctx.getContext(writable: false)
     }
 }

@@ -150,20 +150,21 @@ class MetalRender {
         }
     }
 
-    // s100 — Forward's shape, recovered from 0x101a83020 (278 instr, NOT_IN_TRIE). Two String
-    // parameters, no `isSphere: Bool`: argument 1 (x0,x1) is bridged and fed to
-    // `newFunctionWithName:` -> `setVertexFunction:` (0x101a830c8-f4), argument 2 (x2,x3) to
-    // `setFragmentFunction:` (0x101a83100-2c), and x4 is bitDepth (`cmp w25,#0xa`). The vertex
-    // DESCRIPTOR is built only when the vertex function is the sphere one — the binary compares
-    // argument 1 against the 16-char literal at 0x103d39ce0 ('mapSphereTexture') at
-    // 0x101a83148/50 with `_stringCompareWithSmolCheck` as the slow path — where the previous
-    // source built it unconditionally.
+    // s100 @0x101a83020 (278 instr) is an MTLLibrary method: body reads self from x20 (`mov x0,x20` -> newFunctionWithName:), callers pass x5 = swift_getObjectType(library).
+    static func makePipelineState(fragmentFunction: String, isSphere: Bool = false, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
+        library.makePipelineState(vertexFunction: isSphere ? "mapSphereTexture" : "mapTexture", fragmentFunction: fragmentFunction, bitDepth: bitDepth)
+    }
     static func makePipelineState(vertexFunction: String, fragmentFunction: String, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
+        library.makePipelineState(vertexFunction: vertexFunction, fragmentFunction: fragmentFunction, bitDepth: bitDepth)
+    }
+}
+extension MTLLibrary {
+    func makePipelineState(vertexFunction: String, fragmentFunction: String, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.colorAttachments[0].pixelFormat = KSOptions.colorPixelFormat(bitDepth: bitDepth)
-        descriptor.vertexFunction = library.makeFunction(name: vertexFunction)
-        descriptor.fragmentFunction = library.makeFunction(name: fragmentFunction)
-        if vertexFunction == "mapSphereTexture" {
+        descriptor.vertexFunction = makeFunction(name: vertexFunction)
+        descriptor.fragmentFunction = makeFunction(name: fragmentFunction)
+        if vertexFunction == "mapSphereTexture" { // vertex DESCRIPTOR only for the sphere vertex function (0x101a83148 compare)
             let vertexDescriptor = MTLVertexDescriptor()
             vertexDescriptor.attributes[0].format = .float4
             vertexDescriptor.attributes[0].bufferIndex = 0
@@ -175,11 +176,10 @@ class MetalRender {
             vertexDescriptor.layouts[1].stride = MemoryLayout<simd_float2>.stride
             descriptor.vertexDescriptor = vertexDescriptor
         }
-        // swiftlint:disable force_try
-        return try! library.device.makeRenderPipelineState(descriptor: descriptor)
-        // swftlint:enable force_try
+        return try! device.makeRenderPipelineState(descriptor: descriptor) // swiftlint:disable:this force_try
     }
-
+}
+extension MetalRender {
     static func texture(pixelBuffer: CVPixelBuffer) -> [MTLTexture] {
         guard let iosurface = CVPixelBufferGetIOSurface(pixelBuffer)?.takeUnretainedValue() else {
             return []

@@ -547,6 +547,38 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // both of which are self-declared reconstruction placeholders, and one of whose convenience
     // inits is already pinned DIVERGENT for an unrelated arity divergence at :385.
 
+    func addEntry(logicalPos: UInt64, buffer: UnsafeMutablePointer<UInt8>, size: Int32) throws {
+        if let index = firstEntryEqual(logicalPos: logicalPos) {
+            let entry = entryList[index]
+            let appendingSize = UInt32(size)
+            if !entry.isOut(size: appendingSize) {
+                try entry.write(logicalPos: logicalPos, buffer: buffer, size: size)
+                return
+            }
+            if entry.maxSize == nil {
+                entry.maxSize = entry.size
+            }
+        }
+
+        if let entry = reuseEntry(pos: logicalPos, size: size) {
+            try entry.write(logicalPos: logicalPos, buffer: buffer, size: size)
+            var low = 0
+            var high = entryList.count
+            while low < high {
+                let mid = (low + high) / 2
+                if entryList[mid].position < entry.position {
+                    low = mid + 1
+                } else {
+                    high = mid
+                }
+            }
+            entryList.insert(entry, at: low)
+        } else {
+            try addNewEntry(logicalPos: logicalPos, buffer: buffer, size: size)
+        }
+        onCacheUpdated?()
+    }
+
     // ⚑ 0x10002d9d4 — `mov x0, #0` / `ret`. Unconditional nil: the body reads no field, takes no
     // branch, and never touches either parameter. That address is the image's canonical
     // `return nil` and is the most-folded in the whole binary (605 symbols share it), so it
@@ -558,6 +590,29 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     // the behaviour of the hierarchy.
     public func reuseEntry(pos _: UInt64, size _: Int32) -> CacheFileEntry? {
         nil
+    }
+
+    private func addNewEntry(logicalPos: UInt64, buffer: UnsafeMutablePointer<UInt8>, size: Int32) throws {
+        let removalURL = tmpURL.appendingPathComponent(logicalPos.description)
+        try? FileManager.default.removeItem(at: removalURL)
+        let entry = try CacheFileEntry(dir: tmpURL, position: logicalPos, maxSize: nil)
+        try entry.write(logicalPos: logicalPos, buffer: buffer, size: size)
+
+        var insertionIndex = entryList.count
+        var didFinalizePredecessor = false
+        for (index, existing) in entryList.enumerated() {
+            if logicalPos < existing.position {
+                insertionIndex = index
+                break
+            }
+            if !didFinalizePredecessor,
+               existing.position + UInt64(existing.size) == logicalPos,
+               existing.maxSize == nil {
+                existing.maxSize = existing.size
+                didFinalizePredecessor = true
+            }
+        }
+        entryList.insert(entry, at: insertionIndex)
     }
 
     // ⚑ s109: `buffer` retyped to `UnsafeMutablePointer` with the base — see the correction on
@@ -658,6 +713,55 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
     //   returns the logical negation of _isClosed (`(_isClosed ^ 0xff) & 1`).
     func shouldContinueRead() -> Bool {
         !_isClosed
+    }
+
+    func readComplete(buffer: UnsafeMutablePointer<UInt8>, size: Int32, isReadComplete: Bool) -> Int32 {
+        guard shouldContinueRead() else {
+            KSLog("[PRELOAD_DEBUG] readComplete: shouldContinueRead=false, returning EOF")
+            return 0
+        }
+
+        if isReadComplete {
+            var remainingSize = size
+            var readBuffer = buffer
+            while shouldContinueRead() {
+                let result = download.read(buffer: readBuffer, size: remainingSize)
+                if result < 1 {
+                    if remainingSize == size {
+                        return result
+                    }
+                    break
+                }
+                if stopOnLimitReached {
+                    fetchedSize += Int64(result)
+                }
+                remainingSize -= result
+                if eof, urlPos != UInt64.max,
+                   urlPos + UInt64(size - remainingSize) >= end
+                {
+                    break
+                }
+                if remainingSize < 1 {
+                    break
+                }
+                readBuffer += Int(result)
+            }
+            let result = size - remainingSize
+            if result > 0 {
+                bytesRead += UInt64(result)
+            }
+            return result
+        }
+
+        let result = download.read(buffer: buffer, size: size)
+        if result > 0 {
+            bytesRead += UInt64(result)
+            if stopOnLimitReached {
+                fetchedSize += Int64(result)
+            }
+        }
+        KSLog("[PRELOAD_DEBUG] readComplete: isReadComplete=false, download.read returned \(result)")
+        return result
     }
 
     // s67 @101b8a768 — `func markReadComplete()` (name inferred, devirt). Faithful

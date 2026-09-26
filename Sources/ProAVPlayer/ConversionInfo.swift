@@ -33,8 +33,8 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     let maxBufferDuration: Double  // internal (was private, P34): ProAVPlayer.conversionDidReachEnd reads m3u8Info.maxBufferDuration cross-file
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
     let remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
-    private let demuxerIO: DemuxerIO
-    private let server: LocalHLSServer
+    let demuxerIO: DemuxerIO
+    let server: LocalHLSServer
     private let directoryWatcher: DirectoryWatcher  // KSPlayer (public type fe13053; init→public this pass, P34)
 
     // MARK: Designated init — `FUN_101b6b2a4` (M2)

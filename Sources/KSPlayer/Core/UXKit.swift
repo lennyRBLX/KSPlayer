@@ -11,28 +11,20 @@ import AppKit
 #endif
 
 /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.CGSize.within(ratio:):0x1019e7800 result=85-instr]
-/// The binary carries this extension; the source had its body INLINED into
-/// `SubtitleModel.subtitleDisplaySize()`, a name with zero trie symbols. `SubtitleModel.playSize`
-/// tail-calls this at 0x1019e7800, which is what forced it out into its own member.
-///
-/// The body was carried over from that inlined version, then VERIFIED against the binary rather
-/// than trusted — the branch condition specifically, since that is what a carried body most easily
-/// gets backwards:
-///   · `fdiv d3, d1, d2` / `fcmp d3, d0` / `b.pl` selects the first arm when `d1/d2 >= ratio`,
-///     i.e. `ratio <= d1/d2` — the `ratio <= h / w` below.
-///   · `fmul d3, d0, d2` is `ratio * d2` — the `ratio * w` below.
-///   Both fix the register roles as **d1 = height, d2 = width** (with `ratio` in d0), and the two
-///   readings agree on d2 = width independently, which is what makes the orientation a reading
-///   rather than a coin flip. Reading d1 as width instead inverts the comparison to `w / h` and
-///   silently swaps the fit axis.
-///   · the `Double(Int(…))` conversions are corroborated by `fcvtzs` plus range checks against
-///     ±2^63 as Doubles (`0xc3e0…`/`0x43e0…`) and `Double.greatestFiniteMagnitude` guards.
+/// The Forward body at 0x1019e7800 uses d0 = ratio, d1 = width, and d2 = height.
+/// Its checked `Int` conversions and integer-equality guard precede the two fit branches;
+/// the source below preserves that conversion order and trapping Swift.Int behavior.
 extension CGSize {
     func within(ratio: Double) -> CGSize {
-        let w = width, h = height
-        guard ratio != 0, w != 0 else { return self }
-        return ratio <= h / w ? CGSize(width: w, height: Double(Int(ratio * w)))
-                              : CGSize(width: Double(Int(h / ratio)), height: h)
+        guard ratio != 0 else { return self }
+        let integerWidth = Int(width)
+        let integerAspectWidth = Int(ratio * height)
+        guard integerWidth != integerAspectWidth else { return self }
+        if ratio <= width / height {
+            return CGSize(width: Double(integerAspectWidth), height: Double(Int(height)))
+        } else {
+            return CGSize(width: Double(integerWidth), height: Double(Int(width / ratio)))
+        }
     }
 }
 

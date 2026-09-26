@@ -37,8 +37,13 @@ extension KSMEPlayerTest: MediaPlayerDelegate {
     func changeLoadState(player _: some KSPlayer.MediaPlayerProtocol) {}
 
     func changeBuffering(player _: some KSPlayer.MediaPlayerProtocol, progress _: UInt8) {}
+    func changePlaybackTime(player _: some KSPlayer.MediaPlayerProtocol, time _: TimeInterval) {}
 
     func playBack(player _: some KSPlayer.MediaPlayerProtocol, loopCount _: Int) {}
 
+    func reachEndOfStream(player _: some KSPlayer.MediaPlayerProtocol) {}
+
     func finish(player _: some KSPlayer.MediaPlayerProtocol, error _: Error?) {}
+
+    func playerDidClear(player _: some KSPlayer.MediaPlayerProtocol) {}
 }

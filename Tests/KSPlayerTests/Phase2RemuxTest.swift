@@ -43,20 +43,22 @@ final class Phase2RemuxTest: XCTestCase {
     /// then an `OutputStreamInfo` over it wired for the BUILD path: empty `assetTrackMap`
     /// (so `assetTrackMap[0] == nil` → BUILD branch), `streamMapping[0]=0`,
     /// `timeBaseMap[0]=1/1000`, and a live `outPacket`.
-    private func makeOutputStreamInfo(codecID: AVCodecID, removeADTS: Bool) -> OutputStreamInfo {
+    private func makeOutputStreamInfo(codecID: AVCodecID, removeADTS: Bool) -> (info: OutputStreamInfo, packet: UnsafeMutablePointer<AVPacket>) {
         let fmt = avformat_alloc_context()!
         let outStream = avformat_new_stream(fmt, nil)!          // → index 0
         outStream.pointee.codecpar.pointee.codec_id = codecID
+
+        let packet = av_packet_alloc()!
 
         // BUILD path: leave assetTrackMap EMPTY (assetTrackMap[0] == nil).
         // streamMapping/timeBaseMap/removeADTS are passed at construction, not mutated after:
         // the binary spells all three `let`, so they are immutable once initialized.
         let osi = OutputStreamInfo(formatCtx: fmt,
+                                   outPacket: packet,
                                    streamMapping: [0: 0],
                                    timeBaseMap: [0: AVRational(num: 1, den: 1000)],
                                    removeADTS: removeADTS)
-        osi.outPacket = av_packet_alloc()
-        return osi
+        return (osi, packet)
     }
 
     /// An 8-byte packet on stream 0 with the ADTS sync bytes (0xFF, 0xF0) set, and the given
@@ -81,7 +83,8 @@ final class Phase2RemuxTest: XCTestCase {
     /// s13 must REUSE the pre-existing per-stream context and INVOKE ctx.transcode, forwarding
     /// the input packet + the OSI's outPacket buffer (terminal witness call @L161).
     func testCase1_ReusesExistingContextAndInvokesTranscode() {
-        let osi = makeOutputStreamInfo(codecID: AV_CODEC_ID_AAC, removeADTS: true)
+        let fixture = makeOutputStreamInfo(codecID: AV_CODEC_ID_AAC, removeADTS: true)
+        let osi = fixture.info
         let mock = MockTranscodeContext()
         osi.transcodeMap[0] = mock                               // pre-set the per-stream ctx
         let pkt = makePacket(pts: 0, dts: 0)
@@ -91,7 +94,7 @@ final class Phase2RemuxTest: XCTestCase {
 
         XCTAssertEqual(mock.transcodeCalls.count, 1)
         XCTAssertEqual(mock.transcodeCalls.first?.input, pkt)            // forwards the input packet
-        XCTAssertEqual(mock.transcodeCalls.first?.output, osi.outPacket) // forwards outPacket buffer
+        XCTAssertEqual(mock.transcodeCalls.first?.output, fixture.packet) // forwards outPacket buffer
     }
 
     // MARK: - Case 2: Copy build dispatch
@@ -99,7 +102,8 @@ final class Phase2RemuxTest: XCTestCase {
     /// Non-AAC (H264) → Copy. Copy is a static singleton: it is NOT stored in transcodeMap, and
     /// CopyTranscodeContext.transcode runs (proof: outPacket.pos stamped to -1).
     func testCase2_CopyDispatchNotStoredAndRuns() {
-        let osi = makeOutputStreamInfo(codecID: AV_CODEC_ID_H264, removeADTS: true)
+        let fixture = makeOutputStreamInfo(codecID: AV_CODEC_ID_H264, removeADTS: true)
+        let osi = fixture.info
         // transcodeMap EMPTY.
         let pkt = makePacket(pts: 0, dts: 0)
         let remuxer = makeRemuxer(osi)
@@ -107,7 +111,7 @@ final class Phase2RemuxTest: XCTestCase {
         remuxer.write(pkt)
 
         XCTAssertNil(osi.transcodeMap[0])                        // Copy singleton not stored
-        XCTAssertEqual(osi.outPacket!.pointee.pos, -1)           // CopyTranscodeContext.transcode ran
+        XCTAssertEqual(fixture.packet.pointee.pos, -1)           // CopyTranscodeContext.transcode ran
     }
 
     // MARK: - Case 3: DTS-clamp
@@ -116,14 +120,14 @@ final class Phase2RemuxTest: XCTestCase {
     /// binary `if startTime[idx] == nil`, body-audit-confirmed faithful).
     func testCase3_DTSClampRecordedOncePerStream() {
         // (a) Clamp arithmetic, non-zero result: fresh stream, pts=20, dts=15 → min(max(20,0),max(15,0)) = 15.
-        let osiA = makeOutputStreamInfo(codecID: AV_CODEC_ID_H264, removeADTS: false)
-        let remuxerA = makeRemuxer(osiA)
+        let fixtureA = makeOutputStreamInfo(codecID: AV_CODEC_ID_H264, removeADTS: false)
+        let remuxerA = makeRemuxer(fixtureA.info)
         remuxerA.write(makePacket(pts: 20, dts: 15))
         XCTAssertEqual(remuxerA.startTime[0], 15)
 
         // (b) Negative clamp → 0, AND once-per-stream: a 2nd packet on the SAME stream must NOT overwrite.
-        let osiB = makeOutputStreamInfo(codecID: AV_CODEC_ID_H264, removeADTS: false)
-        let remuxerB = makeRemuxer(osiB)
+        let fixtureB = makeOutputStreamInfo(codecID: AV_CODEC_ID_H264, removeADTS: false)
+        let remuxerB = makeRemuxer(fixtureB.info)
         remuxerB.write(makePacket(pts: -5, dts: 10))          // min(max(-5,0),max(10,0)) = min(0,10) = 0
         XCTAssertEqual(remuxerB.startTime[0], 0)
         remuxerB.write(makePacket(pts: 20, dts: 15))          // same stream 0 — guarded by `if startTime[0]==nil`
@@ -136,7 +140,8 @@ final class Phase2RemuxTest: XCTestCase {
     /// BSF stored if av_bsf_init succeeds; nil = fell back to Copy because the par-setup
     /// (FUN_1029f5584) is deferred-UNRESOLVED → Copy fallthrough. Accept BOTH; do NOT fail on nil.
     func testCase4_AACDispatchBSFOrCopyFallback() {
-        let osi = makeOutputStreamInfo(codecID: AV_CODEC_ID_AAC, removeADTS: true)
+        let fixture = makeOutputStreamInfo(codecID: AV_CODEC_ID_AAC, removeADTS: true)
+        let osi = fixture.info
         // transcodeMap EMPTY; ADTS bytes set by makePacket.
         let pkt = makePacket(pts: 0, dts: 0)
         let remuxer = makeRemuxer(osi)

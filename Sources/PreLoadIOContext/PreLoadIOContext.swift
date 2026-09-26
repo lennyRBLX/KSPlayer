@@ -57,12 +57,10 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     public var minBufferSecondsForThumbnail: Double = 5.0
     // 8  videoDuration: known media duration in seconds. init 0.
     public var videoDuration: Double = 0
-    // 9  thumbnailFetchRequest: pending thumbnail fetch (byte offset + size). ⚑
-    //    composite tuple-optional via decode_composite; init nil.
-    private var thumbnailFetchRequest: (offset: UInt64, size: UInt32)? = nil // ⚑ (composite; gate UNCHECKED)
-    // 10 thumbnailFetchResult: outcome of the last thumbnail fetch. ⚑ Int32
-    //    PLACEHOLDER (4-byte; real type likely an enum → P3/P6). init 0.
-    private var thumbnailFetchResult: Int32 = 0 // ⚑ placeholder (4-byte; real type likely an enum — P3/P6)
+    // 9  thumbnailFetchRequest: pending thumbnail fetch (byte offset + Int32 size).
+    private var thumbnailFetchRequest: (offset: UInt64, size: Int32)? = nil
+    // 10 thumbnailFetchResult: bytes produced by the last thumbnail fetch.
+    private var thumbnailFetchResult: Int32 = 0
 
     // --- computed accessors (vtable slots 0, 1, 11-13 and 20; only slot 20 is written —
     //     see the PINs below for the other three) ---
@@ -119,50 +117,203 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         _playbackSnapshotLock.unlock()
     }
 
-    // s33 @101ba80e8 — `func interpolateTime(_:position:total:) -> Double` (name
-    //   inferred, devirt). FAITHFUL SPINE + UNRESOLVED on the two unnamed helpers.
-    //   The decompile returns 0 unless `total != 0` and the first double passes the
-    //   same NaN/inf validity gate as s31; then, under _timeIndexLock, it calls the
-    //   unnamed FUN_101bac458 over _timeIndex (a lookup returning a found-marker) and,
-    //   on miss (== 0), falls back to the linear interpolation `time * position /
-    //   total` clamped to ≤ time; on hit it delegates to the unnamed FUN_101bac70c
-    //   (then bridge-releases the returned object). param_1=time, param_2=position
-    //   (UInt64), param_3=total (UInt64) — both reinterpreted from the double regs in
-    //   the binary. Helper bodies are unnamed FUN_ with no readable signature → spine
-    //   only, NOT fabricated.
-    // 🚨 NAME AND LABELS WERE FABRICATED; the trie names this outright, and the correct spelling
-    //   was ALREADY QUOTED two lines below by resolve_fun_pins:
-    //   `positionToTime(position: Swift.UInt64, fileSize: Swift.UInt64, duration: Swift.Double)`.
-    //   The old `interpolateTime(_:position:total:)` also had the parameters in the WRONG ORDER —
-    //   `duration` was the leading unlabelled argument and `fileSize` was spelled `total`.
-    func positionToTime(position: UInt64, fileSize: UInt64, duration: Double) -> Double {
-        var result = 0.0
-        // Binary gate (FUN_101ba80e8): total != 0 && finite && time > 0. The decompile  ⚑[tool=resolve_fun_pins ref=FUN_101ba80e8:0x101ba80e8 result=RESOLVES_UNIQUELY] = PreLoadIOContext.PreLoadIOContext.positionToTime(position: Swift.UInt64, fileSize: Swift.UInt64, duration: Swift.Double) -> Swift.Double
-        // enters the lock body only when `-1 < (long)param_1` (sign bit clear = non-negative)
-        // AND finite-exponent, or the positive-subnormal clause — net strictly-positive-finite.
-        // The `time > 0` requirement was OMITTED in the original reconstruction; RECOVERED by
-        // the orchestrator re-walk of the M1C audit. NB the audit itself FALSE-PASSED this unit
-        // (rationalized the sign term as isFinite inlining — the same trap s31's compare agent
-        // hit). Counterexample time=-1.0,total=10,pos=5: binary -> 0.0 (gate fails); pre-fix -> -1.0.
-        guard fileSize != 0, !(duration.isNaN || duration.isInfinite), duration > 0 else { return result }
-        _timeIndexLock.lock()
-        // UNRESOLVED → P8 (IO-completion): lVar1 = FUN_101bac458(time, _timeIndex, total) — an unnamed
-        //   time-index lookup over _timeIndex returning a found-entry marker (0 == miss).
-        //   On a HIT the binary then computes result = FUN_101bac70c(time, position,
-        //   total, <entry>) and _swift_bridgeObjectRelease(<entry>) — a second unnamed
-        //   interpolation helper over the found index entry. Both helpers are unnamed
-        //   FUN_ with no readable signature/body → NOT reconstructed; only the MISS path
-        //   below (which the decompile spells out) is reconstructed. The lock/unlock and
-        //   the miss-branch math are the faithful spine.
-        _timeIndexLock.unlock()
-        // binary (miss): dVar2 = time; if position < total and
-        //   (time * Double(position)) / Double(total) <= time → take the interpolation.
-        result = duration
-        if position < fileSize {
-            let interp = (duration * Double(position)) / Double(fileSize)
-            if interp <= duration { result = interp }
+    // s32 @101ba7dc8 — timeToPosition(time:fileSize:duration:).
+    func timeToPosition(time: Double, fileSize: UInt64, duration: Double) -> UInt64 {
+        guard fileSize != 0, duration.isFinite, duration > 0,
+              time.isFinite, time >= 0 else {
+            return 0
         }
-        return result
+
+        _timeIndexLock.lock()
+        var exactPosition: UInt64?
+        for entry in _timeIndex {
+            if entry.time.isFinite, entry.time >= 0, entry.time <= duration,
+               entry.position <= fileSize,
+               abs(entry.time - time) <= 0.05 {
+                exactPosition = entry.position
+                break
+            }
+        }
+
+        var validatedEntries: [TimeIndexEntry]?
+        if _timeIndex.count >= 2 {
+            let first = _timeIndex[0]
+            var valid = first.time.isFinite && first.time >= 0 && first.time <= duration
+                && first.position <= fileSize
+            var previous = first
+            var index = 1
+            while valid && index < _timeIndex.count {
+                let entry = _timeIndex[index]
+                if !entry.time.isFinite || entry.time < 0 || entry.time > duration
+                    || entry.position > fileSize
+                    || entry.position <= previous.position
+                    || entry.time <= previous.time {
+                    valid = false
+                } else {
+                    previous = entry
+                }
+                index += 1
+            }
+            if valid {
+                validatedEntries = _timeIndex
+            }
+        }
+        _timeIndexLock.unlock()
+
+        if let exactPosition {
+            return exactPosition
+        }
+
+        if let entries = validatedEntries {
+            let first = entries[0]
+            if time <= first.time {
+                if first.time > 0 {
+                    let scaled = (time / first.time) * Double(first.position)
+                    if scaled.isFinite, scaled > 0 {
+                        return UInt64(min(scaled, Double(fileSize)))
+                    }
+                    return 0
+                }
+            } else {
+                let last = entries[entries.count - 1]
+                if last.time <= time {
+                    if fileSize > last.position, duration > last.time, time < duration {
+                        let delta = (time - last.time)
+                            * Double(fileSize - last.position)
+                            / (duration - last.time)
+                        if delta.isFinite, delta > 0 {
+                            let remaining = fileSize - last.position
+                            let bounded = min(delta, Double(remaining))
+                            return last.position + UInt64(bounded)
+                        }
+                        return last.position
+                    }
+                    return fileSize
+                }
+
+                var low = 0
+                var high = entries.count - 1
+                while low < high - 1 {
+                    let mid = (low + high) / 2
+                    if entries[mid].time <= time {
+                        low = mid
+                    } else {
+                        high = mid
+                    }
+                }
+
+                let lower = entries[low]
+                let upper = entries[high]
+                let positionDelta = upper.position - lower.position
+                let timeDelta = upper.time - lower.time
+                if timeDelta > 0, positionDelta != 0 {
+                    let delta = (time - lower.time) * Double(positionDelta) / timeDelta
+                    if delta.isFinite, delta > 0 {
+                        let remaining = fileSize - lower.position
+                        let bounded = min(delta, Double(remaining))
+                        return lower.position + UInt64(bounded)
+                    }
+                }
+                return lower.position
+            }
+        }
+
+        if time >= duration {
+            return fileSize
+        }
+        let scaled = (time / duration) * Double(fileSize)
+        guard scaled.isFinite, scaled > 0 else {
+            return 0
+        }
+        return UInt64(min(scaled, Double(fileSize)))
+    }
+
+    // s33 @101ba80e8 — positionToTime(position:fileSize:duration:).
+    func positionToTime(position: UInt64, fileSize: UInt64, duration: Double) -> Double {
+        guard fileSize != 0, duration.isFinite, duration > 0 else {
+            return 0
+        }
+
+        _timeIndexLock.lock()
+        var validatedEntries: [TimeIndexEntry]?
+        if _timeIndex.count >= 2 {
+            let first = _timeIndex[0]
+            var valid = first.time.isFinite && first.time >= 0 && first.time <= duration
+                && first.position <= fileSize
+            var previous = first
+            var index = 1
+            while valid && index < _timeIndex.count {
+                let entry = _timeIndex[index]
+                if !entry.time.isFinite || entry.time < 0 || entry.time > duration
+                    || entry.position > fileSize
+                    || entry.position <= previous.position
+                    || entry.time <= previous.time {
+                    valid = false
+                } else {
+                    previous = entry
+                }
+                index += 1
+            }
+            if valid {
+                validatedEntries = _timeIndex
+            }
+        }
+        _timeIndexLock.unlock()
+
+        if let entries = validatedEntries {
+            let first = entries[0]
+            var mapped: Double
+            if position < first.position {
+                mapped = first.time * Double(position) / Double(first.position)
+            } else {
+                let last = entries[entries.count - 1]
+                if position >= last.position {
+                    if last.position < fileSize, position < fileSize {
+                        mapped = last.time
+                            + (duration - last.time)
+                            * Double(position - last.position)
+                            / Double(fileSize - last.position)
+                    } else {
+                        mapped = duration
+                    }
+                } else {
+                    var low = 0
+                    var high = entries.count - 1
+                    while low < high - 1 {
+                        let mid = (low + high) / 2
+                        if entries[mid].position <= position {
+                            low = mid
+                        } else {
+                            high = mid
+                        }
+                    }
+
+                    let lower = entries[low]
+                    let upper = entries[high]
+                    let positionDelta = upper.position - lower.position
+                    mapped = lower.time
+                    if positionDelta != 0 {
+                        mapped += (upper.time - lower.time)
+                            * Double(position - lower.position)
+                            / Double(positionDelta)
+                    }
+                }
+            }
+
+            guard mapped.isFinite else {
+                return 0
+            }
+            if mapped <= 0 {
+                return 0
+            }
+            return mapped > duration ? duration : mapped
+        }
+
+        if position >= fileSize {
+            return duration
+        }
+        let mapped = duration * Double(position) / Double(fileSize)
+        return min(duration, mapped)
     }
 
     // 🚨 A SECOND FABRICATED DUPLICATE WAS DELETED HERE — `func reportThumbnailProgress(_:_:)`,
@@ -260,38 +411,9 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         return 0
     }
 
-    // s50 @101ba896c — `func requestThumbnailData(offset:size:) -> UInt32` (name inferred,
-    //   devirt). FAITHFUL (full): all 141 instructions are accounted for; the only calls are
-    //   the stdlib Array bridged-subscript / endIndex thunks and swift_beginAccess/retain/
-    //   release. NO FFmpeg symbol, no unresolved callee, and NO dropped do/catch (same three
-    //   checks as s49: glossary fully consumed, no unreachable-block warning, and the seven
-    //   `brk #1` sites are overflow/bounds traps).
-    //
-    //   SIGNATURE, from the prologue: x0 is a 64-bit live-in and w1 a 32-bit live-in
-    //   (`str w1,[sp,#0xc]` / `mov x21,x0` before any other use), x2+ untouched → two
-    //   parameters, (UInt64, UInt32). The widths are then CONFIRMED by the only side effect:
-    //   the miss path stores x0 as the 8-byte word and w1 as the 4-byte word of
-    //   `thumbnailFetchRequest`, whose declared shape is `(offset: UInt64, size: UInt32)?`.
-    //   The return leaves in w0 → 32-bit, and the hit path returns parameter 2 verbatim
-    //   (`ldr w0,[sp,#0xc]`), so the return type is that parameter's type, UInt32.
-    //
-    //   Shape, instruction-anchored:
-    //     0x101ba89bc  guard !entryList.isEmpty        (miss when empty — same double count
-    //                                                   load as s49)
-    //     0x101ba8a0c  the SAME binary search as s49, keyed on `offset`
-    //     0x101ba8ac8  HIT → subscript entryList[mid] once more and DISCARD it, then
-    //                  `return size`. The discard is in the binary, not an editorial choice:
-    //                  the bridged arm calls the subscript thunk and immediately
-    //                  swift_unknownObjectReleases the +1 it returns, and the native arm keeps
-    //                  only the two bounds traps (`cmn x19,#1` re-derives mid ≥ 0 for a SECOND
-    //                  subscript at the same index) with the element load itself ARC-elided.
-    //                  The loop's own `entry` is already released at 0x101ba8a80, before this.
-    //     0x101ba8b18  MISS (search exhausted or list empty) → thumbnailFetchRequest =
-    //                  (offset, size); the tag byte at +0xc is stored 0 = `.some`; return 0.
-    //   Note the miss store clobbers x20, so it can only ever be reached on the miss path —
-    //   which is itself the proof that the hit path never falls through into it.
-    // ⚑[tool=prefetch_decompiles ref=PreLoadIOContext.slot50:0x101ba896c result=body full; NAME inferred]
-    func requestThumbnailData(offset: UInt64, size: UInt32) -> UInt32 { // name inferred (devirt)
+    // s50 @101ba896c — `requestFetchForThumbnail(offset:size:) -> Int32`.
+    // The binary-search hit returns the requested size; a miss records the request and returns 0.
+    @used func requestFetchForThumbnail(offset: UInt64, size: Int32) -> Int32 {
         if !entryList.isEmpty {
             var low = 0
             var high = entryList.count - 1
@@ -301,7 +423,7 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
                 if offset < entry.position {
                     high = mid - 1
                 } else if offset < entry.position + UInt64(entry.size) {
-                    _ = entryList[mid] // binary: the hit is re-fetched and dropped (see above)
+                    _ = consume entry; _ = entryList[mid] // entry released @0x101ba8a80 before the add; hit re-fetched + dropped
                     return size
                 } else {
                     low = mid + 1
@@ -310,6 +432,90 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         }
         thumbnailFetchRequest = (offset: offset, size: size)
         return 0
+    }
+
+    // s51 @101ba8ba0 — process a pending thumbnail fetch when enough buffered media is available.
+    func processThumbnailFetchRequest() -> Bool {
+        guard let request = thumbnailFetchRequest else {
+            return false
+        }
+
+        if !entryList.isEmpty {
+            var low = 0
+            var high = entryList.count - 1
+            while low <= high {
+                let mid = (low + high) / 2
+                let entry = entryList[mid]
+                if request.offset < entry.position {
+                    high = mid - 1
+                } else if request.offset < entry.position + UInt64(entry.size) {
+                    _ = entryList[mid]
+                    thumbnailFetchRequest = nil
+                    thumbnailFetchResult = request.size
+                    return false
+                } else {
+                    low = mid + 1
+                }
+            }
+        }
+
+        let bufferSeconds = availableBufferSeconds()
+        if bufferSeconds < minBufferSecondsForThumbnail {
+            return false
+        }
+        KSLog("[PreLoadIOContext] processThumbnailFetch: buffer=\(String(format: "%.1f", bufferSeconds))s offset=\(request.offset) size=\(request.size)")
+
+        let originalUrlPos = urlPos
+        let seekResult = download.seek(offset: Int64(request.offset), whence: 0)
+        if seekResult < 0 {
+            KSLog("[PreLoadIOContext] processThumbnailFetch seek failed: \(seekResult)")
+            thumbnailFetchRequest = nil
+            thumbnailFetchResult = 0
+            return false
+        }
+
+        urlPos = UInt64(seekResult)
+        fakeUrlPos = urlPos
+
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Int(request.size))
+        defer { buffer.deallocate() }
+
+        var totalRead: Int32 = 0
+        var currentOffset = request.offset
+        while totalRead < request.size {
+            if availableBufferSeconds() < minBufferSecondsForThumbnail * 0.5 {
+                KSLog("[PreLoadIOContext] processThumbnailFetch: buffer depleted, stop")
+                break
+            }
+            let result = download.read(
+                buffer: buffer.advanced(by: Int(totalRead)),
+                size: request.size - totalRead
+            )
+            if result < 1 {
+                break
+            }
+            totalRead += result
+            currentOffset += UInt64(result)
+            urlPos = currentOffset
+            fakeUrlPos = urlPos
+        }
+
+        if totalRead > 0 {
+            try? addEntry(logicalPos: request.offset, buffer: buffer, size: totalRead)
+            KSLog("[PreLoadIOContext] processThumbnailFetch completed: \(totalRead) bytes")
+        }
+
+        if originalUrlPos != UInt64.max, originalUrlPos != urlPos {
+            let restored = download.seek(offset: Int64(originalUrlPos), whence: 0)
+            if restored >= 0 {
+                urlPos = UInt64(restored)
+                fakeUrlPos = urlPos
+            }
+        }
+
+        thumbnailFetchRequest = nil
+        thumbnailFetchResult = totalRead
+        return totalRead > 0
     }
 
     // ⚑[tool=disassemble_function ref=PreLoadIOContext.slot49:0x101ba8744 result=pinned]
@@ -485,9 +691,8 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     // `fileSize` is `end` (the body loads self+0x48 straight into x0). Any fail -> forward with
     // `nil`, and note the body does NOT reset d0, so the original time is still passed.
     //
-    // UNRESOLVED → P8: `timeToPosition(time:fileSize:duration:)` @0x101ba7dc8 is 200 instructions
-    // and is NOT reconstructed, so the success arm cannot be written without inventing it. Only
-    // the guard ladder and the nil arm are expressed.
+    // The success arm forwards the converter result as Optional.some; the guard-failure arm
+    // forwards nil while preserving the original time argument.
     // ⚑[tool=export_trie_oracle ref=PreLoadIOContext.timeToPosition:0x101ba7dc8 result=name-recovered]
     public func syncPlaybackPosition(time: Double, duration: Double) {
         guard !time.isNaN, !time.isInfinite, time >= 0,
@@ -497,8 +702,10 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
             syncPlaybackPosition(time: time, position: nil)
             return
         }
-        // UNRESOLVED → P8: forward with .some(timeToPosition(time:fileSize:duration:)).
-        syncPlaybackPosition(time: time, position: nil)
+        syncPlaybackPosition(
+            time: time,
+            position: timeToPosition(time: time, fileSize: end, duration: duration)
+        )
     }
 
     // Requirement 6. Body @0x101ba7914, 301 instr — a DIFFERENT method from the 109-instruction
@@ -583,6 +790,62 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         KSLog(level: .verbose, "[PreLoadIOContext] addTimeIndex position=\(position) time=\(String(format: "%.2f", time))s, total=\(total)")
     }
 
+    private func findDiscontinuousPos() -> UInt64? {
+        let position = urlPos == 0 ? logicalPos : min(urlPos, logicalPos)
+        var index: Int?
+        if !entryList.isEmpty {
+            var low = 0
+            var high = entryList.count - 1
+            while low <= high {
+                let mid = (low + high) / 2
+                let entry = entryList[mid]
+                if position < entry.position {
+                    high = mid - 1
+                } else if position < entry.position + UInt64(entry.size) {
+                    index = mid
+                    break
+                } else {
+                    low = mid + 1
+                }
+            }
+        }
+        // binary: max(urlPos, logicalPos) is computed on BOTH edges of the first search,
+        //   before the hit/miss test.
+        let retry = max(urlPos, logicalPos)
+        if index == nil, retry != position, !entryList.isEmpty {
+            var low = 0
+            var high = entryList.count - 1
+            while low <= high {
+                let mid = (low + high) / 2
+                let entry = entryList[mid]
+                if retry < entry.position {
+                    high = mid - 1
+                } else if retry < entry.position + UInt64(entry.size) {
+                    index = mid
+                    break
+                } else {
+                    low = mid + 1
+                }
+            }
+        }
+        guard var cursor = index else {
+            return nil
+        }
+        var end = entryList[cursor].position + UInt64(entryList[cursor].size)
+        while cursor + 1 < entryList.count {
+            let next = entryList[cursor + 1]
+            if next.position != end {
+                break
+            }
+            end += UInt64(next.size)   // binary: CARRY8-trapped UInt64 add
+            cursor += 1
+        }
+        guard end != urlPos, end >= logicalPos else {
+            return nil
+        }
+        return end
+    }
+
     // Requirement 7, overriding CacheIOContext's entryList-based implementation with a
     // timeIndex-based one. Body @0x101ba6fa0, 526 instr, and its FAILURE PATH IS A TAIL CALL TO
     // SUPER (`b 0x101b8eed0`) rather than an empty array — which is why the guard is expressed as
@@ -634,12 +897,133 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
     // (processThumbnailFetchRequest, canAccessNetwork, preloadCount, findDiscontinuousPos,
     // readComplete, addEntry, updateSpeedSample), and inventing any of them is worse than the pin.
     public func more() -> Int32 {
-        guard !isPreloadPaused else {
-            return -1
-        }
-        // UNRESOLVED → P8: the lock, the six remaining guards, and the seek / cache-read split.
-        return 0
+    guard !isPreloadPaused else {
+        KSLog("[PreloadMore] return -1: isPreloadPaused=true")
+        return -1
     }
+
+    guard downloadLock.try() else {
+        KSLog("[PreloadMore] return 1: lock busy, will retry later")
+        return 1
+    }
+
+    guard !isPreloadPaused else {
+        KSLog("[PreloadMore] return -1: isPreloadPaused=true (after lock)")
+        downloadLock.unlock()
+        return -1
+    }
+
+    if processThumbnailFetchRequest() {
+        downloadLock.unlock()
+        return 1
+    }
+
+    let buffer: UnsafeMutablePointer<UInt8>
+    if let existingBuffer = loadMoreBuffer {
+        buffer = existingBuffer
+    } else {
+        let allocatedBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Int(bufferSize))
+        loadMoreBuffer = allocatedBuffer
+        buffer = allocatedBuffer
+    }
+
+    guard canAccessNetwork() else {
+        KSLog("[PreloadMore] return -1: canAccessNetwork=false")
+        loadMoreBuffer = nil
+        fakeUrlPos = 0
+        isPreloadPaused = false
+        downloadLock.unlock()
+        return -1
+    }
+
+    let availableCount = preloadCount()
+    guard availableCount != 0 else {
+        KSLog("[PreloadMore] return -1: preloadCount=\(availableCount), eof=\(eof), urlPos=\(urlPos), end=\(end), logicalPos=\(logicalPos)")
+        loadMoreBuffer = nil
+        fakeUrlPos = 0
+        isPreloadPaused = false
+        downloadLock.unlock()
+        return -1
+    }
+
+    if let position = findDiscontinuousPos() {
+        let seekResult = download.seek(offset: Int64(position), whence: 0)
+        KSLog("[CacheIOContext] more ffurl_seek2 \(position)")
+        if seekResult >= 0 {
+            urlPos = UInt64(seekResult)
+            fakeUrlPos = urlPos
+        }
+        downloadLock.unlock()
+        return 1
+    }
+
+    if eof, urlPos == end, logicalPos + UInt64(bufferSize) < urlPos {
+        guard let position = findDiscontinuousPos() else {
+            loadMoreBuffer = nil
+            fakeUrlPos = 0
+            isPreloadPaused = false
+            downloadLock.unlock()
+            return 0
+        }
+        let seekResult = download.seek(offset: Int64(position), whence: 0)
+        KSLog("[CacheIOContext] more seek to discontinuous pos \(position)")
+        if seekResult >= 0 {
+            urlPos = UInt64(seekResult)
+            fakeUrlPos = urlPos
+        }
+        downloadLock.unlock()
+        return 1
+    }
+
+    var requestedSize = min(Int32(availableCount), bufferSize)
+    guard requestedSize > 0 else {
+        KSLog("[PreloadMore] return -1: size=\(requestedSize) after min(preloadCount, bufferSize)")
+        downloadLock.unlock()
+        return -1
+    }
+
+    let target = urlPos == .max ? logicalPos : urlPos
+    var laterEntry: CacheFileEntry?
+    if !entryList.isEmpty {
+        var low = 0
+        var high = entryList.count - 1
+        while low <= high {
+            let mid = (low + high) / 2
+            let entry = entryList[mid]
+            if target < entry.position {
+                laterEntry = entry
+                high = mid - 1
+            } else {
+                low = mid + 1
+            }
+        }
+    }
+    if let laterEntry {
+        let gap = laterEntry.position - target
+        if gap < UInt64(requestedSize) {
+            requestedSize = Int32(gap)
+        }
+    }
+
+    var result = readComplete(buffer: buffer, size: requestedSize, isReadComplete: false)
+    let avErrorEOF: Int32 = -541_478_725
+    if result == avErrorEOF, requestedSize >= 1,
+       isJudgeEOF, !eof || end == 0 || urlPos < end {
+        result = -35
+    }
+
+    if result > 0 {
+        try? addEntry(logicalPos: target, buffer: buffer, size: result)
+        urlPos = target + UInt64(result)
+        fakeUrlPos = urlPos
+        downloadLock.unlock()
+        return result
+    }
+
+    KSLog("[PreloadMore] return \(result): readComplete failed, size=\(requestedSize), urlPos=\(urlPos), eof=\(eof), end=\(end)")
+    downloadLock.unlock()
+    return result
+}
 }
 
 

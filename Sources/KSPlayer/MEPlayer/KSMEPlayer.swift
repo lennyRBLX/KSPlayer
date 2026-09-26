@@ -50,34 +50,9 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
 
     public let audioOutput: AudioOutput
     public var options: KSOptions
-    // ⚑[tool=binding_gate ref=KSMEPlayer.videoOutput:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   The ONLY one of session 60's 95 binding mismatches that the compiler REFUTED. The
-    //   binary's FieldRecord flags word is 0x00000000 (= `let`; a real `var` such as the
-    //   sibling `options` reads 0x00000002), but this declaration cannot be `let`:
-    //     • it carries a `didSet` — "'let' declarations cannot be observing properties";
-    //     • `private(set)` is meaningless on a read-only property;
-    //     • and it is assigned at three sites (:195 nil, :319 nil, :321 constructed).
-    //   So EITHER Forward's videoOutput really is immutable — which would mean this whole
-    //   replace-and-invalidate lifecycle (oldValue.invalidate + removeFromSuperview) is
-    //   modelled wrongly and the three assignments belong somewhere else — OR the flag is not
-    //   saying what it appears to. Both readings are substantive and neither is settled by the
-    //   flag alone, so this is left as `var` and deferred as its own unit rather than forced.
-    //   One of 33 such refutations across 15 classes; 62 of the 95 mismatches WERE fixed.
-    //   Detail + the full 33, categorised: reconstruction/binding_refuted_s61.json
-    // NON-OPTIONAL in the binary: the trie prints `KSMEPlayer.videoOutput.getter : __C.UIView &
-    // KSPlayer.VideoOutput`, with no `?`. Written as the sanctioned IUO STAND-IN — the l2 gate's
-    // own name for a binary non-optional reference whose real construction is not yet derived —
-    // rather than as a true `let`, because three sites still assign nil and what the binary does
-    // at those points has NOT been read. Composition order follows the binary; the parens are
-    // Swift's requirement for attaching `!` to a composition, not a type difference.
-    public private(set) var videoOutput: (UIView & VideoOutput)! {
-        didSet {
-            oldValue?.invalidate()
-            runOnMainThread {
-                oldValue?.removeFromSuperview()
-            }
-        }
-    }
+    // Ref field record 4 has flags 0; init 0x101a3e818 always creates this output.
+    // Evidence: M05-KSME-videoOutput-field.json, M05-KSME-output-init-raw.json.
+    public let videoOutput: UIView & VideoOutput
 
     public private(set) var bufferingProgress: UInt8 = 0 {
         willSet {
@@ -94,7 +69,7 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     // now declared (see KSPictureInPictureController.swift), so the concrete stand-in is gone.
     // Still open, and NOT part of this unit: ⚑ M2, the PiP-controller construction from
     // videoOutput's displayLayer. Was a `_pipController` lazy + computed; the binary stores it.
-    public private(set) var pipController: (any KSPictureInPictureProtocol)?
+    public var pipController: (any KSPictureInPictureProtocol)?
 
     private lazy var _playbackCoordinator: Any? = {
         if #available(macOS 12.0, iOS 15.0, tvOS 15.0, *) {
@@ -181,7 +156,7 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     ///   `isDLNARunning` and its fall-through BOTH reach the second store to the same global, so
     ///   the `false` is immediately overwritten. Collapsing it would be a cleaner body than the
     ///   binary has; the redundancy most likely marks an early exit the optimiser removed.
-    func checkShouldResume() {
+    public func checkShouldResume() {
         if options.isDLNARunning {
             shouldResumePlayback = false
         }
@@ -192,17 +167,13 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
         KSOptions.setAudioSession()
         audioOutput = KSOptions.audioPlayerType.init()
         playerItem = MEPlayerItem(url: url, options: options)
-        if options.videoDisable {
-            videoOutput = nil
-        } else {
-            videoOutput = KSOptions.videoPlayerType.init(options: options)
-        }
+        videoOutput = KSOptions.videoPlayerType.init(options: options)
         self.options = options
         super.init()
         playerItem.delegate = self
         audioOutput.renderSource = playerItem
-        videoOutput?.renderSource = playerItem
-        videoOutput?.displayLayerDelegate = self
+        videoOutput.renderSource = playerItem
+        videoOutput.displayLayerDelegate = self
         #if !os(macOS)
         NotificationCenter.default.addObserver(self, selector: #selector(audioRouteChange), name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
         if #available(tvOS 15.0, iOS 15.0, *) {
@@ -216,7 +187,7 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(2)
         #endif
         NotificationCenter.default.removeObserver(self)
-        videoOutput?.invalidate()
+        videoOutput.invalidate()
         playerItem.stop()
     }
 }
@@ -230,10 +201,10 @@ private extension KSMEPlayer {
             let isPaused = !(self.playbackState == .playing && self.loadState == .playable)
             if isPaused {
                 self.audioOutput.pause()
-                self.videoOutput?.pause()
+                self.videoOutput.pause()
             } else {
                 self.audioOutput.play()
-                self.videoOutput?.play()
+                self.videoOutput.play()
             }
             self.delegate?.changeLoadState(player: self)
         }
@@ -308,10 +279,6 @@ extension KSMEPlayer: MEPlayerDelegate {
     public func sourceDidOpened() {
         isReadyToPlay = true
         options.readyTime = CACurrentMediaTime()
-        let vidoeTracks = tracks(mediaType: .video)
-        if vidoeTracks.isEmpty {
-            videoOutput = nil
-        }
         let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
             $0 as? FFmpegAssetTrack
         }?.audioDescriptor
@@ -321,7 +288,7 @@ extension KSMEPlayer: MEPlayerDelegate {
                 KSLog("[audio] audio type: \(audioOutput) prepare audioFormat )")
                 audioOutput.prepare(audioFormat: audioDescriptor.audioFormat)
             }
-            if let controlTimebase = videoOutput?.displayLayer.controlTimebase, options.startPlayTime > 1 {
+            if let controlTimebase = videoOutput.displayLayer.controlTimebase, options.startPlayTime > 1 {
                 CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(options.startPlayTime), timescale: 1))
             }
             delegate?.readyToPlay(player: self)
@@ -359,7 +326,7 @@ extension KSMEPlayer: MEPlayerDelegate {
                 self.loopCount += 1
                 self.delegate?.playBack(player: self, loopCount: self.loopCount)
                 self.audioOutput.play()
-                self.videoOutput?.play()
+                self.videoOutput.play()
             } else {
                 self.playbackState = .finished
             }
@@ -413,8 +380,8 @@ extension KSMEPlayer: MEPlayerDelegate {
             }
         } else {
             if loadingState.isFirst {
-                if videoOutput?.pixelBuffer == nil {
-                    videoOutput?.readNextFrame()
+                if videoOutput.pixelBuffer == nil {
+                    videoOutput.readNextFrame()
                 }
             }
             var progress = 100
@@ -511,7 +478,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
-    public var isPlaying: Bool { playbackState == .playing }
+    nonisolated public var isPlaying: Bool { playbackState == .playing }
 
     @MainActor
     public var naturalSize: CGSize {
@@ -522,26 +489,32 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     public var view: UIView { videoOutput }
 
-    public func replace(url: URL, options: KSOptions) {
+    public func replace(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
+        replace(item: MEPlayerItem(io: io, options: options))
+    }
+
+    // Ref 0x101a3c358 preserves the output objects while replacing their source.
+    @MainActor
+    func replace(item: MEPlayerItem) {
         KSLog("replaceUrl \(self)")
-        stop()
+        reset()
         playerItem.delegate = nil
-        playerItem = MEPlayerItem(url: url, options: options)
-        if options.videoDisable {
-            videoOutput = nil
-        } else if videoOutput == nil {
-            videoOutput = KSOptions.videoPlayerType.init(options: options)
-            videoOutput?.displayLayerDelegate = self
+        playerItem = item
+        let options = item.options
+        if options.isAudioRateByFilter(), playbackRate != 1,
+           !options.audioFilters.contains(where: { $0.hasPrefix("atempo=") })
+        {
+            options.audioFilters.append("atempo=\(playbackRate)")
         }
         self.options = options
         playerItem.delegate = self
-        audioOutput.flush()
+        audioOutput.resetTime()
         audioOutput.renderSource = playerItem
-        videoOutput?.renderSource = playerItem
-        videoOutput?.options = options
+        videoOutput.renderSource = playerItem
+        videoOutput.options = options
     }
 
-    public var currentPlaybackTime: TimeInterval {
+    nonisolated public var currentPlaybackTime: TimeInterval {
         get {
             playerItem.currentPlaybackTime
         }
@@ -550,7 +523,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
-    public var duration: TimeInterval { playerItem.duration }
+    nonisolated public var duration: TimeInterval { playerItem.duration }
 
     /// cachedTimeRanges.getter @0x101a3d744, 90 instr. `public` from the property descriptor
     /// $s8KSPlayer10KSMEPlayerC16cachedTimeRangesSayAA06CachedD5RangeVGvpMV @0x10356add0; no
@@ -580,11 +553,11 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     public var fileSize: Int64 { playerItem.fileSize }
 
-    public var dynamicInfo: DynamicInfo? {
+    public var dynamicInfo: DynamicInfo {
         playerItem.dynamicInfo
     }
 
-    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
+    nonisolated public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
         let time = max(time, 0)
         playbackState = .seeking
         runOnMainThread { [weak self] in
@@ -602,7 +575,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
                 self.audioOutput.flush()
                 runOnMainThread { [weak self] in
                     guard let self else { return }
-                    if let controlTimebase = self.videoOutput?.displayLayer.controlTimebase {
+                    if let controlTimebase = self.videoOutput.displayLayer.controlTimebase {
                         CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1))
                     }
                 }
@@ -633,7 +606,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         videoOutput.flush()
     }
 
-    public func play() {
+    nonisolated public func play() {
         KSLog("play \(self)")
         playbackState = .playing
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
@@ -644,7 +617,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
-    public func pause() {
+    nonisolated public func pause() {
         KSLog("pause \(self)")
         playbackState = .paused
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
@@ -674,7 +647,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         options.decodeAudioTime = 0
         options.decodeVideoTime = 0
         if KSOptions.isClearVideoWhereReplace {
-            videoOutput?.flush()
+            videoOutput.flush()
         }
     }
 
@@ -711,7 +684,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         // spelled yet. Declaring that enum is its own unit.
         // ⚑[tool=export_trie_oracle ref=MEPlayerItem.send:0x101a48b04 result=MEMBER_UNDECLARED]
         if KSOptions.isClearVideoWhereReplace { // @0x101a428ec-0x101a428f8, read access, 0x1044e5151
-            videoOutput?.flush() //                @0x101a428fc-0x101a4291c, FrameOutput witness req#2
+            videoOutput.flush() //                @0x101a428fc-0x101a4291c, FrameOutput witness req#2
         }
     }
 
@@ -726,7 +699,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func thumbnailImageAtCurrentTime() async -> CGImage? {
-        videoOutput?.pixelBuffer?.cgImage()
+        videoOutput.pixelBuffer?.cgImage()
     }
 
     public func enterBackground() {}
@@ -742,7 +715,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
-    public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
+    nonisolated public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
         playerItem.assetTracks.compactMap { track -> MediaPlayerTrack? in
             if track.mediaType == mediaType {
                 return track
@@ -903,7 +876,7 @@ public extension KSMEPlayer {
     ///   than isolating the whole type, and the KSAVPlayer twin needs no marking only because that
     ///   class is `@MainActor` outright — so the two `configPIP`s end up equally isolated either way.
     @MainActor
-    func configPIP() {
+    public func configPIP() {
         let contentSource = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: videoOutput.displayLayer,
             playbackDelegate: self
@@ -911,7 +884,7 @@ public extension KSMEPlayer {
         pipController = KSOptions.pictureInPictureType.init(contentSource: contentSource)
     }
 
-    func startRecord(url: URL) {
+    public func startRecord(url: URL) {
         playerItem.startRecord(url: url, mediaType: nil)
     }
 
@@ -923,7 +896,7 @@ public extension KSMEPlayer {
     /// The forwarding body is confirmed by the binary rather than assumed: @0x101a44520 loads
     /// `playerItem` (its own `vpWvd`, offset global 0x1044ea140) and then inlines
     /// `MEPlayerItem.stopRecord()` — see that method, whose commit-1 stub this same read resolved.
-    func stopRecord() {
+    public func stopRecord() {
         playerItem.stopRecord()
     }
 }

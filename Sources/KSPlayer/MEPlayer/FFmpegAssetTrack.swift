@@ -75,7 +75,7 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     // The protocol has been retyped to match, so this no longer diverges from either side.
     public private(set) var rotation: UInt16 = 0
     public var dovi: DOVIDecoderConfigurationRecord?
-    public let fieldOrder: FFmpegFieldOrder
+    public internal(set) var fieldOrder: FFmpegFieldOrder
     public var isImage: Bool = false                       // ⚑ 30 NEW · init population deferred (disposition/side-data)
     public var isStillImage: Bool = false                  // ⚑ 31 NEW · init population deferred
     var closedCaptionsTrack: FFmpegAssetTrack?

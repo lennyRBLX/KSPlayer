@@ -62,7 +62,7 @@ public class AudioDataBuffer {
     // non-nil, slot 14 exhaustion nil, slot 14 adopt non-nil) with one construct. Reading B
     // (no observer; an explicit `currentRenderReadOffset = 0` written at each site) emits
     // identical machine code and is NOT excluded — this choice is FORM-only.
-    var currentRender: AudioFrame? {
+    @exclusivity(unchecked) var currentRender: AudioFrame? {
         didSet {
             currentRenderReadOffset = 0
         }
@@ -70,7 +70,7 @@ public class AudioDataBuffer {
     // currentRenderReadOffset: a 4-byte store at every site (undefined4) rules out a
     // 64-bit type; its field-record symref (0x103c2cf86) is the SAME linker-deduplicated
     // mangled string as AudioBaseOutput's same-named UInt32 field.
-    private var currentRenderReadOffset: UInt32 = 0
+    @exclusivity(unchecked) private var currentRenderReadOffset: UInt32 = 0
 
     // flush (slot 12 @0x101a11cb4, 8 instr — the name is CONFIRMED, no longer inferred. The
     // session-46 P43 check came back negative (no #function/#file literal, no witness-table

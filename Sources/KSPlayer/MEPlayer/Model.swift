@@ -118,9 +118,10 @@ public protocol FrameOutput: AnyObject {
     // `VideoOutputRenderSourceDelegate?` — all six accessors and both direct field offsets say
     // so. One combined requirement cannot express that, so it moves down to AudioOutput and
     // VideoOutput.
+    func play()
     func pause()
     func flush()
-    func play()
+    func invalidate()
 }
 
 protocol MEFrame: ObjectQueueItem {
@@ -209,6 +210,42 @@ public extension KSOptions {
             }
         default:
             return CGColorSpace(name: CGColorSpace.sRGB)
+        }
+    }
+
+    static func colorSpace(colorPrimaries: CFString?, transferFunction: CFString?, dovi: DOVIDecoderConfigurationRecord?) -> CGColorSpace? {
+        switch colorPrimaries {
+        case kCVImageBufferColorPrimaries_ITU_R_709_2:
+            if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+                return CGColorSpace(name: CGColorSpace.itur_709_PQ)
+            } else if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+                return CGColorSpace(name: "kCGColorSpaceITUR_709_HLG" as CFString)
+            } else {
+                return CGColorSpace(name: CGColorSpace.sRGB)
+            }
+        case kCVImageBufferColorPrimaries_ITU_R_2020:
+            if transferFunction == nil {
+                return CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+            } else if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+                return CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+            } else if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+                if dovi != nil {
+                    return CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                }
+                if #available(macOS 15.0, iOS 18.0, tvOS 18.0, *) {
+                    return CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                } else {
+                    return CGColorSpace(name: CGColorSpace.itur_2020)
+                }
+            } else {
+                return CGColorSpace(name: CGColorSpace.itur_2020)
+            }
+        default:
+            if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+                return CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+            } else {
+                return CGColorSpace(name: CGColorSpace.sRGB)
+            }
         }
     }
 
@@ -529,11 +566,9 @@ public final class VideoVTBFrame: MEFrame {
     public var isKeyFrame: Bool = false
     public var dovi: DOVIDecoderConfigurationRecord?
     public let isDovi: Bool
-    // KSDOVIMetadata = opaque 3008 B inline (DOVIRPUShim). Field record 13 of 14 is
-    // `<SYM:2@0x1039eb100>Sg` — the trailing `Sg` IS the optional wrapper, so `?` is the faithful
-    // spelling here and `!` would be wrong. The earlier "an opaque blob has no nil-tag inhabitant in
-    // 3008 B, so it must be NON-optional" rationale is REFUTED by VideoToolboxDecode.swift:31, which
-    // reconstructs the identical type as `KSDOVIMetadata?` and PASSES the same gate.
+    // KSDOVIMetadata uses the imported-C 3008-byte inline layout. The nested Bool at metadata
+    // offset 0x457 supplies Optional's extra inhabitant, so this field remains KSDOVIMetadata?.
+    // Field record 13 of 14 is `<SYM:2@0x1039eb100>Sg`, confirming the optional wrapper.
     // NO declaration default: VideoVTBFrame's vpfi set is exactly {adjustBuffer, duration, position,
     // size, timebase, timestamp} (export_trie_oracle --class VideoVTBFrame) and doviData is NOT in it.
     // The initializer is therefore dropped, not mirrored from VideoToolboxDecode — whose doviData DOES
@@ -579,6 +614,7 @@ public struct EDRMetaData {
     var displayData: MasteringDisplayMetadata?
     var contentData: ContentLightMetadata?
     var ambientViewingEnvironment: AmbientViewingEnvironment?
+    var isVIVID: Bool
 }
 
 public struct MasteringDisplayMetadata {

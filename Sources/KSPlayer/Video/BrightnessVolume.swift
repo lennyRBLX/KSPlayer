@@ -69,9 +69,11 @@ open class BrightnessVolume {
 
     private func disAppearView() {
         if progressView.alpha == 1.0 {
+            #sourceLocation(file: "KSPlayer/BrightnessVolume.swift", line: 56)
             UIView.animate(withDuration: 0.8) { [weak self] () in
                 self?.progressView.alpha = 0.0
             }
+            #sourceLocation()
         }
     }
 
