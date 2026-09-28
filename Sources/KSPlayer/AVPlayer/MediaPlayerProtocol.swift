@@ -361,13 +361,40 @@ public extension MediaPlayerProtocol {
     var typeName: String {
         "NSStringFromClass(Self.self)"
     }
+
+    /// @0x1019dfdd0 (24 insns) — `(extension in KSPlayer):MediaPlayerProtocol.isPlaying.getter`:
+    /// witness +0x48 (playbackState) `== 1` (.playing), then witness +0x50 (loadState) `== 2` (.playable).
+    var isPlaying: Bool {
+        playbackState == .playing && loadState == .playable
+    }
+
+    /// @0x10002dab0 — `(extension in KSPlayer):MediaPlayerProtocol.isExternalPlaybackActive.getter`,
+    /// ICF-folded into the shared `mov w0,#0; ret`.
+    var isExternalPlaybackActive: Bool {
+        false
+    }
+    /// get @0x1019de638 / set @0x1019de670 / modify @0x1019de718 —
+    /// `(extension in KSPlayer):MediaPlayerProtocol.contentMode`: witness +0x28 (`view`) then the
+    /// UIView `contentMode` message.
+    var contentMode: UIViewContentMode {
+        get {
+            view.contentMode
+        }
+        set {
+            view.contentMode = newValue
+        }
+    }
+
     // Ref 0x1019de7f8 wraps URL, then calls requirement 34.
     func replace(url: URL, options: KSOptions) {
         replace(io: .left(url), options: options)
     }
 
+    // Forward's MainActor closure check in this getter reports #line 265 (`mov w3,#0x109`).
     var nominalFrameRate: Float {
+        #sourceLocation(file: "KSPlayer/MediaPlayerProtocol.swift", line: 265)
         tracks(mediaType: .video).first { $0.isEnabled }?.nominalFrameRate ?? 0
+        #sourceLocation()
     }
 
     // ── s106: protocol-extension defaults, each read from its own body ─────────────
@@ -420,8 +447,11 @@ public extension MediaPlayerProtocol {
     /// ⚑ `compactMap` vs `filter`-then-`map` is not decidable from this body: both lower to one
     ///   append loop over an empty seed. `compactMap` is written because the cast and the skip are
     ///   the SAME test here — there is no separate predicate pass to correspond to a `filter`.
+    // Forward's MainActor closure check reports #line 277.
     var subtitlesTracks: [any SubtitleInfo] {
+        #sourceLocation(file: "KSPlayer/MediaPlayerProtocol.swift", line: 277)
         tracks(mediaType: .subtitle).compactMap { $0 as? SubtitleInfo }
+        #sourceLocation()
     }
 
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.audioTracks.getter:0x1019e01c0 result=7-instr]
@@ -446,8 +476,11 @@ public extension MediaPlayerProtocol {
     /// ⚑ That `mov w0,#4` independently confirms the five-entry table decoded for `videoFormat`
     ///   above, whose index 4 held the `(0,0)` word pair: two unrelated bodies agree that 4 is the
     ///   nil inhabitant of `DynamicRange?`.
+    // Forward's MainActor closure check reports #line 289 (`mov w3,#0x121`).
     var dynamicRange: DynamicRange? {
+        #sourceLocation(file: "KSPlayer/MediaPlayerProtocol.swift", line: 289)
         tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange
+        #sourceLocation()
     }
 
     /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.audioFormat.getter:0x1019e0354 result=103-instr]
@@ -487,8 +520,11 @@ public extension MediaPlayerProtocol {
     ///   even though `FFmpegAssetTrack` is not declared `final`. That is the whole-module form of
     ///   `as?` when no subclass exists in the module; it is recorded here because it would also be
     ///   consistent with `type(of:) ==`, and those two are not distinguishable from this body.
+    // Forward's MainActor closure check reports #line 295 (`mov w3,#0x127`).
     var audioFormat: String? {
+        #sourceLocation(file: "KSPlayer/MediaPlayerProtocol.swift", line: 295)
         (tracks(mediaType: .audio).first { $0.isEnabled } as? FFmpegAssetTrack)?.codecName
+        #sourceLocation()
     }
 
     /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.videoFormat.getter:0x1019e04f0 result=101-instr]
@@ -525,7 +561,9 @@ public extension MediaPlayerProtocol {
     ///   sibling's reports 0x121 (289) — a closure of its own, six lines after `audioFormat`'s
     ///   (0x127, 295). An inlined sibling would carry the sibling's line.
     var videoFormat: String? {
+        #sourceLocation(file: "KSPlayer/MediaPlayerProtocol.swift", line: 301)
         tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange?.description
+        #sourceLocation()
     }
 
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.progress.getter:0x1019e0684 result=24-instr]
@@ -601,18 +639,17 @@ public protocol MediaPlayerDelegate: AnyObject {
 }
 
 public protocol MediaPlayerTrack: AnyObject, CustomStringConvertible {
-    var trackID: Int32 { get }
-    var name: String { get }
-    var languageCode: String? { get }
     var mediaType: AVFoundation.AVMediaType { get }
+    var name: String { get }
     // ⚑[tool=type_surface ref=MediaPlayerTrack:requirements result=getter-only] Forward's requirement
     // list has one lone getter here (the only setter/modify pair follows the tenth getter), and
     // AVMediaPlayerTrack stores it as `let` (field_surface), so no setter is required.
     var nominalFrameRate: Float { get }
     var bitRate: Int64 { get }
+    var trackID: Int32 { get }
     var bitDepth: Int32 { get }
-    var isEnabled: Bool { get set }
-    var isImageSubtitle: Bool { get }
+    // protocol_surface: Forward witness 0x40 `reorderSize` (Swift.Int32), between bitDepth 0x38 and rotation 0x48.
+    var reorderSize: Int32 { get }
     // ⚑ s104: UInt16, not Int16. All THREE conformers spell it UInt16 in the binary —
     // KSPlayer.FFmpegAssetTrack.rotation.getter, KSPlayer.MetalPlayView.rotation.getter and
     // KSPlayer.AVMediaSelectionTrack.rotation.getter all demangle to `: Swift.UInt16`, and
@@ -620,8 +657,11 @@ public protocol MediaPlayerTrack: AnyObject, CustomStringConvertible {
     // type descriptor. Rippling the protocol only after every conformer agreed is the rule this
     // change was made under.
     var rotation: UInt16 { get }
-    var dovi: DOVIDecoderConfigurationRecord? { get }
     var fieldOrder: FFmpegFieldOrder { get }
+    var isEnabled: Bool { get set }
+    var isImageSubtitle: Bool { get }
+    var languageCode: String? { get }
+    var dovi: DOVIDecoderConfigurationRecord? { get }
     var formatDescription: CMFormatDescription? { get }
 }
 
@@ -845,16 +885,21 @@ public extension MediaPlayerTrack {
         guard let dynamicRange else {
             return nil
         }
-        if let dovi, dovi.dv_profile == 8 || dovi.dv_profile == 10,
-           dovi.dv_bl_signal_compatibility_id == 4
-        {
-            return "HLG"
+        // Forward @0x1019e0d80-0x1019e0d98: profile 8 branches to its own `cmp x8,#4`, profile 10 uses
+        // `ccmp x8,#4` — two separate arms, not the merged `(p|2)==10` test the `||` form lowers to.
+        if let dovi {
+            if dovi.dv_profile == 8, dovi.dv_bl_signal_compatibility_id == 4 {
+                return "HLG"
+            } else if dovi.dv_profile == 10, dovi.dv_bl_signal_compatibility_id == 4 {
+                return "HLG"
+            }
         }
+        // Forward csel chain: outer `cmp w8,#2` (hlg), inner `ands w8,#0xff` (sdr) — hlg is tested first.
         switch dynamicRange {
-        case .sdr:
-            return "SDR"
         case .hlg:
             return "HLG"
+        case .sdr:
+            return "SDR"
         default:
             return "PQ"
         }
@@ -1007,10 +1052,13 @@ public extension CMFormatDescription {
                 return .otherFormat
             }
         } else {
+            // Forward @0x101a65258-0x101a65270: 16 branches; then `csel` (==32 inner, ==24 outer).
             switch asbd.mBitsPerChannel {
             case 16:
                 return .pcmFormatInt16
-            case 24, 32:
+            case 24:
+                return .pcmFormatInt32
+            case 32:
                 return .pcmFormatInt32
             default:
                 return .otherFormat
@@ -1034,10 +1082,9 @@ public extension CMFormatDescription {
     }
 }
 
+/// Forward @0x101a04924 (150 insns): no `useSystemHTTPProxy` guard — the body opens with
+/// CFNetworkCopySystemProxySettings; the caller (MEPlayerItem open) tests the option.
 func setHttpProxy() {
-    guard KSOptions.useSystemHTTPProxy else {
-        return
-    }
     guard let proxySettings = CFNetworkCopySystemProxySettings()?.takeUnretainedValue() as? NSDictionary else {
         unsetenv("http_proxy")
         return

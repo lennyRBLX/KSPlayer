@@ -213,23 +213,40 @@ extension UIView {
 #if canImport(CallKit)
 extension UIApplication {
     // ⚑[tool=member_add ref=UIApplication.sceneSize:0x101a01d1c result=dne; Forward order before isHDRScreen 0x101a02edc]
-    // Forward factors `(connectedScenes.first as? UIWindowScene)` (@0x101a02f64) and `?.windows.first`
-    // (@0x101a02de0) into private UIApplication helpers; inlined here (no decl).
+    // @0x101a01d1c (29 insns): `UIApplication.shared` → out-of-line `activeWindow` (bl 0x101a02de0 with
+    // x20 = the shared instance, so the helpers are INSTANCE members) → `bounds.size`, else (1, 1).
     static var sceneSize: CGSize { @used get {
-        let window = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first
+        let window = UIApplication.shared.activeWindow
         return window?.bounds.size ?? CGSize(width: 1, height: 1)
     } }
 
-    /// @0x101a02edc — sharedApplication → FUN_101a02de0 (windows.first) → screen.currentEDRHeadroom > 1.0; no window → false.
+    // @0x101a02de0 — no trie symbol (so not public; no private discriminator either): calls
+    // 0x101a02f64, cbz → nil, sends `windows`, bridges the NSArray and takes `.first`.
+    var activeWindow: UIWindow? { // INFERRED 0x101a02de0
+        activeWindowScene?.windows.first
+    }
+
+    /// @0x101a02edc — sharedApplication → activeWindow (0x101a02de0) → screen.currentEDRHeadroom > 1.0; no window → false.
+    // ⚑ residue: Forward also nil-checks the `screen` result (cbz @0x101a02f2c); UIWindow.screen is
+    // nonnull in the SDK header, so that test is not expressible from source.
     public static var isHDRScreen: Bool {
-        guard let window = (shared.connectedScenes.first as? UIWindowScene)?.windows.first else {
+        guard let window = shared.activeWindow else {
             return false
         }
         return window.screen.currentEDRHeadroom > 1.0
     }
 
+    // @0x101a02f64 — walks `connectedScenes` for the first scene whose `activationState` is 0
+    // (.foregroundActive); found → `as? UIWindowScene` (nil when the cast fails); not found →
+    // `connectedScenes.first` (0x1019fda28) `as? UIWindowScene`. The predicate closure carries a
+    // MainActor dynamic check (swift_task_isCurrentExecutor, "KSPlayer/UIKitExtend.swift").
+    var activeWindowScene: UIWindowScene? { // INFERRED 0x101a02f64
+        (connectedScenes.first { $0.activationState == .foregroundActive } ?? connectedScenes.first) as? UIWindowScene
+    }
+
+    // @0x101a03268: sharedApplication → activeWindowScene (0x101a02f64) → interfaceOrientation - 3 < 2.
     static var isLandscape: Bool {
-        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.interfaceOrientation.isLandscape ?? false
+        UIApplication.shared.activeWindowScene?.interfaceOrientation.isLandscape ?? false
     }
 }
 #endif

@@ -149,11 +149,13 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
         if let formatName {
             description += ", \(formatName)"
         }
+        // Forward converts each operand to Float before `bl 0x1019ecd98` (Float.kmFormatted):
+        // `ucvtf s0,w8` (bitsPerRawSample), `scvtf s8,s0` (sampleRate), `ucvtf s0,x8` (bitRate).
         if bitsPerRawSample > 0 {
-            description += "(\(bitsPerRawSample.kmFormatted) bit)"
+            description += "(\(Float(bitsPerRawSample).kmFormatted) bit)"
         }
         if let audioDescriptor {
-            description += ", \(audioDescriptor.sampleRate.kmFormatted)Hz, \(audioDescriptor.channel.nb_channels)ch"
+            description += ", \(Float(audioDescriptor.sampleRate).kmFormatted)Hz, \(audioDescriptor.channel.nb_channels)ch"
         }
         if let formatDescription {
             if mediaType == .video {
@@ -163,7 +165,7 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
             }
         }
         if bitRate > 0 {
-            description += ", \(bitRate.kmFormatted)bps"
+            description += ", \(Float(bitRate).kmFormatted)bps"
         }
         // ⚑ The type annotation is REQUIRED, and its necessity is itself a finding. This class
         // conforms to BOTH MediaPlayerTrack and SubtitleInfo, and the binary carries a `language`
@@ -419,6 +421,16 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot25@0x101a5ba30 result=seek(time:)]
     func flush() {
         subtitle?.seek(time: 0)
+    }
+
+    /// Forward deinit @0x101a20ff8 (86 insns): the local is `closedCaptionsTrack?.codecpar`
+    /// (+0x140 → +0xb8, nil when the track is nil) passed by address to avcodec_parameters_free
+    /// (0x1029f54dc); then `closedCaptionsTrack?.subtitle?` (+0x140 → +0x100) dispatches vtable +0x1c0
+    /// (`shutdown()`) between swift_retain/swift_release; then the implicit field releases.
+    deinit {
+        var codecpar = closedCaptionsTrack?.codecpar
+        avcodec_parameters_free(&codecpar)
+        closedCaptionsTrack?.subtitle?.shutdown()
     }
 }
 

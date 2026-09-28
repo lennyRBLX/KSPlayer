@@ -201,6 +201,13 @@ extension DynamicRange {
 // isolation leaves no reflection record — but it is load-bearing for the existing source,
 // whose SphereDisplayModel.touchesMoved is already @MainActor and could not otherwise witness
 // requirement 2.
+// ⚑ L7 lane 10: protocol_surface's "drop set(frame:encoder:)" is a thunk_callee misattribution —
+// both Forward witness tables carry it: PlaneDisplayModel wt 0x1041d9e18 [+0x10 = 0x101a82018,
+// vtable +0x108 dispatch thunk], SphereDisplayModel wt 0x1041da228 [+0x10 = 0x101a8c5a4, vtable
+// +0x198 thunk]. Isolation evidence points the other way from this @MainActor: both conformance
+// descriptors have flags 0 (no isolated conformance), the witnesses have no executor check, and
+// MetalRender 0x101a873b4 / 0x101a86090 call `set` with none. Kept @MainActor because the
+// conformers (DisplayModel.swift, SphereDisplayModel.swift — not this lane) are @MainActor.
 @MainActor
 public protocol DisplayEnum: AnyObject {
     // nonisolated: it is a stored immutable Bool, and KSOptions reads it from a nonisolated
@@ -249,11 +256,23 @@ public protocol CapacityProtocol {
     var frameMaxCount: Int { get }
     var isEndOfFile: Bool { get }
     var mediaType: AVFoundation.AVMediaType { get }
+    // 7th requirement (wt+0x38): KSOptions.playable @0x1019b84b4 does `ldr x8,[x26,#0x38]; blr` and
+    // stores d0 into the mapped array — `capacitys.map(\.loadedTime)`. Order +0x8..+0x30 above is
+    // consistent with the same function (+0x10/+0x18 counts, +0x28 isEndOfFile).
+    // ⚑ Forward packetCount/frameCount are UInt (`adds x22,x21,x0; b.hs` @0x1019b8598/0x1019b85ec);
+    // types kept Int here — conformers are lane 11 (GAP).
+    var loadedTime: TimeInterval { get } // INFERRED 0x1019b84b4 wt+0x38
 }
 
 extension CapacityProtocol {
     var loadedTime: TimeInterval {
         TimeInterval(packetCount + frameCount) / TimeInterval(fps)
+    }
+
+    // @0x1019e1b6c (just before LoadingState.isSeek 0x1019e1bd4): wt+0x28 isEndOfFile, then
+    // wt+0x10 packetCount == 0, then wt+0x18 frameCount == 0, short-circuit in that order.
+    var isFinished: Bool { // INFERRED 0x1019e1b6c
+        isEndOfFile && packetCount == 0 && frameCount == 0
     }
 }
 
@@ -587,8 +606,26 @@ public extension Int {
 }
 
 public extension FixedWidthInteger {
+    // @0x1019ecbec: scvtf/ucvtf into s0, then calls Float.kmFormatted @0x1019ecd98 (not Double's).
     var kmFormatted: String {
-        Double(self).kmFormatted
+        Float(self).kmFormatted
+    }
+}
+
+// @0x1019ecd98 — Forward-only Float overload (follows FixedWidthInteger.kmFormatted in the image).
+// Thresholds are the s-register literals: 0x4eee6b28 = 2e9, 0x49742400 = 1e6, 0x461c4000 = 1e4;
+// divisors 0x4e6e6b28 = 1e9, 1e6, 0x447a0000 = 1000. No upper-bound test on the K arm.
+public extension Float {
+    var kmFormatted: String {
+        if self >= 2_000_000_000 {
+            return String(format: "%.1fG", locale: Locale.current, self / 1_000_000_000)
+        } else if self >= 1_000_000 {
+            return String(format: "%.1fM", locale: Locale.current, self / 1_000_000)
+        } else if self >= 10000 {
+            return String(format: "%.1fK", locale: Locale.current, self / 1000)
+        } else {
+            return String(format: "%.0f", locale: Locale.current, self)
+        }
     }
 }
 
@@ -634,15 +671,24 @@ public extension VideoPipeline {
 // NumRequirementsInSignature 0 — so it has no associated type and is NOT class-constrained
 // (it must therefore not be written `: AnyObject`).
 //
-// Declared EMPTY on purpose, exactly like `VideoPipeline` above. conformance_walker finds ZERO
-// conformers anywhere in the image, so there is no witness table from which requirement names
-// could be read; per the tool's own rule that makes the three names IRREDUCIBLE rather than
-// merely unrecovered, and any name written here would be invented. A protocol existential's
-// size does not depend on its requirements, so every `any MovieStream` field and signature
-// below is layout-faithful either way.
+// conformance_walker finds ZERO conformers, so no witness table names these requirements; the
+// TYPES below are recovered from the Forward call sites that dispatch through the witness table,
+// and the NAMES are INFERRED from how each value is used.
+//   +0x8  String   — 0x101ae1c90 `playList.currentStream?.<req1>` → String?; keypath getter thunk
+//                    0x101af4a2c returns String (the id of ForEach<[MovieStream], String, …>);
+//                    0x101ae28ac builds `<req1> + " duration=" + …`.
+//   +0x10 Double   — FormatContext.init 0x101a35338..0x101a3534c compares it against
+//                    Double(durSecs + 3600) and stores `Int64(value * 1e6)` into formatCtx.duration;
+//                    UI 0x101adfd14 filters playlists by `$0.<req2> > 120.0`.
+//   +0x18 [any PlayFileProtocol] — 0x28-stride single-protocol existential array: FormatContext
+//                    0x101a3538c..0x101a353ac `seekByBytes = <req3>.count >= 2`; MEPlayerItem.reading
+//                    0x101a51634 walks it reading elem wt+0x8 (Double) and wt+0x20 (Int), which only
+//                    PlayFileProtocol's 4-getter shape fits.
 // ⚑[tool=conformance_walker ref=KSPlayer.MovieStream:0x1039edcd0 result=zero-conformers]
 public protocol MovieStream {
-    // 3 instance Getter requirements IRREDUCIBLE — no conformer exists to read them from.
+    var name: String { get } // INFERRED 0x101ae1c90 / 0x101af4a2c
+    var duration: TimeInterval { get } // INFERRED 0x101a35338 / 0x101adfd14
+    var files: [any PlayFileProtocol] { get } // INFERRED 0x101a3538c / 0x101a51634
 }
 
 // Forward-only protocol, `$s8KSPlayer8PlayListMp` @0x1039edc98. Like MovieStream it has no
@@ -1260,17 +1306,24 @@ public struct KSClock {
         }
     }
 
+    // @0x101a58100..0x101a58124 (inlined copy): `time.seconds` is evaluated first, then
+    // `rate * (CACurrentMediaTime() - lastMediaTime)` is added — the rate factor was missing.
     func getTime() -> TimeInterval {
-        time.seconds + CACurrentMediaTime() - lastMediaTime
+        time.seconds + rate * (CACurrentMediaTime() - lastMediaTime)
     }
 }
 
 // KSDrawable @0x1039ed9f8 — declaration shape read from the Forward context descriptor (kind, parent,
 // conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (MediaPlayerProtocol.swift..AudioPlayerView.swift).
 // ⚑[tool=type_surface ref=KSDrawable:0x1039ed9f8 result=protocol KSDrawable]
-protocol KSDrawable {}
+// Exported (`$s8KSPlayer10KSDrawableMp` / `TL` in the export trie) → public.
+public protocol KSDrawable {}
 
 // PlayFileProtocol @0x1039edd00 — declaration shape read from the Forward context descriptor (kind, parent,
 // conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (MediaPlayerProtocol.swift..AudioPlayerView.swift).
 // ⚑[tool=type_surface ref=PlayFileProtocol:0x1039edd00 result=protocol PlayFileProtocol]
-protocol PlayFileProtocol {}
+// Exported (`$s8KSPlayer16PlayFileProtocolMp` / `TL` in the export trie) → public. 4 instance
+// getter requirements; only two are typed by Forward uses (MEPlayerItem.reading 0x101a51634):
+// +0x8 Double (seconds offset) and +0x20 Int (byte position). +0x10/+0x18 have no Forward use,
+// so the requirements are deferred rather than invented. Element type of MovieStream.files.
+public protocol PlayFileProtocol {}
