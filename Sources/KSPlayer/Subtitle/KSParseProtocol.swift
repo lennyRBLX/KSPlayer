@@ -41,9 +41,10 @@ private func scanSubtitleCue(_ scanner: Scanner) -> (start: String, end: String,
 
 // Build a text SubtitlePart (.right(SubtitleTextInfo)) — inlined per-body in the binary; a shared helper here.
 private func makeTextSubtitlePart(start: Double, end: Double, text: String) -> SubtitlePart {
-    var textPosition = TextPosition()
+    // Forward SrtParse.parsePart 0x101aa0eb0 / VTTParse.parsePart 0x101aa1110 call the SRT/HTML tag helper
+    // FUN_101a9bd1c for the cue text (no TextPosition / build(textPosition:) on this path).
     let textInfo = SubtitleTextInfo(
-        text: text.build(textPosition: &textPosition),
+        text: text.parseHTMLTags(),
         position: nil, // SRT/VTT do not store textPosition — disasm-evidenced (SrtParse audit-confirmed)
         displaySize: nil,
         styleRole: .primary,
@@ -107,7 +108,9 @@ public protocol KSParseProtocol {
 }
 
 public extension KSOptions {
-    @used internal nonisolated(unsafe) static var subtitleParses: [KSParseProtocol] = [AssParse(), VTTParse(), SrtParse()]
+    // public: Forward exports the property descriptor `$s8KSPlayer9KSOptionsC14subtitleParsesSayAA15KSParseProtocol_pGvpZ`
+    // (export trie) and reads the storage under swift_beginAccess in URL.parseSubtitle.
+    @used nonisolated(unsafe) static var subtitleParses: [KSParseProtocol] = [AssParse(), VTTParse(), SrtParse()]
 }
 
 public extension String {}
@@ -143,6 +146,28 @@ extension String {
             attributedStr.append(lineCode.0.parseStyle(attributes: &attributed, style: lineCode.1, textPosition: &textPosition))
         }
         return attributedStr
+    }
+
+    // FUN_101a9bd1c (unnamed, 141 insns) — SRT/WebVTT cue text → attributed string: plain runs up to "<" are
+    // appended as-is, "<font …>" goes through the font-tag scanner (FUN_101a9bf50), "<i>" / "</i>" are dropped,
+    // anything else is taken up to the next newline.
+    func parseHTMLTags() -> NSMutableAttributedString { // INFERRED name — Forward 0x101a9bd1c
+        let attributedString = NSMutableAttributedString()
+        let scanner = Scanner(string: self)
+        scanner.charactersToBeSkipped = nil
+        while !scanner.isAtEnd {
+            if let text = scanner.scanUpToString("<") {
+                attributedString.append(NSAttributedString(string: text))
+            }
+            if scanner.scanString("<font") != nil, let fontString = scanner.scanFontTag() {
+                attributedString.append(fontString)
+            } else if scanner.scanString("<i>") != nil {
+            } else if scanner.scanString("</i>") != nil {
+            } else if let text = scanner.scanUpToCharacters(from: .newlines) {
+                attributedString.append(NSAttributedString(string: text))
+            }
+        }
+        return attributedString
     }
 
     func splitStyle() -> [(String, String?)] {
@@ -234,6 +259,90 @@ extension String {
             attributes[.font] = font
         }
         return NSAttributedString(string: self, attributes: attributes)
+    }
+}
+
+extension Scanner {
+    // FUN_101a9bf50 (unnamed, 1069 insns; self = scanner in x20) — the rest of a "<font" tag: face= / name=
+    // (ASS-style "1c&H…" / "3c&H…" colours), color="#…" / color=#…, color="name" / color=name, then the
+    // text up to "</font>" (an enclosing <i>…</i> makes the font italic).
+    func scanFontTag() -> NSAttributedString? { // INFERRED name — Forward 0x101a9bf50
+        var attributes = [NSAttributedString.Key: Any]()
+        var fontName: String?
+        if scanString(" face=\"") != nil, let face = scanUpToString("\""), scanString("\"") != nil {
+            fontName = face
+        }
+        if scanString(" name=\"") != nil, let name = scanUpToString("\""), scanString("\"") != nil {
+            if let range = name.range(of: "^([A-Za-z0-9]+)", options: .regularExpression) {
+                fontName = String(name[range])
+            }
+            if let range = name.range(of: "1c&H[A-F0-9]{6}", options: .regularExpression) {
+                attributes[.foregroundColor] = UIColor(assColor: String(name[range].dropFirst(4)))
+            }
+            if let range = name.range(of: "3c&H[A-F0-9]{6}", options: .regularExpression) {
+                attributes[.strokeColor] = UIColor(assColor: String(name[range].dropFirst(4)))
+            }
+        }
+        var font: UIFont?
+        if let fontName {
+            let fontSize = KSOptions.subtitleFontSize
+            font = UIFont(name: fontName, size: fontSize) ?? UIFont.systemFont(ofSize: fontSize)
+        }
+        if scanString(" color=\"#") != nil, let hex = scanInt(representation: .hexadecimal), scanString("\"") != nil {
+            attributes[.foregroundColor] = UIColor(rgb: hex)
+        }
+        if scanString(" color=#") != nil, let hex = scanInt(representation: .hexadecimal) {
+            attributes[.foregroundColor] = UIColor(rgb: hex)
+        }
+        if attributes[.foregroundColor] == nil {
+            if scanString(" color=\"") != nil, let name = scanUpToString("\""), scanString("\"") != nil {
+                attributes[.foregroundColor] = htmlNamedColor(name)
+            } else if scanString(" color=") != nil, let name = scanUpToCharacters(from: CharacterSet(charactersIn: " >")) {
+                attributes[.foregroundColor] = htmlNamedColor(name)
+            }
+        }
+        _ = scanUpToString(">")
+        guard scanString(">") != nil, var text = scanUpToString("</font>") else {
+            return nil
+        }
+        _ = scanString("</font>")
+        if text.hasPrefix("<i>"), text.hasSuffix("</i>") {
+            text.removeFirst(3)
+            text.removeLast(4)
+            font = font?.italic
+        }
+        attributes[.font] = font
+        return NSAttributedString(string: text, attributes: attributes)
+    }
+}
+
+// FUN_101a9ebc4 (unnamed, 268 insns) — HTML colour name (lowercased) → UIColor, nil when unknown.
+func htmlNamedColor(_ name: String) -> UIColor? { // INFERRED name — Forward 0x101a9ebc4
+    switch name.lowercased() {
+    case "white":
+        return .white
+    case "yellow":
+        return .yellow
+    case "red":
+        return .red
+    case "green":
+        return .green
+    case "blue":
+        return .blue
+    case "cyan":
+        return .cyan
+    case "magenta":
+        return .magenta
+    case "black":
+        return .black
+    case "orange":
+        return .orange
+    case "gray", "grey":
+        return .gray
+    case "purple":
+        return .purple
+    default:
+        return nil
     }
 }
 
@@ -386,5 +495,21 @@ public class VTTParse: SrtParse {
              end: index + 1 < pairs.count ? pairs[index + 1].timestamp : nil,
              text: pair.text)
         }
+    }
+}
+
+// Forward 0x1019e7290 / 0x1019e7374 (exported `$sSa8KSPlayers5UInt8VRszlE6appendyys6UInt16VF` / `…UInt32VF`):
+// little-endian byte appends through inout self (one append per byte, low byte first).
+public extension Array where Element == UInt8 {
+    mutating func append(_ value: UInt16) {
+        append(UInt8(truncatingIfNeeded: value))
+        append(UInt8(truncatingIfNeeded: value >> 8))
+    }
+
+    mutating func append(_ value: UInt32) {
+        append(UInt8(truncatingIfNeeded: value))
+        append(UInt8(truncatingIfNeeded: value >> 8))
+        append(UInt8(truncatingIfNeeded: value >> 16))
+        append(UInt8(truncatingIfNeeded: value >> 24))
     }
 }

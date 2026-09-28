@@ -34,13 +34,18 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
 //    private let distortion = AVAudioUnitDistortion()
 //    private let delay = AVAudioUnitDelay()
 
-    // slots 0-2 (setter @0x101a0dc20 — getter/_modify were eliminated). Not private:
-    // a private stored property gets no vtable entry, and this one has a triple.
-    // The setter stores the node then mirrors the current volume into it.
-    @exclusivity(unchecked) private var sourceNode: AVAudioSourceNode? {
-        @used didSet {
-            Unmanaged.passUnretained(self).toOpaque()
-                .load(fromByteOffset: 0x58, as: AVAudioSourceNode?.self)?.volume = volume
+    // slots 0-2 (setter @0x101a0dc20 — getter/_modify were eliminated). private: the trie's
+    // vpfi symbol carries discriminator 33_B47A56ECF98C31CFBCDCD833AB352529LL. A private
+    // member of a non-final class still gets a vtable triple.
+    // The setter (36 insns) stores the node then mirrors the current volume into it; it
+    // stays OUT OF LINE (prepare's `bl 0x101a0dc20`, its only caller, and vtable slot 1
+    // stays live). A snippet compile (-swift-version 6 -O -wmo) reproduces that 36-insn body
+    // and the out-of-line call only WITHOUT @exclusivity(unchecked). With the attribute
+    // the setter is inlined into prepare and slot 1 turns into a dead stub. Dropping it adds
+    // no beginAccess on +0x58: WMO access enforcement already removes it.
+    private var sourceNode: AVAudioSourceNode? {
+        didSet {
+            sourceNode?.volume = volume
         }
     }
 

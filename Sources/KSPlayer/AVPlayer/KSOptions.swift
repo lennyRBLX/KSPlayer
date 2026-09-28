@@ -41,8 +41,8 @@ open class KSOptions {
     // Forward 0x1019b2f7c: every constant-default stored property is stored first (declaration order);
     // the properties seeded from the KSOptions statics are assigned here, in this order (the static
     // reads follow the constant stores), then the option dictionaries. Forward also initialises
-    // _preferredForwardBufferDuration in place here, between maxBufferDuration and isAccurateSeek;
-    // that needs the decl without its initializer (explicit `: Double`), so it stays on the decl.
+    // _preferredForwardBufferDuration in place here, between maxBufferDuration and isAccurateSeek
+    // (Published init from the static), so the decl carries no initializer.
     public init() {
         useSystemHTTPProxy = KSOptions.useSystemHTTPProxy
         yadifMode = KSOptions.yadifMode
@@ -51,9 +51,11 @@ open class KSOptions {
         asynchronousDecompression = KSOptions.asynchronousDecompression
         videoSoftDecodeThreadCount = KSOptions.videoSoftDecodeThreadCount
         isLoopPlay = KSOptions.isLoopPlay
-        display = KSOptions.defaultDisplayEnumPlane
+        // Forward 0x1019b2f7c stores the swift_initStaticObject displayEnumPlane instance (inlined getter).
+        display = KSOptions.displayEnumPlane
         isSecondOpen = KSOptions.isSecondOpen
         maxBufferDuration = KSOptions.maxBufferDuration
+        preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
         isAccurateSeek = KSOptions.isAccurateSeek
         isSeekedAutoPlay = KSOptions.isSeekedAutoPlay
         canStartPictureInPictureAutomaticallyFromInline = KSOptions.canStartPictureInPictureAutomaticallyFromInline
@@ -88,7 +90,8 @@ open class KSOptions {
     /// an ICF fold: 0x1019b4080 is its own function-start and 0x1019c0798 is resetTimeLog's
     /// entry, so this method's whole body is that one call.
     /// Trie: `KSPlayer.KSOptions.reset() -> ()`.
-    func reset() {
+    /// Forward KSMEPlayer.reset dispatches it through vtable +0x310 (idx 4), so it is `open`, not devirtualized.
+    open func reset() {
         resetTimeLog()
     }
 
@@ -121,9 +124,59 @@ open class KSOptions {
     public nonisolated(unsafe) static var isHDRScreen: Bool?
     public var startPlayRate: Float = 1.0
     public var registerRemoteControll: Bool = true // 默认支持来自系统控制中心的控制
-    public nonisolated(unsafe) static var playerTypes: [MediaPlayerProtocol.Type] = [KSAVPlayer.self, KSMEPlayer.self]
-    public nonisolated(unsafe) static var secondPlayerType: MediaPlayerProtocol.Type? = KSMEPlayer.self
-    public nonisolated(unsafe) static var firstPlayerType: MediaPlayerProtocol.Type = KSAVPlayer.self
+    // Forward static setter 0x1019b4418 and the modify resume both pass the stored array to 0x1019c3274.
+    public nonisolated(unsafe) static var playerTypes: [MediaPlayerProtocol.Type] = [KSAVPlayer.self, KSMEPlayer.self] {
+        didSet {
+            KSOptions.validatePlayerTypes(playerTypes)
+        }
+    }
+    // Forward: getter/setter/modify + property descriptor, no storage or once-token -> computed over playerTypes.
+    // getter 0x1019b455c; setter 0x1019c3610 builds a 2-element [first, new] or 1-element [first] array.
+    public static var secondPlayerType: MediaPlayerProtocol.Type? {
+        get {
+            playerTypes.count > 1 ? playerTypes[1] : nil
+        }
+        set {
+            if let newValue, newValue != firstPlayerType {
+                playerTypes = [firstPlayerType, newValue]
+            } else {
+                playerTypes = [firstPlayerType]
+            }
+        }
+    }
+    // Forward: no storage -> computed. getter 0x1019b45dc (`first ?? KSAVPlayer.self`); setter 0x1019c3438:
+    // count == 1 -> [0] = new; count > 1 -> removeFirst() (replaceSubrange 0..<1) when [1] == new, else [0] = new;
+    // empty -> append.
+    public static var firstPlayerType: MediaPlayerProtocol.Type {
+        get {
+            playerTypes.first ?? KSAVPlayer.self
+        }
+        set {
+            if playerTypes.count == 1 {
+                playerTypes[0] = newValue
+            } else if !playerTypes.isEmpty {
+                if playerTypes[1] == newValue {
+                    playerTypes.removeFirst()
+                } else {
+                    playerTypes[0] = newValue
+                }
+            } else {
+                playerTypes.append(newValue)
+            }
+        }
+    }
+
+    // Forward 0x1019c3274 (no trie symbol; called with the stored array from both playerTypes didSets):
+    // NSStringFromClass of each type into a Set; a failed insert records the name via update(with:).
+    private static func validatePlayerTypes(_ types: [MediaPlayerProtocol.Type]) { // INFERRED 0x1019c3274
+        var names = Set<String>()
+        var duplicates = Set<String>()
+        for type in types {
+            if !names.insert(NSStringFromClass(type)).inserted {
+                duplicates.update(with: NSStringFromClass(type))
+            }
+        }
+    }
     /// ⚑ swift_once init 0x1019b4814, read in full: `mov x0, #0` / `bl 0x1019d5d24` /
     /// `str x0, [x8, #0xe8]`. The call is a type-metadata accessor with request 0 and nothing
     /// else happens, so the stored value is a METATYPE — and the trie names 0x1019d5d24
@@ -156,7 +209,12 @@ open class KSOptions {
     var firstPlayerType: MediaPlayerProtocol.Type { KSOptions.firstPlayerType }
     // playerTypes default reads the static KSOptions.playerTypes (not an inline literal).
     // ⚑[tool=decompile_function ref=FUN_1019b4334:0x1019b4334 result=static [KSAVPlayer.self,KSMEPlayer.self] — element class-descriptor names confirmed @0x1039ec148/@0x1039ef750]
-    public var playerTypes: [MediaPlayerProtocol.Type]
+    // Forward instance setter 0x1019b5040 / modify resume 0x1019b50d0 call 0x1019c3274 with the stored array.
+    public var playerTypes: [MediaPlayerProtocol.Type] {
+        didSet {
+            KSOptions.validatePlayerTypes(playerTypes)
+        }
+    }
     public var mixAudio: Bool = false
     public var canBackgroundPlay: Bool = true
     public var contentMode = UIViewContentMode.scaleAspectFit  // macOS: KSPlayer.ContentMode (== binary); iOS/tvOS: UIView.ContentMode
@@ -481,7 +539,7 @@ open class KSOptions {
     public var seekUsePacketCache: Bool = false
     /// 最低缓存视频时间
     @Published
-    public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
+    public var preferredForwardBufferDuration: Double
     /// 最大缓存视频时间
     public var maxBufferDuration: Double
 
@@ -902,7 +960,9 @@ open class KSOptions {
     /// `simd_float3x3(1)` and the explicit three-column form all constant-fold to these same 48
     /// bytes, so the binary cannot distinguish them. The identity spelling is used as the clearest.
     public nonisolated(unsafe) static var doviMatrix = matrix_identity_float3x3
-    public nonisolated(unsafe) static var displayEnumPlane = defaultDisplayEnumPlane
+    // Forward: getter/addressor/storage only (no setter/modify); the getter and init inline
+    // swift_initStaticObject, i.e. a constant-folded `static let` of a fresh PlaneDisplayModel.
+    public nonisolated(unsafe) static let displayEnumPlane = PlaneDisplayModel()
     /// ⚑ s107: NOW DECLARED. The blocker recorded above — "`DoviDisplayModel` does not exist in
     /// Sources at all; it needs standing up first" — is cleared: that class is stood up in
     /// DisplayModel.swift, with its superclass read from the descriptor's SuperclassType symbolic
@@ -914,7 +974,8 @@ open class KSOptions {
     /// plain no-argument construction. `DoviDisplayModel` has no explicit init, so like
     /// `PlaneDisplayModel` (and unlike the two `SphereDisplayModel` subclasses) it does not trip
     /// the main-actor-isolated-default-value rule that still blocks `displayEnumVR`/`displayEnumVRBox`.
-    public nonisolated(unsafe) static var displayEnumDovi = DoviDisplayModel()
+    // Forward: getter/addressor/storage only (no setter/modify) -> `let`.
+    public nonisolated(unsafe) static let displayEnumDovi = DoviDisplayModel()
     /// ⚑ s113: NOW DECLARED. Everything the long note above establishes about these two still
     /// stands — the types, the storages (0x104c632b0 / 0x104c632b8), the `swift_once` addressors
     /// @0x1019bc684 / @0x1019bc74c and the no-argument construction through the shared tail
@@ -1225,11 +1286,11 @@ open class KSOptions {
             return false
         }
         #if !os(tvOS)
-        if !isHDRScreen, pixelBufferEDRMetadata(frame.pixelBuffer) != nil {
+        if !isHDRScreen, frame.pixelBuffer.edrMetadata != nil {
             return false
         }
         #endif
-        guard display === KSOptions.defaultDisplayEnumPlane else {
+        guard display === KSOptions.displayEnumPlane else {
             return false
         }
         guard brightness == 1, contrast == 1, saturation == 1 else {
@@ -1280,7 +1341,8 @@ open class KSOptions {
         #endif
     }
     private var videoClockDelayCount: Int = 0
-    public internal(set) var lastVideoClockDropLogTime: Double = 0.0
+    // Forward reads/stores this field without swift_beginAccess (0x1019bf6b4, 0x1019bf774) -> private (discriminator _B90C867…).
+    private var lastVideoClockDropLogTime: Double = 0.0
 
     // Forward slot dead (0x10198eb18 swift_deletedMethodError); body unrecoverable.
     private func resetPreferredDisplayCriteria() {}
@@ -1362,30 +1424,6 @@ open class KSOptions {
     public internal(set) var decodeVideoTime: Double = 0.0
     public internal(set) var firstPlayableTime: Double = 0.0
 
-    #if !os(tvOS)
-    @available(iOS 16, *)
-    private final func pixelBufferEDRMetadata(_ pixelBuffer: PixelBufferProtocol) -> CAEDRMetadata? {
-        if let displayInfo = pixelBuffer.displayInfo, let contentInfo = pixelBuffer.contentInfo {
-            return CAEDRMetadata.hdr10(displayInfo: displayInfo, contentInfo: contentInfo, opticalOutputScale: 10000)
-        }
-        if let ambientViewingEnvironment = pixelBuffer.ambientViewingEnvironment {
-            if #available(macOS 14.0, iOS 17.0, *) {
-                return CAEDRMetadata.hlg(ambientViewingEnvironment: ambientViewingEnvironment)
-            }
-            return CAEDRMetadata.hlg
-        }
-        if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
-            return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
-        }
-        if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
-            if DynamicRange.availableHDRModes.contains(.hlg) {
-                return CAEDRMetadata.hlg
-            }
-            return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
-        }
-        return nil
-    }
-    #endif
 
     open func urlIO(log: String) {
         if log.starts(with: "Original list of addresses"), dnsStartTime == 0 {
@@ -1625,7 +1663,6 @@ public extension KSOptions {
     //   with a `vpZMV`, so public) in a KSPlayer extension on `__C.UIApplication`. Its OWNER is a
     //   divergence in its own right, and it needs its own row before it is used as evidence here.
     //   ⚑[tool=export_trie_oracle ref=UIApplication.sceneSize:0x101a01d1c result=owner-is-UIApplication-not-KSOptions]
-    private nonisolated(unsafe) static let defaultDisplayEnumPlane = PlaneDisplayModel()
     nonisolated(unsafe) static var isPipPopViewController = false
     internal static func deviceCpuCount() -> Int {
         var ncpu = UInt(0)
@@ -1779,7 +1816,8 @@ public extension KSOptions {
     }
     // localHLSServerPort / maxM3U8FileSize / minM3U8BufferDuration moved to ProAVPlayer.swift:
     // Forward mangles them `$s8KSPlayer9KSOptionsC11ProAVPlayerE…` (ProAVPlayer's extension).
-    nonisolated(unsafe) static var seekInterruptIO = false
+    // Forward: storage + getter (0x10002dab0, `mov w0, #0; ret`) + addressor + property descriptor, no setter -> `let`.
+    static let seekInterruptIO = false
     nonisolated(unsafe) static var seekRequireConfirmation = true
     nonisolated(unsafe) static var thumbSize = CGSize(width: 15, height: 15)
     // ── s105, three statics read out of FILE-BACKED storage ──────────────────────────────────
@@ -1900,12 +1938,10 @@ public extension Array {
         return dict
     }
     // Forward 0x1019e711c is `mutating`: `var result = []; try removeAll { if try p0($0) { result.append($0); return true }; return false }; return result`
-    // (closure 0x1019e71d4). This decl is not mutating (gap filed), so the same removal runs on a copy
-    // and only the returned elements match.
-    public func removeAllAndReturn(where p0: (Element) throws -> Bool) throws -> [Element] {
+    // (closure 0x1019e71d4).
+    public mutating func removeAllAndReturn(where p0: (Element) throws -> Bool) throws -> [Element] {
         var result = [Element]()
-        var array = self
-        try array.removeAll { element in
+        try removeAll { element in
             if try p0(element) {
                 result.append(element)
                 return true
@@ -1916,8 +1952,3 @@ public extension Array {
     }
 }
 
-
-extension Array where Element == UInt8 {
-    public func append(_ p0: UInt16) { fatalError("L7: Array.append — Forward body unread") }
-    public func append(_ p0: UInt32) { fatalError("L7: Array.append — Forward body unread") }
-}
