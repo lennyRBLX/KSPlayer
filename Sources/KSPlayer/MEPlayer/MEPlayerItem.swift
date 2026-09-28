@@ -762,19 +762,7 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
         var type: ClockProcessType = force ? .next : .remain
         let predicate: ((VideoVTBFrame, UInt) -> Bool)? = force ? nil : { [weak self] frame, count -> Bool in
             guard let self else { return true }
-            // DynamicInfo.audioVideoSyncDiff is Float in the binary (field record `Sf`), not Double, so
-            // the base's one-line tuple assignment from the Double-returning videoClockSync has to spell
-            // the narrowing out. Type change only — the arithmetic and the control flow are unchanged.
-            // ⚑ UNRESOLVED: Forward may not compute the diff here at all. Every reader/writer of the field
-            //   is an xref of its field-offset global
-            //   ⚑[tool=get_xrefs_to ref=DynamicInfo.audioVideoSyncDiff:0x104c63578 result=CONFIRMED],
-            //   and no getVideoOutputRender closure is among them; the only non-init writer is the
-            //   videoClock/setVideo path
-            //   ⚑[tool=decompile_function ref=MEPlayerItem.setVideo:0x101a5804c result=LOCATED].
-            //   Deferred to the MEPlayerItem migration — settling it is not this unit's lane.
-            let (syncDiff, syncType) = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
-            self.dynamicInfo.audioVideoSyncDiff = Float(syncDiff)
-            type = syncType
+            type = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
             if case .remain = type { return false } // was `type != .remain`; payload case drops synthesized ==
             return true
         }

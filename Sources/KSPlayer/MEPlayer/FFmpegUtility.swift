@@ -136,7 +136,8 @@ extension FormatContext {
 /// (mangled `_TtC8KSPlayer18IOInterruptContext`).
 public final class IOInterruptContext {
     // FAITHFUL fields (binary reflection, alloc 0x30):
-    public var flag: Bool                          // @ +0x10
+    // Declaration default: Forward emits `variable initialization expression of flag` (0x10002dab0, `mov w0,#0`).
+    public var flag: Bool = false                  // @ +0x10
     let block: (@Sendable () -> Bool)?      // 2-word closure @ +0x18 (fn) / +0x20 (ctx)
     // Field name/type are FAITHFUL. The ACCESS LEVEL is not binary-readable for any of the
     // three helper classes below — they are vtable-devirtualized (null descriptor slots), so
@@ -153,7 +154,7 @@ public final class IOInterruptContext {
     /// Designated init — reconstructed from FUN_101a391bc (vtable slot 0).
     /// Allocating thunk @0x101a33658 calls this then balances ARC on the closure.
     @used init(_ block: (@Sendable () -> Bool)?) {
-        self.flag = false                              // *(self+0x10) = 0
+        // *(self+0x10) = 0 is the declaration default above.
         let reg = IOInterruptRegistry.shared           // _swift_once → DAT_1044e9ac0
         reg.lock.lock()                                // objc_stub::lock(reg+0x10)
         let id = reg.nextID                            // id = *(reg+0x18)

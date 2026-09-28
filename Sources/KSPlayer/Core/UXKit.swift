@@ -41,7 +41,8 @@ extension CGSize {
 /// These are needed by KSOptions.textFont(width:style:). `italic` is `mov w0, #1; b 0x1019f205c`, and
 /// 0x1019f205c is a private helper outside the trie that ORs the symbolic traits. Both bodies send
 /// fontWithDescriptor:size: with `pointSize`, and both fall back to `self` when it returns nil.
-/// ⚑ The trie's with(angle:) @0x1019f2150 is not reconstructed here (it is outside this chain).
+/// ⚑[tool=forward_fn ref=(extension in KSPlayer):__C.UIFont.with(angle:):0x1019f2150] rotation matrix via
+/// fontDescriptorWithMatrix:, same fontWithDescriptor:size: / `self` fallback.
 #if canImport(UIKit)
 public extension UIFont {
     func with(weight: UIFont.Weight) -> UIFont {
@@ -56,6 +57,12 @@ public extension UIFont {
     private func with(traits: UIFontDescriptor.SymbolicTraits) -> UIFont { // name inferred
         let symbolicTraits = fontDescriptor.symbolicTraits.union(traits)
         let descriptor = fontDescriptor.withSymbolicTraits(symbolicTraits) ?? fontDescriptor
+        return UIFont(descriptor: descriptor, size: pointSize) as UIFont? ?? self
+    }
+
+    func with(angle: CGFloat) -> UIFont {
+        let matrix = CGAffineTransform(rotationAngle: angle)
+        let descriptor = fontDescriptor.withMatrix(matrix)
         return UIFont(descriptor: descriptor, size: pointSize) as UIFont? ?? self
     }
 }

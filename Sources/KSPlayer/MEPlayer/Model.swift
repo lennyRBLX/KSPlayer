@@ -256,7 +256,8 @@ final class Packet: ObjectQueueItem {
     // OPTIONAL, not IUO. The trie prints `Packet.assetTrack.getter : KSPlayer.FFmpegAssetTrack?`,
     // and a field record cannot tell `T!` from `T?` — so `?` is the only spelling the binary
     // supports, and MEMORY forbids writing `T!` off a field record.
-    public var assetTrack: FFmpegAssetTrack? {
+    // Declaration default: Forward emits `variable initialization expression of assetTrack` (0x10002d9d4, `mov x0,#0`).
+    public var assetTrack: FFmpegAssetTrack? = nil {
         didSet {
             guard let packet = corePacket?.pointee else {
                 return

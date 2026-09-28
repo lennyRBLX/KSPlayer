@@ -115,7 +115,8 @@ open class KSPlayerLayer: NSObject {
     // The binary's access level for this field is not tool-readable (the impl oracle is
     // final-types-only and this class is open), so the narrowest spelling that builds is used.
     // Forward: `let` (field flags 0, no vtable g/s/m; trie has only vg/vpMV/vpWvd).
-    let subtitleView = MetalSubtitleView()
+    // No declaration default: both designated inits (0x1019ca41c, 0x1019caaf4) build it from subtitleModel.
+    let subtitleView: MetalSubtitleView
 
     public var player: MediaPlayerProtocol {
         didSet {
@@ -186,7 +187,8 @@ open class KSPlayerLayer: NSObject {
     // Binary fields 16 and 17. `KSPlayerLayer.subtitleModel.getter : KSPlayer.SubtitleModel` and
     // `KSPlayerLayer.isAutoReplaceAndConstrainPlayerView.getter : Swift.Bool`.
     public let subtitleModel: SubtitleModel
-    public var isAutoReplaceAndConstrainPlayerView = false
+    // Both Forward designated inits store 1 (0x1019ca41c, 0x1019caaf4).
+    public var isAutoReplaceAndConstrainPlayerView = true
     /// `required` is READ, not stylistic. `PlayerView.set(url:options:)` @0x1019fe394 constructs
     /// through `KSOptions.playerLayerType` — a `KSPlayerLayer.Type` — by loading metatype slot
     /// +0x270 and `blr`-ing it. Only a `required` initialiser gets a metatype slot; a plain `init`
@@ -218,6 +220,9 @@ open class KSPlayerLayer: NSObject {
         // Forward init 0x1019ca41c calls SubtitleModel.init(url:options:) at 0x1019ca7ec; no default_init row for subtitleModel.
         subtitleModel = SubtitleModel(url: url, options: options)
         self.isAutoPlay = options.isAutoPlay
+        subtitleView = MetalSubtitleView(subtitleModel: subtitleModel)
+        subtitleView.backgroundColor = .clear
+        subtitleView.translatesAutoresizingMaskIntoConstraints = false
         super.init()
         player.playbackRate = options.startPlayRate
         // ⚑ The `if options.registerRemoteControll { registerRemoteControllEvent() }` statement that
@@ -237,12 +242,9 @@ open class KSPlayerLayer: NSObject {
         if isAutoPlay {
             prepareToPlay()
         }
+        // The enterBackground/enterForeground observers are registered by KSComplexPlayerLayer's inits
+        // (Forward 0x1019d0238 / 0x1019d1068, closure 0x1019d1354); this init registers only these two.
         #if canImport(UIKit)
-        runOnMainThread { [weak self] in
-            guard let self else { return }
-            NotificationCenter.default.addObserver(self, selector: #selector(enterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
-            NotificationCenter.default.addObserver(self, selector: #selector(enterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
-        }
         #if !os(xrOS)
         NotificationCenter.default.addObserver(self, selector: #selector(wirelessRouteActiveDidChange(notification:)), name: .MPVolumeViewWirelessRouteActiveDidChange, object: nil)
         #endif
@@ -252,9 +254,47 @@ open class KSPlayerLayer: NSObject {
         #endif
     }
 
-    @available(*, unavailable)
-    public required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    /// Forward 0x1019caaf4 (alloc 0x1019caa9c), vtable F52. Builds a KSMEPlayer around an existing item;
+    /// a preloaded item resumes through MEPlayerItem.resumeFromPreload (@0x101a4755c), as replace(item:url:) does.
+    /// Main-queue closure 0x1019d5a64 → 0x1019cb4c8 (readyToPlay, vtable +0x300).
+    /// The build-only `init?(coder:)` that sat here is removed: Forward's KSPlayerLayer has no such slot
+    /// (vtable_surface B52 build_only); KSComplexPlayerLayer declares its own (F9).
+    public init(item: MEPlayerItem, url: URL, delegate: KSPlayerLayerDelegate?) {
+        self.url = url
+        options = item.options
+        self.delegate = delegate
+        let player = KSMEPlayer(item: item)
+        self.player = player
+        isAutoPlay = options.isAutoPlay
+        subtitleModel = SubtitleModel(url: url, options: options)
+        subtitleView = MetalSubtitleView(subtitleModel: subtitleModel)
+        subtitleView.backgroundColor = .clear
+        subtitleView.translatesAutoresizingMaskIntoConstraints = false
+        super.init()
+        player.delegate = self
+        player.contentMode = .scaleAspectFit
+        subtitleView.contentMode = .scaleAspectFit
+        player.playbackRate = options.startPlayRate
+        if item.isPreload {
+            let action = item.resumeFromPreload()
+            state = .preparing
+            switch action {
+            case .waitForOpened:
+                break
+            case .resumeFromPaused, .readyImmediate:
+                player.sourceDidOpenedSync()
+                DispatchQueue.main.async { [weak self] in
+                    self?.readyToPlay(player: player)
+                }
+            case .cannotResume:
+                KSLog("[KSPlayerLayer] init(item:): preload item cannot resume, fallback to prepareToPlay", file: "KSPlayer/KSPlayerLayer.swift", function: "init(item:url:delegate:)", line: 234)
+                prepareToPlay()
+            }
+        } else if isAutoPlay {
+            prepareToPlay()
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(wirelessRouteActiveDidChange(notification:)), name: .MPVolumeViewWirelessRouteActiveDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioInterrupted), name: AVAudioSession.interruptionNotification, object: nil)
     }
 
     isolated deinit {
@@ -565,6 +605,11 @@ open class KSPlayerLayer: NSObject {
     /// is the whole of what is declared here. Signature from the trie:
     /// `KSPlayer.KSPlayerLayer.preview(time: Swift.Double?) -> ()`.
     open func preview(time _: Double?) {}
+
+    /// vtable F67 — a method slot whose Forward impl is the dead stub: the member existed and had no
+    /// callers, so its body was stripped. Name INFERRED (irreducible: no body, no call site, no string);
+    /// internal so the build strips it the same way. Ledgered in evidence/vtable-surface/ledger.md.
+    func unreadSlot67() {}
 
     // The eight members below are CLASS-BODY declarations in Forward 1.3.17, not extension
     // members: each occupies a slot in KSPlayerLayer's vtable (descriptor 0x1039ecf38,
@@ -1164,27 +1209,6 @@ open class KSPlayerLayer: NSObject {
 
 extension KSPlayerLayer {
 
-    @objc private func enterBackground() {
-        guard state.isPlaying, !player.isExternalPlaybackActive else {
-            return
-        }
-        if #available(tvOS 14.0, *), player.pipController?.isPictureInPictureActive == true {
-            return
-        }
-
-        if KSOptions.canBackgroundPlay {
-            player.enterBackground()
-            return
-        }
-        pause()
-    }
-
-    @objc private func enterForeground() {
-        if KSOptions.canBackgroundPlay {
-            player.enterForeground()
-        }
-    }
-
     private func updateNowPlayingInfo() {
         if MPNowPlayingInfoCenter.default().nowPlayingInfo == nil {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyPlaybackDuration: player.duration]
@@ -1271,7 +1295,8 @@ extension KSPlayerLayer {
 // ⚑[tool=decode_string_literal ref=KSComplexPlayerLayer.pictureInPictureController:0x1019d6430 result='KSPlayer/KSPlayerLayer.swift']
 open class KSComplexPlayerLayer: KSPlayerLayer {
     public var urls: [URL] = []
-    public var isPictureInPictureStoped: Bool = false
+    // Both Forward designated inits (0x1019d0238, 0x1019d1068) store 1.
+    public var isPictureInPictureStoped: Bool = true
     // private, and the trie prints the module-hash discriminator on all three accessors:
     // `(enterBackgroundTask in _B3181C2628785004269C41BC3433122F) : Swift.Task<(), Swift.Never>?`
     private var enterBackgroundTask: Task<(), Never>?
@@ -1461,12 +1486,34 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
             return .success
         }
     }
+    /// Forward 0x1019d0238: super.init, the registerRemoteControll-guarded call (0x1019d0374), then the
+    /// runOnMainThread observer block (closure 0x1019d5c2c → 0x1019d1354, shared with init(item:url:delegate:)).
     public required init(url: URL, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
         super.init(url: url, options: options, delegate: delegate)
+        if options.registerRemoteControll {
+            registerRemoteControllEvent()
+        }
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.addObserver(self, selector: #selector(enterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(enterForeground(notification:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        }
     }
 
     required public init?(coder: NSCoder) { fatalError("L7: KSComplexPlayerLayer.init — Forward body unread") }
-    public init(item: MEPlayerItem, url: URL, delegate: KSPlayerLayerDelegate?) { fatalError("L7: KSComplexPlayerLayer.init — Forward body unread") }
+    /// Forward 0x1019d1068 (alloc 0x1019d1010): same shape as init(url:options:delegate:) over
+    /// KSPlayerLayer.init(item:url:delegate:); the registerRemoteControll call is 0x1019d11c0.
+    override public init(item: MEPlayerItem, url: URL, delegate: KSPlayerLayerDelegate?) {
+        super.init(item: item, url: url, delegate: delegate)
+        if options.registerRemoteControll {
+            registerRemoteControllEvent()
+        }
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.addObserver(self, selector: #selector(enterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(enterForeground(notification:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        }
+    }
 
     /// @0x1019d1424, 128 instructions. This is Forward's PiP-start entry — there is no
     /// `isPipActive` flag anywhere in the image, and this method plus
@@ -1851,6 +1898,34 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
                                            failedToStartPictureInPictureWithError error: Error)
     {
         KSLog(error)
+    }
+}
+
+// The observer targets are KSComplexPlayerLayer's in Forward: objc thunks
+// `-[KSComplexPlayerLayer enterBackground]` 0x1019d5168 (body 0x1019d4a88, KSPlayerLayer.swift:1134) and
+// `-[KSComplexPlayerLayer enterForegroundWithNotification:]` 0x1019d5544 (body 0x1019d5230, line 1173).
+// Both Forward bodies drive `enterBackgroundTask` and are not read yet; the bodies below are the ones
+// moved from KSPlayerLayer's private extension (L7 body residue, see L7.md).
+extension KSComplexPlayerLayer {
+    @objc private func enterBackground() {
+        guard state.isPlaying, !player.isExternalPlaybackActive else {
+            return
+        }
+        if #available(tvOS 14.0, *), player.pipController?.isPictureInPictureActive == true {
+            return
+        }
+
+        if KSOptions.canBackgroundPlay {
+            player.enterBackground()
+            return
+        }
+        pause()
+    }
+
+    @objc private func enterForeground(notification _: Notification) {
+        if KSOptions.canBackgroundPlay {
+            player.enterForeground()
+        }
     }
 }
 

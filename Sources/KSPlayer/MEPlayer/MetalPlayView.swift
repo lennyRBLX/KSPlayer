@@ -84,6 +84,8 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     ///   ⚑[tool=recover_field_offsets ref=MetalPlayView.dovi:0x1044ea8f0 result=5-sites-2-reads-1-write-2-nil-init]
     private var formatDescription: CMFormatDescription? {
         didSet {
+            // Forward didSet 0x101a5e37c starts `guard formatDescription != nil else { return }`.
+            guard let formatDescription else { return }
             options.updateVideo(refreshRate: fps, isDovi: dovi != nil, formatDescription: formatDescription)
         }
     }
@@ -99,7 +101,10 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
                         displayLink?.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
                     }
                 }
-                options.updateVideo(refreshRate: fps, isDovi: dovi != nil, formatDescription: formatDescription)
+                // Forward fps didSet 0x101a5e568: the call is under `formatDescription != nil` (cbz @0x101a5e7dc).
+                if let formatDescription {
+                    options.updateVideo(refreshRate: fps, isDovi: dovi != nil, formatDescription: formatDescription)
+                }
             }
         }
     }

@@ -57,7 +57,8 @@ protocol MetalDrawable {}
 //   globals. Do NOT guess the three from field order.
 // ⚑[tool=bind_oracle ref=__got:0x104112d10 result=__swiftEmptySetSingleton]
 // ⚑[tool=field_offset_vector ref=MetalSubtitleView:0x1044230b8 result=offsets-0x8-0x30-0x38-0x40-0x48-0x50-0x58]
-class MetalSubtitleView: MTKView {
+// MTKViewDelegate: Forward has the objc thunk drawInMTKView: (0x101ac1380), and init 0x101ac03cc sets delegate = self.
+class MetalSubtitleView: MTKView, MTKViewDelegate {
     public var metalDrawable: (any MetalDrawable)? // §8.6 — offset global 0x1044ef5a8 (vpWvd)
     public var dynamicRange: DynamicRange = .sdr { // ⚑ default inferred → M2; offset global 0x1044ef5b8 (vpWvd)
         didSet {
@@ -89,6 +90,33 @@ class MetalSubtitleView: MTKView {
     private var pendingTexts: [SubtitleTextInfo] = [] // offset global 0x1044ef5c8 -> field offset 0x48
     private var parts: [SubtitlePart] = [] // offset global 0x1044ef5d8 -> field offset 0x50
     private var playRatio: Double = 1 // offset global 0x1044ef5e0 (init stores 1.0)
+    /// Vtable F21: a get-only unit with a dead slot, so Forward keeps no body, callers or strings.
+    /// Name and type are INFERRED. The declaration only holds the slot so that init (F22) and updateSubtitle (F23) line up.
+    var unreadSlot21: Bool { false }
+    /// Forward 0x101ac03cc (vtable F22, dead slot; called directly by both KSPlayerLayer designated inits).
+    /// Label INFERRED — the init is internal, so no trie name; the only argument is the layer's SubtitleModel.
+    /// Sink closure 0x101ac3a3c → 0x101ac0810 (MainActor check, KSPlayer/MetalSubtitleView.swift:99).
+    init(subtitleModel: SubtitleModel) {
+        super.init(frame: .zero, device: MetalRender.device)
+        framebufferOnly = true
+        enableSetNeedsDisplay = true
+        autoResizeDrawable = true
+        isPaused = true
+        delegate = self
+        backingLayer?.isOpaque = false
+        subtitleModel.$parts
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] parts in
+                guard let self else { return }
+                playRatio = subtitleModel.playRatio
+                self.parts = parts
+                #if os(iOS)
+                updateSubtitle(size: nil)
+                #endif
+            }
+            .store(in: &cancellables)
+    }
+
     // ⚑ init shape inferred → M2 witness-verify (real init wires the Metal device + Combine subscriptions)
     override init(frame frameRect: CGRect, device: (any MTLDevice)?) {
         super.init(frame: frameRect, device: device)

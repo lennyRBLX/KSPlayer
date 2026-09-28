@@ -771,37 +771,25 @@ extension KSMEPlayer: AVPictureInPictureSampleBufferPlaybackDelegate {
 
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
 extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
-    public func playbackCoordinator(_: AVDelegatingPlaybackCoordinator, didIssue playCommand: AVDelegatingPlaybackCoordinatorPlayCommand, completionHandler: @escaping () -> Void) {
+    public func playbackCoordinator(_: AVDelegatingPlaybackCoordinator, didIssue playCommand: AVDelegatingPlaybackCoordinatorPlayCommand) async {
         guard playCommand.expectedCurrentItemIdentifier == (playbackCoordinator as? AVDelegatingPlaybackCoordinator)?.currentItemIdentifier else {
-            completionHandler()
             return
         }
-        nonisolated(unsafe) let handler = completionHandler
-        DispatchQueue.main.async { [weak self] in
-            guard let self else {
-                return
+        if playbackState != .playing {
+            await MainActor.run {
+                play()
             }
-            if self.playbackState != .playing {
-                self.play()
-            }
-            handler()
         }
     }
 
-    public func playbackCoordinator(_: AVDelegatingPlaybackCoordinator, didIssue pauseCommand: AVDelegatingPlaybackCoordinatorPauseCommand, completionHandler: @escaping () -> Void) {
+    public func playbackCoordinator(_: AVDelegatingPlaybackCoordinator, didIssue pauseCommand: AVDelegatingPlaybackCoordinatorPauseCommand) async {
         guard pauseCommand.expectedCurrentItemIdentifier == (playbackCoordinator as? AVDelegatingPlaybackCoordinator)?.currentItemIdentifier else {
-            completionHandler()
             return
         }
-        nonisolated(unsafe) let handler = completionHandler
-        DispatchQueue.main.async { [weak self] in
-            guard let self else {
-                return
+        if playbackState != .paused {
+            await MainActor.run {
+                pause()
             }
-            if self.playbackState != .paused {
-                self.pause()
-            }
-            handler()
         }
     }
 
@@ -816,24 +804,14 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
         seek(time: seekTime) { _ in }
     }
 
-    public func playbackCoordinator(_: AVDelegatingPlaybackCoordinator, didIssue bufferingCommand: AVDelegatingPlaybackCoordinatorBufferingCommand, completionHandler: @escaping () -> Void) {
+    public func playbackCoordinator(_: AVDelegatingPlaybackCoordinator, didIssue bufferingCommand: AVDelegatingPlaybackCoordinatorBufferingCommand) async {
         guard bufferingCommand.expectedCurrentItemIdentifier == (playbackCoordinator as? AVDelegatingPlaybackCoordinator)?.currentItemIdentifier else {
-            completionHandler()
             return
         }
-        nonisolated(unsafe) let handler = completionHandler
-        DispatchQueue.main.async { [weak self] in
-            guard let self else {
-                return
-            }
-            guard self.loadState != .playable, let countDown = bufferingCommand.completionDueDate?.timeIntervalSinceNow else {
-                handler()
-                return
-            }
-            // ⚑ UNRESOLVED → KSMEPlayer M2: buffering countdown (recon retained a `bufferingCountDownTimer: Timer?`, removed source-extra)
-            _ = countDown
-            handler()
+        guard loadState != .playable, let countDown = bufferingCommand.completionDueDate?.timeIntervalSinceNow else {
+            return
         }
+        try? await Task.sleep(nanoseconds: UInt64(countDown * 1_000_000_000))
     }
 }
 

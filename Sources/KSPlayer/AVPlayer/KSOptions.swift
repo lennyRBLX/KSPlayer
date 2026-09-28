@@ -693,6 +693,11 @@ open class KSOptions {
     ///
     /// ⚑ The fallback is reached only on nil, so it is `??` rather than a branch on the name —
     ///   a name-validity check would test the String before the send, and none is emitted.
+    /// Forward 0x1019ba6f8: textStyle(role: .primary) → textFont(width:style:) → destroy the style copy.
+    public static func textFont(width: Double) -> UIFont {
+        textFont(width: width, style: textStyle(role: .primary))
+    }
+
     public static func textFont(name: String, size: CGFloat) -> UIFont {
         UIFont(name: name, size: size) ?? UIFont.systemFont(ofSize: size)
     }
@@ -1174,7 +1179,7 @@ open class KSOptions {
     }
 
     @MainActor
-    open func updateVideo(refreshRate: Float, isDovi: Bool, formatDescription: CMFormatDescription?) {
+    open func updateVideo(refreshRate: Float, isDovi: Bool, formatDescription: CMFormatDescription) {
         // Forward 0x1019bee98 (vtable slot 234): the iOS body is this one gated log (level .warning, line 0x3a4).
         KSLog("[video] refreshRate=\(refreshRate),dynamicRange=\(dynamicRange)", line: 932)
         #if os(tvOS) || os(xrOS)
@@ -1187,12 +1192,11 @@ open class KSOptions {
         else {
             return
         }
-        if var dynamicRange = formatDescription?.dynamicRange {
-            if dynamicRange == .dolbyVision {
-                dynamicRange = .hdr10
-            }
-            displayManager.preferredDisplayCriteria = AVDisplayCriteria(refreshRate: refreshRate, videoDynamicRange: dynamicRange.rawValue)
+        var dynamicRange = formatDescription.dynamicRange
+        if dynamicRange == .dolbyVision {
+            dynamicRange = .hdr10
         }
+        displayManager.preferredDisplayCriteria = AVDisplayCriteria(refreshRate: refreshRate, videoDynamicRange: dynamicRange.rawValue)
         #endif
     }
     private var videoClockDelayCount: Int = 0
@@ -1212,50 +1216,49 @@ open class KSOptions {
         return buffer
     }
 
-    // ⚑[tool=member_surface ref=KSOptions.videoClockSync result=frameCount Swift.UInt; ret Forward `ClockProcessType` (no Double)]
-    // L7: return is still `(Double, ClockProcessType)` — the sole consumer (MEPlayerItem.getVideoOutputRender) writes
-    //   the Double into DynamicInfo.audioVideoSyncDiff, whose Forward writer is not this path; body work.
-    open func videoClockSync(main: KSClock, nextVideoTime: TimeInterval, fps: Double, frameCount: UInt) -> (Double, ClockProcessType) {
+    // Forward 0x1019bf108: returns the bare ClockProcessType (x0 = payload / empty-case index, x1 = 1 for an
+    //   empty case). KSLog lines are Forward's constants (0x3d8, 0x3f2, 0x3f7, 0x3fa, 0x406).
+    open func videoClockSync(main: KSClock, nextVideoTime: TimeInterval, fps: Double, frameCount: UInt) -> ClockProcessType {
         let desire = main.getTime() - videoDelay
         let diff = nextVideoTime - desire
-//        print("[video] video diff \(diff) nextVideoTime \(nextVideoTime) main \(main.time.seconds)")
-        if diff >= 1 / fps / 2 {
-            videoClockDelayCount = 0
-            return (diff, .remain)
-        } else {
-            if diff < -4 / fps {
-                videoClockDelayCount += 1
-                let log = "[video] video delay=\(diff), clock=\(desire), delay count=\(videoClockDelayCount), frameCount=\(frameCount)"
-                if frameCount == 1 {
-                    if diff < -1, videoClockDelayCount % 10 == 0 {
-                        KSLog("\(log) drop gop Packet")
-                        return (diff, .dropGOPPacket)
-                    } else if videoClockDelayCount % 5 == 0 {
-                        KSLog("\(log) drop next frame")
-                        return (diff, .dropFrame(count: 1)) // L7: Forward's count operand unread; 1 = the old single-frame drop
-                    } else {
-                        return (diff, .next)
-                    }
-                } else {
-                    if diff < -8, videoClockDelayCount % 100 == 0 {
-                        KSLog("\(log) seek video track")
-                        return (diff, .seek)
-                    }
-                    if diff < -1, videoClockDelayCount % 10 == 0 {
-                        KSLog("\(log) flush video track")
-                        return (diff, .flush)
-                    }
-                    if videoClockDelayCount % 2 == 0 {
-                        KSLog("\(log) drop next frame")
-                        return (diff, .dropFrame(count: 1)) // L7: Forward's count operand unread; 1 = the old single-frame drop
-                    } else {
-                        return (diff, .next)
-                    }
-                }
+        if diff > 8 {
+            videoClockDelayCount += 1
+            let log = "[video] video delay=\(diff), nextVideoTime=\(nextVideoTime), frameCount=\(frameCount), fps=\(fps) delay count=\(videoClockDelayCount)"
+            KSLog(log, line: 984)
+            if videoClockDelayCount > Int(ceil(fps / 3)) {
+                return .remain
             } else {
-                videoClockDelayCount = 0
-                return (diff, .next)
+                return .next
             }
+        } else if diff > 1 / (fps * 2) {
+            return .remain
+        } else if diff >= -2 / fps {
+            videoClockDelayCount = 0
+            lastVideoClockDropLogTime = 0
+            return .next
+        } else {
+            videoClockDelayCount += 1
+            let log = "[video] video delay=\(diff), nextVideoTime=\(nextVideoTime), frameCount=\(frameCount), fps=\(fps) delay count=\(videoClockDelayCount)"
+            if diff < -8, videoClockDelayCount % 80 == 0 {
+                KSLog("\(log) seek video track", line: 1010)
+                return .seek
+            }
+            if diff < -1, videoClockDelayCount % 10 == 0 {
+                if frameCount == 1 {
+                    KSLog("\(log) drop gop Packet", line: 1015)
+                    return .dropGOPPacket
+                } else {
+                    KSLog("\(log) flush video track", line: 1018)
+                    return .flush
+                }
+            }
+            let count = videoClockDelayCount == 1 ? 1 : Int(fps * diff * -0.5)
+            let now = CACurrentMediaTime()
+            if now - lastVideoClockDropLogTime >= 1 {
+                lastVideoClockDropLogTime = now
+                KSLog("\(log) drop \(count) frame", line: 1030)
+            }
+            return .dropFrame(count: count)
         }
     }
     public nonisolated(unsafe) static var lockAspectRatio = true
