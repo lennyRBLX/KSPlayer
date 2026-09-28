@@ -23,7 +23,9 @@ public final class KSAVPlayerView: UIView {
 
     @available(*, unavailable)
     public required init?(coder _: NSCoder) {
+#sourceLocation(file: "KSPlayer/KSAVPlayer.swift", line: 24)
         fatalError("init(coder:) has not been implemented")
+#sourceLocation()
     }
 
     override public var contentMode: UIViewContentMode {
@@ -161,7 +163,8 @@ open class KSAVPlayer {
     public var error: Error? {
         didSet {
             if let error {
-                delegate?.finish(player: self, error: error)
+                KSLog(error, line: 123)
+                process(error: error)
             }
         }
     }
@@ -394,23 +397,24 @@ open class KSAVPlayer {
     // bare escaping closure.
     // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx8 → KSAVPlayer desc 0x1039ec478] open: ProAVPlayer overrides it
     open func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
-        let time = max(time, 0)
         // AN ENTIRE KSLog STATEMENT WAS MISSING. The binary opens with this gated log, and the
         // shouldSeekTo-vs-currentTime coalesce exists only to build the message — which is also why
         // it has to run BEFORE the `shouldSeekTo = time` store below, or it would read the new value
         // and the "from" half would always equal the "to" half.
-        KSLog("\(self) seek from \(shouldSeekTo ?? player.currentTime().seconds) to \(time)")
-        shouldSeekTo = time
+        KSLog("\(self) seek from \(currentPlaybackTime) to \(time)", line: 269)
+        let seekTime = max(time, 0)
+        shouldSeekTo = seekTime
         playbackState = .seeking
-        runOnMainThread { [weak self] in
-            self?.bufferingProgress = 0
-        }
+        bufferingProgress = 0
         let tolerance: CMTime = options.isAccurateSeek ? .zero : .positiveInfinity
-        player.seek(to: CMTime(seconds: time), toleranceBefore: tolerance, toleranceAfter: tolerance) {
+        player.seek(to: CMTime(seconds: seekTime), toleranceBefore: tolerance, toleranceAfter: tolerance) {
             [weak self] finished in
             guard let self else { return }
-            self.shouldSeekTo = 0
-            completion(finished)
+            runOnMainThread { [weak self] in
+                guard let self else { return }
+                self.shouldSeekTo = nil
+                completion(finished)
+            }
         }
     }
     // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx4 → KSAVPlayer desc 0x1039ec480] open: ProAVPlayer overrides it
@@ -488,10 +492,16 @@ open class KSAVPlayer {
         guard let item = playerView.player.currentItem else {
             return
         }
-        _ = item.isPlaybackBufferEmpty
-        let likely = item.isPlaybackLikelyToKeepUp
-        let full = item.isPlaybackBufferFull
-        loadState = likely || full ? .playable : .loading
+        let isPlaybackBufferEmpty = item.isPlaybackBufferEmpty
+        let isPlaybackLikelyToKeepUp = item.isPlaybackLikelyToKeepUp
+        let isPlaybackBufferFull = item.isPlaybackBufferFull
+        if isPlaybackLikelyToKeepUp || isPlaybackBufferFull {
+            loadState = .playable
+        } else if isPlaybackBufferEmpty {
+            loadState = .loading
+        } else {
+            loadState = .loading
+        }
     }
 
     /// ⚑[tool=llvm-objdump ref=KSAVPlayer.nominalFrameRate(track:):0x1019a5128 result=12-instr]
@@ -652,18 +662,41 @@ extension KSAVPlayer {
     }
 
     public func replaceCurrentItem(playerItem: AVPlayerItem?) {   // public (was private, P34): ProAVPlayer (separate module) slot15 item-swap closure installs its ProPlayerItem via this cross-module call (FUN_1019a563c)  ⚑[tool=resolve_fun_pins ref=FUN_1019a563c:0x1019a563c result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.replaceCurrentItem(playerItem: __C.AVPlayerItem?) -> ()
+        bufferingProgress = 0
         player.currentItem?.cancelPendingSeeks()
         if options.isLoopPlay {
+            observerLoopCancellables = []
             playerLooper?.disableLooping()
             guard let playerItem else {
                 playerLooper = nil
                 return
             }
             playerLooper = AVPlayerLooper(player: player, templateItem: playerItem)
-            // ⚑ UNRESOLVED → KSAVPlayer M2: loopCount/loopStatus observation (was 2 KVO NSKeyValueObservations → observerLoopCancellables)
+            playerLooper?.publisher(for: \.loopCount)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] loopCount in
+                    guard let self else { return }
+                    runOnMainThread { [weak self] in
+                        guard let self else { return }
+                        self.delegate?.playBack(player: self, loopCount: loopCount)
+                    }
+                }
+                .store(in: &observerLoopCancellables)
+            playerLooper?.publisher(for: \.status)
+                .sink { [weak self] _ in
+                    guard let self, let playerLooper = self.playerLooper else { return }
+                    if playerLooper.status == .failed {
+                        self.error = playerLooper.error
+                    }
+                }
+                .store(in: &observerLoopCancellables)
         } else {
             player.replaceCurrentItem(with: playerItem)
         }
+        player.actionAtItemEnd = .pause
+        player.volume = playbackVolume
+        error = nil
+        isReadyToPlay = false
     }
     public var playerLayer: AVPlayerLayer { playerView.playerLayer }
 
@@ -729,9 +762,12 @@ extension KSAVPlayer {
         guard let loadedTimeRanges = playerView.player.currentItem?.loadedTimeRanges else {
             return false
         }
-        return loadedTimeRanges.contains {
-            CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: time, preferredTimescale: 30))
+        for value in loadedTimeRanges {
+            if CMTimeRangeContainsTime(value.timeRangeValue, time: CMTime(seconds: time, preferredTimescale: 30)) {
+                return true
+            }
         }
+        return false
     }
 
     /// ⚑[tool=llvm-objdump ref=KSAVPlayer.checkShouldResume():0x1019aaa10 result=38-instr]
@@ -804,7 +840,7 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     public var view: UIView { playerView }
     public var currentPlaybackTime: TimeInterval {
         get {
-            if let shouldSeekTo, shouldSeekTo > 0 {
+            if let shouldSeekTo {
                 return shouldSeekTo
             } else {
                 // 防止卡主
@@ -821,8 +857,8 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     //   = `KSAVPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. Getter-only — the
     //   binary carries no `vs`/`vM` for it. The body stays `nil`; returning nil needs no conformance.
     // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
-    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { nil }
-    public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
+    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { self }
+    public var isPlaying: Bool { player.timeControlStatus == .playing }
 
     public var numberOfBytesTransferred: Int64 {
         guard let playerItem = player.currentItem, let accesslog = playerItem.accessLog(), let event = accesslog.events.first else {
@@ -832,20 +868,35 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func thumbnailImageAtCurrentTime() async -> CGImage? {
-        // ⚑ UNRESOLVED → KSAVPlayer M2: thumbnail from the `io` asset (was urlAsset.thumbnailImage(currentTime:))
-        nil
+        guard let playerItem = player.currentItem, isReadyToPlay else {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            playerItem.asset.thumbnailImage(currentTime: playerItem.currentTime()) { @Sendable result in
+                continuation.resume(returning: result)
+            }
+        }
     }
 
     public func pause() {
-        KSLog("pause \(self)")
+        KSLog("pause \(self)", line: 652)
         playbackState = .paused
     }
 
     public func prepareToPlay() {
-        KSLog("prepareToPlay \(self)")
+        KSLog("prepareToPlay \(self)", line: 657)
         options.prepareTime = CACurrentMediaTime()
-        // ⚑ UNRESOLVED → KSAVPlayer M2: build AVPlayerItem from `io` (was AVPlayerItem(asset: urlAsset)) on the main thread,
-        //   install via replaceCurrentItem, set openTime / actionAtItemEnd / volume / bufferingProgress.
+        isReadyToPlay = false
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let playerItem = try await self.createPlayerItem()
+                self.options.openTime = CACurrentMediaTime()
+                self.replaceCurrentItem(playerItem: playerItem)
+            } catch {
+                self.error = error
+            }
+        }
     }
 
     public func stop() {
@@ -865,8 +916,8 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func replace(io: Either<URL, AVAsset>, options: KSOptions) {
-        KSLog("replaceUrl \(self)")
-        stop()
+        KSLog("replaceUrl \(self)", line: 690)
+        reset()
         self.io = io
         self.options = options
     }
@@ -886,10 +937,14 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
 
     public func enterForeground() {
         playerView.playerLayer.player = playerView.player
+        playbackState = shouldResumePlayback ? .playing : .paused
     }
 
     public var seekable: Bool {
-        !(player.currentItem?.seekableTimeRanges.isEmpty ?? true)
+        guard duration != 0, !duration.isNaN else {
+            return false
+        }
+        return !(player.currentItem?.seekableTimeRanges.isEmpty ?? true)
     }
 
     public var isMuted: Bool {
@@ -902,11 +957,18 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
-        player.currentItem?.tracks.filter { $0.assetTrack?.mediaType == mediaType }.map { AVMediaPlayerTrack(track: $0) } ?? []
+        var tracks = [MediaPlayerTrack]()
+        for track in mediaPlayerTracks where track.mediaType == mediaType {
+            tracks.append(track)
+        }
+        return tracks
     }
 
     public func select(track: some MediaPlayerTrack) {
-        player.currentItem?.tracks.filter { $0.assetTrack?.mediaType == track.mediaType }.forEach { $0.isEnabled = false }
+        mediaPlayerTracks.filter { $0.mediaType == track.mediaType }.forEach { $0.isEnabled = false }
+        if track.mediaType == .subtitle {
+            subtitleTracks.forEach { $0.isEnabled = false }
+        }
         track.isEnabled = true
     }
 }
@@ -1076,23 +1138,40 @@ final class AVMediaSelectionTrack: MediaPlayerTrack, SubtitleInfo {
     let languageCode: String?
 
     init() {
-        fatalError("L7: AVMediaSelectionTrack.init — Forward's vtable slot 0 Impl is null (dead-stripped)")
+        option = AVMediaSelectionOption()
+        name = ""
+        trackID = 0
+        languageCode = nil
     }
 
-    func search(with query: KSSubtitleQuery) async -> [SubtitlePart] { fatalError("L7: KSSubtitleProtocol.search") }
-    var mediaType: AVFoundation.AVMediaType { fatalError("L7: MediaPlayerTrack.mediaType") }
-    var nominalFrameRate: Float { get { fatalError("L7: MediaPlayerTrack.nominalFrameRate") } set { fatalError("L7: MediaPlayerTrack.nominalFrameRate") } }
-    var bitRate: Int64 { fatalError("L7: MediaPlayerTrack.bitRate") }
-    var reorderSize: Int32 { fatalError("L7: AVMediaSelectionTrack.reorderSize — Forward body unread") }
-    var bitDepth: Int32 { fatalError("L7: MediaPlayerTrack.bitDepth") }
-    var isEnabled: Bool { get { fatalError("L7: MediaPlayerTrack.isEnabled") } set { fatalError("L7: MediaPlayerTrack.isEnabled") } }
-    var isImageSubtitle: Bool { fatalError("L7: MediaPlayerTrack.isImageSubtitle") }
-    var rotation: UInt16 { fatalError("L7: MediaPlayerTrack.rotation") }
-    var dovi: DOVIDecoderConfigurationRecord? { fatalError("L7: MediaPlayerTrack.dovi") }
-    var fieldOrder: FFmpegFieldOrder { fatalError("L7: MediaPlayerTrack.fieldOrder") }
-    var formatDescription: CMFormatDescription? { fatalError("L7: MediaPlayerTrack.formatDescription") }
-    var subtitleID: String { fatalError("L7: SubtitleInfo.subtitleID") }
-    var delay: TimeInterval { fatalError("L7: SubtitleInfo.delay") }
-    var renderMode: SubtitleRenderMode { fatalError("L7: SubtitleInfo.renderMode") }
-    var description: String { fatalError("L7: CustomStringConvertible.description") }
+    func search(with query: KSSubtitleQuery) async -> [SubtitlePart] { [] }
+    var mediaType: AVFoundation.AVMediaType { option.mediaType }
+    var nominalFrameRate: Float { get { 1.0 } set {} }
+    var bitRate: Int64 { 0 }
+    var reorderSize: Int32 { 0 }
+    var bitDepth: Int32 { 0 }
+    var isEnabled: Bool {
+        get {
+            if let group, let playerItem {
+                // `currentMediaSelection` is main-actor isolated in the SDK; read it through KVC
+                // from this nonisolated class.
+                return (playerItem.value(forKey: "currentMediaSelection") as? AVMediaSelection)?.selectedMediaOption(in: group) == option
+            }
+            return false
+        }
+        set {
+            if let group, let playerItem {
+                playerItem.select(newValue ? option : nil, in: group)
+            }
+        }
+    }
+    var isImageSubtitle: Bool { false }
+    var rotation: UInt16 { 0 }
+    var dovi: DOVIDecoderConfigurationRecord? { nil }
+    var fieldOrder: FFmpegFieldOrder { .unknown }
+    var formatDescription: CMFormatDescription? { nil }
+    var subtitleID: String { String(describing: trackID) }
+    var delay: TimeInterval { 0 }
+    var renderMode: SubtitleRenderMode { .srtView }
+    var description: String { name }
 }

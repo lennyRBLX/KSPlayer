@@ -83,8 +83,36 @@ class MetalSubtitleView: MTKView, MTKViewDelegate {
             #endif
         }
     }
-    @used final func mtkView(_ p0: MTKView, drawableSizeWillChange: CGSize) { fatalError("L7: MetalSubtitleView.mtkView — Forward body unread") }
-    final func draw(in p0: MTKView) { fatalError("L7: MetalSubtitleView.draw — Forward body unread") }
+    @used final func mtkView(_ p0: MTKView, drawableSizeWillChange: CGSize) {
+        #if os(iOS)
+        updateSubtitle(size: drawableSizeWillChange)
+        #endif
+    }
+    final func draw(in p0: MTKView) {
+        guard let drawable = p0.currentDrawable,
+              let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer()
+        else {
+            return
+        }
+        let renderPassDescriptor = MTLRenderPassDescriptor()
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
+            // Forward @0x101ac0e24: a set metalDrawable gets its encoder requirement (wt+0x10) with
+            // (encoder, p0.drawableSize); otherwise the encoder subtitle helper @0x101ac11ec gets
+            // (subtitleImages, pendingTexts, dynamicRange, p0.drawableSize, displayScale). Neither the
+            // requirement nor the helper is declared in this source (writer GAP), so this keeps the
+            // helper's sampler setup and endEncoding.
+            if metalDrawable == nil {
+                encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
+            }
+            encoder.endEncoding()
+        }
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
     private var cancellables: Set<AnyCancellable> = [] // offset global 0x1044ef5d0 (empty-set singleton)
     private var subtitleImages: [SubtitleImageInfo] = [] // offset global 0x1044ef5c0 -> field offset 0x40
     private var pendingTexts: [SubtitleTextInfo] = [] // offset global 0x1044ef5c8 -> field offset 0x48

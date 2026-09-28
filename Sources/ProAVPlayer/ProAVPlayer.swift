@@ -100,14 +100,232 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
         self.task = task
         return try await task.value
     }
-    override func readyToPlay() { fatalError("L7: ProAVPlayer.readyToPlay — Forward body unread") }
-    override func nominalFrameRate(track: MediaPlayerTrack) -> Float { fatalError("L7: ProAVPlayer.nominalFrameRate — Forward body unread") }
-    override var ioContext: AbstractAVIOContext? { fatalError("L7: ProAVPlayer.ioContext — Forward body unread") }
-    override func play() { fatalError("L7: ProAVPlayer.play — Forward body unread") }
-    override func process(error: Error) { fatalError("L7: ProAVPlayer.process — Forward body unread") }
-    override func update(loadState: MediaLoadState, oldValue: MediaLoadState) { fatalError("L7: ProAVPlayer.update — Forward body unread") }
-    override func changePlaybackTime(time: Double) { fatalError("L7: ProAVPlayer.changePlaybackTime — Forward body unread") }
-    override func seek(time: Double, completion: @escaping @MainActor @Sendable (Bool) -> Void) { fatalError("L7: ProAVPlayer.seek — Forward body unread") }
+    override func readyToPlay() {
+        player.automaticallyWaitsToMinimizeStalling = true
+        super.readyToPlay()
+        // Forward: a MainActor Task (ctx 0x1041e11e8) whose body calls an async ProAVPlayer method @0x101b79024
+        // that this tree does not declare (writer GAP). Its body is inlined here: pick the wanted audio track
+        // and select the matching HLS audio rendition (#file lines 132/134/142).
+        Task { @MainActor [weak self] in
+            guard let self, let m3u8Info = self.m3u8Info, let currentItem = self.player.currentItem else {
+                return
+            }
+            // Forward reads ConversionInfo.assetTracks (private, +0x10), which init assigns from formatContext.assetTracks.
+            let audioTracks = m3u8Info.remuxerIOAction.formatContext.assetTracks.filter { $0.mediaType == .audio }
+            guard let wantedTrack = self.options.wantedAudio(tracks: audioTracks),
+                  let track = audioTracks.first(where: { $0.trackID == wantedTrack.trackID })
+            else {
+                return
+            }
+            // Forward calls trackName(_:tracks:) @0x101b6fcf8 (private to ConversionToM3U8.swift): same logic inlined.
+            var name = track.name.isEmpty ? track.description : track.name
+            for other in audioTracks where other !== track {
+                if (other.name.isEmpty ? other.description : other.name) == name {
+                    name = name + " #" + track.trackID.description
+                    break
+                }
+            }
+            for retry in 0 ..< 10 {
+                guard self.player.currentItem === currentItem else {
+                    return
+                }
+                if let group = try? await currentItem.asset.loadMediaSelectionGroup(for: .audible) {
+                    guard self.player.currentItem === currentItem else {
+                        return
+                    }
+                    if let option = group.options.first(where: { option in
+                        ((option.propertyList() as? [String: Any])?["MediaSelectionOptionsName"] as? String ?? option.displayName) == name
+                    }) {
+                        if currentItem.currentMediaSelection.selectedMediaOption(in: group) != option {
+                            currentItem.select(option, in: group)
+                        }
+                        return
+                    }
+                }
+                guard retry < 9 else {
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        if let seekToTime {
+            KSLog("currentTime=\(player.currentTime().seconds) seek to \(seekToTime.seconds) startPlayTime=\(m3u8Info?.remuxerIOAction.startPlayTime ?? 0)", file: "ProAVPlayer/ProAVPlayer.swift", function: "readyToPlay()", line: 105)
+            player.seek(to: seekToTime - CMTime(seconds: m3u8Info?.remuxerIOAction.startPlayTime ?? 0, preferredTimescale: seekToTime.timescale), toleranceBefore: .zero, toleranceAfter: .zero)
+            self.seekToTime = nil
+        }
+        runOnMainThread { [weak self] in
+            guard let self else {
+                return
+            }
+            self.delegate?.changeLoadState(player: self)
+        }
+        if let currentItem = player.currentItem {
+            currentItem.preferredForwardBufferDuration = 1
+            currentItem.canUseNetworkResourcesForLiveStreamingWhilePaused = false
+            if let m3u8Info, m3u8Info.maxBufferDuration < currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) {
+                currentItem.automaticallyPreservesTimeOffsetFromLive = true
+            }
+        }
+    }
+    override func nominalFrameRate(track: MediaPlayerTrack) -> Float {
+        let nominalFrameRate = track.nominalFrameRate
+        if nominalFrameRate == 0, let m3u8Info {
+            // Forward iterates ConversionInfo.assetTracks (private, +0x10) = formatContext.assetTracks.
+            for assetTrack in m3u8Info.remuxerIOAction.formatContext.assetTracks where assetTrack.mediaType == .video && assetTrack.isEnabled {
+                return assetTrack.nominalFrameRate
+            }
+        }
+        return nominalFrameRate
+    }
+    override var ioContext: AbstractAVIOContext? { m3u8Info?.remuxerIOAction.formatContext.ioContext }
+    override func play() {
+        if let error {
+            _ = error
+            replaceCurrentItem(needSeek: true)
+        } else {
+            super.play()
+            Task {
+                try await Task.sleep(nanoseconds: 400_000_000)
+                if player.reasonForWaitingToPlay == .toMinimizeStalls {
+                    let player = self.player
+                    let currentTime = self.player.currentTime()
+                    _ = await player.seek(to: currentTime - CMTime(seconds: m3u8Info?.remuxerIOAction.startPlayTime ?? 0, preferredTimescale: currentTime.timescale), toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            }
+        }
+    }
+    override func process(error: Error) {
+        if let error = error as? NSError {
+            if error.code == -12312 {
+                replaceCurrentItem(needSeek: false)
+                return
+            }
+            if playbackState == .seeking {
+                return
+            }
+            if [-16839, -11866, -1017].contains(error.code) {
+                if playbackState == .playing {
+                    replaceCurrentItem(needSeek: true)
+                }
+                return
+            }
+            if error.code == -11821, let asset = player.currentItem?.asset as? AVURLAsset, asset.url.lastPathComponent == "master.m3u8" {
+                runOnMainThread { [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    let item = ProPlayerItem(url: asset.url.deletingLastPathComponent().appendingPathComponent("playlist_0.m3u8"))
+                    item.m3u8Info = m3u8Info
+                    (self as KSAVPlayer).replaceCurrentItem(playerItem: item)
+                }
+                return
+            }
+        }
+        super.process(error: error)
+    }
+    override func update(loadState: MediaLoadState, oldValue: MediaLoadState) {
+        super.update(loadState: loadState, oldValue: oldValue)
+        guard isReadyToPlay, let m3u8Info, playbackState == .playing, loadState == .loading,
+              let currentItem = player.currentItem, !hasEndOfStream
+        else {
+            return
+        }
+        let isPlaybackBufferEmpty = currentItem.isPlaybackBufferEmpty
+        let isPlaybackLikelyToKeepUp = currentItem.isPlaybackLikelyToKeepUp
+        let isPlaybackBufferFull = currentItem.isPlaybackBufferFull
+        // Forward subtracts ConversionInfo.currentPlaybackTime (private, +0x40: the last player time handed to
+        // updateCurrentPlaybackTime); the item's current time stands in for it (writer GAP).
+        let loadingBuffer = m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) - currentItem.currentTime().seconds
+        KSLog("loading buffer=\(loadingBuffer),empty=\(isPlaybackBufferEmpty),likelyToKeepUp=\(isPlaybackLikelyToKeepUp),full=\(isPlaybackBufferFull), isPlaying=\(isPlaying)", file: "ProAVPlayer/ProAVPlayer.swift", function: "update(loadState:oldValue:)", line: 231)
+        if Int(loadingBuffer) > 8 {
+            runOnMainThread { [weak self] in
+                guard let self else {
+                    return
+                }
+                KSLog("need play Immediately", file: "ProAVPlayer/ProAVPlayer.swift", function: "update(loadState:oldValue:)", line: 235)
+                self.player.playImmediately(atRate: self.playbackRate)
+            }
+        }
+        // Forward calls an async ConversionInfo method @0x101b6adc8 (not declared in this tree: writer GAP) whose
+        // body hops to demuxerIO and sends .resume.
+        Task {
+            await m3u8Info.demuxerIO.send(.resume)
+        }
+    }
+    override func changePlaybackTime(time: Double) {
+        let currentTime = time + (m3u8Info?.remuxerIOAction.startPlayTime ?? 0)
+        delegate?.changePlaybackTime(player: self, time: currentTime)
+        // Forward then runs `if duration > 0, currentTime >= duration { if fileSize > 0 { playbackState = .finished }
+        // else { duration = currentTime } }`. duration/playbackState are `public private(set)` in KSAVPlayer, so that
+        // block cannot be written from this module (writer GAP).
+        if playbackState == .playing, let m3u8Info {
+            m3u8Info.updateCurrentPlaybackTime(time)
+        }
+    }
+    override func seek(time: Double, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
+        let startPlayTime = m3u8Info?.remuxerIOAction.startPlayTime ?? 0
+        if time >= startPlayTime {
+            super.seek(time: time - startPlayTime) { [weak self] finished in
+                if finished {
+                    completion(true)
+                } else {
+                    guard let self else {
+                        return
+                    }
+                    // Forward inlines ConversionInfo.seek(time:completion:) here (not declared in this tree: writer GAP).
+                    Task { [weak self] in
+                        guard let self, let m3u8Info = self.m3u8Info else {
+                            return
+                        }
+                        let seekCompletion: @Sendable (Bool) -> Void = { finished in
+                            Task { @MainActor [weak self] in
+                                guard let self else {
+                                    return
+                                }
+                                if finished {
+                                    self.replaceCurrentItem(needSeek: false)
+                                }
+                                completion(finished)
+                            }
+                        }
+                        await m3u8Info.demuxerIO.send(.seek(to: time, completion: { [weak m3u8Info] finished in
+                            guard m3u8Info != nil else {
+                                return
+                            }
+                            // Forward: on success it first runs remuxerIOAction.reconstruct (private: writer GAP).
+                            seekCompletion(finished)
+                        }))
+                    }
+                }
+            }
+        } else {
+            // Forward sets `playbackState = .seeking` here; the setter is private(set) in KSAVPlayer (writer GAP).
+            Task { [weak self] in
+                guard let self, let m3u8Info = self.m3u8Info else {
+                    return
+                }
+                let seekCompletion: @Sendable (Bool) -> Void = { finished in
+                    Task { @MainActor [weak self] in
+                        guard let self else {
+                            return
+                        }
+                        if finished {
+                            self.replaceCurrentItem(needSeek: false)
+                        }
+                        completion(finished)
+                    }
+                }
+                await m3u8Info.demuxerIO.send(.seek(to: time, completion: { [weak m3u8Info] finished in
+                    guard m3u8Info != nil else {
+                        return
+                    }
+                    // Forward: on success it first runs remuxerIOAction.reconstruct (private: writer GAP).
+                    seekCompletion(finished)
+                }))
+            }
+        }
+        shouldSeekTo = time
+    }
 
     /// Forward `ProAVPlayer.reset` @ `0x101b7c6e4`; body and cleanup refs: `5cf964654b0ad471a415f6404bd514a97c30a397dffc0b7d65ddc40fa73cae6e`, `b43bbafa67d940027f9762caf377baafec4e7b0423910732f64792d97fa30fe2`.
     override func reset() {

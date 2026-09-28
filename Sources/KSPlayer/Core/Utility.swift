@@ -110,7 +110,11 @@ public extension UIColor {
         var blue = CGFloat(0)
         var alpha = CGFloat(0)
         getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return Int(red * 255) | Int(green * 255) << 8 | Int(blue * 255) << 16 | (0xFF - Int(alpha * 255)) << 24
+        let r = Int(red * 255)
+        let g = Int(green * 255)
+        let b = Int(blue * 255)
+        let a = 0xFF - Int(alpha * 255)
+        return r | g << 8 | b << 16 | a << 24
     }
     public var assColor: String { String(format: "&H%08X", abgr) }
     public var data: Data { try! NSKeyedArchiver.archivedData(withRootObject: self, requiringSecureCoding: false) }
@@ -1023,16 +1027,8 @@ extension Color: RawRepresentable {
     }
 
     public var rawValue: RawValue {
-        do {
-            if #available(macOS 11.0, iOS 14, tvOS 14, *) {
-                let data = try NSKeyedArchiver.archivedData(withRootObject: UIColor(self), requiringSecureCoding: false) as Data
-                return data.base64EncodedString()
-            } else {
-                return ""
-            }
-        } catch {
-            return ""
-        }
+        (try? NSKeyedArchiver.archivedData(withRootObject: UIColor(self), requiringSecureCoding: false))
+            .map { $0.base64EncodedString() } ?? ""
     }
 }
 
