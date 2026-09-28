@@ -285,7 +285,14 @@ public extension MTLRenderCommandEncoder {
 extension CAMetalLayer: Drawable {
     func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: CAMetalLayer.updateInfo — Forward body unread") }
     @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: CAMetalLayer.draw — Forward body unread") }
-    @used func clear() { fatalError("L7: CAMetalLayer.clear — Forward body unread") }
+    @used func clear() {
+        #if !os(tvOS)
+        edrMetadata = nil
+        #endif
+        if let drawable = nextDrawable() {
+            MetalRender.clear(drawable: drawable)
+        }
+    }
 }
 
 // VertexIn @0x1039f1034 — declaration shape read from the Forward context descriptor (kind, parent,
@@ -302,12 +309,17 @@ struct VertexIn {
 import RealityKit
 
 extension RealityKit.TextureResource.Drawable {
-    @used func present(commandBuffer: MTLCommandBuffer) { fatalError("L7: Drawable.present — Forward body unread") }
+    @used func present(commandBuffer: MTLCommandBuffer) {
+        commandBuffer.present(self)
+        commandBuffer.commit()
+    }
 }
 
 extension RealityKit.TextureResource {
     @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: TextureResource.draw — Forward body unread") }
-    @used func clear() { fatalError("L7: TextureResource.clear — Forward body unread") }
+    @used func clear() {
+        drawableQueue?.clear()
+    }
 }
 
 extension RealityKit.TextureResource.DrawableQueue {

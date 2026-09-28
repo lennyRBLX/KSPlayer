@@ -364,10 +364,19 @@ open class KSOptions {
 
     public var userAgent: String? = "KSPlayer" {
         didSet {
+            if let userAgent {
+                appendAVPlayerHeader(["User-Agent": userAgent])
+            }
             formatContextOptions["user_agent"] = userAgent
         }
     }
-    private func appendAVPlayerHeader(_ p0: [String : String]) { fatalError("L7: KSOptions.appendAVPlayerHeader — Forward body unread") }
+    private func appendAVPlayerHeader(_ p0: [String : String]) {
+        var oldValue = avOptions["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String] ?? [
+            String: String
+        ]()
+        oldValue.merge(p0) { _, new in new }
+        avOptions["AVURLAssetHTTPHeaderFieldsKey"] = oldValue
+    }
 
     /**
      you can add http-header or other options which mentions in https://developer.apple.com/reference/avfoundation/avurlasset/initialization_options
@@ -378,18 +387,24 @@ open class KSOptions {
      ```
      */
     public func appendHeader(_ header: [String: String]) {
-        var oldValue = avOptions["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String] ?? [
-            String: String
-        ]()
-        oldValue.merge(header) { _, new in new }
-        avOptions["AVURLAssetHTTPHeaderFieldsKey"] = oldValue
+        appendAVPlayerHeader(header)
         var str = formatContextOptions["headers"] as? String ?? ""
         for (key, value) in header {
             str.append("\(key):\(value)\r\n")
         }
         formatContextOptions["headers"] = str
     }
-    public func removeHeader(key: String) { fatalError("L7: KSOptions.removeHeader — Forward body unread") }
+    public func removeHeader(key: String) {
+        var oldValue = avOptions["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String] ?? [
+            String: String
+        ]()
+        oldValue.removeValue(forKey: key)
+        avOptions["AVURLAssetHTTPHeaderFieldsKey"] = oldValue
+        let str = formatContextOptions["headers"] as? String ?? ""
+        var array = str.components(separatedBy: "\r\n")
+        array.removeAll { $0.hasPrefix(key) }
+        formatContextOptions["headers"] = array.joined(separator: "\r\n")
+    }
 
     public func setCookie(_ cookies: [HTTPCookie]) {
         avOptions[AVURLAssetHTTPCookiesKey] = cookies
@@ -575,18 +590,10 @@ open class KSOptions {
     open func audioFrameMaxCount(fps: Float, channelCount: Int) -> UInt16 {
         if KSOptions.audioPlayerType == AudioRendererPlayer.self {
             let count = (Int(fps) * max(channelCount, 6)) >> 1
-            if count >= 4096 {
-                return 4096
-            } else {
-                return UInt16(count)
-            }
+            return UInt16(min(count, 4096))
         } else {
             let count = (Int(fps) * channelCount) >> 2
-            if count >= 1024 {
-                return 1024
-            } else {
-                return UInt16(count)
-            }
+            return UInt16(min(count, 1024))
         }
     }
 
@@ -1563,12 +1570,16 @@ public extension KSOptions {
         if category != .playAndRecord {
             category = .playback
         }
-        #if os(tvOS)
-        try? AVAudioSession.sharedInstance().setCategory(category, mode: .moviePlayback, policy: .longFormAudio)
-        #else
-        try? AVAudioSession.sharedInstance().setCategory(category, mode: .moviePlayback, policy: .longFormVideo)
-        #endif
-        try? AVAudioSession.sharedInstance().setActive(true)
+        if mixAudio {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: .mixWithOthers)
+        } else {
+            #if os(tvOS)
+            try? AVAudioSession.sharedInstance().setCategory(category, mode: .moviePlayback, policy: .longFormAudio)
+            #else
+            try? AVAudioSession.sharedInstance().setCategory(category, mode: .moviePlayback, policy: .longFormVideo)
+            #endif
+            try? AVAudioSession.sharedInstance().setActive(true)
+        }
         #endif
     }
 
@@ -1796,8 +1807,18 @@ public func KSLog(level: LogLevel = .warning, dso: UnsafeRawPointer = #dsohandle
 }
 
 public extension Array {
-    public func removeDuplicate(predicate: (Element, Element) -> Bool) -> [Element] { fatalError("L7: Array.removeDuplicate — Forward body unread") }
-    public func asyncMap<T>(_ p0: (Element) async throws -> T) async throws -> [T] { fatalError("L7: Array.asyncMap — Forward body unread") }
+    public func removeDuplicate(predicate: (Element, Element) -> Bool) -> [Element] {
+        enumerated().filter { index, element in
+            firstIndex { predicate(element, $0) } == index
+        }.map { $0.element }
+    }
+    public func asyncMap<T>(_ p0: (Element) async throws -> T) async throws -> [T] {
+        var values = [T]()
+        for element in self {
+            try await values.append(p0(element))
+        }
+        return values
+    }
     func toDictionary<Key: Hashable>(with selectKey: (Element) -> Key) -> [Key: Element] {
         var dict = [Key: Element]()
         forEach { element in

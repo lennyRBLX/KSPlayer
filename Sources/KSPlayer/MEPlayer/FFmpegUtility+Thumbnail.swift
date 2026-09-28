@@ -64,7 +64,17 @@ extension FFmpegUtility {
     }
     public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws { fatalError("L7: FFmpegUtility.generateThumbnail — Forward body unread") }
     public static func generateThumbnailFromCache(ioContext: AbstractAVIOContext, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws -> Set<Int> { fatalError("L7: FFmpegUtility.generateThumbnailFromCache — Forward body unread") }
-    public static func generateThumbnailAtTime(ioContext: AbstractAVIOContext, time: Double, options: KSOptions?, thumbWidth: Int32) -> FFThumbnail? { fatalError("L7: FFmpegUtility.generateThumbnailAtTime — Forward body unread") }
+    public static func generateThumbnailAtTime(ioContext: AbstractAVIOContext, time: Double, options: KSOptions?, thumbWidth: Int32) -> FFThumbnail? {
+        do {
+            let formatCtx = try FFmpegUtility.formatCtx(ioContext: ioContext, options: options)
+            let thumbnail = generateThumbnailAtTime(formatCtx: formatCtx, time: time, thumbWidth: thumbWidth)
+            FFmpegUtility.close(formatCtx: formatCtx)
+            return thumbnail
+        } catch {
+            KSLog("generateThumbnailAtTime: failed to create formatCtx: \(error)")
+            return nil
+        }
+    }
     public static func generateThumbnailAtTime(formatCtx: UnsafeMutablePointer<AVFormatContext>, time: Double, thumbWidth: Int32) -> FFThumbnail? { fatalError("L7: FFmpegUtility.generateThumbnailAtTime — Forward body unread") }
 }
 
@@ -748,32 +758,27 @@ public class ThumbnailQueue {
             return
         }
 
-        do {
-            var after: [Int] = []
-            var before: [Int] = []
-            var found = false
-            pendingIndices.forEach { pending in
-                if pending == index {
-                    found = true
-                } else if index < pending {
-                    after.append(pending)
-                } else {
-                    before.append(pending)
-                }
+        var after: [Int] = []
+        var before: [Int] = []
+        var target: Int?
+        for pending in pendingIndices {
+            if pending == index {
+                target = pending
+            } else if index < pending {
+                after.append(pending)
+            } else {
+                before.append(pending)
             }
-            after.sort()
-            before.sort(by: >)
-
-            var reordered: [Int] = []
-            if found {
-                reordered.append(index)
-            }
-            reordered.append(contentsOf: after)
-            reordered.append(contentsOf: before)
-            before = []
-            after = []
-            pendingIndices = reordered
         }
+        after.sort()
+        before.sort(by: >)
+        var reordered: [Int] = []
+        if let target {
+            reordered.append(target)
+        }
+        reordered.append(contentsOf: after)
+        reordered.append(contentsOf: before)
+        pendingIndices = reordered
         lock.unlock()
     }
 
@@ -821,7 +826,12 @@ public class ThumbnailQueue {
         skippedSet = []
         lock.unlock()
     }
-    public var skippedCount: Int { fatalError("L7: ThumbnailQueue.skippedCount — Forward body unread") }
+    public var skippedCount: Int {
+        lock.lock()
+        let result = skippedSet.count
+        lock.unlock()
+        return result
+    }
 
     public func isGenerated(_ index: Int) -> Bool {
         lock.lock()
@@ -845,7 +855,12 @@ public class ThumbnailQueue {
         pendingIndices = []
         lock.unlock()
     }
-    public var pendingCount: Int { fatalError("L7: ThumbnailQueue.pendingCount — Forward body unread") }
+    public var pendingCount: Int {
+        lock.lock()
+        let result = pendingIndices.count
+        lock.unlock()
+        return result
+    }
 
     public func isGenerated(atTime time: Double) -> Bool {
         guard duration > 0 else { return false }
@@ -877,8 +892,23 @@ public class ThumbnailQueue {
         pendingIndices = []
         lock.unlock()
     }
-    public var isEmpty: Bool { fatalError("L7: ThumbnailQueue.isEmpty — Forward body unread") }
-    public var remaining: Int { fatalError("L7: ThumbnailQueue.remaining — Forward body unread") }
+    public var isEmpty: Bool {
+        lock.lock()
+        let result = pendingIndices.isEmpty
+        lock.unlock()
+        return result
+    }
+    public var remaining: Int {
+        lock.lock()
+        let result = pendingIndices.count
+        lock.unlock()
+        return result
+    }
 
-    public var generatedCount: Int { fatalError("L7: ThumbnailQueue.generatedCount — Forward body unread") }
+    public var generatedCount: Int {
+        lock.lock()
+        let result = generatedSet.count
+        lock.unlock()
+        return result
+    }
 }
