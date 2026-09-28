@@ -453,14 +453,14 @@ public class ThumbnailSession {
         let format = codecpar.format
         let width = codecpar.width
         let colorTrc = codecpar.color_trc
+        let thumbHeight = width > 0 ? codecpar.height * thumbWidth / width : thumbWidth * 9 / 16
         // FUN_101a211ec = FFmpegAssetTrack(stream:); FUN_101a23760 = its `isDovi` specialisation.
         let assetTrack = FFmpegAssetTrack(stream: videoStream)
         let hasDovi = assetTrack?.isDovi ?? false
         self.hasDovi = hasDovi
         dovi = assetTrack?.dovi
         isHDR = hasDovi || colorTrc == AVCOL_TRC_SMPTE2084 || colorTrc == AVCOL_TRC_ARIB_STD_B67
-        KSLog("[Thumb] HDR检测: isHDR=\(isHDR), color_trc=\(colorTrc), hasDovi=\(hasDovi)", line: 739)
-        let thumbHeight = width > 0 ? codecpar.height * thumbWidth / width : thumbWidth * 9 / 16
+        KSLog("[Thumb] HDR检测: isHDR=\(isHDR), color_trc=\(colorTrc.rawValue), hasDovi=\(hasDovi)", line: 739)
         reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: format)), fps: 60, dovi: assetTrack?.dovi)
         let duration = av_rescale_q(formatCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
         interval = duration / Int64(count)
