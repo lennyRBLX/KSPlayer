@@ -25,7 +25,15 @@ import AVFAudio
 import CoreAudio
 import CoreMedia
 
-public final class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
+// ⚑ @unchecked Sendable — compiler-MANDATED, not binary-observable; follows the MEPlayerItem.swift:14 /
+//   KSMEPlayer.swift:29 precedent. play()'s deferred path is a `{ [weak self] }` capture list: Forward
+//   0x101a14dac–0x101a14e6c allocates the 0x18 weak box (swift_allocObject + swift_weakInit) AFTER
+//   DispatchTime.+ and BEFORE _Block_copy, then swift_retain, and releases twice after asyncAfter —
+//   the Swift 6 `[weak self]` formation order (a `weak var` local boxes at its declaration instead).
+//   Under this target's Swift 6 + StrictConcurrency, `[weak self]` in the MainActor asyncAfter closure
+//   compiles ONLY if self is Sendable ("sending 'self' risks causing data races"). Sendable is a marker
+//   protocol: no witness table, no conformance record, no metadata.
+public final class AudioUnitPlayer: AudioBaseOutput, AudioOutput, @unchecked Sendable {
     private var audioUnitForOutput: AudioUnit!
     // Written by prepare(audioFormat:), read by play(): the timestamp the play()
     // debounce measures against (the "从多声道切换到2声道马上调用start会不生效" workaround —
@@ -45,9 +53,13 @@ public final class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
         if !isPlaying {
             let elapsed = CFAbsoluteTimeGetCurrent() - lastPrepareTime
             if lastPrepareTime > 0, elapsed < minDelayAfterPrepare {
-                nonisolated(unsafe) weak var weakSelf = self
-                DispatchQueue.main.asyncAfter(deadline: .now() + (minDelayAfterPrepare - elapsed)) { @MainActor in
-                    weakSelf?.doPlay()
+                // The remaining window is computed BEFORE DispatchQueue.main is fetched: Forward
+                // 0x101a14da8 `fsub d8, 0.15, elapsed` precedes the queue getter (0x101a14dcc) and
+                // v8 feeds DispatchTime.+ (0x101a14de4). Closure 0x101a14f98 (MainActor executor
+                // check, weak load, inlined doPlay).
+                let delay = minDelayAfterPrepare - elapsed
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { @MainActor [weak self] in
+                    self?.doPlay()
                 }
             } else {
                 doPlay()
@@ -151,7 +163,7 @@ public final class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
         try? AVAudioSession.sharedInstance().setPreferredSampleRate(audioFormat.sampleRate)
-        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)")
+        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)", line: 92) // w6=#0x5c @0x101a157bc
         #endif
         var audioStreamBasicDescription = audioFormat.formatDescription.audioStreamBasicDescription
         AudioUnitSetProperty(audioUnitForOutput,
@@ -177,9 +189,11 @@ public final class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
         AudioUnitInitialize(audioUnitForOutput)
         lastPrepareTime = CFAbsoluteTimeGetCurrent()
         if isRunning {
-            nonisolated(unsafe) weak var weakSelf = self
-            Task { @MainActor in
-                weakSelf?.play()
+            // Forward 0x101a158d8–0x101a159a8: nil-priority store, THEN the 0x18 weak box
+            // (allocObject + weakInit), retain, context alloc, box release, Task.init — the
+            // `[weak self]` capture-list order (a `weak var` local boxes before the priority store).
+            Task { @MainActor [weak self] in
+                self?.play()
             }
         }
     }

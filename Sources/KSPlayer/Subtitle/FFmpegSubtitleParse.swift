@@ -38,14 +38,37 @@ public class FFmpegSubtitleParse: KSParseProtocol {
 // FFmpegSubtitle @0x1039f1718 — Forward 1.3.17 `actor` ($defaultActor field record; type_kind_gate).
 // §8.3 fields (7, reflection-authoritative: formatContext/decode/subtitleStreamIndex/preTime/startTime/
 // endTime/parts) + §8.5 conforms KSSubtitleProtocol directly.
-actor FFmpegSubtitle: KSSubtitleProtocol {
-    private let formatContext: FormatContext          // +0x70
-    private let decode: SubtitleDecode                // +0x78
+// ⚑ L7: `@preconcurrency` = the Swift 6 spelling that lets the actor-ISOLATED `search(with:)` witness (Forward
+//   hop 0x101a9f9d0 → swift_task_switch(0x101a9fa34, x1=self)) satisfy the nonisolated async requirement with
+//   non-Sendable KSSubtitleQuery/[SubtitlePart]; codegen-neutral (mock asm identical to the plain Swift 5 conformance).
+actor FFmpegSubtitle: @preconcurrency KSSubtitleProtocol {
+    // ⚑ L7: `nonisolated(unsafe)` = Swift 6 spelling for the Forward deinit's reads of these non-Sendable lets
+    //   (Ffd 0x101a9f8e0 reads +0x70/+0x78 from the nonisolated deinit); codegen-neutral (mock asm identical).
+    private nonisolated(unsafe) let formatContext: FormatContext          // +0x70
+    private nonisolated(unsafe) let decode: SubtitleDecode                // +0x78
     private let subtitleStreamIndex: Int32            // +0x80  ⚑[tool=field_surface ref=FFmpegSubtitle.subtitleStreamIndex:idx3 result=let Int32]
     private var preTime: Double = 0                   // +0x88
     private var startTime: Double = 0                 // +0x90
     private var endTime: Double = 0                   // +0x98
     private var parts: [SubtitlePart] = []            // +0xa0
+
+    // ⚑ L7: unnamed local body 0x101a9f0cc (file KSPlayer/FFmpegSubtitleParse.swift, between the metadata accessor
+    //   0x101a9f0ac and init 0x101a9f27c; x20 = self, no args). Its one call is search's finish path @0x101a9ff84,
+    //   right after `self.parts = parts`. Name recon-chosen (stripped). first non-empty part → startTime (+0x90) =
+    //   part.start @0x101a9f20c; parts.last → endTime (+0x98) = end.isInfinite ? start : end (fcsel @0x101a9f240);
+    //   none → `stp xzr,xzr,[x20,#0x90]` @0x101a9f1e0. `final`: Forward's FFmpegSubtitle vtable has no slot for it
+    //   (slot 12 = init; vtable_surface add_final, pass 20260928T165255547393Z).
+    private final func updateTimeRange() {
+        if let first = parts.first(where: { !$0.isEmpty }) {
+            startTime = first.start
+            if let last = parts.last {
+                endTime = last.end.isInfinite ? last.start : last.end
+            }
+        } else {
+            startTime = 0
+            endTime = 0
+        }
+    }
 
     // Binary init `(url: URL) throws` (FUN_101a9f27c, 0x101a9f27c-0x101a9f8df) — MIGRATED from the
     //   base stub `init(formatContext:decode:)`. A throwing ACTOR init: open the subtitle source via the shared
@@ -149,7 +172,59 @@ actor FFmpegSubtitle: KSSubtitleProtocol {
         av_packet_unref(packet) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_unref:0x102d61970 result=CONFIRMED] exit (@0x101a9f654)
     }
 
-    // ⚑ UNRESOLVED → P4 M2 (Batch 4): subtitle(currentTime:) async + the real parts search. Signature migrated to
-    //   search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
-    nonisolated public final func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
+    // ⚑ L7: explicit deinit (Forward Ffd 0x101a9f8e0): `bl 0x101a3302c` FormatContext.close(), then the inlined
+    //   SubtitleDecode.shutdown() (avsubtitle_free 0x10294d330 / avcodec_free_context 0x102d53ac8 under
+    //   beginAccess), then swift_defaultActor_destroy; FfD 0x101a9f9b8 = deinit + swift_defaultActor_deallocate.
+    deinit {
+        formatContext.close()
+        decode.shutdown()
+    }
+
+    // ⚑ L7: actor-ISOLATED (Forward entry 0x101a9f9d0 stores query/self then swift_task_switch(0x101a9fa34,
+    //   x1=self)); internal param name `query` (read @0x101a9fadc). Body = continuation 0x101a9fa34.
+    public final func search(with query: KSSubtitleQuery) async -> [SubtitlePart] {
+        // decode+0x10 non-nil → retain + swift_task_switch(0x101aa015c, x1=renderer): delegate to the ASS renderer.
+        if let assImageRenderer = decode.assImageRenderer {
+            return await assImageRenderer.search(with: query)
+        }
+        let time = query.time
+        // every non-renderer exit stores preTime (+0x88) = time (@0x101a9fb6c/0x101a9fbe0/0x101a9fd58/0x101aa00f8).
+        defer { preTime = time }
+        // in range: `fcmp startTime,time; b.hi` / `fcmp time,endTime; b.ls` → filter self.parts.
+        if startTime <= time, time <= endTime {
+            return self.parts.filter { $0 == time }
+        }
+        if abs(preTime - time) >= 10 {
+            // fabd + 10.0 @0x101a9fb00; avformat_seek_file(ctx, -1, Int64.min, Int64(time * 1e6), Int64.max, 1) @0x101a9fbd8
+            if avformat_seek_file(formatContext.formatCtx, -1, Int64.min, Int64(time * 1_000_000), Int64.max, AVSEEK_FLAG_BACKWARD) != 0 {
+                return []
+            }
+        } else if time < startTime {
+            return []
+        }
+        var parts = [SubtitlePart]()
+        var packet = av_packet_alloc()
+        if let packet {
+            while true {
+                // read-fail / foreign-stream exit (0x101a9fb58): unref + return [].
+                guard av_read_frame(formatContext.formatCtx, packet) == 0, packet.pointee.stream_index == subtitleStreamIndex else {
+                    av_packet_unref(packet)
+                    return []
+                }
+                if let (decoded, _, _) = decode.decodeFrame(from: packet) {
+                    parts.append(contentsOf: decoded)
+                }
+                av_packet_unref(packet)
+                if parts.contains(where: { !$0.isEmpty }), let last = parts.last, !last.end.isInfinite || last.isEmpty {
+                    break
+                }
+            }
+        }
+        av_packet_free(&packet)
+        // ⚑ GAP: Forward calls FUN_101a18c4c(query.size) here (@0x101a9ff60, x20 = &parts) — a mutating
+        //   [SubtitlePart] method (EmbedDataSouce.swift/KSMEPlayer.swift region) with no source decl.
+        self.parts = parts
+        updateTimeRange()
+        return self.parts.filter { $0 == time }
+    }
 }
