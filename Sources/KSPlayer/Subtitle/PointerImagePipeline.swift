@@ -77,6 +77,45 @@ final class PointerImagePipeline {
         self.alphaInfo = alphaInfo
     }
 
+    /// @0x101aa448c, 59 instructions, read in full. Six external callees, every one named through
+    /// its stub's `__got` slot: `CFDataCreate`, `CGDataProviderCreateWithCFData`,
+    /// `CGColorSpaceCreateDeviceRGB`, `CGImageCreate`, and three `objc_release`.
+    ///
+    /// `bitsPerPixel` is `alphaInfo == 0 ? 24 : 32`, and raw 0 is `kCGImageAlphaNone` — so 24 exactly
+    /// when there is no alpha channel, 32 otherwise. The CFData length is `bytesPerRow * height`
+    /// under the body's ONE overflow trap, i.e. a checked multiply.
+    ///
+    /// `CGImageCreate` is called with all 11 arguments, x0-x7 plus three on the stack, in this order:
+    /// width, height, bitsPerComponent = 8, bitsPerPixel, bytesPerRow, space, bitmapInfo = the raw
+    /// `alphaInfo` zero-extended, provider, decode = NULL, shouldInterpolate = false, intent = 0.
+    ///
+    /// ⚠️ The two nil-bail paths DIFFER and the difference is the ownership: the `CFDataCreate`-nil
+    ///   path returns nil releasing NOTHING, while the `CGDataProviderCreateWithCFData`-nil path
+    ///   releases the CFData first. On success all three CF objects are released and the CGImage is
+    ///   returned WITHOUT a release, i.e. at +1.
+    /// ⚑[tool=bind_oracle ref=CGImageCreate:0x104108ed8 result=CoreGraphics-_CGImageCreate]
+    func cgImage() -> CGImage? {
+        let length = bytesPerRow * height
+        guard let data = CFDataCreate(kCFAllocatorDefault, rgbData, length) else {
+            return nil
+        }
+        guard let provider = CGDataProvider(data: data) else {
+            return nil
+        }
+        let space = CGColorSpaceCreateDeviceRGB()
+        return CGImage(width: width,
+                       height: height,
+                       bitsPerComponent: 8,
+                       bitsPerPixel: alphaInfo == .none ? 24 : 32,
+                       bytesPerRow: bytesPerRow,
+                       space: space,
+                       bitmapInfo: CGBitmapInfo(rawValue: alphaInfo.rawValue),
+                       provider: provider,
+                       decode: nil,
+                       shouldInterpolate: false,
+                       intent: .defaultIntent)
+    }
+
     /// @0x101aa46d4, 76 instructions, read statement by statement. The allocating entry
     /// @0x101aa458c is NOT a thunk — it inlines this whole body after `swift_allocObject(_, 0x34, 7)`,
     /// which is a second independent read of the same statements and agrees instruction for
@@ -120,49 +159,10 @@ final class PointerImagePipeline {
         alphaInfo = .first
     }
 
-    /// @0x101aa448c, 59 instructions, read in full. Six external callees, every one named through
-    /// its stub's `__got` slot: `CFDataCreate`, `CGDataProviderCreateWithCFData`,
-    /// `CGColorSpaceCreateDeviceRGB`, `CGImageCreate`, and three `objc_release`.
-    ///
-    /// `bitsPerPixel` is `alphaInfo == 0 ? 24 : 32`, and raw 0 is `kCGImageAlphaNone` — so 24 exactly
-    /// when there is no alpha channel, 32 otherwise. The CFData length is `bytesPerRow * height`
-    /// under the body's ONE overflow trap, i.e. a checked multiply.
-    ///
-    /// `CGImageCreate` is called with all 11 arguments, x0-x7 plus three on the stack, in this order:
-    /// width, height, bitsPerComponent = 8, bitsPerPixel, bytesPerRow, space, bitmapInfo = the raw
-    /// `alphaInfo` zero-extended, provider, decode = NULL, shouldInterpolate = false, intent = 0.
-    ///
-    /// ⚠️ The two nil-bail paths DIFFER and the difference is the ownership: the `CFDataCreate`-nil
-    ///   path returns nil releasing NOTHING, while the `CGDataProviderCreateWithCFData`-nil path
-    ///   releases the CFData first. On success all three CF objects are released and the CGImage is
-    ///   returned WITHOUT a release, i.e. at +1.
-    /// ⚑[tool=bind_oracle ref=CGImageCreate:0x104108ed8 result=CoreGraphics-_CGImageCreate]
-    func cgImage() -> CGImage? {
-        let length = bytesPerRow * height
-        guard let data = CFDataCreate(kCFAllocatorDefault, rgbData, length) else {
-            return nil
-        }
-        guard let provider = CGDataProvider(data: data) else {
-            return nil
-        }
-        let space = CGColorSpaceCreateDeviceRGB()
-        return CGImage(width: width,
-                       height: height,
-                       bitsPerComponent: 8,
-                       bitsPerPixel: alphaInfo == .none ? 24 : 32,
-                       bytesPerRow: bytesPerRow,
-                       space: space,
-                       bitmapInfo: CGBitmapInfo(rawValue: alphaInfo.rawValue),
-                       provider: provider,
-                       decode: nil,
-                       shouldInterpolate: false,
-                       intent: .defaultIntent)
-    }
-
     /// @0x101aa4804, 4 instructions: load `rgbData` and tail-call
     /// `swift_slowDealloc(ptr, -1, -1)`. It touches no other field.
     /// ⚑[tool=bind_oracle ref=swift_slowDealloc:0x104113070 result=libswiftCore-_swift_slowDealloc]
-    func deallocate() {
+    @used func deallocate() {
         rgbData.deallocate()
     }
 }

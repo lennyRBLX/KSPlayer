@@ -31,9 +31,6 @@ public enum Anime4KFrameDump {
     /// Master enable toggle. Storage DAT_104c636c0; direct setter @0x101a76c08 (no once-guard).
     public nonisolated(unsafe) static var enabled = false
 
-    /// Max frames to export; set by configure @0x101a775c0. Storage DAT_1044ebcd0.
-    public nonisolated(unsafe) static var maxFrames = 0
-
     /// Frames exported so far; reset to 0 by configure, incremented under `stateLock` in the gate
     /// @0x101a784d4 (dumps only while frameCounter < maxFrames). Storage DAT_1044ebcf0.
     /// ⚑ name still INFERRED — and now a VERIFIED negative: this static carries no symbol in the
@@ -47,6 +44,9 @@ public enum Anime4KFrameDump {
     /// Sub-toggle gating the GPU texture-readback path (@0x101a77d20). Storage DAT_1044ebcc9.
     public nonisolated(unsafe) static var dumpRendered = false
 
+    /// Max frames to export; set by configure @0x101a775c0. Storage DAT_1044ebcd0.
+    public nonisolated(unsafe) static var maxFrames = 0
+
     /// Export directory (lazy). Storage DAT_104c636c8; default builder @0x101a76f44. configure can
     /// override.
     public nonisolated(unsafe) static var outputDirectory: URL = {
@@ -54,6 +54,25 @@ public enum Anime4KFrameDump {
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return base.appendingPathComponent("Anime4KDump")
     }()
+
+    /// Public config entry. The method name and ALL FIVE parameter labels are RECOVERED, not
+    /// inferred — `recover_swift_function_name` returned None here, but the orphaned export trie
+    /// carries the full mangled name. Every one of the five inferred labels was wrong.
+    /// ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.configure(enabled:maxFrames:outputDirectory:dumpDecoded:dumpRendered:) result=labels RECOVERED, superseding the `recover_swift_function_name ref=0x101a775c0 result=None` pin]
+    /// Sets the enable flag, the frame limit and the two sub-toggles, optionally overrides the export
+    /// directory, and resets the frame counter under `stateLock`. Reconstructed from @0x101a775c0.
+    public static func configure(enabled: Bool, maxFrames: Int, outputDirectory: URL?, dumpDecoded: Bool, dumpRendered: Bool) {
+        Anime4KFrameDump.enabled = enabled
+        Anime4KFrameDump.maxFrames = maxFrames
+        if let outputDirectory {
+            Anime4KFrameDump.outputDirectory = outputDirectory
+        }
+        Anime4KFrameDump.dumpDecoded = dumpDecoded
+        Anime4KFrameDump.dumpRendered = dumpRendered
+        stateLock.lock()
+        frameCounter = 0
+        stateLock.unlock()
+    }
 
     /// Serializes `frameCounter`. Lazy = NSLock() (once-init @0x101a77598). Storage DAT_1044ebce8.
     /// THE ABSENCE IS NOW MEASURED, NOT PREDICTED. The note here used to read "absent from the trie,
@@ -112,25 +131,6 @@ public enum Anime4KFrameDump {
     ///   lock/zero/unlock triple, reconstructed in an earlier session from its own body. `reset()`
     ///   is that block standing alone.
     public static func reset() {
-        stateLock.lock()
-        frameCounter = 0
-        stateLock.unlock()
-    }
-
-    /// Public config entry. The method name and ALL FIVE parameter labels are RECOVERED, not
-    /// inferred — `recover_swift_function_name` returned None here, but the orphaned export trie
-    /// carries the full mangled name. Every one of the five inferred labels was wrong.
-    /// ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.configure(enabled:maxFrames:outputDirectory:dumpDecoded:dumpRendered:) result=labels RECOVERED, superseding the `recover_swift_function_name ref=0x101a775c0 result=None` pin]
-    /// Sets the enable flag, the frame limit and the two sub-toggles, optionally overrides the export
-    /// directory, and resets the frame counter under `stateLock`. Reconstructed from @0x101a775c0.
-    public static func configure(enabled: Bool, maxFrames: Int, outputDirectory: URL?, dumpDecoded: Bool, dumpRendered: Bool) {
-        Anime4KFrameDump.enabled = enabled
-        Anime4KFrameDump.maxFrames = maxFrames
-        if let outputDirectory {
-            Anime4KFrameDump.outputDirectory = outputDirectory
-        }
-        Anime4KFrameDump.dumpDecoded = dumpDecoded
-        Anime4KFrameDump.dumpRendered = dumpRendered
         stateLock.lock()
         frameCounter = 0
         stateLock.unlock()

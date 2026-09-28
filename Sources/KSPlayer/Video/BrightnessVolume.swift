@@ -198,7 +198,7 @@ private final class ProgressView: UIView {
         progressView.progressTintColor = UIColor.white
         progressView.trackTintColor = UIColor.white.withAlphaComponent(0.5)
         progressView.translatesAutoresizingMaskIntoConstraints = false
-        progressView.centerRotate(byDegrees: -90)
+        progressView.centerRotate(by: 270) // was byDegrees: -90; same rotation mod 360 under the UInt16 param
         imageView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             progressView.widthAnchor.constraint(equalToConstant: 115),

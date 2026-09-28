@@ -5,6 +5,7 @@
 //  Created by kintan on 2018/8/16.
 //
 
+import CoreMedia
 #if canImport(UIKit)
 import UIKit
 #else
@@ -34,3 +35,5 @@ open class AudioPlayerView: PlayerView {
         ])
     }
 }
+@used func - (_ lhs: CMTime, _ rhs: Double) -> CMTime { fatalError("L7: KSPlayer.- infix — Forward body unread") }
+@used func + (_ lhs: CMTime, _ rhs: Double) -> CMTime { fatalError("L7: KSPlayer.+ infix — Forward body unread") }

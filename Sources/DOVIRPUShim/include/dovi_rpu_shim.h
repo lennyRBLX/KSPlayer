@@ -104,54 +104,9 @@ int ff_dovi_rpu_parse(DOVIContext *ctx, const uint8_t *rpu, size_t rpu_size, int
 int ff_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata);
 void ff_dovi_ctx_unref(DOVIContext *ctx);
 
-/// Allocate and zero-initialize a caller-owned DOVIContext.
-/// FFmpeg 8.x removed the heap-owning `ff_dovi_ctx_alloc` / `ff_dovi_ctx_free`
-/// lifecycle; the modern contract is a caller-provided zeroed buffer that
-/// `ff_dovi_rpu_parse` populates and `ff_dovi_ctx_unref` releases. This wraps
-/// `calloc` to provide that buffer. Returns NULL on allocation failure.
-DOVIContext *ks_dovi_ctx_alloc(void);
-
-/// Free a DOVIContext allocated by ks_dovi_ctx_alloc.
-/// Releases FFmpeg's internal allocations via ff_dovi_ctx_unref, then frees
-/// the caller-owned buffer.
-void ks_dovi_ctx_free(DOVIContext *ctx);
-
-/// Flush/reset DOVIContext per-frame parser state (e.g. on seek), preserving
-/// the stream-wide configuration record. Wraps ff_dovi_ctx_flush.
-/// Note: ff_dovi_ctx_flush is exported by FFmpegKit's static libavcodec (nm: T)
-/// — the Forward 1.3.15 binary inlined/LTO-eliminated it into ff_dovi_rpu_parse,
-/// so it has no discrete address there, but it is a legitimate linkable symbol
-/// against this project's FFmpegKit dependency.
-void ks_dovi_ctx_flush(DOVIContext *ctx);
-
-/// Parse a raw DV RPU bitstream (after EPB removal) through the DOVIContext.
-/// Returns 0 on success, negative on failure.
-/// RE: Wraps ff_dovi_rpu_parse(ctx, data, size, 0). The FFmpeg function is
-/// defined at binary 0x102a3b9ac; Forward's per-frame call site is 0x101a6ce44.
-/// This is step 1 of the binary's Phase 2 chain -- parse only, no extraction.
-int ks_dovi_rpu_parse(DOVIContext *ctx,
-                      const uint8_t *data,
-                      size_t size);
-
-/// Extract the decoded combined AVDOVIMetadata after a successful
-/// ks_dovi_rpu_parse. Wraps ff_dovi_get_metadata(ctx, &out), which allocates
-/// and assembles a fresh AVDOVIMetadata (header + mapping + color + extension
-/// blocks) via av_dovi_metadata_alloc.
-///
-/// On success writes the newly allocated struct to *out_metadata and returns
-/// its size (> 0); returns 0 if no metadata is available, or a negative AVERROR
-/// on failure. **Ownership of *out_metadata passes to the caller** — release it
-/// with ks_dovi_metadata_free. Use av_dovi_get_header/mapping/color on the
-/// returned pointer to read the sub-structures.
-///
-/// RE: step 2 of the Phase 2 chain. Forward calls ff_dovi_get_metadata(ctx, &outPtr)
-/// @ 0x102a3b744. (Earlier notes mislabeled this "dovi_rpu_get_header" at the wrong
-/// address 0x102402568 — font code — and read ctx->dm directly at the wrong
-/// offset/type; ctx->dm is a private AVDOVIColorMetadata*, not the combined metadata.)
-int ks_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata);
-
-/// Free an AVDOVIMetadata returned by ks_dovi_get_metadata. The struct is a
-/// single av_dovi_metadata_alloc'd flat buffer, so this wraps av_free.
-void ks_dovi_metadata_free(AVDOVIMetadata *metadata);
+// The former ks_dovi_* heap wrappers (ctx_alloc/free/flush, rpu_parse, get_metadata,
+// metadata_free) were removed: Forward has no such functions — every ff_dovi_* call site
+// (0x101a6ce44 parse/get_metadata, 0x101a6ec80 ctx_unref) calls FFmpeg directly on the inline
+// DOVIContext, and ff_dovi_ctx_flush (their flush target) is not even linked into Forward.
 
 #endif /* DOVI_RPU_SHIM_H */

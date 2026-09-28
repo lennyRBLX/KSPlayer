@@ -9,17 +9,20 @@ import Foundation
 import Libavfilter
 import Libavutil
 
+// ⚑ vtable (descriptor 0x1039ef65c): slots 0-20 = get/set/modify for the 7 `var`s, 21 = init,
+//   22 = setup @0x101a3b660, 23 = filter. `private` members are final and get no vtable entry,
+//   so the vars and setup are internal (not private).
 class MEFilter {
-    private var graph: UnsafeMutablePointer<AVFilterGraph>?
-    private var bufferSrcContext: UnsafeMutablePointer<AVFilterContext>?
-    private var bufferSinkContext: UnsafeMutablePointer<AVFilterContext>?
-    private var filters: String?
+    var graph: UnsafeMutablePointer<AVFilterGraph>?
+    var bufferSrcContext: UnsafeMutablePointer<AVFilterContext>?
+    var bufferSinkContext: UnsafeMutablePointer<AVFilterContext>?
+    var filters: String?
     let timebase: Timebase
-    // ⚑ inferred (§7-walled, no concrete field-record) — type from arg-shape; do not "improve"
     // order = binary field-descriptor order (height before width — reflection-authoritative)
-    private var format: AVPixelFormat = AV_PIX_FMT_NONE
-    private var height: Int32 = 0
-    private var width: Int32 = 0
+    // ⚑[tool=field_surface ref=MEFilter.format result=forward Swift.Int32] — Int32, not AVPixelFormat; -1 == AV_PIX_FMT_NONE
+    var format: Int32 = -1
+    var height: Int32 = 0
+    var width: Int32 = 0
     private let nominalFrameRate: Float
     deinit {
         graph?.pointee.opaque = nil
@@ -38,7 +41,7 @@ class MEFilter {
     //   1. isAudio + params are PARAMETERS (param_4 low-bit, param_3) — not self.isAudio/self.params.
     //   2. hw_frames_ctx block DROPPED — avfilter_link → avfilter_graph_config directly.
     //   3. setup()-shape only (no setup2 swap logic).
-    private func setup(filters: String, params: UnsafeMutablePointer<AVBufferSrcParameters>, isVideo: Bool) -> Bool {
+    func setup(filters: String, params: UnsafeMutablePointer<AVBufferSrcParameters>, isVideo: Bool) -> Bool {
         var inputs = avfilter_inout_alloc()
         var outputs = avfilter_inout_alloc()
         // Divergence 4 (vs upstream): free both inout lists on ALL exit paths via defer
@@ -106,8 +109,8 @@ class MEFilter {
         }
         srcParams.sample_rate = inputFrame.pointee.sample_rate
         srcParams.ch_layout = inputFrame.pointee.ch_layout
-        if format != AVPixelFormat(srcParams.format) || width != srcParams.width || height != srcParams.height || self.filters != filters {
-            format = AVPixelFormat(srcParams.format)
+        if format != srcParams.format || width != srcParams.width || height != srcParams.height || self.filters != filters {
+            format = srcParams.format
             width = srcParams.width
             height = srcParams.height
             self.filters = filters

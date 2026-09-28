@@ -32,21 +32,6 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     // shouldResumePlayback added; _pipController lazy→stored pipController; bufferingProgress Int→UInt8.
     private var loopCount: Int = 1
     public var playerItem: MEPlayerItem
-    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.ioContext.getter:0x101a42340 result=24-instr]
-    /// A forward, with `MEPlayerItem.ioContext` INLINED — which is why the body reads two field
-    /// globals and a literal offset rather than making a call:
-    ///   `ldr x19, [0x1044ea140]` / `swift_beginAccess` / `ldr x8, [self, x19]` — `playerItem`,
-    ///   named from its `vpWvd`.
-    ///   `ldr x9, [0x1044ea218]` / `ldr x8, [x8, x9]` — the ivar `MEPlayerItem.ioContext` itself
-    ///   loads, recorded at MEPlayerItem.swift:109 from an earlier session's read; that member is
-    ///   `formatContext?.ioContext`.
-    ///   `cbz x8` → nil, else `ldr x0, [x8, #0x20]` — and `+0x20 = ioContext` is the constant that
-    ///   same file records at :115 from a read of the owning class's init.
-    /// So all three loads line up with the existing `MEPlayerItem.ioContext` declaration, and this
-    /// getter is that expression reached through `playerItem`.
-    public var ioContext: AbstractAVIOContext? {
-        playerItem.ioContext
-    }
 
     public let audioOutput: AudioOutput
     public var options: KSOptions
@@ -137,6 +122,50 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     // ⚑[tool=export_trie_oracle ref=KSMEPlayer.shouldResumePlayback result=no property descriptor ⇒ the GETTER is not public; private(set) is preserved because the binary speaks to the getter only]
     private(set) var shouldResumePlayback: Bool = false // ⚑ M2: binary sets this (NEW field, absent from recon)
 
+    public required init(url: URL, options: KSOptions) {
+        options.setAudioSession()
+        audioOutput = KSOptions.audioPlayerType.init()
+        playerItem = MEPlayerItem(url: url, options: options)
+        videoOutput = KSOptions.videoPlayerType.init(options: options)
+        self.options = options
+        super.init()
+        playerItem.delegate = self
+        audioOutput.renderSource = playerItem
+        videoOutput.renderSource = playerItem
+        #if !os(macOS)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioRouteChange), name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
+        if #available(tvOS 15.0, iOS 15.0, *) {
+            NotificationCenter.default.addObserver(self, selector: #selector(spatialCapabilityChange), name: AVAudioSession.spatialPlaybackCapabilitiesChangedNotification, object: nil)
+        }
+        #endif
+    }
+
+    public init(item: MEPlayerItem) { fatalError("L7: KSMEPlayer.init — Forward body unread") }
+
+    deinit {
+        #if !os(macOS)
+        try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(2)
+        #endif
+        NotificationCenter.default.removeObserver(self)
+        videoOutput.invalidate()
+        playerItem.stop()
+    }
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.ioContext.getter:0x101a42340 result=24-instr]
+    /// A forward, with `MEPlayerItem.ioContext` INLINED — which is why the body reads two field
+    /// globals and a literal offset rather than making a call:
+    ///   `ldr x19, [0x1044ea140]` / `swift_beginAccess` / `ldr x8, [self, x19]` — `playerItem`,
+    ///   named from its `vpWvd`.
+    ///   `ldr x9, [0x1044ea218]` / `ldr x8, [x8, x9]` — the ivar `MEPlayerItem.ioContext` itself
+    ///   loads, recorded at MEPlayerItem.swift:109 from an earlier session's read; that member is
+    ///   `formatContext?.ioContext`.
+    ///   `cbz x8` → nil, else `ldr x0, [x8, #0x20]` — and `+0x20 = ioContext` is the constant that
+    ///   same file records at :115 from a read of the owning class's init.
+    /// So all three loads line up with the existing `MEPlayerItem.ioContext` declaration, and this
+    /// getter is that expression reached through `playerItem`.
+    public var ioContext: AbstractAVIOContext? {
+        playerItem.ioContext
+    }
+
     /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.checkShouldResume():0x101a43f40 result=50-instr]
     /// Three of the four names come from tools; the fourth is elimination:
     ///   · `options` +0x47 = `isDLNARunning`, +0x46 = `enterForgeResumePlay` — both from
@@ -161,34 +190,6 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
             shouldResumePlayback = false
         }
         shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
-    }
-
-    public required init(url: URL, options: KSOptions) {
-        KSOptions.setAudioSession()
-        audioOutput = KSOptions.audioPlayerType.init()
-        playerItem = MEPlayerItem(url: url, options: options)
-        videoOutput = KSOptions.videoPlayerType.init(options: options)
-        self.options = options
-        super.init()
-        playerItem.delegate = self
-        audioOutput.renderSource = playerItem
-        videoOutput.renderSource = playerItem
-        videoOutput.displayLayerDelegate = self
-        #if !os(macOS)
-        NotificationCenter.default.addObserver(self, selector: #selector(audioRouteChange), name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
-        if #available(tvOS 15.0, iOS 15.0, *) {
-            NotificationCenter.default.addObserver(self, selector: #selector(spatialCapabilityChange), name: AVAudioSession.spatialPlaybackCapabilitiesChangedNotification, object: nil)
-        }
-        #endif
-    }
-
-    deinit {
-        #if !os(macOS)
-        try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(2)
-        #endif
-        NotificationCenter.default.removeObserver(self)
-        videoOutput.invalidate()
-        playerItem.stop()
     }
 }
 
@@ -295,41 +296,11 @@ extension KSMEPlayer: MEPlayerDelegate {
         }
     }
 
-    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.sourceDidClear():0x101a42094 result=9-instr]
-    /// Byte-for-byte the same marshal as `sourceDidEOF` above — same `runOnMainThread` trampoline,
-    /// same two weak loads — differing in exactly ONE instruction.
-    ///
-    /// ⚑ THAT ONE INSTRUCTION IS THE WHOLE POINT, and a prior pass got it wrong. §2l recorded both
-    ///   bodies as dispatching `reachEndOfStream(player:)`. They do not: the EOF closure loads
-    ///   `ldr x23, [x21, #0x30]` and this one loads **`[x21, #0x40]`**. Reading
-    ///   `KSPlayerLayer`'s `MediaPlayerDelegate` witness table @0x1041d49b8 at that slot names it
-    ///   outright.
-    ///   ⚑[tool=export_trie_oracle ref=0x1019ceaf4 result=KSPlayerLayer.playerDidClear(player:)]
-    public func sourceDidClear() {
-        runOnMainThread { [weak self] in
-            guard let self else { return }
-            self.delegate?.playerDidClear(player: self)
-        }
-    }
-
-    public func sourceDidFailed(error: NSError?) {
+    // ⚑[tool=member_surface ref=KSMEPlayer.sourceDidFailed:0x101a412bc result=param Swift.Error? (not NSError?); isolation: Forward+build bodies both load $sScMMa (MainActor metadata) via runOnMainThread — unchanged]
+    public func sourceDidFailed(error: Error?) {
         runOnMainThread { [weak self] in
             guard let self else { return }
             self.delegate?.finish(player: self, error: error)
-        }
-    }
-
-    public func sourceDidFinished() {
-        runOnMainThread { [weak self] in
-            guard let self else { return }
-            if self.options.isLoopPlay {
-                self.loopCount += 1
-                self.delegate?.playBack(player: self, loopCount: self.loopCount)
-                self.audioOutput.play()
-                self.videoOutput.play()
-            } else {
-                self.playbackState = .finished
-            }
         }
     }
 
@@ -354,6 +325,20 @@ extension KSMEPlayer: MEPlayerDelegate {
         runOnMainThread { [weak self] in
             guard let self else { return }
             self.delegate?.reachEndOfStream(player: self)
+        }
+    }
+
+    public func sourceDidFinished() {
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            if self.options.isLoopPlay {
+                self.loopCount += 1
+                self.delegate?.playBack(player: self, loopCount: self.loopCount)
+                self.audioOutput.play()
+                self.videoOutput.play()
+            } else {
+                self.playbackState = .finished
+            }
         }
     }
 
@@ -417,6 +402,23 @@ extension KSMEPlayer: MEPlayerDelegate {
     public func sourceDidChange(oldBitRate: Int64, newBitrate: Int64) {
         KSLog("oldBitRate \(oldBitRate) change to newBitrate \(newBitrate)")
     }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.sourceDidClear():0x101a42094 result=9-instr]
+    /// Byte-for-byte the same marshal as `sourceDidEOF` above — same `runOnMainThread` trampoline,
+    /// same two weak loads — differing in exactly ONE instruction.
+    ///
+    /// ⚑ THAT ONE INSTRUCTION IS THE WHOLE POINT, and a prior pass got it wrong. §2l recorded both
+    ///   bodies as dispatching `reachEndOfStream(player:)`. They do not: the EOF closure loads
+    ///   `ldr x23, [x21, #0x30]` and this one loads **`[x21, #0x40]`**. Reading
+    ///   `KSPlayerLayer`'s `MediaPlayerDelegate` witness table @0x1041d49b8 at that slot names it
+    ///   outright.
+    ///   ⚑[tool=export_trie_oracle ref=0x1019ceaf4 result=KSPlayerLayer.playerDidClear(player:)]
+    public func sourceDidClear() {
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            self.delegate?.playerDidClear(player: self)
+        }
+    }
 }
 
 // ⚑ CONFORMANCE RECOVERED FROM THE BINARY. KSMEPlayer conforms to `ConstantSubtitleDataSource`
@@ -458,40 +460,6 @@ extension KSMEPlayer: ConstantSubtitleDataSource {
 }
 
 extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
-    public var chapters: [Chapter] {
-        playerItem.chapters
-    }
-
-    // ⚑ RETYPED to the refined protocol. The getter's own mangled name carries the refined type:
-    //   `$s8KSPlayer10KSMEPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`
-    //   = `KSMEPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. The binary has no
-    //   `vs` and no `vM` symbol for it, so it is getter-only, which the protocol requirement's
-    //   `{ get }` already matches. Returning `self` is what forces the conformance below.
-    // ⚑[tool=export_trie_oracle ref=KSMEPlayer.subtitleDataSource.getter:0x101a42408 result=ConstantSubtitleDataSource-optional]
-    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { self }
-    public var playbackVolume: Float {
-        get {
-            audioOutput.volume
-        }
-        set {
-            audioOutput.volume = newValue
-        }
-    }
-
-    nonisolated public var isPlaying: Bool { playbackState == .playing }
-
-    @MainActor
-    public var naturalSize: CGSize {
-        !options.display.isSphere ? playerItem.naturalSize : KSOptions.sceneSize
-    }
-
-    public var isExternalPlaybackActive: Bool { false }
-
-    public var view: UIView { videoOutput }
-
-    public func replace(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
-        replace(item: MEPlayerItem(io: io, options: options))
-    }
 
     // Ref 0x101a3c358 preserves the output objects while replacing their source.
     @MainActor
@@ -514,16 +482,16 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         videoOutput.options = options
     }
 
-    nonisolated public var currentPlaybackTime: TimeInterval {
-        get {
-            playerItem.currentPlaybackTime
-        }
-        set {
-            seek(time: newValue) { _ in }
+    nonisolated public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
+        playerItem.assetTracks.compactMap { track -> MediaPlayerTrack? in
+            if track.mediaType == mediaType {
+                return track
+            } else if mediaType == .subtitle {
+                return track.closedCaptionsTrack
+            }
+            return nil
         }
     }
-
-    nonisolated public var duration: TimeInterval { playerItem.duration }
 
     /// cachedTimeRanges.getter @0x101a3d744, 90 instr. `public` from the property descriptor
     /// $s8KSPlayer10KSMEPlayerC16cachedTimeRangesSayAA06CachedD5RangeVGvpMV @0x10356add0; no
@@ -551,104 +519,54 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         return ioContext.cachedTimeRanges(duration: duration)
     }
 
-    public var fileSize: Int64 { playerItem.fileSize }
+    nonisolated public var duration: TimeInterval { playerItem.duration }
 
-    public var dynamicInfo: DynamicInfo {
-        playerItem.dynamicInfo
+    nonisolated public var currentPlaybackTime: TimeInterval {
+        get {
+            playerItem.currentPlaybackTime
+        }
+        set {
+            seek(time: newValue) { _ in }
+        }
+    }
+    public var chapters: [Chapter] {
+        playerItem.chapters
     }
 
-    nonisolated public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
-        let time = max(time, 0)
-        playbackState = .seeking
-        runOnMainThread { [weak self] in
-            self?.bufferingProgress = 0
+    // ⚑ RETYPED to the refined protocol. The getter's own mangled name carries the refined type:
+    //   `$s8KSPlayer10KSMEPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`
+    //   = `KSMEPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. The binary has no
+    //   `vs` and no `vM` symbol for it, so it is getter-only, which the protocol requirement's
+    //   `{ get }` already matches. Returning `self` is what forces the conformance below.
+    // ⚑[tool=export_trie_oracle ref=KSMEPlayer.subtitleDataSource.getter:0x101a42408 result=ConstantSubtitleDataSource-optional]
+    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { self }
+    public var playbackVolume: Float {
+        get {
+            audioOutput.volume
         }
-        let seekTime: TimeInterval
-        if time >= duration, options.isLoopPlay {
-            seekTime = 0
-        } else {
-            seekTime = time
-        }
-        playerItem.seek(time: seekTime) { [weak self] result in
-            guard let self else { return }
-            if result {
-                self.audioOutput.flush()
-                runOnMainThread { [weak self] in
-                    guard let self else { return }
-                    if let controlTimebase = self.videoOutput.displayLayer.controlTimebase {
-                        CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1))
-                    }
-                }
-            }
-            completion(result)
+        set {
+            audioOutput.volume = newValue
         }
     }
 
-    public func prepareToPlay() {
-        KSLog("prepareToPlay \(self)")
-        options.prepareTime = CACurrentMediaTime()
-        playerItem.prepareToPlay()
-        bufferingProgress = 0
-    }
+    nonisolated public var isPlaying: Bool { playbackState == .playing }
 
-    /// ⚑[tool=llvm-objdump ref=KSMEPlayer.flushVideo():0x101a43b24 result=15-instr]
-    /// Loads the ivar-offset global `0x1044ea160`, which reads **0x30** statically and which the
-    /// trie names `direct field offset for KSPlayer.KSMEPlayer.videoOutput` — matching entry 4 of
-    /// the offset vector. `ldp x20,x19,[x8]` splits the existential into object and witness table
-    /// with no nil check, then `ldr x1,[x19,#0x8]` takes VideoOutput's word 1 (its inherited
-    /// FrameOutput table) and `ldr x8,[x1,#0x18]` takes that table's word 3 = requirement 2.
-    /// The requirement is DECODED, not counted: MetalPlayView's FrameOutput table 0x1041d8c80
-    /// resolves req0-req3 through thunks to `play()`, `pause()`, `flush()`, `invalidate()`, so
-    /// req2 is `flush()`.
-    /// ⚑[tool=export_trie_oracle ref=0x1044ea160 result=KSMEPlayer.videoOutput-offset-0x30]
-    /// ⚑[tool=decode_witness_table ref=MetalPlayView:FrameOutput@0x1041d8c80 result=req2-flush]
-    public func flushVideo() {
-        videoOutput.flush()
-    }
-
-    nonisolated public func play() {
-        KSLog("play \(self)")
-        playbackState = .playing
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
-            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
-            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
-            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+    @MainActor
+    // Forward 0x101a4254c: isSphere, or playerItem.naturalSize == nil (tag byte +0x10), takes the scene path.
+    // ⚑ scene path in Forward falls back to CGSize(1, 1) (fmov d8/d9 #1.0 @0x101a42698); sceneSize's own fallback is unverified.
+    public var naturalSize: CGSize {
+        guard !options.display.isSphere, let naturalSize = playerItem.naturalSize else {
+            return KSOptions.sceneSize
         }
+        return naturalSize
     }
 
-    nonisolated public func pause() {
-        KSLog("pause \(self)")
-        playbackState = .paused
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
-            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
-            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
-            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
-    }
+    public var isExternalPlaybackActive: Bool { false }
 
-    public func stop() {
-        KSLog("shutdown \(self)")
-        playbackState = .stopped
-        loadState = .idle
-        isReadyToPlay = false
-        loopCount = 0
-        playerItem.stop()
-        options.prepareTime = 0
-        options.dnsStartTime = 0
-        options.tcpStartTime = 0
-        options.tcpConnectedTime = 0
-        options.openTime = 0
-        options.findTime = 0
-        options.readyTime = 0
-        options.readAudioTime = 0
-        options.readVideoTime = 0
-        options.decodeAudioTime = 0
-        options.decodeVideoTime = 0
-        if KSOptions.isClearVideoWhereReplace {
-            videoOutput.flush()
-        }
+    public var view: UIView { videoOutput }
+
+    public func replace(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
+        replace(item: MEPlayerItem(io: io, options: options))
     }
 
     // KSPlayer.KSMEPlayer.reset() @0x101a427b0 — 97 instr (0x101a427b0-0x101a42934), exactly one
@@ -688,6 +606,106 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
+    nonisolated public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
+        let time = max(time, 0)
+        playbackState = .seeking
+        runOnMainThread { [weak self] in
+            self?.bufferingProgress = 0
+        }
+        let seekTime: TimeInterval
+        if time >= duration, options.isLoopPlay {
+            seekTime = 0
+        } else {
+            seekTime = time
+        }
+        playerItem.seek(time: seekTime) { [weak self] result in
+            guard let self else { return }
+            if result {
+                self.audioOutput.flush()
+                runOnMainThread { [weak self] in
+                    guard let self else { return }
+                    if let controlTimebase = self.videoOutput.displayLayer.controlTimebase {
+                        CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1))
+                    }
+                }
+            }
+            completion(result)
+        }
+    }
+
+    public var fileSize: Int64 { playerItem.fileSize }
+
+    public var dynamicInfo: DynamicInfo {
+        playerItem.dynamicInfo
+    }
+
+    public func prepareToPlay() {
+        KSLog("prepareToPlay \(self)")
+        options.prepareTime = CACurrentMediaTime()
+        playerItem.prepareToPlay()
+        bufferingProgress = 0
+    }
+
+    nonisolated public func play() {
+        KSLog("play \(self)")
+        playbackState = .playing
+        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
+            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
+            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
+            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
+            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+        }
+    }
+
+    nonisolated public func pause() {
+        KSLog("pause \(self)")
+        playbackState = .paused
+        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
+            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
+            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
+            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
+            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+        }
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSMEPlayer.flushVideo():0x101a43b24 result=15-instr]
+    /// Loads the ivar-offset global `0x1044ea160`, which reads **0x30** statically and which the
+    /// trie names `direct field offset for KSPlayer.KSMEPlayer.videoOutput` — matching entry 4 of
+    /// the offset vector. `ldp x20,x19,[x8]` splits the existential into object and witness table
+    /// with no nil check, then `ldr x1,[x19,#0x8]` takes VideoOutput's word 1 (its inherited
+    /// FrameOutput table) and `ldr x8,[x1,#0x18]` takes that table's word 3 = requirement 2.
+    /// The requirement is DECODED, not counted: MetalPlayView's FrameOutput table 0x1041d8c80
+    /// resolves req0-req3 through thunks to `play()`, `pause()`, `flush()`, `invalidate()`, so
+    /// req2 is `flush()`.
+    /// ⚑[tool=export_trie_oracle ref=0x1044ea160 result=KSMEPlayer.videoOutput-offset-0x30]
+    /// ⚑[tool=decode_witness_table ref=MetalPlayView:FrameOutput@0x1041d8c80 result=req2-flush]
+    public func flushVideo() {
+        videoOutput.flush()
+    }
+
+    public func stop() {
+        KSLog("shutdown \(self)")
+        playbackState = .stopped
+        loadState = .idle
+        isReadyToPlay = false
+        loopCount = 0
+        playerItem.stop()
+        options.prepareTime = 0
+        options.dnsStartTime = 0
+        options.tcpStartTime = 0
+        options.tcpConnectedTime = 0
+        options.openTime = 0
+        options.findTime = 0
+        options.readyTime = 0
+        options.readAudioTime = 0
+        options.readVideoTime = 0
+        options.decodeAudioTime = 0
+        options.decodeVideoTime = 0
+        if KSOptions.isClearVideoWhereReplace {
+            videoOutput.flush()
+        }
+    }
+
     @MainActor
     public var contentMode: UIViewContentMode {
         get {
@@ -712,17 +730,6 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         }
         set {
             audioOutput.isMuted = newValue
-        }
-    }
-
-    nonisolated public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
-        playerItem.assetTracks.compactMap { track -> MediaPlayerTrack? in
-            if track.mediaType == mediaType {
-                return track
-            } else if mediaType == .subtitle {
-                return track.closedCaptionsTrack
-            }
-            return nil
         }
     }
 
@@ -830,18 +837,23 @@ extension KSMEPlayer: AVPlaybackCoordinatorPlaybackControlDelegate {
     }
 }
 
-extension KSMEPlayer: DisplayLayerDelegate {
-    public func change(displayLayer: AVSampleBufferDisplayLayer) {
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            let contentSource = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
-            pipController = KSPictureInPictureController(contentSource: contentSource) // stored (was _pipController lazy); binary field 6
-            // 更改contentSource会直接crash
-//            pipController?.contentSource = contentSource
-        }
-    }
-}
-
 public extension KSMEPlayer {
+
+    public func startRecord(url: URL) {
+        playerItem.startRecord(url: url, mediaType: nil)
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.stopRecord():0x101a44520 result=42-instr]
+    /// ⚑ RENAMED from `stoptRecord` — a typo that never existed in the binary. The trie carries
+    /// `KSPlayer.KSMEPlayer.stopRecord() -> ()` and has ZERO hits for `stoptRecord`, so the old
+    /// spelling was invented. One occurrence in the whole source, so the rename is self-contained.
+    ///
+    /// The forwarding body is confirmed by the binary rather than assumed: @0x101a44520 loads
+    /// `playerItem` (its own `vpWvd`, offset global 0x1044ea140) and then inlines
+    /// `MEPlayerItem.stopRecord()` — see that method, whose commit-1 stub this same read resolved.
+    public func stopRecord() {
+        playerItem.stopRecord()
+    }
     /// @0x101a445c8, 64 instructions. Trie: `KSMEPlayer.configPIP() -> ()`; no `Tq`.
     ///
     /// The KSAVPlayer twin builds its controller from an `AVPlayerLayer`; this one has no such
@@ -882,21 +894,5 @@ public extension KSMEPlayer {
             playbackDelegate: self
         )
         pipController = KSOptions.pictureInPictureType.init(contentSource: contentSource)
-    }
-
-    public func startRecord(url: URL) {
-        playerItem.startRecord(url: url, mediaType: nil)
-    }
-
-    /// ⚑[tool=export_trie_oracle ref=KSMEPlayer.stopRecord():0x101a44520 result=42-instr]
-    /// ⚑ RENAMED from `stoptRecord` — a typo that never existed in the binary. The trie carries
-    /// `KSPlayer.KSMEPlayer.stopRecord() -> ()` and has ZERO hits for `stoptRecord`, so the old
-    /// spelling was invented. One occurrence in the whole source, so the rename is self-contained.
-    ///
-    /// The forwarding body is confirmed by the binary rather than assumed: @0x101a44520 loads
-    /// `playerItem` (its own `vpWvd`, offset global 0x1044ea140) and then inlines
-    /// `MEPlayerItem.stopRecord()` — see that method, whose commit-1 stub this same read resolved.
-    public func stopRecord() {
-        playerItem.stopRecord()
     }
 }

@@ -10,6 +10,8 @@
 //  other SwiftUI view types already live.
 //
 
+import AVFoundation
+import MediaPlayer
 import SwiftUI
 
 /// ⚑ RECOVERED TYPE — nominal descriptor 0x1039f3078. Nothing of this name or shape existed in the
@@ -55,5 +57,73 @@ struct FocusModifier<Value: Hashable>: ViewModifier {
                     binding = nil
                 }
             }
+    }
+}
+
+@available(iOS 15, tvOS 16, macOS 12, *)
+// Generic parameter ORDER is read from the binary, not chosen. Nominal descriptor 0x1039f2a7c
+// declares 3 parameters and 3 requirements whose subjects are τ_0_0/τ_0_1/τ_0_2: parameter 0 is
+// constrained by 0x1041dd498 = `_$sSHMp` (Swift.Hashable) and parameters 1 and 2 by 0x1041dd460 =
+// `_$s7SwiftUI4ViewMp` (SwiftUI.View). Its field records read selection: Binding<τ_0_0>,
+// content: () -> τ_0_1, label: () -> τ_0_2, and the export trie agrees — …9selectionVyxGvpMV
+// demangles to Binding<A>, …7contentq_ycvpMV to () -> B, …5labelq0_ycvpMV to () -> C. So the
+// Hashable parameter that `selection` uses is declared FIRST. Only the NAMES are recon-chosen:
+// Swift stores no generic-parameter source names anywhere in the image.
+public struct MenuView<SelectionValue, Content, Label>: View where SelectionValue: Hashable, Content: View, Label: View {
+    public let selection: Binding<SelectionValue>
+    @ViewBuilder
+    public let content: () -> Content
+    @ViewBuilder
+    public let label: () -> Label
+    @State
+    private var showMenu = false
+    public var body: some View {
+        if #available(tvOS 17, *) {
+            Menu {
+                Picker(selection: selection) {
+                    content()
+                } label: {
+                    EmptyView()
+                }
+                .pickerStyle(.inline)
+            } label: {
+                label()
+            }
+            .menuIndicator(.hidden)
+        } else {
+            Picker(selection: selection, content: content, label: label)
+            #if !os(macOS)
+                .pickerStyle(.navigationLink)
+            #endif
+                .frame(height: 50)
+            #if os(tvOS)
+                .frame(width: 110)
+            #endif
+        }
+    }
+}
+
+@available(iOS 15, tvOS 16, macOS 12, *)
+public struct PlatformView<Content: View>: View {
+    private let content: () -> Content
+    public var body: some View {
+        #if os(tvOS)
+        ScrollView {
+            content()
+                .padding()
+        }
+        .pickerStyle(.navigationLink)
+        #else
+        Form {
+            content()
+        }
+        #if os(macOS)
+        .padding()
+        #endif
+        #endif
+    }
+
+    public init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
     }
 }

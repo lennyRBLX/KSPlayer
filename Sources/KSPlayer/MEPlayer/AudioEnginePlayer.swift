@@ -8,135 +8,6 @@
 import AVFoundation
 import CoreAudio
 
-public protocol AudioOutput: FrameOutput {
-    var renderSource: AudioOutputRenderSourceDelegate? { get set }
-    var playbackRate: Float { get set }
-    var volume: Float { get set }
-    var isMuted: Bool { get set }
-    init()
-    func prepare(audioFormat: AVAudioFormat)
-}
-
-public protocol AudioDynamicsProcessor {
-    var audioUnitForDynamicsProcessor: AudioUnit { get }
-}
-
-// ⚑ s105: a body the binary places in an EXTENSION of AudioOutput —
-// `(extension in KSPlayer):KSPlayer.AudioOutput.resetTime() -> ()` @0x101a11b10. Three
-// instructions, and all three are the dispatch:
-//     ldr x1, [x1, #0x8]     ; x1 is Self's AudioOutput witness table; +0x8 is its INHERITED
-//                            ; FrameOutput table (a refined protocol's WT holds the base's there)
-//     ldr x2, [x1, #0x18]    ; FrameOutput requirement index 2
-//     br  x2                 ; tail-call it — the whole body is that one call
-// Requirement 2 was NAMED, not counted off the source's declaration order: decoding
-// AudioGraphPlayer's FrameOutput witness table (0x1041d70b0, via conformance descriptor
-// 0x10356a0f0) gives req0 play() @0x101a10284, req1 pause() @0x101a1029c, req2 a thunk to
-// AudioBaseOutput.flush() @0x101a117b0, req3 invalidate() @0x101a11138. So this calls flush().
-// ⚑[tool=decode_witness_table ref=AudioGraphPlayer:FrameOutput:0x1041d70b0 result=req2=flush]
-//
-// ⚠️ SEPARATE FINDING, not acted on here: that decode also shows FrameOutput has FOUR
-// requirements in the order play / pause / flush / invalidate, where the protocol above declares
-// three as pause / flush / play. Requirement order IS the witness-table layout, so that is a real
-// divergence — but reordering a protocol's requirements ripples to every conformer's table and
-// needs its own unit.
-public extension AudioOutput {
-    func resetTime() {
-        flush()
-    }
-}
-
-public extension AudioDynamicsProcessor {
-    var attackTime: Float {
-        get {
-            var value = AudioUnitParameterValue(1.0)
-            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_AttackTime, kAudioUnitScope_Global, 0, &value)
-            return value
-        }
-        set {
-            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_AttackTime, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
-
-    var releaseTime: Float {
-        get {
-            var value = AudioUnitParameterValue(1.0)
-            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, &value)
-            return value
-        }
-        set {
-            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
-
-    var threshold: Float {
-        get {
-            var value = AudioUnitParameterValue(1.0)
-            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, &value)
-            return value
-        }
-        set {
-            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
-
-    var expansionRatio: Float {
-        get {
-            var value = AudioUnitParameterValue(1.0)
-            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ExpansionRatio, kAudioUnitScope_Global, 0, &value)
-            return value
-        }
-        set {
-            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ExpansionRatio, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
-
-    var overallGain: Float {
-        get {
-            var value = AudioUnitParameterValue(1.0)
-            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, &value)
-            return value
-        }
-        set {
-            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
-        }
-    }
-}
-
-public final class AudioEngineDynamicsPlayer: AudioEnginePlayer, AudioDynamicsProcessor {
-    // ⚑ MISSING field, recovered. Binary field order puts it FIRST, before dynamicsProcessor.
-    //   type    `__C.AVAudioUnitEQ` from all four trie symbols; no trailing `Sg` ⇒ non-optional (rule 7)
-    //   access  `public` — carries a vpMV property descriptor, which is public-exclusive (rule 28)
-    //   let     the trie emits vg/vpMV/vpWvd/vpfi and NO vs or vM, so there is no setter
-    //   default read from its vpfi body @0x10199aa1c (rule 26): load the class from 0x104410c18,
-    //           `bl 0x10345c1e4` = _objc_allocWithZone (stub → GOT 0x10410b8b0 → libobjc), then a TAIL
-    //           `b 0x1034629c0` = objc_msgSend with selref 0x10440b838 and NO argument register set
-    //           ⇒ a no-arg init. The distinguishing control is dynamicsProcessor's own vpfi
-    //           @0x10199aa38, which is the same shape but sets `mov x2,sp` with a stack-built
-    //           AudioComponentDescription ⇒ initWithAudioComponentDescription:. Arity separates them.
-    //   ⚑[tool=export_trie_oracle ref=AudioEngineDynamicsPlayer.nbandEQ:0x10199aa1c result=OWNER_MATCH]
-    public let nbandEQ: AVAudioUnitEQ = AVAudioUnitEQ()
-    private let dynamicsProcessor = AVAudioUnitEffect(audioComponentDescription:
-        AudioComponentDescription(componentType: kAudioUnitType_Effect,
-                                  componentSubType: kAudioUnitSubType_DynamicsProcessor,
-                                  componentManufacturer: kAudioUnitManufacturer_Apple,
-                                  componentFlags: 0,
-                                  componentFlagsMask: 0))
-    public var audioUnitForDynamicsProcessor: AudioUnit {
-        dynamicsProcessor.audioUnit
-    }
-
-    override func audioNodes() -> [AVAudioNode] {
-        var nodes: [AVAudioNode] = [dynamicsProcessor]
-        nodes.append(contentsOf: super.audioNodes())
-        return nodes
-    }
-
-    public required init() {
-        super.init()
-        engine.attach(dynamicsProcessor)
-    }
-}
-
 // Forward re-parents this class onto AudioBaseOutput, which now owns the manual
 // AVAudioSourceNode render engine (renderSource / currentRender / the render lock /
 // the sample-copy loop). What is left here is the AVAudioEngine graph itself.
@@ -258,6 +129,16 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     // The mechanism remains unidentified; the older-toolchain hypothesis is untouched by the
     // above. Deliberately left as a pin rather than guessed at. Re-derive alongside
     // AudioBaseOutput's own 34-entry set, which shows a similar shortfall.
+    //
+    // RESOLVED (vtable_surface pass) — the mechanism is ACCESS, not the toolchain. swiftc
+    // (NeedsNewVTableEntryRequest) gives an override its own entry plus a "vtable thunk …
+    // dispatching to" record in the base slot when the override is more visible than the base
+    // (isEffectiveLinkageMoreVisibleThan). `-emit-sil -Onone` of an internal `init()` /
+    // `func prepare(x:)` base with `public required override init()` / `override public func
+    // prepare` reproduces both own entries and both thunks; a `final` subclass keeps only the
+    // init entry, which is AudioGraphPlayer's and AudioUnitPlayer's Forward shape. So
+    // AudioBaseOutput.init() and prepare(audioFormat:) are internal (AudioOutput.swift).
+    // ⚑[tool=override_table ref=AudioEnginePlayer:0x1039ee768 result=2-entries-base-slots-27-28]
     //
     // init: entry 15 @0x101a0df64 is the allocating entry — swift_allocObject(size: 0x7c,
     // alignMask: 7), which independently corroborates the 6-field layout and the 0x50
@@ -408,24 +289,6 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
         }
     }
 
-    // @0x101a0f6f8 (binary own-vtable entry 22). New in Forward; upstream had no such method.
-    // flush() is NOT overridden here: the inherited slot 30 @meta+0x180 still holds
-    // AudioBaseOutput.flush @0x101a117b0.
-    //
-    // ⚑ s105 RENAME: this was declared `stop()`, an INFERRED name. The trie names it
-    // `invalidate()` and that is decisive — 0x101a0f6f8 carries exactly ONE symbol, so it is not
-    // an ICF fold, and it has its own method descriptor. There is no `stop` symbol anywhere on
-    // this class or on AudioOutput / FrameOutput, so the old comment's "FrameOutput requirement
-    // 3" was part of the same wrong inference. Only the NAME was wrong: the body below already
-    // matched the two calls the binary makes, `reset` then `stop` on the field at +0x50, which
-    // field_offset_vector resolves to `engine`.
-    // ⚑[tool=decode_objc_selector ref=reset:0x1034676c0 result=reset]
-    // ⚑[tool=decode_objc_selector ref=stop:0x10346d2e0 result=stop]
-    public func invalidate() {
-        engine.reset()
-        engine.stop()
-    }
-
     // ⚑ UNRESOLVED — binary own-vtable entry 21 (between pause and stop) holds the deleted-method
     // stub @0x10345cc70. The method was eliminated, so no body, name or signature exists
     // anywhere in the binary to recover. Recorded, deliberately not invented.
@@ -444,6 +307,24 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
             }
             return noErr
         }, Unmanaged.passUnretained(self).toOpaque())
+    }
+
+    // @0x101a0f6f8 (binary own-vtable entry 22). New in Forward; upstream had no such method.
+    // flush() is NOT overridden here: the inherited slot 30 @meta+0x180 still holds
+    // AudioBaseOutput.flush @0x101a117b0.
+    //
+    // ⚑ s105 RENAME: this was declared `stop()`, an INFERRED name. The trie names it
+    // `invalidate()` and that is decisive — 0x101a0f6f8 carries exactly ONE symbol, so it is not
+    // an ICF fold, and it has its own method descriptor. There is no `stop` symbol anywhere on
+    // this class or on AudioOutput / FrameOutput, so the old comment's "FrameOutput requirement
+    // 3" was part of the same wrong inference. Only the NAME was wrong: the body below already
+    // matched the two calls the binary makes, `reset` then `stop` on the field at +0x50, which
+    // field_offset_vector resolves to `engine`.
+    // ⚑[tool=decode_objc_selector ref=reset:0x1034676c0 result=reset]
+    // ⚑[tool=decode_objc_selector ref=stop:0x10346d2e0 result=stop]
+    public func invalidate() {
+        engine.reset()
+        engine.stop()
     }
 
 //    private func addRenderCallback(audioUnit: AudioUnit, streamDescription: UnsafePointer<AudioStreamBasicDescription>) {
@@ -480,5 +361,102 @@ extension AVAudioEngine {
         for i in 0 ..< nodes.count - 1 {
             connect(nodes[i], to: nodes[i + 1], format: format)
         }
+    }
+}
+
+
+public protocol AudioDynamicsProcessor {
+    var audioUnitForDynamicsProcessor: AudioUnit { get }
+}
+
+public extension AudioDynamicsProcessor {
+    var attackTime: Float {
+        get {
+            var value = AudioUnitParameterValue(1.0)
+            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_AttackTime, kAudioUnitScope_Global, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_AttackTime, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
+        }
+    }
+
+    var releaseTime: Float {
+        get {
+            var value = AudioUnitParameterValue(1.0)
+            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
+        }
+    }
+
+    var threshold: Float {
+        get {
+            var value = AudioUnitParameterValue(1.0)
+            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
+        }
+    }
+
+    var expansionRatio: Float {
+        get {
+            var value = AudioUnitParameterValue(1.0)
+            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ExpansionRatio, kAudioUnitScope_Global, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_ExpansionRatio, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
+        }
+    }
+
+    var overallGain: Float {
+        get {
+            var value = AudioUnitParameterValue(1.0)
+            AudioUnitGetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForDynamicsProcessor, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, AudioUnitParameterValue(newValue), 0)
+        }
+    }
+}
+
+public final class AudioEngineDynamicsPlayer: AudioEnginePlayer, AudioDynamicsProcessor {
+    // ⚑ MISSING field, recovered. Binary field order puts it FIRST, before dynamicsProcessor.
+    //   type    `__C.AVAudioUnitEQ` from all four trie symbols; no trailing `Sg` ⇒ non-optional (rule 7)
+    //   access  `public` — carries a vpMV property descriptor, which is public-exclusive (rule 28)
+    //   let     the trie emits vg/vpMV/vpWvd/vpfi and NO vs or vM, so there is no setter
+    //   default read from its vpfi body @0x10199aa1c (rule 26): load the class from 0x104410c18,
+    //           `bl 0x10345c1e4` = _objc_allocWithZone (stub → GOT 0x10410b8b0 → libobjc), then a TAIL
+    //           `b 0x1034629c0` = objc_msgSend with selref 0x10440b838 and NO argument register set
+    //           ⇒ a no-arg init. The distinguishing control is dynamicsProcessor's own vpfi
+    //           @0x10199aa38, which is the same shape but sets `mov x2,sp` with a stack-built
+    //           AudioComponentDescription ⇒ initWithAudioComponentDescription:. Arity separates them.
+    //   ⚑[tool=export_trie_oracle ref=AudioEngineDynamicsPlayer.nbandEQ:0x10199aa1c result=OWNER_MATCH]
+    public let nbandEQ: AVAudioUnitEQ = AVAudioUnitEQ()
+    private let dynamicsProcessor = AVAudioUnitEffect(audioComponentDescription:
+        AudioComponentDescription(componentType: kAudioUnitType_Effect,
+                                  componentSubType: kAudioUnitSubType_DynamicsProcessor,
+                                  componentManufacturer: kAudioUnitManufacturer_Apple,
+                                  componentFlags: 0,
+                                  componentFlagsMask: 0))
+    public var audioUnitForDynamicsProcessor: AudioUnit {
+        dynamicsProcessor.audioUnit
+    }
+
+    override func audioNodes() -> [AVAudioNode] {
+        var nodes: [AVAudioNode] = [dynamicsProcessor]
+        nodes.append(contentsOf: super.audioNodes())
+        return nodes
+    }
+
+    public required init() {
+        super.init()
+        engine.attach(dynamicsProcessor)
     }
 }

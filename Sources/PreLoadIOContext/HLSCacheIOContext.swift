@@ -206,6 +206,57 @@ public class HLSCacheIOContext: AbstractAVIOContext {
 
     // --- methods (only the 4 cached small methods; names devirt→inferred) ---
 
+    // @0x101b989f4 — vtable slot 19, trie
+    //   `HLSCacheIOContext.(prefetchUpcoming in _…)(from: Swift.Int)` (private). Caller: addSub @0x101b989b0.
+    //   The subContexts lookup is inlined (absoluteString + lock + FUN_100020444). The closure body is @0x101b99338
+    //   (thunk 0x101b9c1c8): URLContextDownload.init @0x101b90c58 (flags 1, zero interrupt,
+    //   isReadComplete false). av_dict_free runs only on the success edge. CacheIOContext.init @0x101b86d38
+    //   (0x40000, saveFile true, md5 = fileName). The read loop is @0x101b885b8 into a swift_slowAlloc(0x40000) buffer,
+    //   and close() is at vtable +0xa0. KSLog #lines: 204 / 212 / 227 / 243 / 266.
+    private func prefetchUpcoming(from index: Int) {
+        let start = index + 1
+        let end = min(start + prefetchCount, segments.count)
+        guard start < end else { return }
+        KSLog("[HLSCache] prefetch starting from segment[\(start)] to segment[\(end - 1)]") // #line 204
+        for i in start..<end {
+            let url = segments[i]
+            if getSubContext(for: url.absoluteString) != nil {
+                KSLog("[HLSCache] prefetch skip (already cached): segment[\(i)]") // #line 212
+                continue
+            }
+            prefetchQueue.async { [weak self] in
+                guard let self, !self.isClosed else { return }
+                let md5 = url.sortQueryString.md5()
+                let fileName = "hls_" + self.mediaId + "_" + md5
+                let fileURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("videoCaches").appendingPathComponent(fileName)
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    KSLog("[HLSCache] prefetch skip (disk cache exists): segment[\(i)]") // #line 227
+                    return
+                }
+                guard !self.isClosed else { return }
+                var avOptions = self.formatContextOptions.avOptions
+                let context: CacheIOContext
+                do {
+                    let download = try URLContextDownload(url: url, flags: 1, options: &avOptions, interrupt: AVIOInterruptCB(), isReadComplete: false)
+                    av_dict_free(&avOptions)
+                    context = try CacheIOContext(download: download, md5: fileName, bufferSize: 256 * 1024, saveFile: true, isReadComplete: false)
+                } catch {
+                    KSLog("[HLSCache] prefetch failed to create context for segment[\(i)]") // #line 243
+                    return
+                }
+                let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 256 * 1024)
+                while !self.isClosed {
+                    if context.read(buffer: buffer, size: 256 * 1024) <= 0 { break }
+                }
+                context.close()
+                if !self.isClosed {
+                    KSLog("[HLSCache] prefetched segment[\(i)]: \(url.lastPathComponent)") // #line 266
+                }
+                buffer.deallocate()
+            }
+        }
+    }
+
     // @0x101b99ce8 — 798 instr (0x101b99ce8-0x101b9a960), vtable slot 20, a NEW `Method` slot and
     //   NOT an override (none of the 7 override-table impls is this address). Trie-named
     //   `$s16PreLoadIOContext08HLSCacheC0C9parseM3U8yyF`, one symbol (no ICF fold).

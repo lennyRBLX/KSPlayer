@@ -280,3 +280,7 @@ extension KSOptions {
         #endif
     }
 }
+
+extension URLComponents {
+    var queryDictionary: [String : String]? { @used get { fatalError("L7: URLComponents.queryDictionary — Forward body unread") } }
+}

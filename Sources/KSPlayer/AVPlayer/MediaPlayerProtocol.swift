@@ -331,6 +331,35 @@ public protocol MediaPlayerProtocol: MediaPlayback {
 }
 
 public extension MediaPlayerProtocol {
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.shutdown():0x1019de8e4 result=3-instr]
+    /// Forwards to `#0x78` = word 15 = req14, which KSAVPlayer implements at 0x1019aa34c =
+    /// `stop()`.
+    func shutdown() {
+        stop()
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.checkShouldResume():0x10000e52c result=empty-ICF-fold]
+    /// The body IS 0x10000e52c, the canonical ICF-folded empty extension default — so the
+    /// default implementation is empty. This is the fold's documented meaning, not an
+    /// unresolved address.
+    func checkShouldResume() {}
+
+    /// ⚑ s106: the remaining FOUR defaults on this protocol are read but NOT yet transcribed —
+    /// `dynamicRange` @0x1019e01dc (94), `videoFormat` @0x1019e04f0 (101),
+    /// `audioFormat` @0x1019e0354 (103) and `subtitlesTracks` @0x1019dffb8 (130). They are left
+    /// out rather than guessed; each is a real body needing its own read.
+    /// ⚑[tool=member_missing_triage ref=MediaPlayerProtocol:4-of-15 result=deferred]
+
+    /// ⚑[tool=decode_string_literal ref=MediaPlayerProtocol.typeName.getter:0x1019dfd34 result='NSStringFromClass(Self.self)']
+    /// ⚠️ Transcribed as read, not as intended. The body materialises one 28-character literal
+    /// and returns it — `mov x0,#0x1c` / `movk x0,#0xd000,lsl #48` is the count-and-flags word
+    /// and x1 the biased pointer; there is no call to NSStringFromClass anywhere in the 7
+    /// instructions. Forward ships the EXPRESSION as a string. The decoder confirms the bias
+    /// (a wrong-bias read would yield 'ayerProtocol.swift…', the neighbouring #fileID literal).
+    var typeName: String {
+        "NSStringFromClass(Self.self)"
+    }
     // Ref 0x1019de7f8 wraps URL, then calls requirement 34.
     func replace(url: URL, options: KSOptions) {
         replace(io: .left(url), options: options)
@@ -366,30 +395,58 @@ public extension MediaPlayerProtocol {
         nominalFrameRate
     }
 
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.totalTime.getter:0x1019e06e4 result=3-instr]
-    /// `ldr x1,[x1,#0x8]` takes the inherited MediaPlayback table, `ldr x2,[x1,#0x8]` takes its
-    /// word 1 = req0 = `duration`, then tail-calls it.
-    var totalTime: TimeInterval {
-        duration
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.subtitlesTracks.getter:0x1019dffb8 result=130-instr]
+    /// The fourth and last `PAAE` extension member of this protocol; `vpMV` proves public.
+    ///
+    /// Unlike the three above it does NOT filter on `isEnabled` — there is no predicate call in
+    /// the loop at all. The only `tbnz` in the body is the tail of the main-actor executor check
+    /// (`swift_task_isCurrentExecutor`), which is easy to misread as a filter; the element test
+    /// here is the conformance cast, nothing else.
+    ///
+    ///   · __got 0x104108738 binds `AVMediaTypeSubtitle`, dereferenced into the same
+    ///     `[x2,#0x158]` witness that the siblings use — `tracks(mediaType: .subtitle)`.
+    ///     ⚑[tool=bind_oracle ref=__got:0x104108738 result=AVMediaTypeSubtitle]
+    ///   · the accumulator is seeded from __got 0x104112d00 `_swiftEmptyArrayStorage`, so it
+    ///     starts `[]` with no reserved capacity.
+    ///   · per element: `swift_conformsToProtocol(track, 0x1039f18dc)` where that descriptor is
+    ///     `SubtitleInfo`'s own `…12SubtitleInfoMp`. A null result (`cbz x20`) skips the element —
+    ///     that IS the `as?`, and skipping-on-nil is what makes it `compactMap` rather than `map`.
+    ///     ⚑[tool=bind_oracle ref=__got:0x104112db8 result=swift_conformsToProtocol]
+    ///   · on success it appends the TWO-word existential with
+    ///     `stp x27, x20, [x9,#0x20]` — instance and witness table together — after the usual
+    ///     uniqueness check and a `cmp x21, x8, lsr #1` capacity test.
+    ///
+    /// ⚑ `compactMap` vs `filter`-then-`map` is not decidable from this body: both lower to one
+    ///   append loop over an empty seed. `compactMap` is written because the cast and the skip are
+    ///   the SAME test here — there is no separate predicate pass to correspond to a `filter`.
+    var subtitlesTracks: [any SubtitleInfo] {
+        tracks(mediaType: .subtitle).compactMap { $0 as? SubtitleInfo }
     }
 
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.currentTime.getter:0x1019e06f0 result=3-instr]
-    /// Same shape at `#0x28` = word 5 = req4 = `currentPlaybackTime`.
-    var currentTime: TimeInterval {
-        currentPlaybackTime
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.audioTracks.getter:0x1019e01c0 result=7-instr]
+    /// Loads `__got 0x104108730`, which binds `_AVMediaTypeAudio`, and tail-calls `#0x158` =
+    /// word 43 = req42 = `tracks(mediaType:)`.
+    /// ⚑[tool=bind_oracle ref=__got:0x104108730 result=_AVMediaTypeAudio]
+    var audioTracks: [MediaPlayerTrack] {
+        tracks(mediaType: .audio)
     }
 
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.remainingTime.getter:0x1019e06fc result=21-instr]
-    /// Calls req0 into d8, then req4, then `fsub d0, d8, d0`.
-    var remainingTime: TimeInterval {
-        duration - currentPlaybackTime
-    }
-
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.progress.getter:0x1019e0684 result=24-instr]
-    /// Calls req0 into d8; `movi.2d v0,#0` then `fcmp d8,#0.0` / `b.eq` returns 0 when the
-    /// duration is zero; otherwise calls req4 and `fdiv d0, d0, d8`.
-    var progress: CGFloat {
-        duration == 0 ? 0 : currentPlaybackTime / duration
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.dynamicRange.getter:0x1019e01dc result=94-instr]
+    /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot. Same track search
+    /// as `videoFormat` above: __got 0x104108740 (`AVMediaTypeVideo`) into the witness at
+    /// `[x2,#0x158]`, then the loop picks the first track whose `[x26,#0x58]` getter is true.
+    ///
+    /// The two exits are read, and they are what pin the return type's representation:
+    ///   · loop exhausted → release the array and `mov w0, #0x4`. `DynamicRange` has four cases
+    ///     (tags 0…3), so case index **4 is `Optional.none`** — this arm returns nil.
+    ///   · a hit → release the array and tail-call 0x1019de560, the track's own `dynamicRange`
+    ///     (trie: `…MediaPlayerTrackPAAE12dynamicRange…`), returning its value unchanged.
+    ///
+    /// ⚑ That `mov w0,#4` independently confirms the five-entry table decoded for `videoFormat`
+    ///   above, whose index 4 held the `(0,0)` word pair: two unrelated bodies agree that 4 is the
+    ///   nil inhabitant of `DynamicRange?`.
+    var dynamicRange: DynamicRange? {
+        tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange
     }
 
     /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.audioFormat.getter:0x1019e0354 result=103-instr]
@@ -473,50 +530,36 @@ public extension MediaPlayerProtocol {
         dynamicRange?.description
     }
 
-    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.dynamicRange.getter:0x1019e01dc result=94-instr]
-    /// A `PAAE` extension member with a `vpMV` — public proven, no witness slot. Same track search
-    /// as `videoFormat` above: __got 0x104108740 (`AVMediaTypeVideo`) into the witness at
-    /// `[x2,#0x158]`, then the loop picks the first track whose `[x26,#0x58]` getter is true.
-    ///
-    /// The two exits are read, and they are what pin the return type's representation:
-    ///   · loop exhausted → release the array and `mov w0, #0x4`. `DynamicRange` has four cases
-    ///     (tags 0…3), so case index **4 is `Optional.none`** — this arm returns nil.
-    ///   · a hit → release the array and tail-call 0x1019de560, the track's own `dynamicRange`
-    ///     (trie: `…MediaPlayerTrackPAAE12dynamicRange…`), returning its value unchanged.
-    ///
-    /// ⚑ That `mov w0,#4` independently confirms the five-entry table decoded for `videoFormat`
-    ///   above, whose index 4 held the `(0,0)` word pair: two unrelated bodies agree that 4 is the
-    ///   nil inhabitant of `DynamicRange?`.
-    var dynamicRange: DynamicRange? {
-        tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.progress.getter:0x1019e0684 result=24-instr]
+    /// Calls req0 into d8; `movi.2d v0,#0` then `fcmp d8,#0.0` / `b.eq` returns 0 when the
+    /// duration is zero; otherwise calls req4 and `fdiv d0, d0, d8`.
+    var progress: CGFloat {
+        duration == 0 ? 0 : currentPlaybackTime / duration
     }
 
-    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.subtitlesTracks.getter:0x1019dffb8 result=130-instr]
-    /// The fourth and last `PAAE` extension member of this protocol; `vpMV` proves public.
-    ///
-    /// Unlike the three above it does NOT filter on `isEnabled` — there is no predicate call in
-    /// the loop at all. The only `tbnz` in the body is the tail of the main-actor executor check
-    /// (`swift_task_isCurrentExecutor`), which is easy to misread as a filter; the element test
-    /// here is the conformance cast, nothing else.
-    ///
-    ///   · __got 0x104108738 binds `AVMediaTypeSubtitle`, dereferenced into the same
-    ///     `[x2,#0x158]` witness that the siblings use — `tracks(mediaType: .subtitle)`.
-    ///     ⚑[tool=bind_oracle ref=__got:0x104108738 result=AVMediaTypeSubtitle]
-    ///   · the accumulator is seeded from __got 0x104112d00 `_swiftEmptyArrayStorage`, so it
-    ///     starts `[]` with no reserved capacity.
-    ///   · per element: `swift_conformsToProtocol(track, 0x1039f18dc)` where that descriptor is
-    ///     `SubtitleInfo`'s own `…12SubtitleInfoMp`. A null result (`cbz x20`) skips the element —
-    ///     that IS the `as?`, and skipping-on-nil is what makes it `compactMap` rather than `map`.
-    ///     ⚑[tool=bind_oracle ref=__got:0x104112db8 result=swift_conformsToProtocol]
-    ///   · on success it appends the TWO-word existential with
-    ///     `stp x27, x20, [x9,#0x20]` — instance and witness table together — after the usual
-    ///     uniqueness check and a `cmp x21, x8, lsr #1` capacity test.
-    ///
-    /// ⚑ `compactMap` vs `filter`-then-`map` is not decidable from this body: both lower to one
-    ///   append loop over an empty seed. `compactMap` is written because the cast and the skip are
-    ///   the SAME test here — there is no separate predicate pass to correspond to a `filter`.
-    var subtitlesTracks: [any SubtitleInfo] {
-        tracks(mediaType: .subtitle).compactMap { $0 as? SubtitleInfo }
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.totalTime.getter:0x1019e06e4 result=3-instr]
+    /// `ldr x1,[x1,#0x8]` takes the inherited MediaPlayback table, `ldr x2,[x1,#0x8]` takes its
+    /// word 1 = req0 = `duration`, then tail-calls it.
+    var totalTime: TimeInterval {
+        duration
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.currentTime.getter:0x1019e06f0 result=3-instr]
+    /// Same shape at `#0x28` = word 5 = req4 = `currentPlaybackTime`.
+    var currentTime: TimeInterval {
+        currentPlaybackTime
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.remainingTime.getter:0x1019e06fc result=21-instr]
+    /// Calls req0 into d8, then req4, then `fsub d0, d8, d0`.
+    var remainingTime: TimeInterval {
+        duration - currentPlaybackTime
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.set(audioTrack:):0x1019e0750 result=7-instr]
+    /// Pure argument shuffle into a tail-call of `#0x160` = word 44 = req43 = `select(track:)`.
+    func set(audioTrack: some MediaPlayerTrack) {
+        select(track: audioTrack)
     }
 
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.updateProgress(to:):0x1019e076c result=23-instr]
@@ -526,49 +569,6 @@ public extension MediaPlayerProtocol {
     /// the closure is empty.
     func updateProgress(to progress: CGFloat) {
         seek(time: progress * duration) { _ in }
-    }
-
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.shutdown():0x1019de8e4 result=3-instr]
-    /// Forwards to `#0x78` = word 15 = req14, which KSAVPlayer implements at 0x1019aa34c =
-    /// `stop()`.
-    func shutdown() {
-        stop()
-    }
-
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.audioTracks.getter:0x1019e01c0 result=7-instr]
-    /// Loads `__got 0x104108730`, which binds `_AVMediaTypeAudio`, and tail-calls `#0x158` =
-    /// word 43 = req42 = `tracks(mediaType:)`.
-    /// ⚑[tool=bind_oracle ref=__got:0x104108730 result=_AVMediaTypeAudio]
-    var audioTracks: [MediaPlayerTrack] {
-        tracks(mediaType: .audio)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.set(audioTrack:):0x1019e0750 result=7-instr]
-    /// Pure argument shuffle into a tail-call of `#0x160` = word 44 = req43 = `select(track:)`.
-    func set(audioTrack: some MediaPlayerTrack) {
-        select(track: audioTrack)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.checkShouldResume():0x10000e52c result=empty-ICF-fold]
-    /// The body IS 0x10000e52c, the canonical ICF-folded empty extension default — so the
-    /// default implementation is empty. This is the fold's documented meaning, not an
-    /// unresolved address.
-    func checkShouldResume() {}
-
-    /// ⚑ s106: the remaining FOUR defaults on this protocol are read but NOT yet transcribed —
-    /// `dynamicRange` @0x1019e01dc (94), `videoFormat` @0x1019e04f0 (101),
-    /// `audioFormat` @0x1019e0354 (103) and `subtitlesTracks` @0x1019dffb8 (130). They are left
-    /// out rather than guessed; each is a real body needing its own read.
-    /// ⚑[tool=member_missing_triage ref=MediaPlayerProtocol:4-of-15 result=deferred]
-
-    /// ⚑[tool=decode_string_literal ref=MediaPlayerProtocol.typeName.getter:0x1019dfd34 result='NSStringFromClass(Self.self)']
-    /// ⚠️ Transcribed as read, not as intended. The body materialises one 28-character literal
-    /// and returns it — `mov x0,#0x1c` / `movk x0,#0xd000,lsl #48` is the count-and-flags word
-    /// and x1 the biased pointer; there is no call to NSStringFromClass anywhere in the 7
-    /// instructions. Forward ships the EXPRESSION as a string. The decoder confirms the bias
-    /// (a wrong-bias read would yield 'ayerProtocol.swift…', the neighbouring #fileID literal).
-    var typeName: String {
-        "NSStringFromClass(Self.self)"
     }
 }
 
@@ -605,7 +605,10 @@ public protocol MediaPlayerTrack: AnyObject, CustomStringConvertible {
     var name: String { get }
     var languageCode: String? { get }
     var mediaType: AVFoundation.AVMediaType { get }
-    var nominalFrameRate: Float { get set }
+    // ⚑[tool=type_surface ref=MediaPlayerTrack:requirements result=getter-only] Forward's requirement
+    // list has one lone getter here (the only setter/modify pair follows the tenth getter), and
+    // AVMediaPlayerTrack stores it as `let` (field_surface), so no setter is required.
+    var nominalFrameRate: Float { get }
     var bitRate: Int64 { get }
     var bitDepth: Int32 { get }
     var isEnabled: Bool { get set }
@@ -650,7 +653,7 @@ public struct DOVIDecoderConfigurationRecord {
     public let rpu_present_flag: UInt8
     public let el_present_flag: UInt8
     public let bl_present_flag: UInt8
-    public let dv_bl_signal_compatibility_id: UInt8
+    public var dv_bl_signal_compatibility_id: UInt8
     /// ⚑[tool=export_trie_oracle ref=DOVIDecoderConfigurationRecord.dv_md_compression.getter:0x100137314 result=UInt8]
     /// A ninth field the source lacked. Its getter is the whole of two instructions,
     /// `mov x0, x1` / `ret` — it returns the SECOND register, which for a 9-byte struct passed in
@@ -697,6 +700,63 @@ extension FFmpegFieldOrder: CustomStringConvertible {
 
 // swiftlint:enable identifier_name
 public extension MediaPlayerTrack {
+
+    var naturalSize: CGSize {
+        formatDescription?.naturalSize ?? .zero
+    }
+
+    var dynamicRange: DynamicRange? {
+        if dovi != nil {
+            return .dolbyVision
+        } else {
+            return formatDescription?.dynamicRange
+        }
+    }
+
+    /// ⚑[tool=llvm-objdump ref=MediaPlayerTrack.isDovi.getter:0x1019de614 result=8-instr]
+    /// `bl 0x1019de560` — which the trie names `MediaPlayerTrack.dynamicRange.getter` (the
+    /// property directly above) — then `and w8,w0,#0xff` / `cmp w8,#0x3` / `cset w0,eq`.
+    /// ⚠️ 3 is the CASE TAG, not the raw value. `DynamicRange`'s raw values are 0,2,3,5 but its
+    /// tags are 0,1,2,3, so tag 3 is `.dolbyVision` — raw value 3 would have been `.hlg`. The
+    /// note at PlayerDefines.swift:54 established that tag/raw split independently.
+    var isDovi: Bool {
+        dynamicRange == .dolbyVision
+    }
+
+    var codecType: FourCharCode {
+        mediaSubType.rawValue
+    }
+
+    /// ⚑ s106: the other TWO MediaPlayerTrack extension defaults are read but NOT transcribed —
+    /// `videoRange` @0x1019e0d20 (53) and `codecs` @0x1019e0bc8 (86). videoRange is decoded as
+    /// far as its three small-string immediates (0xE3 "HLG", 0xE2 "PQ", 0xE3 "SDR", selected on
+    /// the dynamicRange tag) but it also branches on a second witness call at table word 16
+    /// whose requirement is not yet named, so it is left out rather than half-written.
+    /// ⚑[tool=member_missing_triage ref=MediaPlayerTrack:2-of-3 result=deferred]
+
+    var colorSpace: CGColorSpace? {
+        KSOptions.colorSpace(ycbcrMatrix: yCbCrMatrix as CFString?, transferFunction: transferFunction as CFString?)
+    }
+
+    var mediaSubType: CMFormatDescription.MediaSubType {
+        formatDescription?.mediaSubType ?? .boxed
+    }
+
+    var audioStreamBasicDescription: AudioStreamBasicDescription? {
+        formatDescription?.audioStreamBasicDescription
+    }
+
+    var colorPrimaries: String? {
+        formatDescription?.colorPrimaries
+    }
+
+    var transferFunction: String? {
+        formatDescription?.transferFunction
+    }
+
+    var yCbCrMatrix: String? {
+        formatDescription?.yCbCrMatrix
+    }
     var language: String? {
         languageCode.flatMap {
             Locale.current.localizedString(forLanguageCode: $0)
@@ -792,63 +852,6 @@ public extension MediaPlayerTrack {
             return "PQ"
         }
     }
-
-    var codecType: FourCharCode {
-        mediaSubType.rawValue
-    }
-
-    var dynamicRange: DynamicRange? {
-        if dovi != nil {
-            return .dolbyVision
-        } else {
-            return formatDescription?.dynamicRange
-        }
-    }
-
-    /// ⚑[tool=llvm-objdump ref=MediaPlayerTrack.isDovi.getter:0x1019de614 result=8-instr]
-    /// `bl 0x1019de560` — which the trie names `MediaPlayerTrack.dynamicRange.getter` (the
-    /// property directly above) — then `and w8,w0,#0xff` / `cmp w8,#0x3` / `cset w0,eq`.
-    /// ⚠️ 3 is the CASE TAG, not the raw value. `DynamicRange`'s raw values are 0,2,3,5 but its
-    /// tags are 0,1,2,3, so tag 3 is `.dolbyVision` — raw value 3 would have been `.hlg`. The
-    /// note at PlayerDefines.swift:54 established that tag/raw split independently.
-    var isDovi: Bool {
-        dynamicRange == .dolbyVision
-    }
-
-    /// ⚑ s106: the other TWO MediaPlayerTrack extension defaults are read but NOT transcribed —
-    /// `videoRange` @0x1019e0d20 (53) and `codecs` @0x1019e0bc8 (86). videoRange is decoded as
-    /// far as its three small-string immediates (0xE3 "HLG", 0xE2 "PQ", 0xE3 "SDR", selected on
-    /// the dynamicRange tag) but it also branches on a second witness call at table word 16
-    /// whose requirement is not yet named, so it is left out rather than half-written.
-    /// ⚑[tool=member_missing_triage ref=MediaPlayerTrack:2-of-3 result=deferred]
-
-    var colorSpace: CGColorSpace? {
-        KSOptions.colorSpace(ycbcrMatrix: yCbCrMatrix as CFString?, transferFunction: transferFunction as CFString?)
-    }
-
-    var mediaSubType: CMFormatDescription.MediaSubType {
-        formatDescription?.mediaSubType ?? .boxed
-    }
-
-    var audioStreamBasicDescription: AudioStreamBasicDescription? {
-        formatDescription?.audioStreamBasicDescription
-    }
-
-    var naturalSize: CGSize {
-        formatDescription?.naturalSize ?? .zero
-    }
-
-    var colorPrimaries: String? {
-        formatDescription?.colorPrimaries
-    }
-
-    var transferFunction: String? {
-        formatDescription?.transferFunction
-    }
-
-    var yCbCrMatrix: String? {
-        formatDescription?.yCbCrMatrix
-    }
 }
 
 public extension CMFormatDescription {
@@ -931,6 +934,15 @@ public extension CMFormatDescription {
             return false
         }
     }
+    public var displaySize: CGSize? { fatalError("L7: CMFormatDescription.displaySize — Forward body unread") }
+    public var hevcExtradata: Data? { fatalError("L7: CMFormatDescription.hevcExtradata — Forward body unread") }
+    public var channelCount: UInt32 { fatalError("L7: CMFormatDescription.channelCount — Forward body unread") }
+    public var sampleRate: Double { fatalError("L7: CMFormatDescription.sampleRate — Forward body unread") }
+    public var formatDescription: CMFormatDescription { fatalError("L7: CMFormatDescription.formatDescription — Forward body unread") }
+    public var sampleSize: UInt32 { fatalError("L7: CMFormatDescription.sampleSize — Forward body unread") }
+    public var commonFormat: AVAudioCommonFormat { fatalError("L7: CMFormatDescription.commonFormat — Forward body unread") }
+    public var isInterleaved: Bool { fatalError("L7: CMFormatDescription.isInterleaved — Forward body unread") }
+    public var layout: UnsafePointer<AudioChannelLayout>? { fatalError("L7: CMFormatDescription.layout — Forward body unread") }
 }
 
 func setHttpProxy() {

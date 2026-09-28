@@ -25,7 +25,7 @@ import AVFAudio
 import CoreAudio
 import CoreMedia
 
-public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
+public final class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     private var audioUnitForOutput: AudioUnit!
     // Written by prepare(audioFormat:), read by play(): the timestamp the play()
     // debounce measures against (the "从多声道切换到2声道马上调用start会不生效" workaround —
@@ -37,6 +37,45 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     // level); `private` matches its role.
     private let minDelayAfterPrepare = 0.15
     private var isPlaying = false
+
+    // play() @0x101a14c54 (FrameOutput requirement 0): a play() that lands within
+    // minDelayAfterPrepare of the last prepare is deferred by the remainder of that window.
+    // The comparison fuses to an inline 0.15 because minDelayAfterPrepare is a `let`.
+    public func play() {
+        if !isPlaying {
+            let elapsed = CFAbsoluteTimeGetCurrent() - lastPrepareTime
+            if lastPrepareTime > 0, elapsed < minDelayAfterPrepare {
+                nonisolated(unsafe) weak var weakSelf = self
+                DispatchQueue.main.asyncAfter(deadline: .now() + (minDelayAfterPrepare - elapsed)) { @MainActor in
+                    weakSelf?.doPlay()
+                }
+            } else {
+                doPlay()
+            }
+        }
+    }
+
+    // The actual start, shared by play()'s immediate path and the deferred @MainActor closure
+    // (fully inlined at both sites, so it carries no distinct address). prepareRender() is the
+    // inherited AudioBaseOutput hook @0x101a116c0.
+    private func doPlay() {
+        if !isPlaying {
+            isPlaying = true
+            prepareRender()
+            AudioOutputUnitStart(audioUnitForOutput)
+        }
+    }
+
+    // pause() @0x101a150dc (FrameOutput requirement 1).
+    public func pause() {
+        if Unmanaged.passUnretained(self).toOpaque()
+            .load(fromByteOffset: 0x68, as: UInt8.self) == 1
+        {
+            Unmanaged.passUnretained(self).toOpaque()
+                .storeBytes(of: false, toByteOffset: 0x68, as: Bool.self)
+            AudioOutputUnitStop(audioUnitForOutput)
+        }
+    }
     public var playbackRate: Float = 1
     public var isMuted: Bool = false {
         didSet {
@@ -44,20 +83,6 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
             // writes self+0x70 under tracked access, then writes self+0x28 directly.
             Unmanaged.passUnretained(self).toOpaque()
                 .storeBytes(of: isMuted, toByteOffset: 0x28, as: Bool.self)
-        }
-    }
-
-    // volume is COMPUTED onto the output unit (no field record). id 14 / scope 1 / element 0
-    // are pinned from the binary's AudioUnitGet/SetParameter arguments (kHALOutputParam_Volume
-    // == 14, kAudioUnitScope_Input == 1).
-    public var volume: Float {
-        get {
-            var value = AudioUnitParameterValue(0)
-            AudioUnitGetParameter(audioUnitForOutput, kHALOutputParam_Volume, kAudioUnitScope_Input, 0, &value)
-            return value
-        }
-        set {
-            AudioUnitSetParameter(audioUnitForOutput, kHALOutputParam_Volume, kAudioUnitScope_Input, 0, newValue, 0)
         }
     }
 
@@ -159,45 +184,6 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
         }
     }
 
-    // play() @0x101a14c54 (FrameOutput requirement 0): a play() that lands within
-    // minDelayAfterPrepare of the last prepare is deferred by the remainder of that window.
-    // The comparison fuses to an inline 0.15 because minDelayAfterPrepare is a `let`.
-    public func play() {
-        if !isPlaying {
-            let elapsed = CFAbsoluteTimeGetCurrent() - lastPrepareTime
-            if lastPrepareTime > 0, elapsed < minDelayAfterPrepare {
-                nonisolated(unsafe) weak var weakSelf = self
-                DispatchQueue.main.asyncAfter(deadline: .now() + (minDelayAfterPrepare - elapsed)) { @MainActor in
-                    weakSelf?.doPlay()
-                }
-            } else {
-                doPlay()
-            }
-        }
-    }
-
-    // The actual start, shared by play()'s immediate path and the deferred @MainActor closure
-    // (fully inlined at both sites, so it carries no distinct address). prepareRender() is the
-    // inherited AudioBaseOutput hook @0x101a116c0.
-    private func doPlay() {
-        if !isPlaying {
-            isPlaying = true
-            prepareRender()
-            AudioOutputUnitStart(audioUnitForOutput)
-        }
-    }
-
-    // pause() @0x101a150dc (FrameOutput requirement 1).
-    public func pause() {
-        if Unmanaged.passUnretained(self).toOpaque()
-            .load(fromByteOffset: 0x68, as: UInt8.self) == 1
-        {
-            Unmanaged.passUnretained(self).toOpaque()
-                .storeBytes(of: false, toByteOffset: 0x68, as: Bool.self)
-            AudioOutputUnitStop(audioUnitForOutput)
-        }
-    }
-
     // stop() @0x101a15b28 (FrameOutput requirement 3). New in Forward — the flat class did this
     // in deinit; that deinit is gone (AudioUnitUninitialize has exactly two callers now, prepare
     // and stop). flush() is NOT overridden: FrameOutput requirement 2 resolves to the inherited
@@ -207,6 +193,20 @@ public class AudioUnitPlayer: AudioBaseOutput, AudioOutput {
     // no `stop` symbol on this class at all. Body unchanged — only the name was invented.
     public func invalidate() {
         AudioUnitUninitialize(audioUnitForOutput)
+    }
+
+    // volume is COMPUTED onto the output unit (no field record). id 14 / scope 1 / element 0
+    // are pinned from the binary's AudioUnitGet/SetParameter arguments (kHALOutputParam_Volume
+    // == 14, kAudioUnitScope_Input == 1).
+    public var volume: Float {
+        get {
+            var value = AudioUnitParameterValue(0)
+            AudioUnitGetParameter(audioUnitForOutput, kHALOutputParam_Volume, kAudioUnitScope_Input, 0, &value)
+            return value
+        }
+        set {
+            AudioUnitSetParameter(audioUnitForOutput, kHALOutputParam_Volume, kAudioUnitScope_Input, 0, newValue, 0)
+        }
     }
 }
 

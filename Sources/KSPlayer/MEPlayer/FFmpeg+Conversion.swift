@@ -10,10 +10,289 @@
 //
 //  The per-output-stream config the Phase-2 Remuxer writes packets through.
 //
+import Libavutil
 import AVFoundation   // AVMediaType — the p8 slot's type, read from the binary (see the init below)
 import FFmpegKit
 import Libavcodec
 import Libavformat
+
+// ── FFmpegAssetTrack members Forward emits inside this file (#fileID contiguity) ─────────────
+// Order: Forward __text order — transcode(packet:) 0x101a1ae90, stop() 0x101a1be30.
+extension FFmpegAssetTrack {
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.transcode(packet:):0x101a1ae90 result=64-instr]
+    /// `swift_allocObject(size: 0x48, align: 7)` for a `Packet`, whose default initializer runs
+    /// inline — the numeric fields and `isFlush` are zeroed and `corePacket` is filled from
+    /// av_packet_alloc. Then av_packet_ref copies the incoming packet into it, `self` is stored
+    /// into `assetTrack` at 0x40 (old value released, new retained, then the `didSet` observer
+    /// at 0x101a637d0 runs), and finally `subtitle` (0x100) dispatches metadata offset 0x1a0 ⇒
+    /// slot 26, impl 0x101a5bab4 — which takes x0 and branches on the state byte at 0x28 being
+    /// 2 (.flush), i.e. `putPacket(packet:)`.
+    /// ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
+    /// ⚑[tool=ffmpeg_name_oracle ref=av_packet_ref:0x102d622ec result=CONFIRMED]
+    /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot26@0x101a5bab4 result=putPacket(packet:)]
+    func transcode(packet: UnsafeMutablePointer<AVPacket>) {
+        let newPacket = Packet()
+        av_packet_ref(newPacket.corePacket, packet)
+        newPacket.assetTrack = self
+        subtitle?.putPacket(packet: newPacket)
+    }
+
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.stop():0x101a1be30 result=17-instr]
+    /// Same shape as `flush`, dispatching metadata offset 0x1c0 ⇒ slot 30, impl 0x101a5bc34.
+    /// That impl is arity-0 (it never reads x0), returns early when the state byte at 0x28 is
+    /// 0 (.idle), sets it to 3 (.closed) and drains the render queue — `shutdown()`.
+    /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot30@0x101a5bc34 result=shutdown()]
+    /// REJECTED anchor: reconstruction/build_match_release.json proposes `putPacket` for
+    /// 0x101a5bc34 at similarity 0.5342 with 3603 matches over threshold — a fingerprint that
+    /// cannot discriminate is never identity, and putPacket takes an argument this body never
+    /// reads.
+    @used func stop() {
+        subtitle?.shutdown()
+    }
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (Wave 1).
+//  Forward type (binary-confirmed name). Protocol descriptor @0x1039eefa0 declares exactly
+//  3 instance methods, no defaults (binary fact — __swift5_proto). The witness slots are
+//  GROUNDED from the Copy/BSF witness bodies (CopyTC_req1 @0x101a1bee0, BSFTC_req1 @0x101a1bf28,
+//  BSFTC_req3 @0x101a1bfe4); the protocol method *names* are not in the binary → inferred + FLAGGED.
+//  Conformers: CopyTranscodeContext, BSFTranscodeContext (this wave) + Audio/Video/Subtitle (later).
+public protocol TranscodeProtocol {
+    // ── req1 / witness slot 1 — the per-stream packet op (GROUNDED) ──────────────────────────────
+    // Body shape (from Copy/BSF witnesses): take an INPUT packet + an OUTPUT packet (caller buffer)
+    // + a COMPLETION closure that receives the output; on success set output.pts = -1 (AV_NOPTS) then
+    // call completion(output)  (decompile: `param_2[9] = -1` then `(*param_3)(param_2)`).
+    // I/O type GROUNDED: `UnsafeMutablePointer<AVPacket>?` (= OutputStreamInfo.outPacket; av_bsf_send_packet
+    // takes `AVPacket*`). ⚑ method name `transcode` INFERRED (not in binary). ⚑ closure convention
+    // (escaping/label) inferred from the call `(*param_3)(param_2)` = completion(output).
+    // ⚑ SIGNATURE RE-READ (Copy 0x101a1bee0 / BSF 0x101a1bf28 / caller OSI.transcode @0x101a1ae68):
+    //   · returns Int32 — BSF's failure paths return the live av_bsf_* result (`mov x20,x0 … mov x0,x20` around
+    //     av_packet_unref), and the success path returns the completion's x0 unchanged (tail `blr`), which
+    //     OSI.transcode (`-> Int32`) returns as its own result;
+    //   · completion returns Int32 (OSI's closure 0x101a1af90 ends `mov x0,x22`), non-escaping (stack context);
+    //   · `output` is NON-optional: `str #-1,[output,#0x48]` has no nil check in either conformer.
+    func transcode(_ input: UnsafeMutablePointer<AVPacket>,
+                   output: UnsafeMutablePointer<AVPacket>,
+                   completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32
+
+    // ── req2 / witness slot 2 — ATC-distinctive (re-encode drain) ────────────────────────────────
+    // DEFERRED: the re-encode (ATC) path, off the remux test. Binary requires 3 methods, so it is
+    // declared; Copy/BSF satisfy it with a SHARED/trivial witness (implemented trivially below).
+    // ⚑ name + signature INFERRED placeholder. // UNRESOLVED → re-encode (ATC) phase
+    // ⚑ req2 ARITY RE-READ: Audio's witness 0x101a1cc00 forwards (x0 packet, x1/x2 closure) + returns w0;
+    //   OSI.writeTrailer calls it as (outPacket, closure 0x101a1f1dc). Copy/BSF/Video/Subtitle all share the
+    //   ICF-folded `mov w0,#0; ret` (0x10002dab0) = `return 0`.
+    func drain(_ output: UnsafeMutablePointer<AVPacket>,
+               completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32
+
+    // ── req3 / witness slot 3 — teardown/close (GROUNDED from BSFTC_req3) ────────────────────────
+    // BSF witness body = `av_bsf_free(&self.bsfContext)`. Copy's witness is trivial (shared/no-op).
+    // ⚑ method name `close` INFERRED (not in binary).
+    func close()
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (Wave 1).
+//  TranscodeProtocol conformer. Binary: 0 stored fields, root class. The stream-copy (no-transcode)
+//  path: copy the input packet into the caller's output buffer, stamp AV_NOPTS, fire completion.
+//  Body GROUNDED from CopyTC_req1 @0x101a1bee0. req2/req3 = trivial shared witness.
+public final class CopyTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (no library evolution); 0 fields → no stored state
+    public init() {}  // root class, 0 fields — devirt init has no readable body; minimal inferred init
+
+    // req1 — stream-copy packet op @0x101a1bee0 (the witness itself; self unused):
+    //   av_packet_ref(output, input) (0x102d622ec — body read: ref/alloc buf + copy props; result DISCARDED —
+    //   the next instruction is the store), output.pos (+0x48) = -1, return completion(output).
+    public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
+                          output: UnsafeMutablePointer<AVPacket>,
+                          completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        _ = av_packet_ref(output, input)
+        output.pointee.pos = -1
+        return completion(output)
+    }
+
+    // req2 — the shared ICF-folded witness 0x10002dab0 (`mov w0,#0; ret`).
+    public func drain(_ output: UnsafeMutablePointer<AVPacket>,
+                      completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        0
+    }
+
+    // req3 — Copy's witness is the empty `ret` fold 0x10000e52c.
+    public func close() {}
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (Wave 1).
+//  TranscodeProtocol conformer. Binary: 1 stored field `bsfContext` (+0x10), root class. The
+//  bitstream-filter path: send the input packet through the BSF, receive the filtered packet into
+//  the caller's output buffer, stamp AV_NOPTS, fire completion; teardown frees the BSF.
+//  Bodies GROUNDED from BSFTC_req1 @0x101a1bf28 and BSFTC_req3 @0x101a1bfe4.
+//  av_bsf_* are oracle-CONFIRMED names → used directly. The packet-unref helper (FUN_102d61970) is
+//  name-UNRESOLVED → spine only.
+public final class BSFTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (no library evolution)
+    // Field +0x10 (binary __swift5_fieldmd). FFmpeg C type. Accessed under _swift_beginAccess in req1/req3.
+    public var bsfContext: UnsafeMutablePointer<AVBSFContext>?
+
+    // init devirtualized (no readable body). Minimal inferred init — the bsfContext is supplied by the
+    // Remuxer once the filter is allocated/initialised; exact init signature unrecoverable → inferred.
+    public init(bsfContext: UnsafeMutablePointer<AVBSFContext>? = nil) {  // inferred — devirt init, no body
+        self.bsfContext = bsfContext
+    }
+
+    // req1 — BSF packet op @0x101a1bf28 (witness thunk 0x101a1bfc4 loads self from [x20]). Read in full:
+    //   beginAccess(read, self+0x10); av_bsf_send_packet(bsfContext, input) (0x10295b31c) → `tbnz w0,#31` return it;
+    //   av_bsf_receive_packet(bsfContext, output) (0x10295b40c) → on <0: av_packet_unref(output) (0x102d61970 —
+    //   body read: frees side data + buf, resets fields, pos=-1, pts/dts=AV_NOPTS) and return the receive result;
+    //   else output.pos (+0x48) = -1, return completion(output).
+    public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
+                          output: UnsafeMutablePointer<AVPacket>,
+                          completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        var ret = av_bsf_send_packet(bsfContext, input)
+        if ret < 0 {
+            return ret
+        }
+        ret = av_bsf_receive_packet(bsfContext, output)
+        if ret < 0 {
+            av_packet_unref(output)
+            return ret
+        }
+        output.pointee.pos = -1
+        return completion(output)
+    }
+
+    // req2 — the shared ICF-folded witness 0x10002dab0 (`mov w0,#0; ret`).
+    public func drain(_ output: UnsafeMutablePointer<AVPacket>,
+                      completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        0
+    }
+
+    // req3 / witness slot 3 — teardown. GROUNDED (BSFTC_req3 @0x101a1bfe4):
+    //   av_bsf_free(&self.bsfContext)   (the _swift_beginAccess/_swift_endAccess pair = inout access)
+    public func close() {
+        av_bsf_free(&bsfContext)  // oracle-CONFIRMED name; takes AVBSFContext** → &self.bsfContext
+    }
+
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio, STRUCTURE-ONLY).
+//  Forward type (binary-confirmed name). TranscodeProtocol conformer for the AUDIO re-encode path.
+//  Built by the re-encode driver FUN_101a1d014 (P3-owner) — OFF the remux→segments (M3) path and OFF
+//  the P3 DV-decode path (P18 triage). Its witness bodies are the deep swr/fifo audio re-encode engine
+//  → DEFERRED (cardinal: structure faithful now; the engine is reconstructed with its behavioral test in
+//  the owner phase, NOT invented here). Descriptor 0x1039ef050 / accessor 0x101a1f284; vtable-empty
+//  (real methods in the TranscodeProtocol witness table). 9 stored fields (reflection-authoritative).
+public final class AudioTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (M2 verifies)
+    // Field types: field-record concrete where resolvable; ⚑ = symref/§7-walled → name-inference-flagged.
+    let decodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
+    let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
+    var decodedFrame:  UnsafeMutablePointer<AVFrame>? = nil      // field-record concrete (optional)
+    // ⚑[tool=field_surface ref=AudioTranscodeContext.fifo,pts result=forward OpaquePointer (non-optional), Int64]
+    var fifo:          OpaquePointer                             // AVAudioFifo*; Forward init 0x101a1c104 `str x0,[self,#0x28]` after a cbz→brk unwrap
+    var pts:           Int64 = 0                                 // Forward init 0x101a1c070 `stp xzr,xzr,[self,#0x30]` (pts, swrContext)
+    var swrContext:    OpaquePointer? = nil                      // ⚑ SwrContext* (opaque; codebase typealiases SwrContext=OpaquePointer)
+    var channel:       AVChannelLayout = AVChannelLayout()       // field-record concrete
+    var sampleFormat:  AVSampleFormat = AVSampleFormat(rawValue: -1)  // field-record concrete (AV_SAMPLE_FMT_NONE)
+    var sampleRate:    Int32 = 0                                 // ⚑ symref-walled; FFmpeg sample_rate is `int`(32) + siblings are FFmpeg-typed → Int32. l2_field_gate's `Int?` is an UNSCOPED property-symbol (another class's sampleRate) — adjudicated noise.
+
+    // init: vtable-empty class, devirt init (slot 0, no readable body) → minimal inferred init taking the
+    // two non-optional codec contexts. Real signature unrecoverable → P3/owner refines. ⚑ inferred.
+    public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
+                encodeContext: UnsafeMutablePointer<AVCodecContext>) {
+        self.decodeContext = decodeContext
+        self.encodeContext = encodeContext
+        // Forward init 0x101a1c0ec-0x101a1c104: av_audio_fifo_alloc(encode +0x15c sample_fmt,
+        // +0x164 ch_layout.nb_channels, +0x178 frame_size)!. The rest of that init (decoder/encoder
+        // construction via 0x101a07dc8 / 0x101a08a94, channel/format/rate copy, swr setup 0x101a1c198)
+        // is its own unit.
+        fifo = av_audio_fifo_alloc(encodeContext.pointee.sample_fmt, encodeContext.pointee.ch_layout.nb_channels, encodeContext.pointee.frame_size)!
+    }
+
+    // ── TranscodeProtocol conformance — re-encode WITNESS bodies STRUCTURE-ONLY (DEFERRED, not invented) ──
+    // The real witness methods live in the TranscodeProtocol witness table; they are the deep swr/fifo audio
+    // re-encode engine, off the M3/P3 path → reconstruct in the owner phase with a re-encode behavioral test.
+    public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
+                          output: UnsafeMutablePointer<AVPacket>,
+                          completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        // UNRESOLVED → re-encode engine (witness slot1 @0x101a1c260, 460 instr: swr_convert + AVAudioFifo
+        // buffering + encode). NOT reconstructed — structure-only scope.
+        return 0  // ⚑ UNRESOLVED stub value — req1 body not reconstructed
+    }
+    public func drain(_ output: UnsafeMutablePointer<AVPacket>,
+                      completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        // UNRESOLVED → re-encode drain (witness slot2 @0x101a1c990, 99 instr). Structure-only.
+        return 0  // ⚑ UNRESOLVED stub value — real body is the 0x101a1c990(flush: 1, …) drain, not reconstructed
+    }
+    public func close() {
+        // UNRESOLVED → re-encode teardown (witness slot3 @0x101a1cb1c, 45 instr: swr_free/fifo_free/etc). Structure-only.
+    }
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio, STRUCTURE-ONLY).
+//  Forward type (binary-confirmed name). TranscodeProtocol conformer for the SUBTITLE re-encode path.
+//  Built by the re-encode driver FUN_101a1d014 (P3-owner) — OFF the remux→segments (M3) path. Witness
+//  bodies (decode→AVSubtitle→encode) DEFERRED (cardinal: structure faithful now, engine reconstructed in
+//  the owner phase — also the P4 subtitles owner). Descriptor 0x1039ef094 / accessor 0x101a1f2a4;
+//  vtable-empty (witness-table methods). 3 stored fields (reflection-authoritative, all concrete).
+public final class SubtitleTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (M2 verifies)
+    let decodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
+    let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
+    var subtitle:      AVSubtitle = AVSubtitle()                 // field-record concrete (the decoded AVSubtitle)
+
+    // init: vtable-empty, devirt init (no readable body) → minimal inferred. ⚑ inferred.
+    public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
+                encodeContext: UnsafeMutablePointer<AVCodecContext>) {
+        self.decodeContext = decodeContext
+        self.encodeContext = encodeContext
+    }
+
+    // ── TranscodeProtocol conformance — re-encode WITNESS bodies STRUCTURE-ONLY (DEFERRED, not invented) ──
+    public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
+                          output: UnsafeMutablePointer<AVPacket>,
+                          completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        // UNRESOLVED → subtitle re-encode (witness slot1 @0x101a1cc50, 82 instr: decode_subtitle→encode). Structure-only.
+        return 0  // ⚑ UNRESOLVED stub value — req1 body not reconstructed
+    }
+    public func drain(_ output: UnsafeMutablePointer<AVPacket>,
+                      completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        // UNRESOLVED → re-encode drain (req2 — shared/trivial witness). Structure-only.
+        return 0  // req2 = shared ICF fold 0x10002dab0 (`mov w0,#0; ret`)
+    }
+    public func close() {
+        // UNRESOLVED → re-encode teardown (witness slot3 @0x101a1cdc8, 19 instr). Structure-only.
+    }
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio, STRUCTURE-ONLY).
+//  Forward type (binary-confirmed name). TranscodeProtocol conformer for the VIDEO re-encode path.
+//  Built by the re-encode driver FUN_101a1d014 (P3-owner) — OFF the remux→segments (M3) path. Witness
+//  bodies (decode→encode re-encode) DEFERRED (cardinal: structure faithful now, engine reconstructed in
+//  the owner phase). Descriptor 0x1039ef0d8 / accessor 0x101a1f2c4; vtable-empty (witness-table methods).
+//  3 stored fields (reflection-authoritative, all field-record concrete).
+public final class VideoTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (M2 verifies)
+    let decodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
+    let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
+    var decodedFrame:  UnsafeMutablePointer<AVFrame>? = nil      // field-record concrete (optional)
+
+    // init: vtable-empty, devirt init (no readable body) → minimal inferred. ⚑ inferred.
+    public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
+                encodeContext: UnsafeMutablePointer<AVCodecContext>) {
+        self.decodeContext = decodeContext
+        self.encodeContext = encodeContext
+    }
+
+    // ── TranscodeProtocol conformance — re-encode WITNESS bodies STRUCTURE-ONLY (DEFERRED, not invented) ──
+    public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
+                          output: UnsafeMutablePointer<AVPacket>,
+                          completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        // UNRESOLVED → video re-encode (witness slot1 @0x101a1ce14, 59 instr: decode→encode). Structure-only.
+        return 0  // ⚑ UNRESOLVED stub value — req1 body not reconstructed
+    }
+    public func drain(_ output: UnsafeMutablePointer<AVPacket>,
+                      completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
+        // UNRESOLVED → re-encode drain (req2 — shared/trivial witness, no distinct VTC slot). Structure-only.
+        return 0  // req2 = shared ICF fold 0x10002dab0 (`mov w0,#0; ret`)
+    }
+    public func close() {
+        // UNRESOLVED → re-encode teardown (witness slot3 @0x101a1cf30, 19 instr). Structure-only.
+    }
+}
 
 public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor gives OSI a 16-slot method vtable (slots 0-15,
                                       // incl. slot13/14/15 dispatched by RemuxerIOAction via +0x118/+0x120/+0x128) — a `final class`
@@ -23,7 +302,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // Map KEYS are Int32 (faithfulness correction, 3 signals: subscript hashes 4 bytes; key = AVPacket
     // stream_index which is C `int`; field-record key = stdlib symref, libswiftCore-walled).
     public var assetTrackMap: [Int32: FFmpegAssetTrack] = [:]      // +0x10  key Int32 (stream_index) ⚑ value confirmed
-    public var transcodeMap:  [Int32: any TranscodeProtocol] = [:] // +0x18
+    public private(set) var transcodeMap:  [Int32: any TranscodeProtocol] = [:] // +0x18  vtable: getter impl, setter/modify null
     // ⚑[tool=binding_gate ref=OutputStreamInfo:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
@@ -44,7 +323,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     private var lastDTSMap:    [Int32: Int64] = [:]                 // +0x48  key Int32; value Int64 (DTS)
     private var hasWriteTrailer: Bool = false                     // v4 concrete `Sb`
     public let formatCtx:     UnsafeMutablePointer<AVFormatContext>  // v4 concrete (non-optional → init param)
-    private var outPacket:     UnsafeMutablePointer<AVPacket>? = nil  // v4 concrete (optional)
+    private let outPacket:     UnsafeMutablePointer<AVPacket>?  // field flags 0 (`let`); both inits assign it once
     public let formatName:    String  // v4 concrete `SS`
     public let removeADTS:    Bool  // v4 concrete `Sb`
 
@@ -218,6 +497,8 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         _ = transcodeCodecIDs // ⚑ p9: the transcode codec allowlist — consumed by the deferred transcode arms
     }
 
+    public func transcode(packet: UnsafeMutablePointer<AVPacket>, block: ((UnsafeMutablePointer<AVPacket>) -> Void)?) -> Int32 { fatalError("L7: OutputStreamInfo.transcode — Forward body unread") }
+
     // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots
     //    13/14/15 in isolation without the full factory. The binary's SOLE construction is the designated
     //    init above (FUN_101a1d014). Not used in any reconstructed path. ──────────────────────────────
@@ -276,7 +557,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     // output AVStream (formatCtx->streams[mapped]); then decide Copy vs BSF and store transcodeMap[idx].
     // (Which branch dominates at runtime is binary-UNVERIFIED — assetTrackMap's populator was not located.)
     // ⚑ NAME AND SIGNATURE ARE WRONG — see the trie signature recorded above this comment block.
-    func buildTranscodeContext(_ packet: UnsafeMutablePointer<AVPacket>,           // ⚑ INVENTED name; real name is `transcode`
+    final func buildTranscodeContext(_ packet: UnsafeMutablePointer<AVPacket>,           // ⚑ INVENTED name; real name is `transcode`
                                completion: (UnsafeMutablePointer<AVPacket>?) -> Void) {  // forwarded to ctx.transcode (binary: callback FUN_101a660d0 + closure box, adapted by the compiler reabstraction thunk FUN_101a1f1a8 — not source-level)
         let idx = packet.pointee.stream_index                                     // *(uint*)(packet+0x24)
 
@@ -336,7 +617,10 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         // PRIMARY EFFECT (binary terminal witness call @L161 `(*ctx.witness[1])(packet, outPacket, …)`):
         // run the context on the packet, FORWARDING the completion (the compiler reabstraction thunk
         // FUN_101a1f1a8 is not source-level → the completion is passed through, not constructed here).
-        ctx.transcode(packet, output: outPacket, completion: completion)
+        // ⚑ ADAPTER ONLY (TranscodeProtocol.transcode now `-> Int32` with an Int32 completion): this function's own
+        //   signature/closure (trie: transcode(packet:block:) -> Int32; closure 0x101a1af90 returns the write
+        //   result) is its own unit — the `return 0` below is NOT binary-read.
+        _ = ctx.transcode(packet, output: outPacket!, completion: { completion($0); return 0 })
     }
 
     // BSF allocation (FUN_101a08744, 0x101a08744..0x101a08a94, 212 instr). export_trie_oracle = NOT IN TRIE,
@@ -367,7 +651,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED]
     //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_init:0x10295b198 result=CONFIRMED]
     //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_free:0x10295b040 result=CONFIRMED]
-    private func makeADTSBitstreamFilter(_ name: String,                          // ⚑ label inferred (P28)
+    private final func makeADTSBitstreamFilter(_ name: String,                          // ⚑ label inferred (P28)
                                          _ codecpar: UnsafeMutablePointer<AVCodecParameters>) // ⚑ label inferred (P28)
         -> UnsafeMutablePointer<AVBSFContext>?
     {
@@ -416,8 +700,12 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             //   streamMapping[idx], @0x101a1b9f8-a2c) — the exact gate + the completion body (FUN_101a1f1dc,
             //   per-packet write-out) are DEFERRED to P3 (behaviorally testable with the remux driver). The
             //   drain CALL (witness +0x10) is faithful; its guard is modeled as unconditional here — ⚑ flagged.
-            ctx.drain { _ in
-                // ⚑ UNRESOLVED — completion body FUN_101a1f1dc; reconstruct with the P3 remux driver.
+            // ⚑ req2 is (outPacket, completion) -> Int32 (call @0x101a1bad0: x0 = outPacket); gate/closure still UNRESOLVED.
+            if let outPacket {
+                _ = ctx.drain(outPacket) { _ in
+                    // ⚑ UNRESOLVED — completion body FUN_101a1f1dc; reconstruct with the P3 remux driver.
+                    0
+                }
             }
         }
         av_write_trailer(formatCtx)                         // FUN_103194e1c — ffmpeg_name_oracle CONFIRMED (117/468 exact) [0x101a1b9f0]
@@ -442,6 +730,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             //   (FFmpegAssetTrack-internal codec/context close) — DEFERRED to P3 (FFmpegAssetTrack layout).
             _ = track
         }
+        var outPacket = outPacket                           // Forward stop() @0x101a1bb5c frees a stack copy, no writeback
         av_packet_free(&outPacket)                          // FUN_102d618b8 — ffmpeg_name_oracle CONFIRMED (46/184 exact) [0x101a1be1c]
         // ⚑ formatCtx cleanup — FUN_101a39028: a KSPlayer Swift wrapper (0x101a3 range, NOT FFmpeg —
         //   ffmpeg_name_oracle REFUTED avformat_free_context: fwd 101/404 ≠ lib 131/524) around FFmpeg

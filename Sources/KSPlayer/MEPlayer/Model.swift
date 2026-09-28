@@ -10,6 +10,8 @@ import CoreMedia
 import DOVIRPUShim
 import Libavcodec
 import Metal
+import Foundation
+import Libavformat
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -90,7 +92,7 @@ public protocol MEPlayerDelegate: AnyObject {
     func sourceDidChange(loadingState: LoadingState)
     func sourceDidOpened()
     func sourceDidEOF()
-    func sourceDidFailed(error: NSError?)
+    func sourceDidFailed(error: Error?)
     func sourceDidFinished()
     func sourceDidChange(oldBitRate: Int64, newBitrate: Int64)
     func sourceDidClear()
@@ -104,7 +106,9 @@ public protocol ObjectQueueItem {
     var duration: Int64 { get set }
     // byte position
     var position: Int64 { get set }
-    var size: Int32 { get set }
+    // ⚑[tool=type_surface ref=ObjectQueueItem:requirements result=5 getters] Forward's requirement list
+    //   is five lone getters; AudioFrame satisfies `size` with a computed getter (no stored field).
+    var size: Int32 { get }
 }
 
 extension ObjectQueueItem {
@@ -132,34 +136,7 @@ protocol MEFrame: ObjectQueueItem {
 
 // for MEPlayer
 public extension KSOptions {
-    /// 开启VR模式的陀飞轮
-    nonisolated(unsafe) static var enableSensor = true
     nonisolated(unsafe) static var stackSize = 65536
-    nonisolated(unsafe) static var isClearVideoWhereReplace = true
-    nonisolated(unsafe) static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self
-    nonisolated(unsafe) static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
-    nonisolated(unsafe) static var yadifMode = 1
-    nonisolated(unsafe) static var deInterlaceAddIdet = false
-    /// ⚑[tool=llvm-objdump ref=KSOptions.colorSpace2020HLG.getter:0x1019c1058 result=4-instr]
-    /// The whole body loads `__got 0x104109060`, dereferences it and tail-calls the
-    /// CGColorSpace creator — no branch, no availability check.
-    /// ⚑[tool=bind_oracle ref=__got:0x104109060 result=_kCGColorSpaceITUR_2100_HLG]
-    /// ⚑[tool=bind_oracle ref=__got:0x104108d50 result=_CGColorSpaceCreateWithName]
-    /// ⚠️ The NAME says 2020 and the constant is 2100. Transcribed as read — that mismatch is
-    /// Forward's, and `colorSpace(ycbcrMatrix:transferFunction:)` below picks `itur_2100_HLG`
-    /// for the 2020 matrix too, so it is consistent rather than a decode error.
-    /// Written WITHOUT the `#available` guard the neighbouring code uses: these four
-    /// instructions contain no version check, so the guard would be source the binary refutes.
-    static var colorSpace2020HLG: CGColorSpace? {
-        CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=KSOptions.colorSpace2020PQ.getter:0x1019c1048 result=4-instr]
-    /// Identical shape to `colorSpace2020HLG`, through the adjacent got slot.
-    /// ⚑[tool=bind_oracle ref=__got:0x104109068 result=_kCGColorSpaceITUR_2100_PQ]
-    static var colorSpace2020PQ: CGColorSpace? {
-        CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-    }
 
     static func colorSpace(ycbcrMatrix: CFString?, transferFunction: CFString?) -> CGColorSpace? {
         switch ycbcrMatrix {
@@ -212,68 +189,6 @@ public extension KSOptions {
             return CGColorSpace(name: CGColorSpace.sRGB)
         }
     }
-
-    static func colorSpace(colorPrimaries: CFString?, transferFunction: CFString?, dovi: DOVIDecoderConfigurationRecord?) -> CGColorSpace? {
-        switch colorPrimaries {
-        case kCVImageBufferColorPrimaries_ITU_R_709_2:
-            if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
-                return CGColorSpace(name: CGColorSpace.itur_709_PQ)
-            } else if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
-                return CGColorSpace(name: "kCGColorSpaceITUR_709_HLG" as CFString)
-            } else {
-                return CGColorSpace(name: CGColorSpace.sRGB)
-            }
-        case kCVImageBufferColorPrimaries_ITU_R_2020:
-            if transferFunction == nil {
-                return CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-            } else if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
-                return CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-            } else if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
-                if dovi != nil {
-                    return CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-                }
-                if #available(macOS 15.0, iOS 18.0, tvOS 18.0, *) {
-                    return CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-                } else {
-                    return CGColorSpace(name: CGColorSpace.itur_2020)
-                }
-            } else {
-                return CGColorSpace(name: CGColorSpace.itur_2020)
-            }
-        default:
-            if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
-                return CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-            } else {
-                return CGColorSpace(name: CGColorSpace.sRGB)
-            }
-        }
-    }
-
-    static func pixelFormat(planeCount: Int, bitDepth: Int32) -> [MTLPixelFormat] {
-        if planeCount == 3 {
-            if bitDepth > 8 {
-                return [.r16Unorm, .r16Unorm, .r16Unorm]
-            } else {
-                return [.r8Unorm, .r8Unorm, .r8Unorm]
-            }
-        } else if planeCount == 2 {
-            if bitDepth > 8 {
-                return [.r16Unorm, .rg16Unorm]
-            } else {
-                return [.r8Unorm, .rg8Unorm]
-            }
-        } else {
-            return [colorPixelFormat(bitDepth: bitDepth)]
-        }
-    }
-
-    static func colorPixelFormat(bitDepth: Int32) -> MTLPixelFormat {
-        if bitDepth == 10 {
-            return .bgr10a2Unorm
-        } else {
-            return .bgra8Unorm
-        }
-    }
 }
 
 enum MECodecState {
@@ -301,6 +216,7 @@ extension Timebase {
         num = rational.num
         den = rational.den
     }
+    public var cmtime: CMTime { fatalError("L7: Timebase.cmtime — Forward body unread") }
 }
 
 final class Packet: ObjectQueueItem {
@@ -308,6 +224,14 @@ final class Packet: ObjectQueueItem {
     public var timestamp: Int64 = 0
     public var position: Int64 = 0
     public var size: Int32 = 0
+    public var timebase: Timebase {
+        assetTrack!.timebase
+    }
+
+    deinit {
+        av_packet_unref(corePacket)
+        av_packet_free(&corePacket)
+    }
     // ⚑[tool=export_trie_oracle ref=Packet.corePacket:vpMV result=property descriptor present ⇒ the GETTER is public; the private setter is unobservable and is kept as reconstructed]
     // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o, instr 16 / size 64)
     public private(set) var corePacket = av_packet_alloc()
@@ -320,9 +244,6 @@ final class Packet: ObjectQueueItem {
     // which is `mov w0, #0 / ret` — false.
     // ⚑[tool=export_trie_oracle ref=Packet.isFlush:vpfi@0x10002dab0 result=false]
     public var isFlush = false
-    public var timebase: Timebase {
-        assetTrack!.timebase
-    }
 
     var isKeyFrame: Bool {
         if let corePacket {
@@ -346,11 +267,6 @@ final class Packet: ObjectQueueItem {
             size = packet.size
         }
     }
-
-    deinit {
-        av_packet_unref(corePacket)
-        av_packet_free(&corePacket)
-    }
 }
 
 final class SubtitleFrame: MEFrame {
@@ -360,9 +276,17 @@ final class SubtitleFrame: MEFrame {
     var position: Int64 = 0
     var size: Int32 = 0
     let part: SubtitlePart
+    // @0x101a63adc — timing is derived here, not by the caller (decodeFrame(from:completionHandler:) @0x101a69de8
+    // only constructs and delivers).
     init(part: SubtitlePart, timebase: Timebase) {
         self.part = part
         self.timebase = timebase
+        timestamp = timebase.getPosition(from: part.start)
+        if part.end.isFinite {
+            duration = max(timebase.getPosition(from: part.end) - timestamp, 0)
+        } else {
+            duration = Int64.max - max(timestamp, 0)
+        }
     }
 }
 
@@ -375,8 +299,11 @@ public final class AudioFrame: MEFrame {
     public var timestamp: Int64 = 0
     public var duration: Int64 = 0
     public var position: Int64 = 0
-    public var size: Int32 = 0
     public var data: [UnsafeMutablePointer<UInt8>?]
+    // ⚑[tool=field_surface ref=AudioFrame:fieldmd result=8 fields, no size] Computed. Getter 0x101a63ff0:
+    //   `ldr w19,[x20,#0x10]` + tbnz #31 trap (Int32(dataSize)), data.count with `lsr #31` trap
+    //   (Int32(count)), `mul` then `cmp x0, w0, sxtw` overflow trap.
+    public var size: Int32 { Int32(dataSize) * Int32(data.count) }
     public var numberOfSamples: UInt32 = 0
     public init(dataSize: UInt32, audioFormat: AVAudioFormat) {
         self.dataSize = dataSize
@@ -396,7 +323,6 @@ public final class AudioFrame: MEFrame {
         for frame in array {
             duration += frame.duration
             dataSize += frame.dataSize
-            size += frame.size
             numberOfSamples += frame.numberOfSamples
         }
         self.dataSize = dataSize
@@ -562,24 +488,31 @@ public final class VideoVTBFrame: MEFrame {
     public let fps: Float
     public var size: Int32 = 0
     public var adjustBuffer: MTLBuffer? // @+0x48, field-record So9MTLBuffer_pSg; render-side, nil here
-    public var edrMetaData: EDRMetaData? = nil
-    public var isKeyFrame: Bool = false
-    public var dovi: DOVIDecoderConfigurationRecord?
+    // edrMetaData, isKeyFrame, dovi, doviData, rpuBuffer are `let` (field-record flags 0; the trie exports
+    // getters only: no setter, modify or vpfi), supplied by the init.
+    public let edrMetaData: EDRMetaData?
+    public let isKeyFrame: Bool
+    public let dovi: DOVIDecoderConfigurationRecord?
     public let isDovi: Bool
     // KSDOVIMetadata uses the imported-C 3008-byte inline layout. The nested Bool at metadata
     // offset 0x457 supplies Optional's extra inhabitant, so this field remains KSDOVIMetadata?.
     // Field record 13 of 14 is `<SYM:2@0x1039eb100>Sg`, confirming the optional wrapper.
-    // NO declaration default: VideoVTBFrame's vpfi set is exactly {adjustBuffer, duration, position,
-    // size, timebase, timestamp} (export_trie_oracle --class VideoVTBFrame) and doviData is NOT in it.
-    // The initializer is therefore dropped, not mirrored from VideoToolboxDecode — whose doviData DOES
-    // carry a vpfi, which is why the two classes legitimately differ. An optional `var` takes Swift's
-    // implicit nil; writing `= nil` would emit a declaration default the binary does not have.
-    var doviData: KSDOVIMetadata?
-    public var rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
-    init(pixelBuffer: PixelBufferProtocol, fps: Float, isDovi: Bool) {
+    let doviData: KSDOVIMetadata?
+    public let rpuBuffer: Data? // @+0xc50 — AV_FRAME_DATA_DOVI_RPU_BUFFER raw bytes
+    // Inlined at both Forward construction sites (VideoSwresample.change 0x101a660dc, VT output closure
+    // 0x101a6d734): after the pixelBuffer store both call the colorspace helper (0x101a88b68, CVBuffer
+    // specialization 0x101a6c9ec) with dovi, then store fps, isKeyFrame, isDovi (= dovi != nil), dovi,
+    // edrMetaData, doviData, rpuBuffer. The init itself is dead-stripped; parameter order is ours.
+    init(pixelBuffer: PixelBufferProtocol, fps: Float, isKeyFrame: Bool, dovi: DOVIDecoderConfigurationRecord?, edrMetaData: EDRMetaData?, doviData: KSDOVIMetadata?, rpuBuffer: Data?) {
         self.pixelBuffer = pixelBuffer
+        configureColorSpace(dovi: dovi, pixelBuffer: pixelBuffer)
         self.fps = fps
-        self.isDovi = isDovi
+        self.isKeyFrame = isKeyFrame
+        isDovi = dovi != nil
+        self.dovi = dovi
+        self.edrMetaData = edrMetaData
+        self.doviData = doviData
+        self.rpuBuffer = rpuBuffer
     }
 }
 
@@ -610,11 +543,12 @@ extension VideoVTBFrame {
     #endif
 }
 
+// ⚑[tool=field_surface ref=EDRMetaData:fieldmd result=4 let]
 public struct EDRMetaData {
-    var displayData: MasteringDisplayMetadata?
-    var contentData: ContentLightMetadata?
-    var ambientViewingEnvironment: AmbientViewingEnvironment?
-    var isVIVID: Bool
+    let displayData: MasteringDisplayMetadata?
+    let contentData: ContentLightMetadata?
+    let ambientViewingEnvironment: AmbientViewingEnvironment?
+    let isVIVID: Bool
 }
 
 public struct MasteringDisplayMetadata {
@@ -640,4 +574,109 @@ public struct AmbientViewingEnvironment {
     let ambient_illuminance: UInt32
     let ambient_light_x: UInt16
     let ambient_light_y: UInt16
+}
+
+//  Forward 1.3.17 reconstruction — P2 remux cluster (Wave 2). NEW Forward-only class (root, no superclass).
+//  The packet-writer that fronts OutputStreamInfo: per packet it clamps the DTS, records it, then drives
+//  the per-stream Copy/BSF builder (OutputStreamInfo slot13). Reconstructed FAITHFUL from write/slot7
+//  (0x101a65df0, 94 instr). Descriptor 0x1039f01e8, accessor 0x101a6608c.
+//  `final` not binary-pinned (no library evolution) — M2 verifies; matches the Copy/BSF/OSI `final` choice.
+public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:) @0x101a65df0)
+    // 5 stored fields — reflection-authoritative NAMES + ORDER; offsets from the driver store-sequence (size 0x34).
+    let formatCtx: UnsafeMutablePointer<AVFormatContext>  // +0x10 ⚑ inferred (symref); driver stores formatContext[+0x18];
+                                                          //   matches the 1C.5 FormatContext convention (OSI.formatCtx is exactly this)
+    let outputStreamInfo: OutputStreamInfo               // +0x18  grounded (write reads it; the P3 builder returns OSI here)
+    // ⚑ MODULE-QUALIFIED s102. Unqualified, `AVMediaType` resolved HERE to Libavutil's C enum, because
+    //   this file imports Libavcodec/Libavformat and not AVFoundation — a silent wrong type, since the
+    //   binary `objc_retain`s this field (@0x101a484b4, stored `str x21,[x23,#0x20]` @0x101a484b0) and
+    //   a C enum is not retainable. The value arrives from MEPlayerItem.startRecord, whose trie
+    //   signature types it `__C.AVMediaType?` (mangled `So07AVMediaH0aSg`, an `a`-kind typealias).
+    //   ⚑[tool=export_trie_oracle ref=MEPlayerItem.startRecord(url:mediaType:):0x101a483d4 result=AVMediaType-optional]
+    let mediaType: AVFoundation.AVMediaType?              // +0x20  l2_field_gate property-symbol (class-proven) = AVMediaType? (OPTIONAL)
+    var startTime: [Int32: Int64] = [:]                  // +0x28  per-stream DTS map. CLASS-SCOPED field-record = SDy (DICTIONARY),
+                                                         //   key Int32 (stream_index), value Int64 (clamped DTS) — corroborated by write()'s
+                                                         //   keyed-set. NOT Array, NOT CMTime?, NOT Double: l2_field_gate's `Double` is an
+                                                         //   UNSCOPED property-symbol match (another class's startTime); the class-scoped
+                                                         //   field-record + write-usage are authoritative (§19). ⚑ key/value width via §7-walled symref
+    var lock: os_unfair_lock = os_unfair_lock()          // +0x30  (4-byte os_unfair_lock, init 0)
+
+    // init — minimal inferred (devirt slot6, inlined in the P3 driver → signature UNRECOVERABLE).
+    // ⚑ init inferred — devirt slot6, built inline by the P3 driver 0x101a483d4 (alloc+field-stores);
+    //   exact signature unrecoverable.
+    public init(formatCtx: UnsafeMutablePointer<AVFormatContext>,
+                outputStreamInfo: OutputStreamInfo,
+                mediaType: AVFoundation.AVMediaType?) {
+        self.formatCtx = formatCtx
+        self.outputStreamInfo = outputStreamInfo
+        self.mediaType = mediaType
+        // startTime defaults to [:]; lock defaults to os_unfair_lock().
+    }
+
+    // ── write (slot7 @0x101a65df0, 94 instr) — FAITHFUL (DTS-clamp + lock + → slot13) ─────────────
+    // NAME IS INVENTED AND IS NOW MARKED AS SUCH. `name_exhaustion_gate` closes ALL SEVEN routes on
+    //   0x101a65df0 — no trie symbol at the address; the trie carries NO symbol for class
+    //   KSPlayer.Remuxer at all (its only Remuxer-bearing symbols are MEPlayerItem's `remuxer` field
+    //   and two unrelated ProAVPlayer protocol descriptors); no `#function`/`#file` literal (the body
+    //   has ZERO string literals); not an objc selector or IMP; and `masked_twin --scan` finds no twin
+    //   anywhere in the image, so it is real source, not emitted-library code. Two call sites, so it
+    //   is not INLINE-INSTEAD. Exactly one data pointer references it image-wide: Remuxer's metadata
+    //   vtable slot 7 (0x1044eae58 = meta 0x1044eada8 + 0x78 + 0x38) — no witness table, no objc
+    //   method list, so the witness-anchoring route is closed too.
+    // ⚠️ THE VTABLE-ELIMINATION ROUTE IS CLOSED ON THE MERITS, NOT ON THE GATE'S SAY-SO. The gate
+    //   reported "3 slots are unnamed" for this class; that is a TOOL BUG (its regex
+    //   `0x([0-9a-f]{9})` also matches the two header addresses `desc=0x1039f01e8` and
+    //   `@0x1039f0214` that vtable_walk prints, so it counted headers as impls — the true Impl count
+    //   is 1). Corrected, the route would print OPEN, and that OPEN would be VACUOUS: elimination
+    //   needs N-1 NAMED siblings and the trie names zero Remuxer methods. Closed either way.
+    // ⚠️ THE NAME IS KEPT, NOT CHANGED. `transcode(packet:)` is the binary's convention for this exact
+    //   AVPacket-ingest signature (FFmpegAssetTrack and OutputStreamInfo both use it; no trie-named
+    //   KSPlayer member with an AVPacket parameter is called `write`). But that is a convention
+    //   argument at a DIFFERENT abstraction level — this is the Remuxer's entry point, and the actual
+    //   output write happens downstream in the transcode contexts — and swapping one invented name
+    //   for another invented name buys
+    //   no binary evidence. What was actually wrong here is that a fabricated identifier carried
+    //   prose instead of the marker grammar, so no grep could find it. That is fixed.
+    //   Header-verified AVPacket offsets: pts@+0x08, dts@+0x10, stream_index@+0x24.
+    // ⚑[invented=write addr=0x101a65df0 exhaustion=name_exhaustion_gate approved=jweaver]
+    func write(_ packet: UnsafeMutablePointer<AVPacket>) {
+        // Guard [A]: the OSI must have stream mappings. *(*(*(self+0x18)+0x40)+0x10) != 0 →
+        // outputStreamInfo.streamMapping (OSI+0x40), NOT transcodeMap (OSI+0x18). [orchestrator re-walk fix]
+        guard !outputStreamInfo.streamMapping.isEmpty else { return }
+
+        let idx = packet.pointee.stream_index                          // packet+0x24
+        // Guard [B]: this stream must be mapped to an output. subscript FUN_1019c10ec → (param_2 & 1).
+        // ⚑ [B] binding inferred as streamMapping[idx] (consistent with guard [A]'s streamMapping check).
+        guard outputStreamInfo.streamMapping[idx] != nil else { return }
+
+        os_unfair_lock_lock(&lock)                                     // self+0x30
+        defer { os_unfair_lock_unlock(&lock) }                         // self+0x30 (binary unlocks on the same path tail)
+
+        // Record the clamped DTS for this stream IF not already recorded. Binary: `if startTime empty ||
+        // startTime[idx] miss { … }` (self+0x28: isUniquelyReferenced + keyed-set FUN_1019c235c + the
+        // 0x8000000000000000 sentinel swap). startTime (self+0x28) is the Remuxer's OWN [Int32: Int64]
+        // DTS map (field-record SDy). DTS clamp = min(max(pts,0), max(dts,0)); the binary computes max(x,0)
+        // branchlessly as `x & ~(x>>63)` for pts (packet+0x08) and dts (packet+0x10), then min.
+        if startTime[idx] == nil {                                     // self+0x28 empty OR subscript-miss
+            let pts = packet.pointee.pts                               // packet+0x08
+            let dts = packet.pointee.dts                               // packet+0x10
+            startTime[idx] = min(max(pts, 0), max(dts, 0))            // keyed-set FUN_1019c235c on self+0x28
+        }
+
+        // Ensure the per-stream context exists and RUN it (OSI.s13). The completion is the write-output
+        // callback: ctx.transcode produces the filtered/copied packet, then calls completion(outputPacket)
+        // to emit it. Binary: callback FUN_101a660d0 + a closure box capturing self+idx (DAT_1041d9368).
+        outputStreamInfo.buildTranscodeContext(packet) { [self] outputPacket in   // FUN_101a1ab5c (File-1 slot13)  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
+            writeOutputPacket(outputPacket, streamIndex: idx)
+        }
+    }
+
+    // ⚑ UNRESOLVED → P3: write-output completion body (FUN_101a660d0). Emits the transcoded `outputPacket`
+    // to the output format context for `streamIndex` (av_write_frame / av_interleaved_write_frame — the actual
+    // write is devirtualized/unresolved). NOT invented. Reconstruct as its own unit (decompile FUN_101a660d0).
+    private func writeOutputPacket(_ outputPacket: UnsafeMutablePointer<AVPacket>?, streamIndex: Int32) {
+        // UNRESOLVED — devirtualized write-output (FUN_101a660d0); reconstruct as its own unit.
+    }
+
+    // slot8 — devirtualized, no readable body.
+    // UNRESOLVED → P3: slot8 (devirt, no body)
 }

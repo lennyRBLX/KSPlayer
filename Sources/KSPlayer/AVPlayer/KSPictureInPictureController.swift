@@ -89,6 +89,22 @@ public class KSPictureInPictureController: AVPictureInPictureController {
         super.init(contentSource: contentSource)
     }
 
+    // req6. The binary body is TWO instructions — `mov x0,x20` / `b 0x10346d1c0`, whose selref
+    // 0x10440e238 is "startPictureInPicture". The 8-statement `start(view:)` above is the
+    // un-reduced source-only version and is deliberately left intact: this class has ZERO stored
+    // properties in the binary, so that state lives on KSComplexPlayerLayer, and deleting it before
+    // those bodies are reconstructed would destroy information.
+    public func start(layer _: KSComplexPlayerLayer) {
+        startPictureInPicture()
+    }
+
+    // req7. Body read from slot 1 @0x1019c75d4: sendAction of selref 0x10440e498 = "suspend".
+    public func didStart(layer _: KSComplexPlayerLayer) {
+        #if canImport(UIKit)
+        UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
+        #endif
+    }
+
     // Body read at slot 2 @0x1019c7648: two instructions, `mov x0,x20` / `b <objc stub>`, whose
     // selref 0x10440e2c8 is "stopPictureInPicture". The parameter is declared but never read — the
     // function contains no comparison and no branch — so it is spelled `_`.
@@ -152,21 +168,6 @@ public protocol KSPictureInPictureProtocol: AnyObject {
 
 @available(tvOS 14.0, *)
 extension KSPictureInPictureController: KSPictureInPictureProtocol {
-    // req6. The binary body is TWO instructions — `mov x0,x20` / `b 0x10346d1c0`, whose selref
-    // 0x10440e238 is "startPictureInPicture". The 8-statement `start(view:)` above is the
-    // un-reduced source-only version and is deliberately left intact: this class has ZERO stored
-    // properties in the binary, so that state lives on KSComplexPlayerLayer, and deleting it before
-    // those bodies are reconstructed would destroy information.
-    public func start(layer _: KSComplexPlayerLayer) {
-        startPictureInPicture()
-    }
-
-    // req7. Body read from slot 1 @0x1019c75d4: sendAction of selref 0x10440e498 = "suspend".
-    public func didStart(layer _: KSComplexPlayerLayer) {
-        #if canImport(UIKit)
-        UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
-        #endif
-    }
 
     // req9. EMPTY body — witness 0x10000e52c is the bare `ret` that 420 symbols ICF-fold onto.
     public static func play(layer _: KSComplexPlayerLayer) {}

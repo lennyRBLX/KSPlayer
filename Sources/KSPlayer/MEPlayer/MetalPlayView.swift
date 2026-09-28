@@ -8,17 +8,14 @@
 import AVFoundation
 import Combine
 import CoreMedia
+import Foundation
+import Metal
+import QuartzCore
 #if canImport(MetalKit)
 import MetalKit
 #endif
-public protocol DisplayLayerDelegate: NSObjectProtocol {
-    func change(displayLayer: AVSampleBufferDisplayLayer)
-}
-
 public protocol VideoOutput: FrameOutput {
     var renderSource: VideoOutputRenderSourceDelegate? { get set }
-    // Source-only; removal derived and ready, but it is its own unit (see the field below).
-    var displayLayerDelegate: DisplayLayerDelegate? { get set }
     var options: KSOptions { get set }
     var displayLayer: AVSampleBufferDisplayLayer { get }
     var pixelBuffer: PixelBufferProtocol? { get }
@@ -28,9 +25,6 @@ public protocol VideoOutput: FrameOutput {
 }
 
 public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
-    public var displayLayer: AVSampleBufferDisplayLayer {
-        displayView.displayLayer
-    }
 
     /// Field-record index 0 — it opens the class, ahead of `formatDescription`.
     /// Default READ from its own `vpfi` @0x10002c740, which is `mov w0,#1` / `ret` ⇒ `true`, and
@@ -110,6 +104,29 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
+    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.didStopPIP():0x101a5e2d8 result=20-instr]
+    /// Shares `didStartPIP`'s guard exactly — the same `isHidden` send on the same global
+    /// 0x1044ea8a0 (`metalView`, see above), with `tbz w0,#0` branching to the work when the
+    /// bit is CLEAR, i.e. when it is not hidden.
+    ///
+    /// The direction of the re-parent is the mirror of `didStartPIP` and is read from the
+    /// registers, not assumed: here `bl 0x1019f245c` leaves swiftself as **self** and passes
+    /// `metalView` as the argument, so the view comes BACK into this one.
+    ///   · `bl 0x10345ece0` → selref 0x10440a900 = **`bounds`**, sent to `self`.
+    ///   · the tail `b 0x103469bc0` → selref 0x10440d4b8 = **`setFrame:`**, sent to `displayView`
+    ///     with that rect still live in the FP registers — i.e. `metalView.frame = bounds`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
+    /// ⚑[tool=decode_objc_selector ref=0x10440d4b8 result='setFrame:']
+    override public func didStopPIP() {
+        if !metalView.isHidden {
+            addSub(view: metalView)
+            metalView.frame = bounds
+        }
+    }
+    public var displayLayer: AVSampleBufferDisplayLayer {
+        displayView.displayLayer
+    }
+
     /// ⚑[tool=field_offset_vector ref=MetalPlayView.rotation result=index-3@0x1c]
     /// Placed HERE, not appended: the binary's field-offset vector puts `rotation` at index 3
     /// (offset 0x1c), between `fps` (2) and `pixelBuffer` (4), and stored-property order is part
@@ -160,11 +177,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.isBackground:0x10002dab0 result=false]
     private var isBackground: Bool = false
     // AVSampleBufferAudioRenderer AVSampleBufferRenderSynchronizer AVSampleBufferDisplayLayer
-    private var displayView = AVSampleBufferDisplayView() {
-        didSet {
-            displayLayerDelegate?.change(displayLayer: displayView.displayLayer)
-        }
-    }
+    private var displayView = AVSampleBufferDisplayView()
 
     /// 用displayLink会导致锁屏无法draw，
     /// 用DispatchSourceTimer的话，在播放4k视频的时候repeat的时间会变长,
@@ -218,30 +231,12 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.forcedFrameRetryScheduled:0x10002dab0 result=false]
     private var forcedFrameRetryScheduled: Bool = false
 //    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
-    // displayLayerDelegate is a source-only construct. The evidence is stronger than the trie
-    // scan this comment used to cite: over the whole 76 MB image the byte sequences
-    // `displayLayerDelegate` and `DisplayLayerDelegate` occur ZERO times, against 3 for the
-    // control `flickerDetector` — so the absence is the image's, not a search artifact. This
-    // class's field descriptor lists 17 records ending at `forcedFrameRetryScheduled` and none
-    // is this one, and removing it shifts no offset because it is the last stored property
-    // (InstanceSize 0xca, last field at 0xc9).
+    // ⚑ REMOVED `displayLayerDelegate` + `DisplayLayerDelegate` (all 7 sites): both byte strings
+    //   occur ZERO times in the 76 MB image, the field descriptor lists 17 records ending at
+    //   `forcedFrameRetryScheduled`, and `6change12displayLayer` (KSMEPlayer.change(displayLayer:))
+    //   is likewise a zero-hit. The PiP setup the old conformance carried is `configPIP()` (trie-named,
+    //   KSMEPlayer.swift), so nothing the binary has went with it.
     // ⚑[tool=fieldrec ref=MetalPlayView:0x1039efd08 result=17-fields-no-displayLayerDelegate]
-    //
-    // ⚠️ THE REMOVAL IS **NOT** "DERIVED AND READY", WHICH IS WHAT THIS COMMENT SAID BEFORE.
-    // It was scoped as a 7-site delete: this protocol, this field, the `VideoOutput` requirement,
-    // the displayView didSet call, two `videoOutput?.displayLayerDelegate = self` sites in
-    // KSMEPlayer, and `extension KSMEPlayer: DisplayLayerDelegate` with its
-    // `change(displayLayer:)`. The first five are safe — every name in them is a zero-hit.
-    // The last two are NOT, and deleting them would delete behaviour the binary HAS:
-    // `change(displayLayer:)`'s body is what builds the PiP controller, and `pipController`
-    // occurs 3 times image-wide as a PUBLIC field of KSMEPlayer, with `ContentSource` likewise
-    // at 3. So the binary reaches that setup by SOME route; it simply is not this protocol.
-    // ⚑[tool=export_trie_oracle ref=KSMEPlayer.pipController result=public-field-present]
-    //
-    // Scope it as: (a) drop the five source-only sites, and (b) a SEPARATE unit that derives how
-    // the binary invokes the PiP setup and re-homes the body there. Doing (a) without (b) leaves
-    // an orphan method with no caller, which is its own divergence.
-    public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
         // @0x101a5f144: `ldrb w8,[options, <KSOptions global 0x104c63400>]` then
@@ -278,6 +273,133 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
 
     public func pause() {
         displayLink?.isPaused = true
+    }
+
+    @available(*, unavailable)
+    required init(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override public func didAddSubview(_ subview: UIView) {
+        super.didAddSubview(subview)
+        subview.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            subview.leftAnchor.constraint(equalTo: leftAnchor),
+            subview.topAnchor.constraint(equalTo: topAnchor),
+            subview.bottomAnchor.constraint(equalTo: bottomAnchor),
+            subview.rightAnchor.constraint(equalTo: rightAnchor),
+        ])
+    }
+
+    override public var contentMode: UIViewContentMode {
+        didSet {
+            metalView.contentMode = contentMode
+            switch contentMode {
+            case .scaleToFill:
+                displayView.displayLayer.videoGravity = .resize
+            case .scaleAspectFit, .center:
+                displayView.displayLayer.videoGravity = .resizeAspect
+            case .scaleAspectFill:
+                displayView.displayLayer.videoGravity = .resizeAspectFill
+            default:
+                break
+            }
+        }
+    }
+
+    #if canImport(UIKit)
+    override public func touchesMoved(_ touches: Set<UITouch>, with: UIEvent?) {
+        if !options.display.isSphere {
+            super.touchesMoved(touches, with: with)
+        } else {
+            options.display.touchesMoved(touch: touches.first!)
+        }
+    }
+    #else
+    override public func touchesMoved(with event: NSEvent) {
+        if !options.display.isSphere {
+            super.touchesMoved(with: event)
+        } else {
+            options.display.touchesMoved(touch: event.allTouches().first!)
+        }
+    }
+    #endif
+
+    public func flush() {
+        pixelBuffer = nil
+        if displayView.isHidden {
+            metalView.clear()
+        } else {
+            displayView.displayLayer.flushAndRemoveImage()
+        }
+    }
+
+    public func invalidate() {
+        displayLink?.invalidate()
+    }
+
+    public func readNextFrame() {
+        draw(force: true)
+    }
+
+    @used private func draw(force: Bool) {
+        autoreleasepool {
+            guard let frame = renderSource?.getVideoOutputRender(force: force) else {
+                return
+            }
+            pixelBuffer = frame.pixelBuffer
+            guard let pixelBuffer else {
+                return
+            }
+            // The binary copies the frame's `dovi` RECORD, not its `isDovi` Bool: a 10-byte POD
+            // move `ldur x8,[frame,#0x7b]` / `ldurh w9,[frame,#0x83]` into self+0x78..0x81.
+            // frame+0x85 (`VideoVTBFrame.isDovi`) is read nowhere in the 603-instruction body.
+            dovi = frame.dovi
+            fps = frame.fps
+            let cmtime = frame.cmtime
+            let par = pixelBuffer.size
+            let sar = pixelBuffer.aspectRatio
+            // The two arguments come from the binary's own signature. `isHDRScreen` is the static
+            // KSOptions.isHDRScreen, which is Optional there; the `?? false` coalesce at this call
+            // site is OURS — the default is not read from the caller.
+            if let pixelBuffer = pixelBuffer.cvPixelBuffer,
+               options.isUseDisplayLayer(frame: frame, isHDRScreen: KSOptions.isHDRScreen ?? false) {
+                if displayView.isHidden {
+                    displayView.isHidden = false
+                    metalView.isHidden = true
+                    metalView.clear()
+                }
+                if let dar = options.customizeDar(sar: sar, par: par) {
+                    pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
+                }
+                checkFormatDescription(pixelBuffer: pixelBuffer)
+                set(pixelBuffer: pixelBuffer, time: cmtime)
+            } else {
+                if !displayView.isHidden {
+                    displayView.isHidden = true
+                    metalView.isHidden = false
+                    displayView.displayLayer.flushAndRemoveImage()
+                }
+                let size: CGSize
+                if !options.display.isSphere {
+                    if let dar = options.customizeDar(sar: sar, par: par) {
+                        size = CGSize(width: par.width, height: par.width * dar.height / dar.width)
+                    } else {
+                        size = CGSize(width: par.width, height: par.height * sar.height / sar.width)
+                    }
+                } else {
+                    size = KSOptions.sceneSize
+                }
+                checkFormatDescription(pixelBuffer: pixelBuffer)
+                #if !os(tvOS)
+                if #available(iOS 16, *) {
+                    metalView.metalLayer.edrMetadata = frame.edrMetadata
+                }
+                #endif
+                metalView.draw(frame: frame, display: options.display, size: size)
+            }
+            renderSource?.setVideo(time: cmtime, position: frame.position)
+        }
     }
 
     /// @0x101a602dc, 103 instructions.
@@ -393,65 +515,6 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
-    @available(*, unavailable)
-    required init(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override public func didAddSubview(_ subview: UIView) {
-        super.didAddSubview(subview)
-        subview.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            subview.leftAnchor.constraint(equalTo: leftAnchor),
-            subview.topAnchor.constraint(equalTo: topAnchor),
-            subview.bottomAnchor.constraint(equalTo: bottomAnchor),
-            subview.rightAnchor.constraint(equalTo: rightAnchor),
-        ])
-    }
-
-    override public var contentMode: UIViewContentMode {
-        didSet {
-            metalView.contentMode = contentMode
-            switch contentMode {
-            case .scaleToFill:
-                displayView.displayLayer.videoGravity = .resize
-            case .scaleAspectFit, .center:
-                displayView.displayLayer.videoGravity = .resizeAspect
-            case .scaleAspectFill:
-                displayView.displayLayer.videoGravity = .resizeAspectFill
-            default:
-                break
-            }
-        }
-    }
-
-    #if canImport(UIKit)
-    override public func touchesMoved(_ touches: Set<UITouch>, with: UIEvent?) {
-        if !options.display.isSphere {
-            super.touchesMoved(touches, with: with)
-        } else {
-            options.display.touchesMoved(touch: touches.first!)
-        }
-    }
-    #else
-    override public func touchesMoved(with event: NSEvent) {
-        if !options.display.isSphere {
-            super.touchesMoved(with: event)
-        } else {
-            options.display.touchesMoved(touch: event.allTouches().first!)
-        }
-    }
-    #endif
-
-    public func flush() {
-        pixelBuffer = nil
-        if displayView.isHidden {
-            metalView.clear()
-        } else {
-            displayView.displayLayer.flushAndRemoveImage()
-        }
-    }
-
     /// ⚑[tool=export_trie_oracle ref=MetalPlayView.didStartPIP(to:):0x101a6305c result=18-instr]
     ///   · `bl 0x103463f40` is an ObjC send whose selref 0x10440bd98 decodes to **`isHidden`**;
     ///     `tbnz w0,#0` skips the call when it is true, hence the negation.
@@ -482,34 +545,6 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
-    /// ⚑[tool=export_trie_oracle ref=MetalPlayView.didStopPIP():0x101a5e2d8 result=20-instr]
-    /// Shares `didStartPIP`'s guard exactly — the same `isHidden` send on the same global
-    /// 0x1044ea8a0 (`metalView`, see above), with `tbz w0,#0` branching to the work when the
-    /// bit is CLEAR, i.e. when it is not hidden.
-    ///
-    /// The direction of the re-parent is the mirror of `didStartPIP` and is read from the
-    /// registers, not assumed: here `bl 0x1019f245c` leaves swiftself as **self** and passes
-    /// `metalView` as the argument, so the view comes BACK into this one.
-    ///   · `bl 0x10345ece0` → selref 0x10440a900 = **`bounds`**, sent to `self`.
-    ///   · the tail `b 0x103469bc0` → selref 0x10440d4b8 = **`setFrame:`**, sent to `displayView`
-    ///     with that rect still live in the FP registers — i.e. `metalView.frame = bounds`.
-    /// ⚑[tool=decode_objc_selector ref=0x10440a900 result='bounds']
-    /// ⚑[tool=decode_objc_selector ref=0x10440d4b8 result='setFrame:']
-    override public func didStopPIP() {
-        if !metalView.isHidden {
-            addSub(view: metalView)
-            metalView.frame = bounds
-        }
-    }
-
-    public func invalidate() {
-        displayLink?.invalidate()
-    }
-
-    public func readNextFrame() {
-        draw(force: true)
-    }
-
 //    deinit {
 //        print()
 //    }
@@ -518,66 +553,6 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
 extension MetalPlayView {
     @objc private func renderFrame() {
         draw(force: false)
-    }
-
-    private func draw(force: Bool) {
-        autoreleasepool {
-            guard let frame = renderSource?.getVideoOutputRender(force: force) else {
-                return
-            }
-            pixelBuffer = frame.pixelBuffer
-            guard let pixelBuffer else {
-                return
-            }
-            // The binary copies the frame's `dovi` RECORD, not its `isDovi` Bool: a 10-byte POD
-            // move `ldur x8,[frame,#0x7b]` / `ldurh w9,[frame,#0x83]` into self+0x78..0x81.
-            // frame+0x85 (`VideoVTBFrame.isDovi`) is read nowhere in the 603-instruction body.
-            dovi = frame.dovi
-            fps = frame.fps
-            let cmtime = frame.cmtime
-            let par = pixelBuffer.size
-            let sar = pixelBuffer.aspectRatio
-            // The two arguments come from the binary's own signature. `isHDRScreen` is the static
-            // KSOptions.isHDRScreen, which is Optional there; the `?? false` coalesce at this call
-            // site is OURS — the default is not read from the caller.
-            if let pixelBuffer = pixelBuffer.cvPixelBuffer,
-               options.isUseDisplayLayer(frame: frame, isHDRScreen: KSOptions.isHDRScreen ?? false) {
-                if displayView.isHidden {
-                    displayView.isHidden = false
-                    metalView.isHidden = true
-                    metalView.clear()
-                }
-                if let dar = options.customizeDar(sar: sar, par: par) {
-                    pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
-                }
-                checkFormatDescription(pixelBuffer: pixelBuffer)
-                set(pixelBuffer: pixelBuffer, time: cmtime)
-            } else {
-                if !displayView.isHidden {
-                    displayView.isHidden = true
-                    metalView.isHidden = false
-                    displayView.displayLayer.flushAndRemoveImage()
-                }
-                let size: CGSize
-                if !options.display.isSphere {
-                    if let dar = options.customizeDar(sar: sar, par: par) {
-                        size = CGSize(width: par.width, height: par.width * dar.height / dar.width)
-                    } else {
-                        size = CGSize(width: par.width, height: par.height * sar.height / sar.width)
-                    }
-                } else {
-                    size = KSOptions.sceneSize
-                }
-                checkFormatDescription(pixelBuffer: pixelBuffer)
-                #if !os(tvOS)
-                if #available(iOS 16, *) {
-                    metalView.metalLayer.edrMetadata = frame.edrMetadata
-                }
-                #endif
-                metalView.draw(frame: frame, display: options.display, size: size)
-            }
-            renderSource?.setVideo(time: cmtime, position: frame.position)
-        }
     }
 
     private func checkFormatDescription(pixelBuffer: PixelBufferProtocol) {
@@ -627,7 +602,7 @@ class MetalView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func clear() {
+    final func clear() {
         if let drawable = metalLayer.nextDrawable() {
             MetalRender.clear(drawable: drawable)
         }
@@ -635,7 +610,7 @@ class MetalView: UIView {
 
     // Carries the FRAME rather than the pixel buffer, because DisplayEnum's requirement is
     // set(frame:encoder:). Every caller already had a frame in scope.
-    func draw(frame: VideoVTBFrame, display: any DisplayEnum, size: CGSize) {
+    final func draw(frame: VideoVTBFrame, display: any DisplayEnum, size: CGSize) {
         // No unwrap: VideoVTBFrame.pixelBuffer is a non-optional `let` in the source now too, so
         // this matches the binary, which loads the field with no nil check.
         let pixelBuffer = frame.pixelBuffer
@@ -676,7 +651,8 @@ class MetalView: UIView {
     }
 }
 
-class AVSampleBufferDisplayView: UIView {
+// ⚑[tool=field_surface ref=MetalPlayView.displayView result=forward sig (AVSampleBufferDisplayView in _<disc>) — private type]
+private class AVSampleBufferDisplayView: UIView {
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
     #endif
@@ -705,7 +681,7 @@ class AVSampleBufferDisplayView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func enqueue(imageBuffer: CVPixelBuffer, formatDescription: CMVideoFormatDescription, time: CMTime) {
+    final func enqueue(imageBuffer: CVPixelBuffer, formatDescription: CMVideoFormatDescription, time: CMTime) {
         let timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
         //        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: time, decodeTimeStamp: .invalid)
         var sampleBuffer: CMSampleBuffer?
@@ -903,3 +879,39 @@ class CADisplayLink {
     }
 }
 #endif
+
+// FlickerDetector — a small value type absent from Sources/ entirely, recovered because
+// MetalPlayView stores one (field 15). Nominal type descriptor 0x1039efdcc, NumFields=3, read
+// straight from the reflection field records:
+//   lastSignature : Swift.Int?   (`SiSg`, var)
+//   changeCount   : Swift.Int    (`Si`,   var)
+//   notified      : Swift.Bool   (`Sb`,   var)
+// No method of this type is named anywhere in the trie, so only its SHAPE is declared here; what
+// it does with those three fields is not read.
+// ⚑[tool=fieldrec ref=KSPlayer.FlickerDetector:0x1039efdcc result=3-fields-no-named-methods]
+// ⚑[tool=field_surface ref=MetalPlayView.flickerDetector result=forward sig (FlickerDetector in _<disc>) — private type]
+private struct FlickerDetector {
+    public var lastSignature: Int?
+    public var changeCount: Int
+    public var notified: Bool
+
+    public init(lastSignature: Int? = nil, changeCount: Int = 0, notified: Bool = false) {
+        self.lastSignature = lastSignature
+        self.changeCount = changeCount
+        self.notified = notified
+    }
+}
+
+// AudioFormatProtocol @0x1039f00b0 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (MetalPlayView.swift..Resample.swift).
+// ⚑[tool=type_surface ref=AudioFormatProtocol:0x1039f00b0 result=protocol AudioFormatProtocol: AnyObject, Equatable]
+protocol AudioFormatProtocol: AnyObject, Equatable {}
+
+extension AudioStreamBasicDescription {
+    // ⚑[tool=member_add ref=AudioStreamBasicDescription.sampleRate.getter:0x1000ef030 result=dne; placed before sampleSize 0x101a65168 (Forward addr ICF-shared, order inferred)]
+    var sampleRate: Double { @used get { fatalError("L7: AudioStreamBasicDescription.sampleRate — Forward body unread") } }
+    var sampleSize: UInt32 { @used get { fatalError("L7: AudioStreamBasicDescription.sampleSize — Forward body unread") } }
+    var channelCount: UInt32 { @used get { fatalError("L7: AudioStreamBasicDescription.channelCount — Forward body unread") } }
+    var commonFormat: AVAudioCommonFormat { @used get { fatalError("L7: AudioStreamBasicDescription.commonFormat — Forward body unread") } }
+    var isInterleaved: Bool { @used get { fatalError("L7: AudioStreamBasicDescription.isInterleaved — Forward body unread") } }
+}

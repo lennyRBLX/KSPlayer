@@ -116,7 +116,7 @@ open class KSAVPlayer {
     public private(set) var duration: TimeInterval = 0
     // Forward 1.3.17: `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via Foundation.Progress / Alamofire
     //   byte-count fields). MediaPlayback.fileSize migrated Double→Int64 (session 16b); l2 UNCHECKED (GOT-external field-record).
-    public private(set) var fileSize: Int64 = 0
+    public var fileSize: Int64 = 0
     public private(set) var playableTime: TimeInterval = 0
     /// cachedTimeRanges.getter @0x1019a1244, Forward idx45 / absolute metadata slot83.
     /// It sits between playableTime and chapters. The ioContext virtual call at metadata +0x458
@@ -270,9 +270,22 @@ open class KSAVPlayer {
     }
     #endif
 
-    public required init(url: URL, options: KSOptions) {
-        KSOptions.setAudioSession()
-        io = .left(url) // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset; binary stores io:Either<URL,AVAsset>
+    // ⚑[tool=member_surface ref=KSAVPlayer.init(io:options:):0x1019a2e18 result=designated; init(url:) 0x1019a2c5c / init(asset:) 0x1019a2d34 allocating-only]
+    //   init(url:) builds Either tag 0 (`mov w2,#0`), init(asset:) tag 1 (`mov w2,#1`); both dispatch
+    //   the allocating init through vtable +0x408, i.e. `self.init(io:options:)`. The designated body is
+    //   shared FUN 0x1019b1b30 (called from both 0x1019a2dc0 and 0x1019a2e18).
+    //   isolation: none of the three entries calls swift_task_*/ScM; class stays @MainActor as declared.
+    public required convenience init(url: URL, options: KSOptions) {
+        self.init(io: .left(url), options: options)
+    }
+
+    public convenience init(asset: AVAsset, options: KSOptions) {
+        self.init(io: .right(asset), options: options)
+    }
+
+    public init(io: Either<URL, AVAsset>, options: KSOptions) {
+        options.setAudioSession()
+        self.io = io // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset; binary stores io:Either<URL,AVAsset>
         self.options = options
         // ⚑ UNRESOLVED → KSAVPlayer M2: currentItem observation (was `itemObservation` KVO → observer(playerItem:)) via observerCancellables
     }
@@ -280,6 +293,22 @@ open class KSAVPlayer {
     // ── s106: existing tail declarations follow Forward order. `init(io:options:)` and
     // `createPlayerItem()` remain pending separate body reconstruction; this note does not claim
     // complete layout or faithfulness.
+
+    /// @0x1019a3ccc, vtable slot 92 (async). Entry `swift_task_switch(FUN_1019a3d5c, 0, 0)`.
+    /// `.left(url)`: AVURLAsset(url:options: options.avOptions) (+0x20) → initWithAsset:.
+    /// `.right(asset)`: hops to MainActor (FUN_1019a3f84) for initWithAsset:, then back.
+    /// ⚑ ISOLATION: Forward is `nonisolated` (the generic-executor entry, and the .right MainActor hop is
+    ///   what the SDK's MainActor `AVPlayerItem(asset:)` forces for a non-sending AVAsset). Spelled
+    ///   MainActor here: nonisolated reads of `io`/`options` fail Swift 6 checks, and `options.didSet`
+    ///   touches MainActor state, so `nonisolated(unsafe)` on the fields is not an option.
+    open func createPlayerItem() async throws -> AVPlayerItem {
+        switch io {
+        case let .left(url):
+            return AVPlayerItem(asset: AVURLAsset(url: url, options: options.avOptions))
+        case let .right(asset):
+            return AVPlayerItem(asset: asset)
+        }
+    }
 
     /// @0x1019a402c, 130 instructions, vtable slot 93 (kind Method). It is NOT an override —
     /// ⚑[tool=override_table ref=KSAVPlayer.readyToPlay:0x1019a402c result=NO-override-table]
@@ -350,7 +379,8 @@ open class KSAVPlayer {
     ///   its own unit, and this statement waits for it rather than being half-written here.
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.runOnMainThread:0x101a03e88 result=block-is-MainActor-Sendable]
     /// ⚑[tool=function_extents ref=KSAVPlayer.readyToPlay.closure:0x1019a4234 result=51-instr]
-    @used func readyToPlay() {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx1 → KSAVPlayer desc 0x1039ec470] open: ProAVPlayer overrides it
+    open func readyToPlay() {
         options.readyTime = CACurrentMediaTime()
         runOnMainThread { [weak self] in
             guard let self else {
@@ -362,7 +392,8 @@ open class KSAVPlayer {
 
     // The completion carries @MainActor and @Sendable in the binary symbol; the source declared a
     // bare escaping closure.
-    public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx8 → KSAVPlayer desc 0x1039ec478] open: ProAVPlayer overrides it
+    open func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
         let time = max(time, 0)
         // AN ENTIRE KSLog STATEMENT WAS MISSING. The binary opens with this gated log, and the
         // shouldSeekTo-vs-currentTime coalesce exists only to build the message — which is also why
@@ -382,13 +413,15 @@ open class KSAVPlayer {
             completion(finished)
         }
     }
-    public func play() {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx4 → KSAVPlayer desc 0x1039ec480] open: ProAVPlayer overrides it
+    open func play() {
 #sourceLocation(file: "KSPlayer/KSAVPlayer.swift", line: 286)
         KSLog("play \(self)")
 #sourceLocation()
         playbackState = .playing }
 
-    public func changePlaybackTime(time: TimeInterval) { delegate?.changePlaybackTime(player: self, time: time) }
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx7 → KSAVPlayer desc 0x1039ec488] open: ProAVPlayer overrides it
+    open func changePlaybackTime(time: TimeInterval) { delegate?.changePlaybackTime(player: self, time: time) }
 
     // KSPlayer.KSAVPlayer.update(loadState:oldValue:) @0x1019a4db8 — 167 instr, vtable slot 97.
     //   Trie-named `$s8KSPlayer10KSAVPlayerC6update9loadState8oldValueyAA09MediaLoadE0O_AHtF`, one
@@ -416,7 +449,8 @@ open class KSAVPlayer {
     //   `LogLevel.description` getter's `csel` ladder maps 0→panic 1→fatal 2→error 3→warning.
     // ⟨UNGROUNDED: `if a == 0, b != 0 { … }` versus two `guard … else { return }` — both arms exit to
     //  the same epilogue, so the source form is not separable from the codegen.⟩
-    func update(loadState: MediaLoadState, oldValue: MediaLoadState) {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx6 → KSAVPlayer desc 0x1039ec490] open: ProAVPlayer overrides it
+    open func update(loadState: MediaLoadState, oldValue: MediaLoadState) {
         guard loadState != oldValue else { return }
         playOrPause()
         if loadState == .playable {
@@ -468,7 +502,8 @@ open class KSAVPlayer {
     /// req3 = 0x101a1f5bc, which the trie names `FFmpegAssetTrack.nominalFrameRate.getter`.
     /// ⚑[tool=bind_oracle ref=__got:0x104112f08 result=_swift_getObjectType]
     /// ⚑[tool=decode_witness_table ref=FFmpegAssetTrack:MediaPlayerTrack@0x1041d78b8 result=req3-nominalFrameRate]
-    public func nominalFrameRate(track: any MediaPlayerTrack) -> Float {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx2 → KSAVPlayer desc 0x1039ec4a0] open: ProAVPlayer overrides it
+    open func nominalFrameRate(track: any MediaPlayerTrack) -> Float {
         track.nominalFrameRate
     }
 
@@ -500,7 +535,8 @@ open class KSAVPlayer {
     // ⚑[tool=bind_oracle ref=MainActor.shared:0x104113860 result=libswift_Concurrency]
     // ⚑[tool=bind_oracle ref=_swift_errorRetain:0x104112e50 result=libswiftCore]
     // ⚑[tool=bind_oracle ref=_swift_unknownObjectWeakLoadStrong:0x1041130e8 result=libswiftCore]
-    public func process(error: Error) {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx5 → KSAVPlayer desc 0x1039ec4a8] open: ProAVPlayer overrides it
+    open func process(error: Error) {
         Task { @MainActor [weak self] in
             guard let self else {
                 return
@@ -516,7 +552,8 @@ open class KSAVPlayer {
     /// MetalRender.swift:26 note that also cites 0x10002d9d4 is another symbol at the same
     /// folded address, NOT a second name for this one.
     /// ⚑[tool=export_trie_oracle ref=0x10002d9d4 result=ICF-FOLD-605-symbols]
-    public var ioContext: AbstractAVIOContext? {
+    // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx3 → KSAVPlayer desc 0x1039ec4b0] open: ProAVPlayer overrides it
+    open var ioContext: AbstractAVIOContext? {
         nil
     }
 
@@ -571,96 +608,6 @@ open class KSAVPlayer {
 
 extension KSAVPlayer {
     public var player: AVQueuePlayer { playerView.player }
-    public var playerLayer: AVPlayerLayer { playerView.playerLayer }
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.startRecord(url:):0x10000e52c result=single-ret]
-    /// The body IS 0x10000e52c, whose only instruction is `ret`. Empty, not unimplemented —
-    /// this is the empty-body fold, distinct from the deleted-method stub at 0x10198eb18 which
-    /// would have carried `bl swift_deletedMethodError` / `brk`.
-    public func startRecord(url _: URL) {}
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.stopRecord():0x10000e52c result=single-ret]
-    /// Same empty-body fold as `startRecord` above.
-    public func stopRecord() {}
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.thumbnailImage(atTime:handler:):0x1019a9a1c result=32-instr]
-    /// ⚠️ The two paths are ASYMMETRIC, and that is read, not inferred. `ldrb` of the
-    /// `isReadyToPlay` ivar (offset global 0x104c630d0) then `cmp w8,#0x1`:
-    ///   · NOT ready — `mov x0,#0` and `blr` the handler, i.e. `handler(nil)`;
-    ///   · ready — builds a CMTime from the incoming seconds with timescale 600
-    ///     (`mov w0,#0x258` into CMTime.init(seconds:preferredTimescale:)) and then branches
-    ///     STRAIGHT to the epilogue. The handler is never invoked on that path and the CMTime is
-    ///     discarded.
-    /// The construction survives dead-code elimination only because that initialiser can trap, so
-    /// it is genuine evidence the conversion is in the source — but whatever consumed it (an
-    /// AVAssetImageGenerator path, by analogy with the AVAsset extension at the bottom of this
-    /// file) is NOT in this binary. Transcribed as read rather than completed by analogy.
-    /// ⚑[tool=bind_oracle ref=__got:0x1041132c8 result=CMTime.init(seconds:preferredTimescale:)]
-    public func thumbnailImage(atTime: TimeInterval, handler: @escaping @Sendable (CGImage?) -> Void) {
-        guard isReadyToPlay else {
-            handler(nil)
-            return
-        }
-        _ = CMTime(seconds: atTime, preferredTimescale: 600)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.checkShouldResume():0x1019aaa10 result=38-instr]
-    /// Reads `options` (offset global 0x104c63098) then the Bool at `options + 0x46`. If that bit
-    /// is set the result is 1 immediately and the second read is skipped — that short-circuit IS
-    /// the `||`. Otherwise it reads `playbackState` (0x104c630b8) and compares against 1. The
-    /// result is stored through 0x104c630d8.
-    ///
-    /// Three names, none guessed:
-    ///   · `options + 0x46` = `enterForgeResumePlay`. KSOptions has metadata_init=1 so its offset
-    ///     vector is unreadable, and this is a constant-immediate touch so no global names it.
-    ///     Recovered instead from KSOptions' own trie-named accessors, 21 of which open
-    ///     `add x0, x20, #IMM`; the resulting map is strictly increasing in field-record order.
-    ///   · `playbackState == 1` is the CASE TAG. MediaPlaybackState is
-    ///     idle/playing/paused/seeking/finished/stopped, so tag 1 is `.playing`.
-    ///   · the store target 0x104c630d8 is `shouldResumePlayback`, by elimination: it is the only
-    ///     KSAVPlayer offset global with no trie symbol, and the other Bool field
-    ///     (`isReadyToPlay`) is already claimed by 0x104c630d0.
-    /// ⚑[tool=recover_field_offsets ref=KSOptions:+0x46 result=enterForgeResumePlay]
-    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer:0x104c630d8 result=unnamed-only-Bool-left]
-    public func checkShouldResume() {
-        shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
-    }
-
-    /// @0x1019a9a9c, 116 instructions.
-    ///
-    /// It lives in an EXTENSION, and that is derived rather than stylistic: the whole export trie
-    /// carries exactly ONE symbol containing `canQuickSeek` — the function
-    /// `$s8KSPlayer10KSAVPlayerC12canQuickSeek4timeSbSd_tF` — and no `method descriptor`. No
-    /// descriptor means no vtable slot, which is what distinguishes an extension member from a
-    /// class-body one. Contrast `cachedTimeRanges` above, which has slot 45 and so must sit in the
-    /// body.
-    ///
-    ///   · `self + 0x38` is `playerView` — the fixed instance offset this file already pins at the
-    ///     `playbackCoordinator` note; the field global read off it is
-    ///     `KSAVPlayerView.player : __C.AVQueuePlayer` (0x1044e46b0). So the receiver chain is
-    ///     `playerView.player`, the same one line 194 establishes.
-    ///   · `currentItem` is sent, and the `cbz x0` on the retained result is the `?.` — the nil
-    ///     path falls to `mov w22,#0`, i.e. `false`.
-    ///   · `loadedTimeRanges` is sent and bridged with
-    ///     `Array._unconditionallyBridgeFromObjectiveC`, giving `[NSValue]`.
-    ///   · the loop's `cset w22, ne` at the head is what is RETURNED: exhausting the array leaves
-    ///     w22 = 0 and an early exit leaves it 1. That is `contains(where:)`, not a `for` loop
-    ///     with a flag — nothing else writes w22.
-    ///   · per element: `CMTimeRangeValue` (so `$0.timeRangeValue`), then
-    ///     `CMTime(seconds:preferredTimescale:)` with `mov w0, #0x1e` = **30**, then
-    ///     `_CMTimeRangeContainsTime`. The CMTime is built INSIDE the loop, not hoisted — the
-    ///     call sits between the loop head at 0x1019a9b48 and the back-branch at 0x1019a9be4.
-    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer.canQuickSeek(time:):0x1019a9a9c result=OWNER_MATCH-no-method-descriptor]
-    /// ⚑ ACCESS not independently proven: no private discriminator on the symbol, and a method
-    ///   has no `vpMV` equivalent. `public` matches the two members above it in this extension.
-    public func canQuickSeek(time: Double) -> Bool {
-        guard let loadedTimeRanges = playerView.player.currentItem?.loadedTimeRanges else {
-            return false
-        }
-        return loadedTimeRanges.contains {
-            CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: time, preferredTimescale: 30))
-        }
-    }
     @objc private func moviePlayDidEnd(notification _: Notification) {
         if !options.isLoopPlay {
             playbackState = .finished
@@ -718,6 +665,96 @@ extension KSAVPlayer {
             player.replaceCurrentItem(with: playerItem)
         }
     }
+    public var playerLayer: AVPlayerLayer { playerView.playerLayer }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.startRecord(url:):0x10000e52c result=single-ret]
+    /// The body IS 0x10000e52c, whose only instruction is `ret`. Empty, not unimplemented —
+    /// this is the empty-body fold, distinct from the deleted-method stub at 0x10198eb18 which
+    /// would have carried `bl swift_deletedMethodError` / `brk`.
+    public func startRecord(url _: URL) {}
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.stopRecord():0x10000e52c result=single-ret]
+    /// Same empty-body fold as `startRecord` above.
+    public func stopRecord() {}
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.thumbnailImage(atTime:handler:):0x1019a9a1c result=32-instr]
+    /// ⚠️ The two paths are ASYMMETRIC, and that is read, not inferred. `ldrb` of the
+    /// `isReadyToPlay` ivar (offset global 0x104c630d0) then `cmp w8,#0x1`:
+    ///   · NOT ready — `mov x0,#0` and `blr` the handler, i.e. `handler(nil)`;
+    ///   · ready — builds a CMTime from the incoming seconds with timescale 600
+    ///     (`mov w0,#0x258` into CMTime.init(seconds:preferredTimescale:)) and then branches
+    ///     STRAIGHT to the epilogue. The handler is never invoked on that path and the CMTime is
+    ///     discarded.
+    /// The construction survives dead-code elimination only because that initialiser can trap, so
+    /// it is genuine evidence the conversion is in the source — but whatever consumed it (an
+    /// AVAssetImageGenerator path, by analogy with the AVAsset extension at the bottom of this
+    /// file) is NOT in this binary. Transcribed as read rather than completed by analogy.
+    /// ⚑[tool=bind_oracle ref=__got:0x1041132c8 result=CMTime.init(seconds:preferredTimescale:)]
+    public func thumbnailImage(atTime: TimeInterval, handler: @escaping @Sendable (CGImage?) -> Void) {
+        guard isReadyToPlay else {
+            handler(nil)
+            return
+        }
+        _ = CMTime(seconds: atTime, preferredTimescale: 600)
+    }
+
+    /// @0x1019a9a9c, 116 instructions.
+    ///
+    /// It lives in an EXTENSION, and that is derived rather than stylistic: the whole export trie
+    /// carries exactly ONE symbol containing `canQuickSeek` — the function
+    /// `$s8KSPlayer10KSAVPlayerC12canQuickSeek4timeSbSd_tF` — and no `method descriptor`. No
+    /// descriptor means no vtable slot, which is what distinguishes an extension member from a
+    /// class-body one. Contrast `cachedTimeRanges` above, which has slot 45 and so must sit in the
+    /// body.
+    ///
+    ///   · `self + 0x38` is `playerView` — the fixed instance offset this file already pins at the
+    ///     `playbackCoordinator` note; the field global read off it is
+    ///     `KSAVPlayerView.player : __C.AVQueuePlayer` (0x1044e46b0). So the receiver chain is
+    ///     `playerView.player`, the same one line 194 establishes.
+    ///   · `currentItem` is sent, and the `cbz x0` on the retained result is the `?.` — the nil
+    ///     path falls to `mov w22,#0`, i.e. `false`.
+    ///   · `loadedTimeRanges` is sent and bridged with
+    ///     `Array._unconditionallyBridgeFromObjectiveC`, giving `[NSValue]`.
+    ///   · the loop's `cset w22, ne` at the head is what is RETURNED: exhausting the array leaves
+    ///     w22 = 0 and an early exit leaves it 1. That is `contains(where:)`, not a `for` loop
+    ///     with a flag — nothing else writes w22.
+    ///   · per element: `CMTimeRangeValue` (so `$0.timeRangeValue`), then
+    ///     `CMTime(seconds:preferredTimescale:)` with `mov w0, #0x1e` = **30**, then
+    ///     `_CMTimeRangeContainsTime`. The CMTime is built INSIDE the loop, not hoisted — the
+    ///     call sits between the loop head at 0x1019a9b48 and the back-branch at 0x1019a9be4.
+    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer.canQuickSeek(time:):0x1019a9a9c result=OWNER_MATCH-no-method-descriptor]
+    /// ⚑ ACCESS not independently proven: no private discriminator on the symbol, and a method
+    ///   has no `vpMV` equivalent. `public` matches the two members above it in this extension.
+    public func canQuickSeek(time: Double) -> Bool {
+        guard let loadedTimeRanges = playerView.player.currentItem?.loadedTimeRanges else {
+            return false
+        }
+        return loadedTimeRanges.contains {
+            CMTimeRangeContainsTime($0.timeRangeValue, time: CMTime(seconds: time, preferredTimescale: 30))
+        }
+    }
+
+    /// ⚑[tool=llvm-objdump ref=KSAVPlayer.checkShouldResume():0x1019aaa10 result=38-instr]
+    /// Reads `options` (offset global 0x104c63098) then the Bool at `options + 0x46`. If that bit
+    /// is set the result is 1 immediately and the second read is skipped — that short-circuit IS
+    /// the `||`. Otherwise it reads `playbackState` (0x104c630b8) and compares against 1. The
+    /// result is stored through 0x104c630d8.
+    ///
+    /// Three names, none guessed:
+    ///   · `options + 0x46` = `enterForgeResumePlay`. KSOptions has metadata_init=1 so its offset
+    ///     vector is unreadable, and this is a constant-immediate touch so no global names it.
+    ///     Recovered instead from KSOptions' own trie-named accessors, 21 of which open
+    ///     `add x0, x20, #IMM`; the resulting map is strictly increasing in field-record order.
+    ///   · `playbackState == 1` is the CASE TAG. MediaPlaybackState is
+    ///     idle/playing/paused/seeking/finished/stopped, so tag 1 is `.playing`.
+    ///   · the store target 0x104c630d8 is `shouldResumePlayback`, by elimination: it is the only
+    ///     KSAVPlayer offset global with no trie symbol, and the other Bool field
+    ///     (`isReadyToPlay`) is already claimed by 0x104c630d0.
+    /// ⚑[tool=recover_field_offsets ref=KSOptions:+0x46 result=enterForgeResumePlay]
+    /// ⚑[tool=export_trie_oracle ref=KSAVPlayer:0x104c630d8 result=unnamed-only-Bool-left]
+    public func checkShouldResume() {
+        shouldResumePlayback = options.enterForgeResumePlay || playbackState == .playing
+    }
 
     /// @0x1019ab4dc, 62 instructions. Trie: `KSAVPlayer.configPIP() -> ()`; no `Tq`, so it is not
     /// an overridable requirement.
@@ -764,13 +801,6 @@ extension KSAVPlayer {
 }
 
 extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
-    // ⚑ RETYPED to the refined protocol, from this getter's own mangled name:
-    //   `$s8KSPlayer10KSAVPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`
-    //   = `KSAVPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. Getter-only — the
-    //   binary carries no `vs`/`vM` for it. The body stays `nil`; returning nil needs no conformance.
-    // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
-    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { nil }
-    public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
     public var view: UIView { playerView }
     public var currentPlaybackTime: TimeInterval {
         get {
@@ -786,6 +816,13 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
             }
         }
     }
+    // ⚑ RETYPED to the refined protocol, from this getter's own mangled name:
+    //   `$s8KSPlayer10KSAVPlayerC18subtitleDataSourceAA016ConstantSubtitledE0_pSgvg`
+    //   = `KSAVPlayer.subtitleDataSource.getter : ConstantSubtitleDataSource?`. Getter-only — the
+    //   binary carries no `vs`/`vM` for it. The body stays `nil`; returning nil needs no conformance.
+    // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
+    public var subtitleDataSource: (any ConstantSubtitleDataSource)? { nil }
+    public var isPlaying: Bool { player.rate > 0 ? true : playbackState == .playing }
 
     public var numberOfBytesTransferred: Int64 {
         guard let playerItem = player.currentItem, let accesslog = playerItem.accessLog(), let event = accesslog.events.first else {
@@ -799,16 +836,16 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         nil
     }
 
+    public func pause() {
+        KSLog("pause \(self)")
+        playbackState = .paused
+    }
+
     public func prepareToPlay() {
         KSLog("prepareToPlay \(self)")
         options.prepareTime = CACurrentMediaTime()
         // ⚑ UNRESOLVED → KSAVPlayer M2: build AVPlayerItem from `io` (was AVPlayerItem(asset: urlAsset)) on the main thread,
         //   install via replaceCurrentItem, set openTime / actionAtItemEnd / volume / bufferingProgress.
-    }
-
-    public func pause() {
-        KSLog("pause \(self)")
-        playbackState = .paused
     }
 
     public func stop() {
@@ -925,17 +962,19 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
     let mediaType: AVFoundation.AVMediaType
     let name: String
     let description: String
-    var nominalFrameRate: Float
+    let nominalFrameRate: Float
     let bitRate: Int64
     let trackID: Int32
-    // reorderSize: Int32 — binary index 8, undeclared (see the pin above)
+    // ⚑[tool=field_surface ref=AVMediaPlayerTrack.reorderSize:idx7 result=let Int32] declared now;
+    // its value stays unread (dead-stripped init, above), so init assigns it under an L7 marker.
+    let reorderSize: Int32
     let bitDepth: Int32
     let rotation: UInt16 = 0
     let fieldOrder: FFmpegFieldOrder = .unknown
     let isImageSubtitle = false
-    var isPlayable: Bool
+    let isPlayable: Bool
     let languageCode: String?
-    var dovi: DOVIDecoderConfigurationRecord?
+    let dovi: DOVIDecoderConfigurationRecord?
     let formatDescription: CMFormatDescription?
     @MainActor
     var isEnabled: Bool {
@@ -955,6 +994,8 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
         languageCode = track.assetTrack?.languageCode
         nominalFrameRate = track.assetTrack?.nominalFrameRate ?? 24.0
         bitRate = Int64(track.assetTrack?.estimatedDataRate ?? 0)
+        reorderSize = 0 // L7: Forward's init is dead-stripped; the stored value was not read
+        dovi = nil // L7: Forward's init is dead-stripped; the stored value was not read
         #if os(xrOS)
         isPlayable = false
         #else
@@ -969,14 +1010,9 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
         bitDepth = formatDescription?.bitDepth ?? 0
         // swiftlint:enable force_cast
         description = (formatDescription?.mediaSubType ?? .boxed).rawValue.string
-        #if os(xrOS)
-        Task {
-            isPlayable = await (try? track.assetTrack?.load(.isPlayable)) ?? false
-        }
-        #endif
     }
 
-    func load() {}
+    final func load() {}
 }
 
 public extension AVAsset {
@@ -1023,4 +1059,40 @@ extension KSAVPlayer: @preconcurrency ConstantSubtitleDataSource {
     public func infos() async throws -> [any SubtitleInfo] {
         subtitleTracks.compactMap { $0 as? (any SubtitleInfo) }
     }
+}
+
+// AVMediaSelectionTrack @0x1039ec0e0 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_upper(inferred) (resource_bundle_accessor.swift..KSAVPlayer.swift).
+// ⚑[tool=type_surface ref=AVMediaSelectionTrack:0x1039ec0e0 result=class AVMediaSelectionTrack: MediaPlayerTrack, SubtitleInfo]
+final class AVMediaSelectionTrack: MediaPlayerTrack, SubtitleInfo {
+    // ⚑[tool=field_surface ref=AVMediaSelectionTrack:fieldmd result=6 fields size 80] `group` and
+    // `playerItem` export vpfi (declaration defaults). The only vtable entry, the initializer,
+    // has a NULL Impl (dead-stripped), so no stored values are readable.
+    let option: AVMediaSelectionOption
+    var group: AVMediaSelectionGroup? = nil
+    weak var playerItem: AVPlayerItem? = nil
+    let name: String
+    let trackID: Int32
+    let languageCode: String?
+
+    init() {
+        fatalError("L7: AVMediaSelectionTrack.init — Forward's vtable slot 0 Impl is null (dead-stripped)")
+    }
+
+    func search(with query: KSSubtitleQuery) async -> [SubtitlePart] { fatalError("L7: KSSubtitleProtocol.search") }
+    var mediaType: AVFoundation.AVMediaType { fatalError("L7: MediaPlayerTrack.mediaType") }
+    var nominalFrameRate: Float { get { fatalError("L7: MediaPlayerTrack.nominalFrameRate") } set { fatalError("L7: MediaPlayerTrack.nominalFrameRate") } }
+    var bitRate: Int64 { fatalError("L7: MediaPlayerTrack.bitRate") }
+    var reorderSize: Int32 { fatalError("L7: AVMediaSelectionTrack.reorderSize — Forward body unread") }
+    var bitDepth: Int32 { fatalError("L7: MediaPlayerTrack.bitDepth") }
+    var isEnabled: Bool { get { fatalError("L7: MediaPlayerTrack.isEnabled") } set { fatalError("L7: MediaPlayerTrack.isEnabled") } }
+    var isImageSubtitle: Bool { fatalError("L7: MediaPlayerTrack.isImageSubtitle") }
+    var rotation: UInt16 { fatalError("L7: MediaPlayerTrack.rotation") }
+    var dovi: DOVIDecoderConfigurationRecord? { fatalError("L7: MediaPlayerTrack.dovi") }
+    var fieldOrder: FFmpegFieldOrder { fatalError("L7: MediaPlayerTrack.fieldOrder") }
+    var formatDescription: CMFormatDescription? { fatalError("L7: MediaPlayerTrack.formatDescription") }
+    var subtitleID: String { fatalError("L7: SubtitleInfo.subtitleID") }
+    var delay: TimeInterval { fatalError("L7: SubtitleInfo.delay") }
+    var renderMode: SubtitleRenderMode { fatalError("L7: SubtitleInfo.renderMode") }
+    var description: String { fatalError("L7: CustomStringConvertible.description") }
 }

@@ -203,8 +203,27 @@ extension UIView {
         return nil
     }
 
-    public func centerRotate(byDegrees: Double) {
-        transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi * byDegrees / 180.0))
+    // ⚑[tool=member_surface ref=UIView.centerRotate(by:):0x101a02d60 result=by: UInt16 (ucvtf from w0&0xffff); no swift_task_*/ScM call]
+    // L7: Forward branches `by == 0` → .identity (tst w0,#0xffff @0x101a02d6c) before the rotation; not ported (body logic).
+    public func centerRotate(by: UInt16) {
+        transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi * Double(by) / 180.0))
     }
 }
+
+// Moved from IOSVideoPlayerView.swift (#fileID contiguity); keeps that file's CallKit guard.
+#if canImport(CallKit)
+extension UIApplication {
+    // ⚑[tool=member_add ref=UIApplication.sceneSize:0x101a01d1c result=dne; Forward order before isHDRScreen 0x101a02edc]
+    static var sceneSize: CGSize { @used get { fatalError("L7: UIApplication.sceneSize — Forward body unread") } }
+
+    /// @0x101a02edc — sharedApplication → FUN_101a02de0 (windows.first) → screen.currentEDRHeadroom > 1.0; no window → false.
+    public static var isHDRScreen: Bool {
+        (UIApplication.shared.windows.first?.screen.currentEDRHeadroom ?? 0) > 1.0
+    }
+
+    static var isLandscape: Bool {
+        UIApplication.shared.windows.first?.windowScene?.interfaceOrientation.isLandscape ?? false
+    }
+}
+#endif
 #endif

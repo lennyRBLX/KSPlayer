@@ -33,30 +33,6 @@ class LocalHLSServer {
     // ⚑ [String: (URL) -> Void] — value CORRECTED from M1's ()->Void: slot13 invokes the block with the
     // request's file URL (blr, x0 = fileURL; context in x20). Keep-alive block per directory-path key (self+0x20).
     public var keepAliveBlockMap: [String: (URL) -> Void] = [:]
-    private let rootDirectory: URL                    // ⚑ init param (URL value-witness copy) — was temporaryDirectory (M1 bug)
-    private let queue: DispatchQueue = DispatchQueue(label: "com.localhlsserver.queue")  // label @0x103d3df80
-    // HTTP status table — 6 pairs recovered from the static dict literal (keys read as Int; values
-    // 400/403/404 inline-confirmed, 405/500/503 length-matched to the standard messages).
-    private let statusMessages: [Int: String] = [
-        400: "Bad Request", 403: "Forbidden", 404: "Not Found",
-        405: "Method Not Allowed", 500: "Internal Server Error", 503: "Service Unavailable",
-    ]
-    // ⚑ [URL: UInt64] — the KEY was CORRECTED from the M1 [String: Int] guess: slot19
-    // (sendRetryResponse) hashes it via URL:Hashable (FUN_101b835bc → Hashable._rawHashValue on a URL).
-    // Session 79 corrects the VALUE, which that pass never checked: the binary says UInt64, not Int.
-    // ⚑[tool=export_trie_oracle ref=LocalHLSServer.retryDelayMap:$s11ProAVPlayer14LocalHLSServerC13retryDelayMap33_15C2A0C98D82F34B7E875A9CFB544E90LLSDy10Foundation3URLVs6UInt64VGvpfi result=CONFIRMED]
-    //   demangles to `[Foundation.URL : Swift.UInt64]` — `s6UInt64V`, not `Si`.
-    // NOT a spelling difference (MEMORY rule 51), three ways. (a) The same class mangles
-    // `statusMessages` as `SDySiSSG` = [Swift.Int : Swift.String], so Int vs UInt64 is a distinction
-    // this mangler makes inside this one class. (b) and (c) the BODY agrees, in sendRetryResponse
-    // (0x101b740d4–0x101b74760, 419 instr by LC_FUNCTION_STARTS), where x26 IS the loaded value —
-    // `ldr x26,[x8,x0,lsl #3]` @0x101b74288 is the subscript, `mov w26,#0x1` @0x101b742a8 the `?? 1`:
-    //   (b) `cmp x26,#0x5` / `b.lo` @0x101b74294-98 is the `delay <= 4` test taken UNSIGNED; a
-    //       `Swift.Int` emits the signed `b.lt`.
-    //   (c) `ucvtf d0, x26` @0x101b744f0 converts it for `.now() + Double(delay)` — the UNSIGNED
-    //       convert, where a `Swift.Int` emits `scvtf`.
-    // Per-URL backoff delay.
-    private var retryDelayMap: [URL: UInt64] = [:]
 
     /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).  ⚑[tool=resolve_fun_pins ref=FUN_101b705ec:0x101b705ec result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer  ⚑[tool=resolve_fun_pins ref=FUN_101b70274:0x101b70274 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.__allocating_init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer
     /// vtable slot 6 @0x101b70274 is the compiler-emitted ALLOCATING entry point for this init and has no
@@ -123,50 +99,6 @@ class LocalHLSServer {
             throw error
         }
         startListen()
-    }
-
-    /// Binary: FUN_101b7138c (vtable slot10). ⚑ name from the debug-log string "startListen()". Accepts
-    /// each connection, drives it to `.ready`, receives the HTTP request, and dispatches it. The `[weak self]`
-    /// captures in these `@Sendable` handlers are faithful to the binary (weakInit/weakLoadStrong); they
-    /// compile because ProAVPlayer is built in Swift 5 language mode (Package.swift — Forward's own mode,
-    /// since LocalHLSServer has no Sendable conformance). Per-state KSLog forms UNRESOLVED (as elsewhere).
-    @used private func startListen() {
-        listener.newConnectionHandler = { [weak self] connection in            // accept: FUN_101b71590
-            guard let self else { return }
-            connection.stateUpdateHandler = { [weak self] state in             // conn state: FUN_101b71644
-                guard let self else { return }
-                switch state {
-                case .failed:
-                    // ⚑ gated KSLog("startListen() … connection failed") omitted — KSLog form UNRESOLVED.
-                    connection.cancel()
-                case .ready:
-                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
-                        [weak self] data, _, isComplete, error in              // receive: FUN_101b72150
-                        guard let self else { return }
-                        if error != nil {
-                            // ⚑ gated KSLog("Connection failed: \(error)") omitted — KSLog form UNRESOLVED.
-                            connection.cancel()
-                            return
-                        }
-                        if let data {
-                            self.processRequest(data: data, connection: connection)
-                        }
-                        if isComplete {   // peer closed the stream (EOF) → close the connection
-                            connection.cancel()
-                        }
-                    }
-                default:
-                    break
-                }
-            }
-            connection.start(queue: self.queue)
-        }
-        listener.stateUpdateHandler = { [weak self] state in                   // listener state: FUN_101b71958
-            guard let self else { return }
-            _ = state
-            // ⚑ per-state gated KSLog (startListen() … .failed / .ready / .cancelled) omitted — KSLog form UNRESOLVED.
-        }
-        listener.start(queue: queue)
     }
 
     /// Binary: FUN_101b70b64 (vtable slot7) → outlined body FUN_101b753e8.  ⚑[tool=resolve_fun_pins ref=FUN_101b70b64:0x101b70b64 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.ping() -> ()
@@ -287,16 +219,7 @@ class LocalHLSServer {
     /// inferred. `to`'s path relative to `from`: when they share scheme + host, drop the common leading
     /// standardized path components and join the remainder with "/"; otherwise `to.path`.
     private func relativePath(from: URL, to: URL) -> String {
-        guard from.scheme == to.scheme, from.host == to.host else {
-            return to.path
-        }
-        let fromComponents = from.standardized.pathComponents
-        let toComponents = to.standardized.pathComponents
-        var i = 0
-        while i < fromComponents.count, i < toComponents.count, fromComponents[i] == toComponents[i] {
-            i += 1
-        }
-        return toComponents[i...].joined(separator: "/")
+        to.relativePath(base: from)
     }
 
     /// Binary: FUN_101b7395c (vtable slot15). Name RECOVERED (deterministic — `recover_swift_function_name.py`):
@@ -311,23 +234,13 @@ class LocalHLSServer {
     /// ⚑ private: called only by slot13 (the request dispatcher).
     private func sendErrorResponse(connection: NWConnection, statusCode: Int, message: String) {
         let statusText = statusMessages[statusCode] ?? "Error"
-        // ⚑ log-level-gated KSLog debug (the #file/#function source) omitted — KSLog form UNRESOLVED
-        //   (consistent with stop()/startListen()).
+        KSLog(level: .error, "\(statusCode) \(statusText) \(message)", file: "ProAVPlayer/LocalHLSServer.swift", function: "sendErrorResponse(connection:statusCode:message:)", line: 250)
         let body = "<html><body><h1>\(statusCode) \(statusText)</h1><p>\(message)</p></body></html>"
-        // ⚑ Content-Length uses String.count (binary calls Swift.String.count on `body`); equals the
-        //   UTF-8 byte count for this ASCII HTML.
-        let response = "HTTP/1.1 \(statusCode) \(statusText)\r\n"
-            + "Content-Type: text/html\r\nConnection: close\r\nContent-Length: \(body.count)\r\n\r\n"
-            + body
-        // send(content:contentContext:isComplete:completion:). DISASM @0x101b73df0–e08 (self=x20=connection):
-        //   x0/x1 = content (Data?)  ·  x2 = .defaultMessage  ·  w3 = isComplete = 1 (TRUE; byte 23008052
-        //   = MOVZ w3,#1)  ·  x4 = completion. `.defaultMessage` and `isComplete: true` are both the API
-        // defaults, so omitting them is equivalent (writing them explicitly emits the same call). content
-        // is Optional → no force-unwrap.  [NB: the decompile mis-casts these args; the disasm is authoritative.]
-        // Completion (FUN_101b761e8 → FUN_101b73e58): on a send error it KSLogs the error (bridged to
-        // NSError, log-level-gated — omitted, KSLog form UNRESOLVED), then ALWAYS cancels the
-        // connection (Connection: close — close after the response is written).
-        connection.send(content: response.data(using: .utf8), completion: .contentProcessed { _ in
+        let response = "HTTP/1.1 \(statusCode) \(statusText)\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: \(body.count)\r\n\r\n\(body)"
+        connection.send(content: response.data(using: .utf8), completion: .contentProcessed { error in
+            if let error {
+                KSLog(error as Error, file: "ProAVPlayer/LocalHLSServer.swift", function: "sendErrorResponse(connection:statusCode:message:)", line: 262)
+            }
             connection.cancel()
         })
     }
@@ -339,7 +252,7 @@ class LocalHLSServer {
     @used private func sendRetryResponse(connection: NWConnection, url: URL) {
         let delay = retryDelayMap[url] ?? 1
         if delay <= 4 { retryDelayMap[url] = delay * 2 }   // exp backoff; >4 stops doubling (cap 8)
-        // ⚑ The separate pre-schedule gated KSLog remains unresolved.
+        KSLog("\(url) not ready, send 503 After: \(delay)s", file: "ProAVPlayer/LocalHLSServer.swift", function: "sendRetryResponse(connection:url:)", line: 275)
         queue.asyncAfter(deadline: .now() + Double(delay)) { [weak self] in
             // Serve `url` on `connection` once it's ready (FUN_101b75a84 -> FUN_101b74760). The block
             // captures [weak self] + connection + url + delay (`delay` = param_4, pinned via `ucvtf d0,x26`
@@ -438,8 +351,7 @@ class LocalHLSServer {
                     let threshold = (scanner.scanString("#EXT-X-TARGETDURATION:") != nil
                                      ? scanner.scanDouble().map { $0 * 1.5 + 20.0 } : nil) ?? 26.0
                     if threshold <= age {
-                        // ⚑ gated KSLog (level-gated; emits "…\(fileURL.lastPathComponent),diff=\(age)")
-                        //   omitted — KSLog form UNRESOLVED (as elsewhere in the class).
+                        KSLog("keepAliveBlock url=\(fileURL.lastPathComponent),diff=\(age)", file: "ProAVPlayer/LocalHLSServer.swift", function: "processRequest(data:connection:)", line: 214)
                         keepAliveBlockMap[fileURL.deletingLastPathComponent().path]?(fileURL)
                     }
                 }
@@ -453,12 +365,79 @@ class LocalHLSServer {
     /// returning it once the header is complete. ⚑ the exact incomplete-header return path → own later unit.
     private func parseRequest(_ data: Data) -> CFHTTPMessage? {
         let message = CFHTTPMessageCreateEmpty(kCFAllocatorDefault, true).takeRetainedValue()
-        data.withUnsafeBytes { raw in
-            if let base = raw.baseAddress {
-                CFHTTPMessageAppendBytes(message, base.assumingMemoryBound(to: UInt8.self), data.count)
-            }
+        let appended = data.withUnsafeBytes { raw in
+            CFHTTPMessageAppendBytes(message, raw.baseAddress!.assumingMemoryBound(to: UInt8.self), raw.count)
         }
-        return CFHTTPMessageIsHeaderComplete(message) ? message : nil
+        guard appended, CFHTTPMessageIsHeaderComplete(message) else { return nil }
+        return message
+    }
+    private let rootDirectory: URL                    // ⚑ init param (URL value-witness copy) — was temporaryDirectory (M1 bug)
+    private let queue: DispatchQueue = DispatchQueue(label: "com.localhlsserver.queue")  // label @0x103d3df80
+    // HTTP status table — 6 pairs recovered from the static dict literal (keys read as Int; values
+    // 400/403/404 inline-confirmed, 405/500/503 length-matched to the standard messages).
+    private let statusMessages: [Int: String] = [
+        400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+        405: "Method Not Allowed", 500: "Internal Server Error", 503: "Service Unavailable",
+    ]
+    // ⚑ [URL: UInt64] — the KEY was CORRECTED from the M1 [String: Int] guess: slot19
+    // (sendRetryResponse) hashes it via URL:Hashable (FUN_101b835bc → Hashable._rawHashValue on a URL).
+    // Session 79 corrects the VALUE, which that pass never checked: the binary says UInt64, not Int.
+    // ⚑[tool=export_trie_oracle ref=LocalHLSServer.retryDelayMap:$s11ProAVPlayer14LocalHLSServerC13retryDelayMap33_15C2A0C98D82F34B7E875A9CFB544E90LLSDy10Foundation3URLVs6UInt64VGvpfi result=CONFIRMED]
+    //   demangles to `[Foundation.URL : Swift.UInt64]` — `s6UInt64V`, not `Si`.
+    // NOT a spelling difference (MEMORY rule 51), three ways. (a) The same class mangles
+    // `statusMessages` as `SDySiSSG` = [Swift.Int : Swift.String], so Int vs UInt64 is a distinction
+    // this mangler makes inside this one class. (b) and (c) the BODY agrees, in sendRetryResponse
+    // (0x101b740d4–0x101b74760, 419 instr by LC_FUNCTION_STARTS), where x26 IS the loaded value —
+    // `ldr x26,[x8,x0,lsl #3]` @0x101b74288 is the subscript, `mov w26,#0x1` @0x101b742a8 the `?? 1`:
+    //   (b) `cmp x26,#0x5` / `b.lo` @0x101b74294-98 is the `delay <= 4` test taken UNSIGNED; a
+    //       `Swift.Int` emits the signed `b.lt`.
+    //   (c) `ucvtf d0, x26` @0x101b744f0 converts it for `.now() + Double(delay)` — the UNSIGNED
+    //       convert, where a `Swift.Int` emits `scvtf`.
+    // Per-URL backoff delay.
+    private var retryDelayMap: [URL: UInt64] = [:]
+
+    /// Binary: FUN_101b7138c (vtable slot10). ⚑ name from the debug-log string "startListen()". Accepts
+    /// each connection, drives it to `.ready`, receives the HTTP request, and dispatches it. The `[weak self]`
+    /// captures in these `@Sendable` handlers are faithful to the binary (weakInit/weakLoadStrong); they
+    /// compile because ProAVPlayer is built in Swift 5 language mode (Package.swift — Forward's own mode,
+    /// since LocalHLSServer has no Sendable conformance). Per-state KSLog forms UNRESOLVED (as elsewhere).
+    @used private final func startListen() {
+        listener.newConnectionHandler = { [weak self] connection in            // accept: FUN_101b71590
+            guard let self else { return }
+            connection.stateUpdateHandler = { [weak self] state in             // conn state: FUN_101b71644
+                guard let self else { return }
+                switch state {
+                case .failed:
+                    // ⚑ gated KSLog("startListen() … connection failed") omitted — KSLog form UNRESOLVED.
+                    connection.cancel()
+                case .ready:
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+                        [weak self] data, _, isComplete, error in              // receive: FUN_101b72150
+                        guard let self else { return }
+                        if error != nil {
+                            // ⚑ gated KSLog("Connection failed: \(error)") omitted — KSLog form UNRESOLVED.
+                            connection.cancel()
+                            return
+                        }
+                        if let data {
+                            self.processRequest(data: data, connection: connection)
+                        }
+                        if isComplete {   // peer closed the stream (EOF) → close the connection
+                            connection.cancel()
+                        }
+                    }
+                default:
+                    break
+                }
+            }
+            connection.start(queue: self.queue)
+        }
+        listener.stateUpdateHandler = { [weak self] state in                   // listener state: FUN_101b71958
+            guard let self else { return }
+            _ = state
+            // ⚑ per-state gated KSLog (startListen() … .failed / .ready / .cancelled) omitted — KSLog form UNRESOLVED.
+        }
+        listener.start(queue: queue)
     }
 
     /// Binary: FUN_101b73388 (slot13 helper). ⚑ name inferred. Maps a file extension to the HTTP
@@ -468,32 +447,31 @@ class LocalHLSServer {
     /// `key`→octet-stream; default→octet-stream. ⚑ m4a→audio/mp4 width-inferred (shared "…/mp4" tail).
     private func contentType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {
+        case "m3u8":              return "application/vnd.apple.mpegurl"
         case "ts":                return "video/mp2t"
         case "mp4", "m4s", "m4v": return "video/mp4"
         case "m4a":               return "audio/mp4"
         case "aac":               return "audio/aac"
-        case "vtt":               return "text/vtt"
         case "key":               return "application/octet-stream"
-        case "m3u8":              return "application/vnd.apple.mpegurl"
+        case "vtt":               return "text/vtt"
         default:                  return "application/octet-stream"
         }
     }
 
-    /// Binary: FUN_101b75edc (slot13 helper). ⚑ name inferred. Sends `data` as an HTTP/1.1 200 response
-    /// on `connection` (Content-Type + `Cache-Control: no-store` + `Connection: keep-alive` +
-    /// Content-Length, then the bytes as one payload). Keep-alive → the connection is NOT cancelled
-    /// after the write (contrast sendErrorResponse). ⚑ completion (FUN_101b76190 → FUN_101b736e0): on a
-    /// send error it KSLogs the error (bridged to NSError, log-level-gated — KSLog form UNRESOLVED); no cancel.
-    private func sendFileResponse(connection: NWConnection, data: Data, contentType: String) {
-        var response = "HTTP/1.1 200 OK\r\nContent-Type: "
-        response.append(contentType)
-        response.append("\r\nCache-Control: no-store\r\nConnection: keep-alive\r\nContent-Length: ")
-        response.append("\(data.count)")
-        response.append("\r\n\r\n")
-        // ⚑ binary: response.data(using: .utf8) then Data.append(data) → one combined payload.
-        var payload = Data(response.utf8)
+    /// Binary: FUN_101b75edc (slot13 helper). ⚑ real name `sendSuccessResponse(connection:data:contentType:)` (#function
+    /// literal 0x103d3e5a0); kept as sendFileResponse because the protected sendRetryResponse closure calls it by
+    /// this name. HTTP/1.1 200 + Content-Type + Cache-Control + Connection + Content-Length, then the bytes as one
+    /// payload. Completion (FUN_101b76190 → FUN_101b736e0): on a send error KSLog(error) line 242, then cancel.
+    private final func sendFileResponse(connection: NWConnection, data: Data, contentType: String) {
+        let response = "HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nCache-Control: no-store\r\nConnection: keep-alive\r\nContent-Length: \(data.count)\r\n\r\n"
+        var payload = response.data(using: .utf8)!
         payload.append(data)
-        connection.send(content: payload, completion: .contentProcessed { _ in })
+        connection.send(content: payload, completion: .contentProcessed { error in
+            if let error {
+                KSLog(error as Error, file: "ProAVPlayer/LocalHLSServer.swift", function: "sendSuccessResponse(connection:data:contentType:)", line: 242)
+            }
+            connection.cancel()
+        })
     }
 
     // LocalHLSServer M2: all 8 vtable methods + every startListen/slot7/slot19 closure reconstructed.

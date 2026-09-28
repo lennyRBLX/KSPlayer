@@ -453,6 +453,51 @@ extension AVRational: Equatable {
     }
 }
 
+extension KSPlayerError {
+    // ── The 33 `static let` constants: #fileID-anchored contiguity puts them in this file ──────
+    // Each value was READ from the global its own unsafeMutableAddressor returns: 27 are
+    // statically initialised and were read straight out of the image; the remaining 6 are
+    // swift_once-guarded and their values come from the init functions (e.g. tryAgain's at
+    // 0x101a09e90 is `mov w9, #-0x23 / str w9,[x8] / stp xzr,xzr,[x8,#0x8]`). Every one has
+    // message == nil, read as the two zero words at +0x8.
+    // ⚑[tool=export_trie_oracle ref=KSPlayerError.bug.unsafeMutableAddressor:0x101a0a348 result=static-global]
+    // The FFERRTAG/-errno notes are decoded FROM the stored value, not the source of it.
+    // Order: Forward __text order of their unsafeMutableAddressors (0x101a09ea8..0x101a0a668).
+    package static let tryAgain = KSPlayerError(code: -35)  // -errno 35
+    package static let invalidArgument = KSPlayerError(code: -22)  // -errno 22
+    package static let outOfMemory = KSPlayerError(code: -12)  // -errno 12
+    package static let outOfRange = KSPlayerError(code: -34)  // -errno 34
+    package static let invalidValue = KSPlayerError(code: -22)  // -errno 22
+    package static let noSystem = KSPlayerError(code: -78)  // -errno 78
+    package static let bitstreamFilterNotFound = KSPlayerError(code: -1179861752)
+    package static let bug = KSPlayerError(code: -558323010)  // FFERRTAG(BUG!)
+    package static let bufferTooSmall = KSPlayerError(code: -1397118274)  // FFERRTAG(BUFS)
+    package static let decoderNotFound = KSPlayerError(code: -1128613112)
+    package static let demuxerNotFound = KSPlayerError(code: -1296385272)
+    package static let encoderNotFound = KSPlayerError(code: -1129203192)
+    package static let eof = KSPlayerError(code: -541478725)  // FFERRTAG(EOF )
+    package static let exit = KSPlayerError(code: -1414092869)  // FFERRTAG(EXIT)
+    package static let external = KSPlayerError(code: -542398533)  // FFERRTAG(EXT )
+    package static let filterNotFound = KSPlayerError(code: -1279870712)
+    package static let invalidData = KSPlayerError(code: -1094995529)  // FFERRTAG(INDA)
+    package static let muxerNotFound = KSPlayerError(code: -1481985528)
+    package static let optionNotFound = KSPlayerError(code: -1414549496)
+    package static let patchWelcome = KSPlayerError(code: -1163346256)  // FFERRTAG(PAWE)
+    package static let protocolNotFound = KSPlayerError(code: -1330794744)
+    package static let streamNotFound = KSPlayerError(code: -1381258232)
+    package static let bug2 = KSPlayerError(code: -541545794)  // FFERRTAG(BUG )
+    package static let unknown = KSPlayerError(code: -1313558101)  // FFERRTAG(UNKN)
+    package static let experimental = KSPlayerError(code: -733130664)
+    package static let inputChanged = KSPlayerError(code: -1668179713)
+    package static let outputChanged = KSPlayerError(code: -1668179714)
+    static let httpBadRequest = KSPlayerError(code: -808465656)
+    package static let httpUnauthorized = KSPlayerError(code: -825242872)
+    package static let httpForbidden = KSPlayerError(code: -858797304)
+    static let httpNotFound = KSPlayerError(code: -875574520)
+    package static let httpOther4xx = KSPlayerError(code: -1482175736)
+    package static let httpServerError = KSPlayerError(code: -1482175992)
+}
+
 public struct AVError: Error, Equatable {
     public var code: Int32
     public var message: String
@@ -565,3 +610,4 @@ public extension AVError {
     static let httpOther4xx = AVError(code: swift_AVERROR_HTTP_OTHER_4XX)
     static let httpServerError = AVError(code: swift_AVERROR_HTTP_SERVER_ERROR)
 }
+func setLogCallback() { fatalError("L7: KSPlayer.setLogCallback — Forward body unread") }

@@ -21,17 +21,10 @@ class SubtitleDecode: DecodeProtocol {
     var assImageRenderer: AssIncrementImageRenderer?
     private var codecContext: UnsafeMutablePointer<AVCodecContext>?
     private var subtitle: AVSubtitle = AVSubtitle()
-    // ⚑[tool=binding_gate ref=SubtitleDecode:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • assParse — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    //   RESOLVED in session 62: isASS and startTime are now `let` — both were assigned from
-    //   the init's `assetTrack` PARAMETER, so their defaults were never observable and the
-    //   faithful `let` form drops them. `assParse` deliberately still stands.
+    // ⚑[tool=field_surface ref=SubtitleDecode.assParse:idx4 result=let AssParse?] Record flags 0 (`let`).
+    //   The init assigns it exactly once — the parsed AssParse, or nil — after the header probe.
     private let startTime: Double
-    private var assParse: AssParse?
+    private let assParse: AssParse?
     private let assetTrack: FFmpegAssetTrack
     private let isASS: Bool
     private let fontsDir: String?
@@ -71,6 +64,7 @@ class SubtitleDecode: DecodeProtocol {
         startTime = assetTrack.startTime.seconds
         fontsDir = options?.fontsDir?.path
         isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.pointee.codec_id)
+        var parsed: AssParse?
         do {
             codecContext = try assetTrack.createContext(options: options)
             codecContext?.pointee.time_base = assetTrack.timebase.rational
@@ -79,12 +73,13 @@ class SubtitleDecode: DecodeProtocol {
                 self.subtitleHeader = subtitleHeader
                 let assParse = AssParse()
                 if assParse.canParse(scanner: Scanner(string: subtitleHeader)) {
-                    self.assParse = assParse
+                    parsed = assParse
                 }
             }
         } catch {
             KSLog(error as CustomStringConvertible)
         }
+        assParse = parsed
     }
 
     // ── FFmpeg provenance (P32) — every av* symbol named in this class is ffmpeg_name_oracle result=CONFIRMED
@@ -95,6 +90,123 @@ class SubtitleDecode: DecodeProtocol {
     //   ⚑[tool=ffmpeg_name_oracle ref=avsubtitle_free:0x10294d330 result=CONFIRMED]
     // decode() — base cce7002 = empty `{}`; no Forward body (DecodeProtocol no-op requirement). Faithful as-is.
     func decode() {}
+
+    // decodeFrame(from:completionHandler:) — FUN_101a69de8, the DecodeProtocol witness. Calls the synchronous  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
+    // decodeFrame(from:) above on packet.corePacket, then delivers each part as a SubtitleFrame. FUN_101a69de8  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
+    // @0x101a69e24 captures the tuple's .timebase (x2) and passes it to the frame-init getPosition helper (FUN_101a63adc,
+    // outlined into the frame build); the tuple's .timestamp (x1) is unused here (frame timing derives from part.start).
+    // The parameter is the raw pointer, and this body forwards it UNCHANGED — it loads no field
+    // out of it. Between entry and the call only x1 and x2 move; x0 and x20 are untouched:
+    //   101a69e08  mov x19, x2      101a69e0c  mov x21, x1
+    //   101a69e10  bl  0x101a69f54  101a69e14  cbz x0, 0x101a69f10   (the nil-tuple early return)
+    // So the `packet.corePacket` unwrap this body used to do belongs to the CALLER now, and the
+    // two-overload split is the binary's own: 0x101a69de8 (91 instr) ends exactly where
+    // 0x101a69f54 (278 instr) begins.
+    func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+        guard let (parts, _, timebase) = decodeFrame(from: packet) else {
+            return
+        }
+        for part in parts {
+            // timestamp/duration are set inside SubtitleFrame.init @0x101a63adc.
+            completionHandler(.success(SubtitleFrame(part: part, timebase: timebase)))
+        }
+    }
+
+    // text(subtitle:start:end:) — FUN_101a6a568. Base cce7002 `text(subtitle:)` reworked: takes start/end (baked into
+    // each part, since SubtitlePart is now a struct), assParse.parsePart returns [SubtitlePart] with a merge-vs-standalone
+    // step, and the bitmap path builds SubtitleImageInfo/BitmapSource (not the removed VideoSwresample `scale`). This
+    // reconstructs the text-rect and ASS-text (assParse) paths — faithful whenever the ASS-image feature is off (the
+    // always-current state, since AssImageParse.canParse={false}). The ASS-image and SUBTITLE_BITMAP arms are DEFERRED
+    // (see decodeFrame ⚑).
+    private func text(subtitle: AVSubtitle, start: Double, end: Double, displaySize: CGSize) -> [SubtitlePart] {
+        var parts = [SubtitlePart]()
+        var images = [SubtitleImageInfo]()
+        var attributedString: NSMutableAttributedString?
+        for i in 0 ..< Int(subtitle.num_rects) {
+            guard let rect = subtitle.rects[i]?.pointee else {
+                continue
+            }
+            if let text = rect.text {
+                if attributedString == nil {
+                    attributedString = NSMutableAttributedString()
+                }
+                attributedString?.append(NSAttributedString(string: String(cString: text)))
+            } else if let ass = rect.ass {
+                // an ASS rect without assParse is skipped, not tried as a bitmap (@0x101a6a568).
+                guard let assParse else {
+                    continue
+                }
+                // ⚑ DEFERRED here (Batch 5): the ASS-image detection (\fs strip + 4 un-nameable helpers + 10-regex +
+                //   KSOptions gate) that, when enabled, routes to assImageRenderer/pendingASSImageSubtitles. With the
+                //   feature off the rect always falls through to assParse.parsePart. FUN_101a6a568 detection @0x101a6a6c0+.
+                let scanner = Scanner(string: String(cString: ass))
+                let assParts = assParse.parsePart(scanner: scanner)
+                if let part = assParts.first {
+                    if case let .right(textInfo) = part.render, !isASS {
+                        if attributedString == nil {
+                            attributedString = NSMutableAttributedString()
+                        }
+                        // Inline-merged ASS text renders PLAIN: the binary takes textInfo.text.string and rebuilds a
+                        // bare NSAttributedString (FUN_101a6a568 cache 885 `objc_stub::string` → 895 initWithString:),
+                        // stripping attributes. Styled/positioned parts go standalone (the else branch).
+                        attributedString?.append(NSAttributedString(string: textInfo.text.string))
+                    } else {
+                        parts.append(SubtitlePart(start, end, render: part.render))
+                    }
+                }
+            } else if rect.type == SUBTITLE_BITMAP, let bitmap = rect.data.0, let palette = rect.data.1 {
+                // Tier 2b: SUBTITLE_BITMAP -> SubtitleImageInfo(.left). Net-new Forward code (replaces the removed
+                // VideoSwresample scale.transfer path). Two Foundation.Data copies — the bitmap (linesize[0]*h) and the
+                // palette (fixed AVPALETTE_SIZE = 256*4 = 1024) — plus a CGRect -> BitmapSource.palette. displaySize =
+                // the codec reference resolution. FUN_101a6a568 cache 259-362; the 0x78 stride confirms .palette=Data.
+                images.append(SubtitleImageInfo(
+                    rect: CGRect(x: Int(rect.x), y: Int(rect.y), width: Int(rect.w), height: Int(rect.h)),
+                    source: .palette(
+                        bitmap: Data(bytes: bitmap, count: Int(rect.linesize.0) * Int(rect.h)),
+                        palette: Data(bytes: palette, count: 1024),
+                        width: Int(rect.w),
+                        height: Int(rect.h),
+                        stride: Int(rect.linesize.0)
+                    ),
+                    displaySize: displaySize, // the d2/d3 parameter, not a codecContext re-read
+                    styleRole: .primary
+                ))
+            }
+        }
+        if let attributedString {
+            parts.append(SubtitlePart(start, end, render: .right(SubtitleTextInfo(text: attributedString, position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
+        }
+        // Merge the bitmap-subtitle images (built above) as .left parts, stamped with the packet start/end — the text
+        // accumulator part is emitted first, then the images. FUN_101a6a568 cache 992-1104 (stride 0x78 -> 0x88, .left).
+        for image in images {
+            parts.append(SubtitlePart(start, end, render: .left(image)))
+        }
+        return parts
+    }
+
+    // FUN_101a6a3ac — doFlushCodec() (Forward ADDITION; base cce7002 = empty `{}`). Flush the subtitle  ⚑[tool=resolve_fun_pins ref=FUN_101a6a3ac:0x101a6a3ac result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.doFlushCodec() -> ()
+    // decoder's buffers. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avcodec_flush_buffers @0x10294d260
+    // (self+0x18 `codecContext`). ⚑ UNRESOLVED → Batch 5 (spine-preserved-by-omission, cardinal rule):
+    //   the binary ALSO spawns a `Task { }` (FUN_101a03fd4) capturing self+0x10 `assImageRenderer` to
+    //   async-reset the incremental ASS renderer — but that renderer method does NOT yet exist
+    //   (AssIncrementImageRenderer is a Batch-5 skeleton with only `search` stubbed). Reconstruct the Task
+    //   body together with the renderer in Batch 5; NOT fabricated here.
+    @used func doFlushCodec() {
+        if let codecContext {
+            avcodec_flush_buffers(codecContext)
+        }
+    }
+
+    // FUN_101a6a4ec — shutdown() (base-adapted, P19/P61: base cce7002 body MINUS the removed  ⚑[tool=resolve_fun_pins ref=FUN_101a6a4ec:0x101a6a4ec result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.shutdown() -> ()
+    // VideoSwresample `scale.shutdown()` — Forward dropped the `scale` field, §8.3). Frees the decoded
+    // subtitle then the codec context. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avsubtitle_free
+    // @0x10294d330 (self+0x20 `subtitle`), avcodec_free_context @0x102d53ac8 (self+0x18 `codecContext`).
+    @used func shutdown() {
+        avsubtitle_free(&subtitle)
+        if codecContext != nil {
+            avcodec_free_context(&self.codecContext)
+        }
+    }
 
     // decodeFrame(from:) — FUN_101a69f54, `SubtitleDecode.decodeFrame(from:) -> ([SubtitlePart], Int64, Timebase)?`.
     // Forward SPLIT the base's single completion-handler decodeFrame into this SYNCHRONOUS decode core + a
@@ -161,7 +273,8 @@ class SubtitleDecode: DecodeProtocol {
             }
             end = start + duration
         }
-        var parts = text(subtitle: subtitle, start: start, end: end)
+        // displaySize = codecContext width/height (+0x70/+0x74 @0x101a6a154, `scvtf` d2/d3) passed into text() @0x101a6a178.
+        var parts = text(subtitle: subtitle, start: start, end: end, displaySize: CGSize(width: Int(codecContext.pointee.width), height: Int(codecContext.pointee.height)))
         if assImageRenderer == nil, parts.isEmpty {
             // Placeholder for an empty subtitle cue: a part covering [start, end] whose text is the normalization
             // pipeline applied to an empty string. The binary (@0x101a6a204-0x101a6a2e4) runs the same normalization it
@@ -178,124 +291,5 @@ class SubtitleDecode: DecodeProtocol {
         // rect data into parts (Forward moves this before delivery; base freed it after the loop). FUN_101a69f54 @0x101a6a1ac.
         avsubtitle_free(&subtitle)
         return (parts, timestamp, timebase)
-    }
-
-    // decodeFrame(from:completionHandler:) — FUN_101a69de8, the DecodeProtocol witness. Calls the synchronous  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
-    // decodeFrame(from:) above on packet.corePacket, then delivers each part as a SubtitleFrame. FUN_101a69de8  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
-    // @0x101a69e24 captures the tuple's .timebase (x2) and passes it to the frame-init getPosition helper (FUN_101a63adc,
-    // outlined into the frame build); the tuple's .timestamp (x1) is unused here (frame timing derives from part.start).
-    // The parameter is the raw pointer, and this body forwards it UNCHANGED — it loads no field
-    // out of it. Between entry and the call only x1 and x2 move; x0 and x20 are untouched:
-    //   101a69e08  mov x19, x2      101a69e0c  mov x21, x1
-    //   101a69e10  bl  0x101a69f54  101a69e14  cbz x0, 0x101a69f10   (the nil-tuple early return)
-    // So the `packet.corePacket` unwrap this body used to do belongs to the CALLER now, and the
-    // two-overload split is the binary's own: 0x101a69de8 (91 instr) ends exactly where
-    // 0x101a69f54 (278 instr) begins.
-    func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
-        guard let (parts, _, timebase) = decodeFrame(from: packet) else {
-            return
-        }
-        for part in parts {
-            let frame = SubtitleFrame(part: part, timebase: timebase)
-            frame.timestamp = timebase.getPosition(from: part.start)
-            if part.end.isFinite {
-                frame.duration = max(timebase.getPosition(from: part.end) - frame.timestamp, 0)
-            } else {
-                frame.duration = Int64.max - max(frame.timestamp, 0)
-            }
-            completionHandler(.success(frame))
-        }
-    }
-
-    // text(subtitle:start:end:) — FUN_101a6a568. Base cce7002 `text(subtitle:)` reworked: takes start/end (baked into
-    // each part, since SubtitlePart is now a struct), assParse.parsePart returns [SubtitlePart] with a merge-vs-standalone
-    // step, and the bitmap path builds SubtitleImageInfo/BitmapSource (not the removed VideoSwresample `scale`). This
-    // reconstructs the text-rect and ASS-text (assParse) paths — faithful whenever the ASS-image feature is off (the
-    // always-current state, since AssImageParse.canParse={false}). The ASS-image and SUBTITLE_BITMAP arms are DEFERRED
-    // (see decodeFrame ⚑).
-    private func text(subtitle: AVSubtitle, start: Double, end: Double) -> [SubtitlePart] {
-        var parts = [SubtitlePart]()
-        var images = [SubtitleImageInfo]()
-        var attributedString: NSMutableAttributedString?
-        for i in 0 ..< Int(subtitle.num_rects) {
-            guard let rect = subtitle.rects[i]?.pointee else {
-                continue
-            }
-            if let text = rect.text {
-                if attributedString == nil {
-                    attributedString = NSMutableAttributedString()
-                }
-                attributedString?.append(NSAttributedString(string: String(cString: text)))
-            } else if let ass = rect.ass, let assParse {
-                // ⚑ DEFERRED here (Batch 5): the ASS-image detection (\fs strip + 4 un-nameable helpers + 10-regex +
-                //   KSOptions gate) that, when enabled, routes to assImageRenderer/pendingASSImageSubtitles. With the
-                //   feature off the rect always falls through to assParse.parsePart. FUN_101a6a568 detection @0x101a6a6c0+.
-                let scanner = Scanner(string: String(cString: ass))
-                let assParts = assParse.parsePart(scanner: scanner)
-                if let part = assParts.first {
-                    if case let .right(textInfo) = part.render, !isASS {
-                        if attributedString == nil {
-                            attributedString = NSMutableAttributedString()
-                        }
-                        // Inline-merged ASS text renders PLAIN: the binary takes textInfo.text.string and rebuilds a
-                        // bare NSAttributedString (FUN_101a6a568 cache 885 `objc_stub::string` → 895 initWithString:),
-                        // stripping attributes. Styled/positioned parts go standalone (the else branch).
-                        attributedString?.append(NSAttributedString(string: textInfo.text.string))
-                    } else {
-                        parts.append(SubtitlePart(start, end, render: part.render))
-                    }
-                }
-            } else if rect.type == SUBTITLE_BITMAP, let bitmap = rect.data.0, let palette = rect.data.1 {
-                // Tier 2b: SUBTITLE_BITMAP -> SubtitleImageInfo(.left). Net-new Forward code (replaces the removed
-                // VideoSwresample scale.transfer path). Two Foundation.Data copies — the bitmap (linesize[0]*h) and the
-                // palette (fixed AVPALETTE_SIZE = 256*4 = 1024) — plus a CGRect -> BitmapSource.palette. displaySize =
-                // the codec reference resolution. FUN_101a6a568 cache 259-362; the 0x78 stride confirms .palette=Data.
-                images.append(SubtitleImageInfo(
-                    rect: CGRect(x: Int(rect.x), y: Int(rect.y), width: Int(rect.w), height: Int(rect.h)),
-                    source: .palette(
-                        bitmap: Data(bytes: bitmap, count: Int(rect.linesize.0) * Int(rect.h)),
-                        palette: Data(bytes: palette, count: 1024),
-                        width: Int(rect.w),
-                        height: Int(rect.h),
-                        stride: Int(rect.linesize.0)
-                    ),
-                    displaySize: CGSize(width: Double(codecContext?.pointee.width ?? 0), height: Double(codecContext?.pointee.height ?? 0)),
-                    styleRole: .primary
-                ))
-            }
-        }
-        if let attributedString {
-            parts.append(SubtitlePart(start, end, render: .right(SubtitleTextInfo(text: attributedString, position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))))
-        }
-        // Merge the bitmap-subtitle images (built above) as .left parts, stamped with the packet start/end — the text
-        // accumulator part is emitted first, then the images. FUN_101a6a568 cache 992-1104 (stride 0x78 -> 0x88, .left).
-        for image in images {
-            parts.append(SubtitlePart(start, end, render: .left(image)))
-        }
-        return parts
-    }
-
-    // FUN_101a6a3ac — doFlushCodec() (Forward ADDITION; base cce7002 = empty `{}`). Flush the subtitle  ⚑[tool=resolve_fun_pins ref=FUN_101a6a3ac:0x101a6a3ac result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.doFlushCodec() -> ()
-    // decoder's buffers. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avcodec_flush_buffers @0x10294d260
-    // (self+0x18 `codecContext`). ⚑ UNRESOLVED → Batch 5 (spine-preserved-by-omission, cardinal rule):
-    //   the binary ALSO spawns a `Task { }` (FUN_101a03fd4) capturing self+0x10 `assImageRenderer` to
-    //   async-reset the incremental ASS renderer — but that renderer method does NOT yet exist
-    //   (AssIncrementImageRenderer is a Batch-5 skeleton with only `search` stubbed). Reconstruct the Task
-    //   body together with the renderer in Batch 5; NOT fabricated here.
-    @used func doFlushCodec() {
-        if let codecContext {
-            avcodec_flush_buffers(codecContext)
-        }
-    }
-
-    // FUN_101a6a4ec — shutdown() (base-adapted, P19/P61: base cce7002 body MINUS the removed  ⚑[tool=resolve_fun_pins ref=FUN_101a6a4ec:0x101a6a4ec result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.shutdown() -> ()
-    // VideoSwresample `scale.shutdown()` — Forward dropped the `scale` field, §8.3). Frees the decoded
-    // subtitle then the codec context. ⚑ FFmpeg CONFIRMED (ffmpeg_name_oracle): avsubtitle_free
-    // @0x10294d330 (self+0x20 `subtitle`), avcodec_free_context @0x102d53ac8 (self+0x18 `codecContext`).
-    @used func shutdown() {
-        avsubtitle_free(&subtitle)
-        if codecContext != nil {
-            avcodec_free_context(&self.codecContext)
-        }
     }
 }

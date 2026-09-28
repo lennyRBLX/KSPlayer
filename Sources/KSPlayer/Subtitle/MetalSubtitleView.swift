@@ -4,6 +4,7 @@
 //
 //  Forward 1.3.17 — NEW Metal subtitle-overlay view (P4 M1 structure). §8.3. Bodies → P4 M2.
 //
+import Metal
 import Combine
 import CoreGraphics
 import Foundation
@@ -81,6 +82,8 @@ class MetalSubtitleView: MTKView {
             #endif
         }
     }
+    @used final func mtkView(_ p0: MTKView, drawableSizeWillChange: CGSize) { fatalError("L7: MetalSubtitleView.mtkView — Forward body unread") }
+    final func draw(in p0: MTKView) { fatalError("L7: MetalSubtitleView.draw — Forward body unread") }
     private var cancellables: Set<AnyCancellable> = [] // offset global 0x1044ef5d0 (empty-set singleton)
     private var subtitleImages: [SubtitleImageInfo] = [] // offset global 0x1044ef5c0 -> field offset 0x40
     private var pendingTexts: [SubtitleTextInfo] = [] // offset global 0x1044ef5c8 -> field offset 0x48
@@ -94,5 +97,49 @@ class MetalSubtitleView: MTKView {
     required init(coder: NSCoder) {
         super.init(coder: coder)
     }
-    // ⚑ UNRESOLVED → P4 M2: the Metal subtitle render bodies
+    // ⚑ UNRESOLVED → P4 M2: the Metal subtitle render bodies. In Forward, mtkView(_:drawableSizeWillChange:)
+    //   @0x101ac0d48, draw(in:) @0x101ac0e24 and the init sink are absent here. They are the callers of
+    //   the slot-40 method below.
+
+    #if os(iOS)
+    /// Vtable slot 40 @0x101ac0a90 (flags 0x10, the last of 24 entries starting at slot 17). Argument:
+    /// Optional<CGSize> as x0/x1 plus tag w2. On nil it falls back to `drawableSize`. It divides by
+    /// UITraitCollection.current.displayScale and calls layoutSubtitle with literal 1. It stores the
+    /// pair into subtitleImages/pendingTexts and tail-calls setNeedsDisplay.
+    /// `parts` (0x5d8) and `playRatio` (0x5e0) are loaded before the trait-collection sends.
+    @used func updateSubtitle(size: CGSize?) { // name inferred; @used keeps the body while its callers are absent
+        let size = size ?? drawableSize
+        let parts = parts
+        let playRatio = playRatio
+        let scale = UITraitCollection.current.displayScale
+        (subtitleImages, pendingTexts) = layoutSubtitle(playRatio: playRatio, size: CGSize(width: size.width / scale, height: size.height / scale), fontWidthMode: 1, parts: parts)
+        setNeedsDisplay()
+    }
+    #endif
+}
+
+// AssLayerSource @0x1039f23bc
+// ⚑[tool=field_surface ref=AssLayerSource:fieldmd result=7 let] Every record lacks IsVar; `bitmap`
+// resolves to Foundation.Data and `color` to SIMD4<Float>.
+public struct AssLayerSource {
+    public let bitmap: Data
+    public let width: Int
+    public let height: Int
+    public let stride: Int
+    public let origin: SIMD2<Float>
+    public let size: SIMD2<Float>
+    public let color: SIMD4<Float>
+}
+
+// AssAtlasInstance @0x1039f2398 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names). Placement: gap_lower(inferred) (MetalSubtitleView.swift..GestureView.swift).
+// ⚑[tool=type_surface ref=AssAtlasInstance:0x1039f2398 result=private struct AssAtlasInstance]
+// ⚑[tool=field_surface ref=AssAtlasInstance:fieldmd result=5 var] Lazy owner (no build metadata);
+// the fields are taken from Forward's record order, IsVar bits and resolved types.
+private struct AssAtlasInstance {
+    var origin: SIMD2<Float>
+    var size: SIMD2<Float>
+    var uvOrigin: SIMD2<Float>
+    var uvSize: SIMD2<Float>
+    var color: SIMD4<Float>
 }

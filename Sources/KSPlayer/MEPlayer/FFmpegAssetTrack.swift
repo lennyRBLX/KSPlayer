@@ -9,17 +9,6 @@ import AVFoundation
 import FFmpegKit
 import Libavformat
 
-// ⚑ Forward-added protocol (absent from KSPlayer source). Resolved from the FFmpegAssetTrack.bitStreamFilter
-//   field-record symref → protocol descriptor 0x1039f0820 (kind=Protocol). Requirements deferred
-//   (minimal no-conformer declare). The field is a 16-byte class-existential (init nil): the descriptor's
-//   own class-constraint flag reads Any, so the class layout comes from the field-site `& AnyObject`,
-//   not the protocol — kept faithful to the descriptor.
-// ⚑[tool=name_type_at_addr ref=BitStreamFilter:0x1039f0820 result=protocol(kind=3,non-class-constrained)]
-// ⚑ `public` is FORCED by type visibility: FFmpegAssetTrack.bitStreamFilter carries a
-//   property descriptor (public-exclusive), and a public stored property's type must be
-//   public. The protocol's own access is not separately observable.
-// ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter:vpMV result=public ⇒ BitStreamFilter public by the type-visibility rule]
-public protocol BitStreamFilter {}
 
 // ⚑ `final` is DERIVED, not stylistic, and it is load-bearing for KSMEPlayer.infos().
 //   KSMEPlayer.infos() @0x101a18f80-0x101a19144 filters its tracks with an EXACT class-identity
@@ -45,9 +34,58 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     //   and it blocked every commit to this file.)
     public private(set) var trackID: Int32 = 0
     public let codecName: String
-    public var profileName: String?                        // ⚑ 3 NEW · init population deferred (codec profile name via FUN_102e676a0); layout-first nil
+    public let profileName: String?                        // ⚑ 3 NEW · init population deferred (codec profile name via FUN_102e676a0); layout-first nil
+
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.renderMode.getter:0x101a1855c result=45-instr]
+    /// `ldrb [x20,#0xe8]` is `isImageSubtitle` and `tbnz` returns case 0. Otherwise the 40-byte
+    /// optional existential at 0x108 (`subtitleRender`) is copied out and nil-checked; non-nil
+    /// also returns case 0. The remaining path re-runs the same five-constant `isSrt` table at
+    /// 0x1044e8bc0 and ends `mov w8,#1` / `cinc w0,w8,ne` ⇒ 2 when srt, else 1.
+    /// SubtitleRenderMode case indices: image 0, assView 1, srtView 2.
+    public var renderMode: SubtitleRenderMode {
+        if isImageSubtitle || subtitleRender != nil {
+            return .image
+        }
+        return isSrt ? .srtView : .assView
+    }
+
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.isSrt.getter:0x101a18610 result=16-instr]
+    /// A set-membership test on `codec_id`: four constants compared at once via `cmeq.4s`
+    /// against the vector at 0x1044e8bc0, plus a fifth scalar at +0x10. Those five int32s read
+    /// 0x17008, 0x17012, 0x17002, 0x17011, 0x17005 = SRT, WEBVTT, TEXT, SUBRIP, MOV_TEXT.
+    /// The SET is decidable; the source's ORDER is not, because the compiler split it 4+1 to
+    /// vectorise. Written in enum order.
+    public var isSrt: Bool {
+        switch codecpar.pointee.codec_id {
+        case AV_CODEC_ID_TEXT, AV_CODEC_ID_MOV_TEXT, AV_CODEC_ID_SRT, AV_CODEC_ID_SUBRIP, AV_CODEC_ID_WEBVTT:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.isDVBTeletext.getter:0x101a1f2f0 result=6-instr]
+    /// `ldr x8,[x20,#0xb8]` is `codecpar`, `ldr w8,[x8,#0x4]` is `codec_id`, then
+    /// `sub w8,w8,#0x17000` / `cmp w8,#0x7` / `cset eq` ⇒ codec_id == 0x17007, which is
+    /// AV_CODEC_ID_DVB_TELETEXT (index 7 of the 0x17000 subtitle block in this build's header).
+    public var isDVBTeletext: Bool {
+        codecpar.pointee.codec_id == AV_CODEC_ID_DVB_TELETEXT
+    }
     public var name: String = ""
     public private(set) var languageCode: String?
+
+    public var isEnabled: Bool {
+        get {
+            stream?.pointee.discard == AVDISCARD_DEFAULT
+        }
+        set {
+            var discard = newValue ? AVDISCARD_DEFAULT : AVDISCARD_ALL
+            if mediaType == .subtitle, !isImageSubtitle {
+                discard = AVDISCARD_DEFAULT
+            }
+            stream?.pointee.discard = discard
+        }
+    }
     public var nominalFrameRate: Float = 0
     public private(set) var avgFrameRate = Timebase.defaultValue
     public private(set) var realFrameRate = Timebase.defaultValue
@@ -55,14 +93,14 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     public let mediaType: AVFoundation.AVMediaType
     public let formatName: String?
     public let bitDepth: Int32
-    public var stream: UnsafeMutablePointer<AVStream>?
+    public let stream: UnsafeMutablePointer<AVStream>?
     package var startTime = CMTime.zero        // ⚑ package (Forward-fidelity): RemuxerIOAction (ProAVPlayer module) reads this cross-module — binary-arbitrated; exact modifier under-included §1 (could be public)
-    public var codecpar: UnsafeMutablePointer<AVCodecParameters>   // ⚑ retyped value→pointer (+0xb8); designated init derefs via `let codecpar = codecparPtr.pointee`
+    public let codecpar: UnsafeMutablePointer<AVCodecParameters>   // ⚑ retyped value→pointer (+0xb8); designated init derefs via `let codecpar = codecparPtr.pointee`
     package var timebase: Timebase = .defaultValue  // ⚑ package: see startTime — cross-module read by RemuxerIOAction.performRead/ptsToSeconds (FUN_101a32e28)  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
     let bitsPerRawSample: Int32
-    public let formatDescription: CMFormatDescription?   // moved up to bin +0xd0 (before audioDescriptor)
+    public var formatDescription: CMFormatDescription?   // ⚑[tool=field_surface ref=FFmpegAssetTrack.formatDescription:idx17 result=var] vpfi 0x10002d9d4 = nil; moved up to bin +0xd0 (before audioDescriptor)
     public let audioDescriptor: AudioDescriptor?
-    public var audioFormat: AVAudioFormat?                 // ⚑ 20 NEW · init population deferred (audio branch AVAudioFormat(cmAudioFormatDescription:))
+    public let audioFormat: AVAudioFormat?                 // ⚑ 20 NEW · init population deferred (audio branch AVAudioFormat(cmAudioFormatDescription:))
     public let isImageSubtitle: Bool
     public var delay: TimeInterval = 0
     public var scale: Float = 1.0                          // ⚑ 23 NEW · prologue init 1.0 (0x3f800000) — confirmed unconditional
@@ -141,8 +179,7 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
 
     convenience init?(stream: UnsafeMutablePointer<AVStream>) {
         let codecpar = stream.pointee.codecpar.pointee
-        self.init(codecpar: stream.pointee.codecpar)   // ⚑ pass the pointer (stored field retyped +0xb8); local `codecpar` value serves the reads below
-        self.stream = stream
+        self.init(codecpar: stream.pointee.codecpar, stream: stream)   // ⚑ pass the pointer (stored field retyped +0xb8); local `codecpar` value serves the reads below. `stream` rides in because Forward's field is `let` (field record binding) — Forward has no init(codecpar:) symbol, so the label change is unobservable
         let metadata = toDictionary(stream.pointee.metadata)
         if let value = metadata["variant_bitrate"] ?? metadata["BPS"], let bitRate = Int64(value) {
             self.bitRate = bitRate
@@ -195,8 +232,11 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
         //        avcodec_string(&buf, buf.count, codecpar, 0)
     }
 
-    init?(codecpar codecparPtr: UnsafeMutablePointer<AVCodecParameters>) {
+    init?(codecpar codecparPtr: UnsafeMutablePointer<AVCodecParameters>, stream: UnsafeMutablePointer<AVStream>?) {
+        self.stream = stream
         self.codecpar = codecparPtr
+        profileName = nil // L7: Forward fills this from the codec profile (FUN_102e676a0); not read
+        audioFormat = nil // L7: Forward's audio branch builds AVAudioFormat(cmAudioFormatDescription:); not read
         let codecpar = codecparPtr.pointee   // ⚑ local value copy keeps the dense codecpar.X reads unchanged; stored field is the pointer (+0xb8)
         bitRate = codecpar.bit_rate
         // codec_tag byte order is LSB first CMFormatDescription.MediaSubType(rawValue: codecpar.codec_tag.bigEndian)
@@ -325,91 +365,13 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
         try codecpar.pointee.createContext(options: options)
     }
 
-    public var isEnabled: Bool {
-        get {
-            stream?.pointee.discard == AVDISCARD_DEFAULT
-        }
-        set {
-            var discard = newValue ? AVDISCARD_DEFAULT : AVDISCARD_ALL
-            if mediaType == .subtitle, !isImageSubtitle {
-                discard = AVDISCARD_DEFAULT
-            }
-            stream?.pointee.discard = discard
-        }
-    }
-
-    // ── s106: the nine MEMBER_MISSING members of this class, each read from its own body ──
-    // Access: the three computed properties each carry a property descriptor (vpMV), which is
-    // public-exclusive, so `public` is read rather than chosen. The six methods carry no such
-    // symbol and this class is non-`final`, so their access is NOT observable — they are left
-    // unmarked (internal) rather than asserted public.
-
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.discardAll():0x101a20f9c result=5-instr]
-    /// `ldr x8,[x20,#0x98]` is `stream`, `cbz` is the optional guard, then
-    /// `mov w9,#0x30` / `str w9,[x8,#0x44]`. In THIS build's AVStream `discard` is at 0x44
-    /// (codecpar sits at 0x10 here, unlike stock), and 48 is AVDISCARD_ALL.
-    func discardAll() {
-        stream?.pointee.discard = AVDISCARD_ALL
-    }
-
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.flush():0x101a20fb0 result=18-instr]
-    /// Loads `subtitle` (0x100), guards nil, and dispatches the vtable entry at metadata
-    /// offset 0x198 with `movi.2d v0,#0` — a Double 0.0. Slot = (0x198-0xd0)/8 = 25, and slot
-    /// 25's impl 0x101a5ba30 saves that Double, reads an options Bool, and `fcsel`s either it
-    /// or 0.0 into the field at 0x10 = `seekTime`. Decoded from the slot, never counted from
-    /// declaration order.
-    /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot25@0x101a5ba30 result=seek(time:)]
-    func flush() {
-        subtitle?.seek(time: 0)
-    }
-
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.stop():0x101a1be30 result=17-instr]
-    /// Same shape as `flush`, dispatching metadata offset 0x1c0 ⇒ slot 30, impl 0x101a5bc34.
-    /// That impl is arity-0 (it never reads x0), returns early when the state byte at 0x28 is
-    /// 0 (.idle), sets it to 3 (.closed) and drains the render queue — `shutdown()`.
-    /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot30@0x101a5bc34 result=shutdown()]
-    /// REJECTED anchor: reconstruction/build_match_release.json proposes `putPacket` for
-    /// 0x101a5bc34 at similarity 0.5342 with 3603 matches over threshold — a fingerprint that
-    /// cannot discriminate is never identity, and putPacket takes an argument this body never
-    /// reads.
-    func stop() {
-        subtitle?.shutdown()
-    }
-
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.isDVBTeletext.getter:0x101a1f2f0 result=6-instr]
-    /// `ldr x8,[x20,#0xb8]` is `codecpar`, `ldr w8,[x8,#0x4]` is `codec_id`, then
-    /// `sub w8,w8,#0x17000` / `cmp w8,#0x7` / `cset eq` ⇒ codec_id == 0x17007, which is
-    /// AV_CODEC_ID_DVB_TELETEXT (index 7 of the 0x17000 subtitle block in this build's header).
-    public var isDVBTeletext: Bool {
-        codecpar.pointee.codec_id == AV_CODEC_ID_DVB_TELETEXT
-    }
-
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.isSrt.getter:0x101a18610 result=16-instr]
-    /// A set-membership test on `codec_id`: four constants compared at once via `cmeq.4s`
-    /// against the vector at 0x1044e8bc0, plus a fifth scalar at +0x10. Those five int32s read
-    /// 0x17008, 0x17012, 0x17002, 0x17011, 0x17005 = SRT, WEBVTT, TEXT, SUBRIP, MOV_TEXT.
-    /// The SET is decidable; the source's ORDER is not, because the compiler split it 4+1 to
-    /// vectorise. Written in enum order.
-    public var isSrt: Bool {
-        switch codecpar.pointee.codec_id {
-        case AV_CODEC_ID_TEXT, AV_CODEC_ID_MOV_TEXT, AV_CODEC_ID_SRT, AV_CODEC_ID_SUBRIP, AV_CODEC_ID_WEBVTT:
-            return true
-        default:
-            return false
-        }
-    }
-
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.renderMode.getter:0x101a1855c result=45-instr]
-    /// `ldrb [x20,#0xe8]` is `isImageSubtitle` and `tbnz` returns case 0. Otherwise the 40-byte
-    /// optional existential at 0x108 (`subtitleRender`) is copied out and nil-checked; non-nil
-    /// also returns case 0. The remaining path re-runs the same five-constant `isSrt` table at
-    /// 0x1044e8bc0 and ends `mov w8,#1` / `cinc w0,w8,ne` ⇒ 2 when srt, else 1.
-    /// SubtitleRenderMode case indices: image 0, assView 1, srtView 2.
-    public var renderMode: SubtitleRenderMode {
-        if isImageSubtitle || subtitleRender != nil {
-            return .image
-        }
-        return isSrt ? .srtView : .assView
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.timestamp(for:):0x101a20e30 result=52-instr]
+    /// `CMTime.seconds.getter` on `startTime`, then `fmul` by Double(int32 at 0xc4 = den) and
+    /// `fdiv` by Double(int32 at 0xc0 = num), `fcvtzs` to Int64, and `subs` from the parameter
+    /// with an overflow trap. That multiply-then-divide-then-truncate is exactly
+    /// `Timebase.getPosition(from:)`, already declared in this module and inlined here.
+    @used func timestamp(for value: Int64) -> Int64 {
+        value - timebase.getPosition(from: startTime.seconds)
     }
 
     /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.seconds(for:):0x101a20f00 result=39-instr]
@@ -422,35 +384,33 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     /// ⚑[tool=bind_oracle ref=__got:0x1041132c0 result=CMTime.init(value:timescale:)]
     /// ⚑[tool=bind_oracle ref=__got:0x1041132b8 result=CMTime.-infix]
     /// ⚑[tool=bind_oracle ref=__got:0x1041132d0 result=CMTime.seconds.getter]
-    func seconds(for value: Int64) -> Double {
+    @used func seconds(for value: Int64) -> Double {
         (timebase.cmtime(for: value) - startTime).seconds
     }
 
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.timestamp(for:):0x101a20e30 result=52-instr]
-    /// `CMTime.seconds.getter` on `startTime`, then `fmul` by Double(int32 at 0xc4 = den) and
-    /// `fdiv` by Double(int32 at 0xc0 = num), `fcvtzs` to Int64, and `subs` from the parameter
-    /// with an overflow trap. That multiply-then-divide-then-truncate is exactly
-    /// `Timebase.getPosition(from:)`, already declared in this module and inlined here.
-    func timestamp(for value: Int64) -> Int64 {
-        value - timebase.getPosition(from: startTime.seconds)
+    // ── s106: the nine MEMBER_MISSING members of this class, each read from its own body ──
+    // Access: the three computed properties each carry a property descriptor (vpMV), which is
+    // public-exclusive, so `public` is read rather than chosen. The six methods carry no such
+    // symbol and this class is non-`final`, so their access is NOT observable — they are left
+    // unmarked (internal) rather than asserted public.
+
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.discardAll():0x101a20f9c result=5-instr]
+    /// `ldr x8,[x20,#0x98]` is `stream`, `cbz` is the optional guard, then
+    /// `mov w9,#0x30` / `str w9,[x8,#0x44]`. In THIS build's AVStream `discard` is at 0x44
+    /// (codecpar sits at 0x10 here, unlike stock), and 48 is AVDISCARD_ALL.
+    @used func discardAll() {
+        stream?.pointee.discard = AVDISCARD_ALL
     }
 
-    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.transcode(packet:):0x101a1ae90 result=64-instr]
-    /// `swift_allocObject(size: 0x48, align: 7)` for a `Packet`, whose default initializer runs
-    /// inline — the numeric fields and `isFlush` are zeroed and `corePacket` is filled from
-    /// av_packet_alloc. Then av_packet_ref copies the incoming packet into it, `self` is stored
-    /// into `assetTrack` at 0x40 (old value released, new retained, then the `didSet` observer
-    /// at 0x101a637d0 runs), and finally `subtitle` (0x100) dispatches metadata offset 0x1a0 ⇒
-    /// slot 26, impl 0x101a5bab4 — which takes x0 and branches on the state byte at 0x28 being
-    /// 2 (.flush), i.e. `putPacket(packet:)`.
-    /// ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
-    /// ⚑[tool=ffmpeg_name_oracle ref=av_packet_ref:0x102d622ec result=CONFIRMED]
-    /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot26@0x101a5bab4 result=putPacket(packet:)]
-    func transcode(packet: UnsafeMutablePointer<AVPacket>) {
-        let newPacket = Packet()
-        av_packet_ref(newPacket.corePacket, packet)
-        newPacket.assetTrack = self
-        subtitle?.putPacket(packet: newPacket)
+    /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.flush():0x101a20fb0 result=18-instr]
+    /// Loads `subtitle` (0x100), guards nil, and dispatches the vtable entry at metadata
+    /// offset 0x198 with `movi.2d v0,#0` — a Double 0.0. Slot = (0x198-0xd0)/8 = 25, and slot
+    /// 25's impl 0x101a5ba30 saves that Double, reads an options Bool, and `fcsel`s either it
+    /// or 0.0 into the field at 0x10 = `seekTime`. Decoded from the slot, never counted from
+    /// declaration order.
+    /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot25@0x101a5ba30 result=seek(time:)]
+    func flush() {
+        subtitle?.seek(time: 0)
     }
 }
 

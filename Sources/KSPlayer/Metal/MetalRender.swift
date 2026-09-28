@@ -12,32 +12,14 @@ import QuartzCore
 import simd
 
 class MetalRender {
-    public static let device = MTLCreateSystemDefaultDevice()!
-    /// ⚑[tool=disassemble ref=MetalRender.mtlTextureCache:addressor@0x101a82f14 once-init@0x101a83794 result=45-instr]
-    /// A `swift_once`-guarded static: the addressor checks the token at 0x1044eda8, runs the init
-    /// at 0x101a83794, and returns the storage 0x104c636e8. The init is one CoreVideo call whose
-    /// every operand is named:
-    ///   `x0 = [kCFAllocatorDefault]`  __got 0x104108c40
-    ///   `x1 = 0`, `x3 = 0`            the two attribute dictionaries, both nil
-    ///   `x2 = [0x104c636e0]`          which the trie names `static MetalRender.device : MTLDevice`
-    ///                                 — the property declared directly above
-    ///   `x4 = sp`                     the out-parameter, read back and stored to 0x104c636e8
-    ///   ⚑[tool=bind_oracle ref=__got:0x1041087b8 result=_CVMetalTextureCacheCreate]
-    /// The function's own result is discarded — nothing branches on it — so there is no `guard`
-    /// and no error path to write.
-    /// ⚑ `let`, not `var`, and that is read: the trie exports an `unsafeMutableAddressor` and a
-    /// getter for this static and NO setter. The remaining stores in the body are the
-    /// `___stack_chk_guard` load/compare pair (__got 0x10410bc10), not a second write.
-    /// Access read from its vpMV.
-    /// ⚑ `nonisolated(unsafe)` is a COMPILER requirement, not a binary reading: strict concurrency
-    /// rejects a static of the non-Sendable `CVMetalTextureCache?` without it. The annotation has
-    /// no runtime representation, so it cannot diverge from the image; it is the same device this
-    /// repo already uses on the KSOptions statics.
-    nonisolated(unsafe) public static let mtlTextureCache: CVMetalTextureCache? = {
-        var cache: CVMetalTextureCache?
-        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
-        return cache
-    }()
+
+    // s100 @0x101a83020 (278 instr) is an MTLLibrary method: body reads self from x20 (`mov x0,x20` -> newFunctionWithName:), callers pass x5 = swift_getObjectType(library).
+    static func makePipelineState(fragmentFunction: String, isSphere: Bool = false, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
+        library.makePipelineState(vertexFunction: isSphere ? "mapSphereTexture" : "mapTexture", fragmentFunction: fragmentFunction, bitDepth: bitDepth)
+    }
+    static func makePipelineState(vertexFunction: String, fragmentFunction: String, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
+        library.makePipelineState(vertexFunction: vertexFunction, fragmentFunction: fragmentFunction, bitDepth: bitDepth)
+    }
     static let library: MTLLibrary = {
         var library: MTLLibrary!
         library = device.makeDefaultLibrary()
@@ -54,7 +36,7 @@ class MetalRender {
     /// (`typedef NS_ENUM(NSUInteger, MTLStorageMode) { MTLStorageModeShared = 0, ... }`), which
     /// is what licenses spelling it `.shared` rather than `MTLStorageMode(rawValue: 0)!`.
     /// Trie: `static KSPlayer.MetalRender.fragmentTextureStorageMode.getter : __C.MTLStorageMode`.
-    nonisolated(unsafe) static var fragmentTextureStorageMode: MTLStorageMode = .shared
+    @used nonisolated(unsafe) static var fragmentTextureStorageMode: MTLStorageMode = .shared
     static let commandQueue = MetalRender.device.makeCommandQueue()
     static let samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()
@@ -149,14 +131,32 @@ class MetalRender {
             encoder.setFragmentBuffer(leftShift, offset: 0, index: 2)
         }
     }
-
-    // s100 @0x101a83020 (278 instr) is an MTLLibrary method: body reads self from x20 (`mov x0,x20` -> newFunctionWithName:), callers pass x5 = swift_getObjectType(library).
-    static func makePipelineState(fragmentFunction: String, isSphere: Bool = false, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
-        library.makePipelineState(vertexFunction: isSphere ? "mapSphereTexture" : "mapTexture", fragmentFunction: fragmentFunction, bitDepth: bitDepth)
-    }
-    static func makePipelineState(vertexFunction: String, fragmentFunction: String, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
-        library.makePipelineState(vertexFunction: vertexFunction, fragmentFunction: fragmentFunction, bitDepth: bitDepth)
-    }
+    public static let device = MTLCreateSystemDefaultDevice()!
+    /// ⚑[tool=disassemble ref=MetalRender.mtlTextureCache:addressor@0x101a82f14 once-init@0x101a83794 result=45-instr]
+    /// A `swift_once`-guarded static: the addressor checks the token at 0x1044eda8, runs the init
+    /// at 0x101a83794, and returns the storage 0x104c636e8. The init is one CoreVideo call whose
+    /// every operand is named:
+    ///   `x0 = [kCFAllocatorDefault]`  __got 0x104108c40
+    ///   `x1 = 0`, `x3 = 0`            the two attribute dictionaries, both nil
+    ///   `x2 = [0x104c636e0]`          which the trie names `static MetalRender.device : MTLDevice`
+    ///                                 — the property declared directly above
+    ///   `x4 = sp`                     the out-parameter, read back and stored to 0x104c636e8
+    ///   ⚑[tool=bind_oracle ref=__got:0x1041087b8 result=_CVMetalTextureCacheCreate]
+    /// The function's own result is discarded — nothing branches on it — so there is no `guard`
+    /// and no error path to write.
+    /// ⚑ `let`, not `var`, and that is read: the trie exports an `unsafeMutableAddressor` and a
+    /// getter for this static and NO setter. The remaining stores in the body are the
+    /// `___stack_chk_guard` load/compare pair (__got 0x10410bc10), not a second write.
+    /// Access read from its vpMV.
+    /// ⚑ `nonisolated(unsafe)` is a COMPILER requirement, not a binary reading: strict concurrency
+    /// rejects a static of the non-Sendable `CVMetalTextureCache?` without it. The annotation has
+    /// no runtime representation, so it cannot diverge from the image; it is the same device this
+    /// repo already uses on the KSOptions statics.
+    nonisolated(unsafe) public static let mtlTextureCache: CVMetalTextureCache? = {
+        var cache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        return cache
+    }()
 }
 extension MTLLibrary {
     func makePipelineState(vertexFunction: String, fragmentFunction: String, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
@@ -278,3 +278,41 @@ public extension MTLRenderCommandEncoder {
         endEncoding()
     }
 }
+
+// The only conformer whose witness table is walkable in this image. The other two are RealityKit
+// types (TextureResource and TextureResource.DrawableQueue) whose conformances the binary records
+// but whose descriptors are out of image, so they are not declared here.
+extension CAMetalLayer: Drawable {
+    func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: CAMetalLayer.updateInfo — Forward body unread") }
+    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: CAMetalLayer.draw — Forward body unread") }
+    @used func clear() { fatalError("L7: CAMetalLayer.clear — Forward body unread") }
+}
+
+// VertexIn @0x1039f1034 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (MetalRender.swift..SphereDisplayModel.swift).
+// ⚑[tool=type_surface ref=VertexIn:0x1039f1034 result=struct VertexIn]
+// ⚑[tool=field_surface ref=VertexIn:fieldmd result=2 let] Lazy owner (no build metadata); fields follow
+// Forward's record order, IsVar bits and resolved types.
+struct VertexIn {
+    let pos: SIMD4<Float>
+    let uv: SIMD2<Float>
+}
+
+#if canImport(RealityKit)
+import RealityKit
+
+extension RealityKit.TextureResource.Drawable {
+    @used func present(commandBuffer: MTLCommandBuffer) { fatalError("L7: Drawable.present — Forward body unread") }
+}
+
+extension RealityKit.TextureResource {
+    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: TextureResource.draw — Forward body unread") }
+    @used func clear() { fatalError("L7: TextureResource.clear — Forward body unread") }
+}
+
+extension RealityKit.TextureResource.DrawableQueue {
+    // ⚑[tool=member_add ref=DrawableQueue.clear():0x10000e52c result=ICF-folded into the shared 1-instr `ret`] empty body.
+    @used func clear() {}
+    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: DrawableQueue.draw — Forward body unread") }
+}
+#endif

@@ -9,6 +9,10 @@ import AVFoundation
 import CoreMedia
 import CoreServices
 import FFmpegKit // Forward: AbstractAVIOContext's addSub/urlContext are FFmpeg-typed vtable slots (AVIOContext / URLContext / AVIOInterruptCB)
+import Foundation
+import Metal
+import OSLog
+import QuartzCore
 #if canImport(UIKit)
 import UIKit
 
@@ -219,14 +223,19 @@ public struct VideoAdaptationState {
     public internal(set) var bitRateStates: [BitRateState]
     public internal(set) var currentPlaybackTime: TimeInterval = 0
     public internal(set) var isPlayable: Bool = false
-    public internal(set) var loadedCount: Int = 0
+    // ⚑[tool=field_surface ref=VideoAdaptationState.loadedCount result=forward Swift.UInt; vpfi 0x10002d9d4 = 0]
+    public internal(set) var loadedCount: UInt = 0
 }
 
+// ⚑[tool=field_surface ref=ClockProcessType:0x1039edb30 result=7 records: dropFrame(count: Int), empty, remain, next, dropGOPPacket, flush, seek]
+//   `dropNextFrame` → `dropFrame(count:)` (payload records sort first, so its source slot is not
+//   fixed by the record). `dropNextPacket` had no producer and no Forward record: removed with its
+//   switch arm. No declared conformances, so the payload case costs the synthesized `==`.
 public enum ClockProcessType {
+    case dropFrame(count: Int)
+    case empty
     case remain
     case next
-    case dropNextFrame
-    case dropNextPacket
     case dropGOPPacket
     case flush
     case seek
@@ -271,7 +280,8 @@ extension CapacityProtocol {
 //                      the MIN
 // ⚑[tool=llvm-objdump ref=KSOptions.playable:0x1019b8650-0x1019b868c result=d9-max-d8-min]
 public struct LoadingState {
-    public let maxLoadedTime: TimeInterval
+    // ⚑[tool=field_surface ref=LoadingState.maxLoadedTime result=forward var (IsVar); siblings let]
+    public var maxLoadedTime: TimeInterval
     public let minLoadedTime: TimeInterval
     public let progress: UInt8
     public let packetCount: UInt
@@ -365,7 +375,9 @@ public enum KSPlayerErrorCode: String {
 /// inlines construction (`_swift_allocError` + store {code, message}), so no distinct init survives to
 /// decompile. ⚑ base-regression: the reconstruction base still carries the upstream `extension NSError`
 /// (below); migrating its call sites to this struct is a tracked structural gap.
-public struct KSPlayerError: Error {
+// ⚑[tool=type_surface ref=KSPlayerError:0x1039edbd4 result=CustomNSError@0x103568710,CustomStringConvertible@0x103568750]
+// (Error is implied by CustomNSError; LocalizedError is the extension below.)
+public struct KSPlayerError: CustomNSError, CustomStringConvertible {
     // ⚑ s105 RETYPE: `code` is `Swift.Int32`, NOT `KSPlayerErrorCode`. The field record on
     // descriptor 0x1039edbd4 is a symref through __got 0x104112920, and
     // `bind_oracle.py --addr 0x104112920` resolves that slot to `_$ss5Int32VMn` — the nominal
@@ -376,6 +388,7 @@ public struct KSPlayerError: Error {
     // `Int`-raw enum would hold.
     public let code: Int32
     public let message: String?
+    public init(errorCode: KSPlayerErrorCode) { fatalError("L7: KSPlayerError.init — Forward body unread") }
 
     // ⚑ s105: the label is `description:`, not `message:` — pin_sweep compares this init's
     // labels against the mangled name the linker wrote and reports (code, description). The
@@ -430,47 +443,7 @@ public struct KSPlayerError: Error {
         Int(code)
     }
 
-    // ── The 33 `static let` constants Forward declares here ──────────────────────────────────
-    // Each value was READ from the global its own unsafeMutableAddressor returns: 27 are
-    // statically initialised and were read straight out of the image; the remaining 6 are
-    // swift_once-guarded and their values come from the init functions (e.g. tryAgain's at
-    // 0x101a09e90 is `mov w9, #-0x23 / str w9,[x8] / stp xzr,xzr,[x8,#0x8]`). Every one has
-    // message == nil, read as the two zero words at +0x8.
-    // ⚑[tool=export_trie_oracle ref=KSPlayerError.bug.unsafeMutableAddressor:0x101a0a348 result=static-global]
-    // The FFERRTAG/-errno notes are decoded FROM the stored value, not the source of it.
-    static let bitstreamFilterNotFound = KSPlayerError(code: -1179861752)
-    static let bufferTooSmall = KSPlayerError(code: -1397118274)  // FFERRTAG(BUFS)
-    static let bug = KSPlayerError(code: -558323010)  // FFERRTAG(BUG!)
-    static let bug2 = KSPlayerError(code: -541545794)  // FFERRTAG(BUG )
-    static let decoderNotFound = KSPlayerError(code: -1128613112)
-    static let demuxerNotFound = KSPlayerError(code: -1296385272)
-    static let encoderNotFound = KSPlayerError(code: -1129203192)
-    static let eof = KSPlayerError(code: -541478725)  // FFERRTAG(EOF )
-    static let exit = KSPlayerError(code: -1414092869)  // FFERRTAG(EXIT)
-    static let experimental = KSPlayerError(code: -733130664)
-    static let external = KSPlayerError(code: -542398533)  // FFERRTAG(EXT )
-    static let filterNotFound = KSPlayerError(code: -1279870712)
-    static let httpBadRequest = KSPlayerError(code: -808465656)
-    static let httpForbidden = KSPlayerError(code: -858797304)
-    static let httpNotFound = KSPlayerError(code: -875574520)
-    static let httpOther4xx = KSPlayerError(code: -1482175736)
-    static let httpServerError = KSPlayerError(code: -1482175992)
-    static let httpUnauthorized = KSPlayerError(code: -825242872)
-    static let inputChanged = KSPlayerError(code: -1668179713)
-    static let invalidArgument = KSPlayerError(code: -22)  // -errno 22
-    static let invalidData = KSPlayerError(code: -1094995529)  // FFERRTAG(INDA)
-    static let invalidValue = KSPlayerError(code: -22)  // -errno 22
-    static let muxerNotFound = KSPlayerError(code: -1481985528)
-    static let noSystem = KSPlayerError(code: -78)  // -errno 78
-    static let optionNotFound = KSPlayerError(code: -1414549496)
-    static let outOfMemory = KSPlayerError(code: -12)  // -errno 12
-    static let outOfRange = KSPlayerError(code: -34)  // -errno 34
-    static let outputChanged = KSPlayerError(code: -1668179714)
-    static let patchWelcome = KSPlayerError(code: -1163346256)  // FFERRTAG(PAWE)
-    static let protocolNotFound = KSPlayerError(code: -1330794744)
-    static let streamNotFound = KSPlayerError(code: -1381258232)
-    static let tryAgain = KSPlayerError(code: -35)  // -errno 35
-    static let unknown = KSPlayerError(code: -1313558101)  // FFERRTAG(UNKN)
+    public var description: String { fatalError("L7: CustomStringConvertible.description") }
 }
 
 /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSPlayerError.localizedDescription.getter:0x1019e1f98 result=110-instr]
@@ -617,7 +590,9 @@ public extension FixedWidthInteger {
 // oracle, desc @0x1039edfec): 5 no-payload cases in this ORDER, 1-byte storage. Case indices are binary-pinned —
 // KSOptions.init (FUN_1019b2f7c) stores `decodeType = 1` = `.avplayer`. `vulka` is the binary's exact case name  ⚑[tool=resolve_fun_pins ref=FUN_1019b2f7c:0x1019b2f7c result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.init() -> KSPlayer.KSOptions
 // (reflection-read; reads like a truncation of "vulkan" but is what Forward ships — searched, no standalone "vulkan").
-public enum DecodeType {
+// ⚑[tool=type_surface ref=DecodeType:0x1039edfec result=RawRepresentable(RawValue=String)@0x1035689e0]
+// L7: raw values are the implicit case names; Forward's rawValue body was not read.
+public enum DecodeType: String {
     case asynchronousHardware
     case avplayer
     case hardware
@@ -817,3 +792,479 @@ public protocol DownloadProtocol {
 // table 0x1041d5330). An extension (vs the class's inheritance clause) keeps the vtable declaration
 // order above untouched.
 extension AbstractAVIOContext: DownloadProtocol {}
+
+// Forward-only protocol, `$s8KSPlayer8DrawableMp` @0x1039eda20. It exists to type
+// `MetalPlayView.drawable`, whose field record is a NON-optional existential (`_p`, no `Sg`) and
+// whose accessors the trie names `KSPlayer.MetalPlayView.drawable.getter/setter/modify :
+// KSPlayer.Drawable`.
+//
+// protocol_signature: 2 requirements, BOTH instance Methods; NumRequirementsInSignature 0, so it
+// is NOT class-constrained and must not be written `: AnyObject`; no associated types.
+//
+// Declared EMPTY with its requirements pinned, on the same footing as `MovieStream` and
+// `VideoPipeline`. The two requirement names are NOT recoverable:
+//   · conformance_walker gives three conformers — __C.CAMetalLayer (wt 0x1041d9e70) and two
+//     RealityKit types whose conformer descriptors lie outside the image (0x1052f5900,
+//     0x1052f5700), so decode_witness_table cannot walk them at all.
+//   · CAMetalLayer's own two witnesses are 0x101a856dc, which forwards to the trie-negative
+//     0x101a854b0, and 0x101a856fc, whose only distinguishing act is an ObjC `setEDRMetadata:`
+//     send — a selector, not a Swift requirement name.
+//
+// A NEAR MISS WORTH RECORDING, because it would be easy to take as evidence: the trie contains
+// `(extension in KSPlayer):RealityKit.TextureResource.Drawable.present(commandBuffer:)`. That
+// `Drawable` is RealityKit's own NESTED TextureResource.Drawable, a different type that merely
+// shares the name — it is not a requirement of this protocol, and reading it as one would put a
+// fabricated method here.
+// ⚑[tool=conformance_walker ref=KSPlayer.Drawable:0x1039eda20 result=requirement-names-irreducible]
+public protocol Drawable {
+    // 2 instance Method requirements IRREDUCIBLE — see above.
+}
+
+//  Reconstructed binary-faithful from Forward 1.3.17 (KSPlayer module).
+// In-memory cache record of the IO foundation. NOT final: vtable slots 9-12 (the binary's
+// inits call `_swift_allocObject`; `init(from:)` calls
+// `_swift_deallocPartialClassInstance`). Conforms to `Codable` — slots 11
+// (`encode(to:)`) and 12 (`init(from:)`) are Swift's AUTO-SYNTHESIZED Codable
+// methods (verified: ordered integer CodingKeys 0–4 = declaration order, with
+// `encodeIfPresent` for the single Optional). Properties are declared in key
+// order 0–4 so that synthesis matches the binary's key order.
+// Forward-only protocol, `$s8KSPlayer18CacheEntryProtocolMp` @0x1039edec8 — module KSPlayer,
+// NOT PreLoadIOContext (that spelling is a real trie negative). It is a LEAF: 2 requirements,
+// both instance Getters, both stdlib scalars, and NumRequirementsInSignature 0 so it is not
+// class-constrained. Two conformers, both with validated witness tables:
+//   CacheEntry     wt 0x1041d5378  req0 0x1019e30a4 (position)  req1 0x1019e30b8 (size)
+//   CacheFileEntry wt 0x1041e19e8  req0 0x101b90b48 (position)  req1 0x101b90b5c (size)
+// Requirement ORDER and both widths are read off those witnesses: req0 returns x0 (64-bit),
+// req1 returns w0 (32-bit); the trie independently names CacheEntry.position.getter : UInt64
+// @0x1019e3094 and CacheEntry.size.getter : UInt32 @0x1019e2750.
+// `public` because PreLoadIOContext.CacheFileEntry conforms to it across the module boundary
+// and PreLoadIOContext exposes `[any CacheEntryProtocol]`. Public vs package is not decidable
+// from the image — access level is not carried in the mangling and both export a descriptor —
+// so this follows the in-tree precedent for Forward's other recovered protocols.
+public protocol CacheEntryProtocol {
+    var position: UInt64 { get }
+    var size: UInt32 { get }
+}
+
+public class CacheEntry: CacheEntryProtocol, Codable {
+    // field types pinned from mangled property descriptors (authoritative — demangled):
+    //   CacheEntry.logicalPos : Swift.Int64   ·  .physicalPos : Swift.UInt64
+    //   CacheEntry.size : Swift.UInt32  ·  .maxSize : Swift.UInt32?  ·  .eof : Swift.Bool
+    //
+    // logicalPos was UInt64 here and the comment asserting the mangling `logicalPoss6UInt64Vv`
+    // was FALSE. Three independent reads say Int64:
+    //   1. l2_field_gate raises a REAL_FLAG — source UInt64 vs binary Int64.
+    //   2. The export trie HAS $s8KSPlayer10CacheEntryC10logicalPoss5Int64Vvg @0x100137008 and
+    //      the `s6UInt64V` spelling is a real trie negative — no address exports that name.
+    //   3. The CacheEntryProtocol `position` witness @0x1019e30a4 is
+    //      `ldr x0,[x8,#0x10]` / `tbnz x0,#0x3f` / `ret` / `brk #0x1` — a sign-bit test that
+    //      traps. That trap is Swift's UInt64(Int64) conversion guard and is only emitted when
+    //      the source value is SIGNED; on a UInt64 field no test would exist at all.
+    // The reflection field records corroborate the split: logicalPos resolves through the same
+    // type __got slot as CacheIOContext.fetchedSize (gate-confirmed SIGNED), while physicalPos
+    // resolves through the UInt64 slot that CacheFileEntry.position uses.
+    public let logicalPos: Int64    // +0x10, 8B  (mangled: logicalPoss5Int64Vv)
+    public let physicalPos: UInt64  // +0x18, 8B  (mangled: physicalPoss6UInt64Vv)
+    public var size: UInt32         // +0x20, 4B  (mangled: size...s6UInt32V; bounds-check compares UNSIGNED)
+    public var eof: Bool = false    // +0x24, 1B  (reflection `Sb`; initial value: 0x1019e2928 strb wzr precedes the param stores)
+    public var maxSize: UInt32?     // +0x28 value / +0x2c discriminator (mangled: maxSizes6UInt32VSgv; encodeIfPresent)
+
+    // Slot 9 memberwise init @0x1019e28dc: stores logicalPos(+0x10),
+    // physicalPos(+0x18), size(+0x20) from params; eof(+0x24) defaults to
+    // false (init writes 0); maxSize(+0x28/+0x2c) stored from the Optional
+    // param. There is no `eof` parameter — the binary always initialises it false.
+    @used init(logicalPos: Int64, physicalPos: UInt64, size: UInt32, maxSize: UInt32?) {
+        self.logicalPos = logicalPos
+        self.physicalPos = physicalPos
+        self.size = size
+        // eof: declaration default. maxSize: assigned after full init (0x1019e294c swift_beginAccess, flags 1).
+        self.maxSize = maxSize
+    }
+
+    // Slot 10 method @0x1019e29e4 (bounds/space check).
+    // ⚑ s105 RENAME+LABEL: this was `isExceeded(_ length:)` and the comment below claimed
+    // "no symbol in binary (devirtualized)". That is refuted — the export trie names the address
+    // `KSPlayer.CacheEntry.isOut(size: Swift.UInt32) -> Swift.Bool`, one symbol, not a fold. So
+    // both the method name AND the argument label were invented; the label is `size:`, not `_`.
+    // Written `size length:` so the external label matches the binary while the body keeps its
+    // own name — `size` alone would shadow the stored property this method reads.
+    // ⚑[tool=export_trie_oracle ref=CacheEntry.isOut:0x1019e29e4 result=name-recovered]
+    // The BODY was already right and is unchanged. Behaviour is faithful to the decompile:
+    //   reads size(+0x20) and maxSize(+0x28/+0x2c); returns Bool.
+    //   if size >= 0x1000001 (> 16MB)                       -> true
+    //   else if maxSize != nil && maxSize < size + length   -> true   (size+length
+    //        is a checked UInt32 add: the binary traps on CARRY4 overflow)
+    //   else                                                -> false
+    func isOut(size length: UInt32) -> Bool {
+        if size > 0x100_0000 {
+            return true
+        }
+        if let maxSize, maxSize < size + length {
+            return true
+        }
+        return false
+    }
+
+    // CacheEntryProtocol req0. COMPUTED, not stored: `position` appears nowhere in this class's
+    // 5 field records. The witness @0x1019e30a4 is four instructions —
+    //   ldr x0,[x8,#0x10]  ·  tbnz x0,#0x3f,+8  ·  ret  ·  brk #0x1
+    // — i.e. load logicalPos (the first stored field, at the +0x10 header boundary) and trap if
+    // it is negative. That is exactly `UInt64(logicalPos)`: the trapping, non-clamping
+    // conversion. `UInt64(bitPattern:)` or `UInt64(clamping:)` would emit no test at all.
+    // The class's own declared getter @0x1019e3094 is the same four instructions off x20.
+    public final var position: UInt64 {
+        UInt64(logicalPos)
+    }
+
+    // CacheEntryProtocol req1 is satisfied by the stored `size` above: the witness
+    // @0x1019e30b8 takes a read access on self+0x20 and returns `ldr w0,[x19,#0x20]` — a plain
+    // 32-bit stored-property read, no computation. +0x20 is where `size` sits given
+    // logicalPos@+0x10 (8B) and physicalPos@+0x18 (8B).
+
+    // Slots 11 (encode(to:)) + 12 (init(from:)) are SYNTHESIZED by `: Codable`.
+    // Do NOT hand-write them — the binary uses standard Swift Codable synthesis.
+    // `Codable` IS exactly `Decodable & Encodable`, so the binary listing those two separately
+    // is a spelling equivalence, not a missing conformance.
+}
+
+// TimeIndexEntry — a value type recovered from __swift5_fieldmd (struct; not in the
+// class classmap → no vtable). Referenced by PreLoadIOContext._timeIndex and
+// LimitSeparatePreLoadIOContext._timeIndex (both `[TimeIndexEntry]`).
+// s98 — MOVED from the PreLoadIOContext target to KSPlayer. The binary says
+// `KSPlayer.TimeIndexEntry`: the trie carries
+// `$s8KSPlayer14TimeIndexEntryV8positions6UInt64Vvg` and
+// `nominal type descriptor for KSPlayer.TimeIndexEntry`, while the
+// `$s16PreLoadIOContext14TimeIndexEntryMn` spelling is a real trie negative. It has to live
+// here because `KSPlayer.PreLoadProtocol` names it in a requirement type, and
+// PreLoadIOContext depends on KSPlayer rather than the other way round.
+// s98 — the `position` type pin is DISCHARGED. It was flagged "field-record unmapped; UInt64
+// by width + position-field pattern", i.e. a guess from the load width. The trie settles it
+// outright: `position.getter : Swift.UInt64` and
+// `init(position: Swift.UInt64, time: Swift.Double)`.
+// Both properties are `let`, not `var`. The image exports a getter for each and NO setter and
+// NO modify for either — the same negative that distinguishes them from, say,
+// `KSOptions.display`, which carries getter, setter AND modify. Nothing mutates a member in
+// place either: the one write site (LimitSeparatePreLoadIOContext.addTimeIndex) replaces the
+// whole element with a freshly constructed value.
+public struct TimeIndexEntry {
+    public let position: UInt64
+    public let time: Double
+
+    // Spelled out rather than left to memberwise synthesis: a synthesized memberwise init is
+    // `internal`, and this type is now consumed from the PreLoadIOContext module. The binary
+    // agrees it is public — the trie exports
+    // `init(position: Swift.UInt64, time: Swift.Double) -> KSPlayer.TimeIndexEntry`, and an
+    // internal init of an internal-init'd struct would export nothing. The body is a bare
+    // `ret` (both fields arrive in registers), i.e. plain memberwise assignment.
+    public init(position: UInt64, time: Double) {
+        self.position = position
+        self.time = time
+    }
+}
+
+// CachedTimeRange — absent from Sources/ entirely before s98, and required by
+// `PreLoadProtocol.cachedTimeRanges(duration:) -> [CachedTimeRange]`. Also
+// KSPlayer-module: `nominal type descriptor for KSPlayer.CachedTimeRange`, and both
+// KSAVPlayer and KSMEPlayer expose `cachedTimeRanges.getter : [KSPlayer.CachedTimeRange]`.
+//
+// Members and order are read, not chosen: `init(start: Swift.Double, end: Swift.Double)`
+// fixes the declaration order, and the two accessors confirm which register each field
+// occupies — `start.getter` is a bare `ret` (the first field is already in d0) while
+// `end.getter` @0x1000eef70 is `mov.16b v0, v1` / `ret`, moving the SECOND register into the
+// return. Both are `let` by the same no-setter negative as above.
+public struct CachedTimeRange {
+    public let start: Double
+    public let end: Double
+
+    // Public for the same reason and on the same evidence as TimeIndexEntry's: the trie
+    // exports `init(start: Swift.Double, end: Swift.Double) -> KSPlayer.CachedTimeRange`.
+    // Its body is likewise a bare `ret`.
+    public init(start: Double, end: Double) {
+        self.start = start
+        self.end = end
+    }
+
+    // COMPUTED, and the whole body is two instructions at 0x1019e30f4:
+    //   fsub d0, d1, d0   ·   ret
+    // With start in d0 and end in d1 that is exactly `end - start`. It carries its own
+    // property descriptor and getter but no setter, so it is get-only.
+    public var duration: Double {
+        end - start
+    }
+}
+
+// Forward-only protocol pair, both module KSPlayer, both recovered in s98.
+// PreLoadProtocol             `$s8KSPlayer15PreLoadProtocolMp`                    @0x1039ede48
+// PreLoadPlaybackPositionSync `$s8KSPlayer35PreLoadPlaybackPositionSyncProtocolMp` @0x1039edea8
+// Note the length token on the second one is 35, not 37. A hand-built probe with the wrong
+// count returns a plausible-looking "NOT IN TRIE", which is indistinguishable from a real
+// negative — count the identifier rather than estimating it.
+// NEITHER IS CLASS-CONSTRAINED. protocol_signature reports NumRequirementsInSignature 0 for
+// both, so neither carries a Layout requirement on Self and neither may be written
+// `: AnyObject`. (Contrast DisplayEnum, which reports 1 and IS class-constrained.) Neither
+// has an associated type, so no requirement type is an abstract placeholder.
+// Conformers, all witness tables validated by decode_witness_table:
+//   PreLoadProtocol             <- LimitSeparatePreLoadIOContext  wt 0x1041e21b0
+//                               <- PreLoadIOContext               wt 0x1041e2250
+//   PreLoadPlaybackPositionSync <- PreLoadIOContext               wt 0x1041e22a0
+// HOW THE NAMES AND TYPES WERE ESTABLISHED. Every one of the ten witness addresses in those
+// three tables is NOT_IN_TRIE, so none of these names came from a witness. They were read
+// off the CONFORMERS' own exported method symbols, found by dumping the whole orphan export
+// trie (57138 mangled names) and searching the DEMANGLED text — e.g.
+// `PreLoadIOContext.PreLoadIOContext.cachedTimeRanges(duration: Swift.Double) ->
+// [KSPlayer.CachedTimeRange]`. The requirement ORDER below is the witness-table order, and
+// the KINDS independently corroborate it: protocol_signature reports
+// Getter,Getter,Getter,Getter,Method,Getter,Method,Method,Method, which is exactly the
+// shape of the nine declarations as written.
+// THE CONFORMANCES ARE NOT DECLARED YET, and that is deliberate rather than an oversight.
+// Swift will not accept a conformance whose witnesses do not exist, and several of these
+// members are absent from both conformers under any spelling — `more()` alone is 1183
+// instructions on PreLoadIOContext and 433 on LimitSeparatePreLoadIOContext. Declaring the
+// members with invented bodies to satisfy the compiler would be exactly the fabrication the
+// reconstruction rules forbid, so the protocols land first and each conformance follows its
+// members. Until then superclass_conformance_gate continues to FLAG both conformer files,
+// which is the honest state.
+public protocol PreLoadProtocol {
+    // 0
+    var loadedSize: Int64 { get }
+    // 1 — shared witness ADDRESS, but see the correction below: an ICF fold, not a default.
+    var position: UInt64 { get }
+    // 2 — shared witness address; same correction.
+    var downloadSpeed: Double { get }
+    // 3 — shared witness address; same correction.
+    var bytesRead: UInt64 { get }
+    // 4
+    func more() -> Int32
+    // 5
+    var timeIndex: [TimeIndexEntry] { get }
+    // 6
+    func addTimeIndex(position: UInt64, time: Double)
+    // 7
+    func cachedTimeRanges(duration: Double) -> [CachedTimeRange]
+    // 8 — note the sibling protocol below declares a DIFFERENT overload of this name.
+    func syncPlaybackPosition(time: Double, duration: Double)
+}
+
+// CORRECTION, and it is worth stating plainly because the first reading of this was wrong.
+//
+// Requirements 1, 2 and 3 resolve to the SAME witness address in BOTH conformance tables —
+// req1 0x101ba66bc, req2 0x101b95bf8 (thunk -> 0x101b914d0), req3 0x101a65dd4 (thunk ->
+// 0x101a63dec). That was first read as proof of protocol-extension defaults, on the reasoning
+// that two unrelated conformers cannot share a witness body. THAT REASONING IS INVALID, and
+// the bodies themselves refute it: req2's shared body is
+//     ldr x8, [x20]  ·  ldr d0, [x8, #0x68]  ·  ret
+// — a CONCRETE read of inherited offset 0x68, which is CacheIOContext._downloadSpeed, whose
+// own exported getter @0x100d362bc is the same `ldr d0, [x20, #0x68]`. req3's body likewise
+// reads offset 0x18 = CacheIOContext.bytesRead, and req1's reads 0x50 and 0x80 = urlPos and
+// logicalPos. A generic protocol-extension body cannot hardcode an inherited stored-property
+// offset.
+//
+// The two conformers are SIBLINGS under CacheIOContext, not one under the other, so they
+// inherit an identical layout and their witnesses come out bit-identical — and the linker
+// folds them. The shared address is an ICF fold, exactly the case AGENT_PROTOCOL warns about:
+// a shared address is not an anchor mismatch, the code is genuinely each function's, it is
+// merely also somebody else's.
+//
+// Protocol-extension defaults for two of these DO exist — the trie carries
+// `(extension in KSPlayer):KSPlayer.PreLoadProtocol.downloadSpeed.getter` @0x10002dc44 and
+// `...bytesRead.getter` @0x1001a1394 — but at addresses appearing in NEITHER witness table, so
+// neither conformer uses them. No `position` or `loadedSize` extension default exists at all
+// (both real trie negatives).
+//
+// The consequence for the conformances: these three are satisfied by members INHERITED from
+// CacheIOContext, not by anything the protocol supplies. Source's CacheIOContext already has
+// `bytesRead`; it does not yet have `downloadSpeed` (only the private stored `_downloadSpeed`
+// at the same 0x68) or `position`.
+// ⚑[tool=decode_witness_table ref=KSPlayer.PreLoadProtocol:0x1039ede48 result=reqs-1-2-3-ICF-folded]
+
+// Sole requirement, and it is NOT a duplicate of PreLoadProtocol's req8 — it is a different
+// overload of the same base name, distinguished by its second label and type. Both exist as
+// separate symbols on the same class:
+//   PreLoadIOContext.PreLoadIOContext.syncPlaybackPosition(time: Double, duration: Double)
+//   PreLoadIOContext.PreLoadIOContext.syncPlaybackPosition(time: Double, position: UInt64?)
+// Sole conformer PreLoadIOContext, wt 0x1041e22a0, whose single witness is 0x1002e67c0.
+public protocol PreLoadPlaybackPositionSyncProtocol {
+    func syncPlaybackPosition(time: Double, position: UInt64?)
+}
+
+public enum LogLevel: Int32, CustomStringConvertible {
+    case panic = 0
+    case fatal = 8
+    case error = 16
+    case warning = 24
+    case info = 32
+    case verbose = 40
+    case debug = 48
+    case trace = 56
+
+    public var description: String {
+        switch self {
+        case .panic:
+            return "panic"
+        case .fatal:
+            return "fault"
+        case .error:
+            return "error"
+        case .warning:
+            return "warning"
+        case .info:
+            return "info"
+        case .verbose:
+            return "verbose"
+        case .debug:
+            return "debug"
+        case .trace:
+            return "trace"
+        }
+    }
+}
+
+public extension LogLevel {
+    var logType: OSLogType {
+        switch self {
+        case .panic, .fatal:
+            return .fault
+        case .error:
+            return .error
+        case .warning:
+            return .debug
+        case .info, .verbose, .debug:
+            return .info
+        case .trace:
+            return .default
+        }
+    }
+}
+
+public protocol LogHandler {
+    @inlinable
+    func log(level: LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt)
+}
+
+public class OSLog: LogHandler {
+    public let label: String
+    // Forward's OSLog carries a DateFormatter, exactly like FileLog. Binary reflection lists TWO
+    // stored fields for OSLog — `label: Swift.String` then `formatter: NSDateFormatter`, BOTH with
+    // field-record flags 0x0 = `let` (scripts/dump_binary_field_types.py OSLog +
+    // scripts/dump_field_bindings.py OSLog) — and the vtable has ZERO accessor slots
+    // (vtable_walk.py OSLog: slot 0 Init, slot 1 Method), which is the `let`-only shape.
+    // init @0x1019e19ec: swift_allocObject(size 0x28 = 16 header + 16 String @self+0x10/+0x18 (the
+    // `lable` argument) + 8 @self+0x20), [[NSDateFormatter alloc] init] stored to self+0x20, then
+    // -[NSDateFormatter setDateFormat:] with the SAME 18-char literal FileLog uses (see below).
+    // Shape is ALLOCATING_INIT_INLINED, not a forwarding thunk: it stores fields directly after the
+    // swift_allocObject call site (`str x21,[x20,#0x10]` / `stp x19,x0,[x20,#0x18]`). The call
+    // COUNT is not the discriminator — this init makes seven calls after that alloc site (eight
+    // `bl` in total) and still inlines; a session-61 golden mislabelled it a thunk on call count.
+    // `mov w1,#0x28; mov w2,#0x7` pins instance size 40 / align mask 7, which is exactly the two
+    // fields above and leaves room for no third. ARITY: only x0/x1 are read (the one String);
+    // x2/x3 are never read, which refutes a second parameter AND a defaulted one, since a
+    // default-argument generator would still have to materialise its value at the call site.
+    // The class ref for the formatter is __objc_classrefs 0x1044105B0 = NSDateFormatter, so the
+    // declaration-site default really is `DateFormatter()`.
+    // ⚑[tool=nm ref=OSLog.init(lable:):0x1019e19ec result=UNRESOLVED] the argument LABEL `lable`
+    // (the upstream typo) is carried from the base source and is NOT recoverable here: this binary
+    // is stripped to 7609 symbols with no `5OSLogC`/`7FileLogC` entry, and Swift argument labels
+    // appear in no reflection section. Only the label's TYPE and count are proven above.
+    public let formatter = DateFormatter()
+    public init(lable: String) {
+        label = lable
+        formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
+    }
+
+    // log @0x1019e3460 (vtable slot 1). The os_log format is a StaticString passed as x3 =
+    // 0x103d34f80 with `mov w4,#0x17` = 23 UTF-8 bytes; read raw those 23 bytes are
+    // "%@ %@ %@: %@:%d %@ | %@" (NUL at +23) — SEVEN specifiers, not the six of the base. The
+    // argument array confirms seven independently: it is a 0x138-byte allocation = 0x20 array
+    // header + 7 * 0x28 CVarArg existentials (payload +0x00, metadata +0x18, witness +0x20), and
+    // every element's metadata word names its type — Swift.String (__got 0x104111500 =
+    // _$sSSN) for six, Swift.UInt (0x104111B08 = _$sSuN, witness 0x104111B30 =
+    // _$sSus7CVarArgsWP) for `line`, which is what pins `line` as UInt rather than Int. Element
+    // order, by store offset into that array:
+    //   +0x20   formatter.string(from: Date()) — self+0x20 is loaded, then Date.init ->
+    //           Date._bridgeToObjectiveC -> -[NSDateFormatter stringFromDate:] ->
+    //           String._unconditionallyBridgeFromObjectiveC. This leading timestamp is the seventh
+    //           argument the base is missing, and it is why OSLog carries a formatter at all.
+    //   +0x48   level.description   +0x70  label (self+0x10)   +0x98  file (params x2/x3)
+    //   +0xC0   line (param x6)     +0xE8  function (params x4/x5)
+    //   +0x110  message.description (via the CustomStringConvertible witness getter @0x103459364)
+    // `dso:` and `log:` are DEFAULTED at this call site, so neither is spelled here: x1 =
+    // 0x100000000 is #dsohandle and x2 comes from OSLog.default's getter @0x1034587c4 — a
+    // default-argument generator runs at the CALL site, which is exactly what these are.
+    @inlinable
+    public func log(level: LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt) {
+        os_log(level.logType, "%@ %@ %@: %@:%d %@ | %@", formatter.string(from: Date()), level.description, label, file, line, function, message.description)
+    }
+}
+
+public class FileLog: LogHandler {
+    public let fileHandle: FileHandle
+    public let formatter = DateFormatter()
+    public init(fileHandle: FileHandle) {
+        self.fileHandle = fileHandle
+        // 18 chars, NOT the base's 21-char "…SSSSSS". init @0x1019e380c emits the literal as
+        // `mov x0,#0x12; movk x0,#0xd000,LSL#48` → _StringObject count = 0x12 = 18, and
+        // `adrp x8,0x103d34000; add x8,x8,#0x9c0; sub x22,x8,#0x20` → the object word is the literal
+        // address MINUS _StringObject.nativeBias (32), so the literal itself is at 0x103d349c0 =
+        // "MM-dd HH:mm:ss.SSS" (NUL at +18). The bias DIRECTION is proven by a control in this same
+        // file's FileLog.log @0x1019e38d0: identical `add #0xfa0; sub #0x20` shape with count
+        // 0x14 = 20, where the add result 0x103d34fa0 holds "%@ %@ %@:%d %@ | %@\n" (exactly 20
+        // chars) while the sub result 0x103d34f80 holds a 23-char string — so the ADD result is the
+        // literal. Both lengths therefore agree only for the add-side reading. (That 23-char
+        // neighbour is now identified: it is OSLog.log's own format string. The wrong-bias read of
+        // THIS literal would land on "ReadCacheIOContext", which is also 18 characters — length
+        // alone would not have caught it, so the count field is checked against the add side.)
+        // Shape is ALLOCATING_INIT_INLINED: stores land after the swift_allocObject call site as
+        // `stp x19,x0,[x20,#0x10]` — fileHandle at self+0x10, formatter at self+0x18.
+        // `mov w1,#0x20; mov w2,#0x7` pins instance size 32 / align mask 7 = exactly two pointers.
+        // ARITY: only x0 is read; x1/x2/x3 are never read, refuting both a second parameter and a
+        // defaulted one. Formatter class ref is __objc_classrefs 0x1044105B0 = NSDateFormatter.
+        formatter.dateFormat = "MM-dd HH:mm:ss.SSS"
+    }
+
+    @inlinable
+    public func log(level: LogLevel, message: CustomStringConvertible, file: String, function: String, line: UInt) {
+        let string = String(format: "%@ %@ %@:%d %@ | %@\n", formatter.string(from: Date()), level.description, file, line, function, message.description)
+        if let data = string.data(using: .utf8) {
+            // Forward calls the THROWING generic overload and DROPS the error, not the
+            // non-throwing ObjC `write(_:)`. Read at FileLog.log @0x1019e38d0: `mov x21,#0x0`
+            // @0x1019e3c00 zeroes the swifterror register, `bl 0x103458080` @0x1019e3c04 is
+            // `_$sSo12NSFileHandleC10FoundationE5write10contentsOfyx_tKAC12DataProtocolRzlF`
+            // = `FileHandle.write<T: DataProtocol>(contentsOf: T) throws`, then `cbz x21`
+            // @0x1019e3c08 skips `bl _swift_errorRelease` @0x1019e3c10 — the error is
+            // released and discarded, never rethrown. That is exactly `try?`.
+            try? fileHandle.write(contentsOf: data)
+        }
+    }
+}
+
+public struct KSClock {
+    public private(set) var lastMediaTime = CACurrentMediaTime()
+    public internal(set) var position = Int64(0)
+    // ⚑ s105: field record [2] of 4 on descriptor 0x1039edfd0, mangle `Sd` = Swift.Double, and it
+    // sits BETWEEN `position` and `time` — so it is declared here, not appended, because a stored
+    // property's order is its layout. Default read from its own variable-initialization
+    // expression @0x1000b783c, which is `fmov d0, #1.00000000 / ret`.
+    // ⚑[tool=vpfi_initializer_oracle ref=KSClock.rate:0x1000b783c result=1.0]
+    // Access ⚑ INFERRED from the two fields it sits between; the trie exports getter, setter and
+    // modify for it, which is what establishes `var` rather than `let`.
+    public internal(set) var rate = 1.0
+    public internal(set) var time = CMTime.zero {
+        didSet {
+            lastMediaTime = CACurrentMediaTime()
+        }
+    }
+
+    func getTime() -> TimeInterval {
+        time.seconds + CACurrentMediaTime() - lastMediaTime
+    }
+}
+
+// KSDrawable @0x1039ed9f8 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (MediaPlayerProtocol.swift..AudioPlayerView.swift).
+// ⚑[tool=type_surface ref=KSDrawable:0x1039ed9f8 result=protocol KSDrawable]
+protocol KSDrawable {}
+
+// PlayFileProtocol @0x1039edd00 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (MediaPlayerProtocol.swift..AudioPlayerView.swift).
+// ⚑[tool=type_surface ref=PlayFileProtocol:0x1039edd00 result=protocol PlayFileProtocol]
+protocol PlayFileProtocol {}

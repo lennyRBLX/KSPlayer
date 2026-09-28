@@ -17,7 +17,7 @@ public typealias UIViewRepresentable = NSViewRepresentable
 #endif
 
 public struct KSVideoPlayer {
-    public private(set) var coordinator: Coordinator
+    @ObservedObject public private(set) var coordinator: Coordinator
     public let url: URL
     public let options: KSOptions
     public init(coordinator: Coordinator, url: URL, options: KSOptions) {
@@ -25,12 +25,42 @@ public struct KSVideoPlayer {
         self.url = url
         self.options = options
     }
+    public init(playerLayer: KSPlayerLayer) { fatalError("L7: KSVideoPlayer.init — Forward body unread") }
+    public init?(coordinator: KSVideoPlayer.Coordinator) { fatalError("L7: KSVideoPlayer.init — Forward body unread") }
+}
+
+extension KSVideoPlayer: Equatable {
+    public static func == (lhs: KSVideoPlayer, rhs: KSVideoPlayer) -> Bool {
+        lhs.url == rhs.url
+    }
+}
+
+@MainActor
+public extension KSVideoPlayer {
+    func onBufferChanged(_ handler: @escaping (Int, TimeInterval) -> Void) -> Self {
+        coordinator.onBufferChanged = handler
+        return self
+    }
+
+    /// Playing to the end.
+    func onFinish(_ handler: @escaping (KSPlayerLayer, Error?) -> Void) -> Self {
+        coordinator.onFinish = handler
+        return self
+    }
+
+    func onPlay(_ handler: @escaping (TimeInterval, TimeInterval) -> Void) -> Self {
+        coordinator.onPlay = handler
+        return self
+    }
+
+    /// Playback status changes, such as from play to pause.
+    func onStateChanged(_ handler: @escaping (KSPlayerLayer, KSPlayerState) -> Void) -> Self {
+        coordinator.onStateChanged = handler
+        return self
+    }
 }
 
 extension KSVideoPlayer: UIViewRepresentable {
-    public func makeCoordinator() -> Coordinator {
-        coordinator
-    }
 
     #if canImport(UIKit)
     public typealias UIViewType = UIView
@@ -127,13 +157,10 @@ extension KSVideoPlayer: UIViewRepresentable {
             }
         }
 
-        // ⚑ SOURCE HAS THIS, THE BINARY DOES NOT — absent from all 15 field records AND from all
-        //   146 Coordinator trie symbols, so it is a real divergence, not a naming gap. NOT removed
-        //   here: `subtitleModel` genuinely exists on KSPlayerLayer (field 15, `let`, type
-        //   `KSPlayer.SubtitleModel`, offset global 0x104c63500), and the five KSVideoPlayerView
-        //   sites reading it cannot be re-rooted onto `config`, which is a Coordinator. Two of those
-        //   sites live in view types that are themselves divergent. Removing it is a view-layer unit.
-        public var subtitleModel = SubtitleModel()
+        // ⚑ REMOVED `subtitleModel` — absent from all 15 Coordinator field records and all 146
+        //   Coordinator trie symbols; it lives on KSPlayerLayer (offset global 0x104c63500). Neither
+        //   Forward makeView @0x1019d7254 nor resetPlayer @0x1019d7988 loads 0x104c63500, so the two
+        //   Coordinator-side uses went with it. SwiftUI readers re-rooted onto `playerLayer?`.
         public var timemodel = ControllerTimeModel()
         // 在SplitView模式下，第二次进入会先调用makeUIView。然后在调用之前的dismantleUIView.所以如果进入的是同一个View的话，就会导致playerLayer被清空了。最准确的方式是在onDisappear清空playerLayer
         public var playerLayer: KSPlayerLayer? {
@@ -153,14 +180,6 @@ extension KSVideoPlayer: UIViewRepresentable {
         public var onStateChanged: ((KSPlayerLayer, KSPlayerState) -> Void)?
         public var onBufferChanged: ((Int, TimeInterval) -> Void)?
         public var onURLChanged: ((KSPlayerLayer, URL) -> Void)?
-        #if canImport(UIKit)
-        fileprivate var onSwipe: ((UISwipeGestureRecognizer.Direction) -> Void)?
-        @objc fileprivate func swipeGestureAction(_ recognizer: UISwipeGestureRecognizer) {
-            onSwipe?(recognizer.direction)
-        }
-        #endif
-
-        public init() {}
 
         /// ⚑ RECOVERED — the binary declares this and source did not. Trie-named at BOTH entries:
         /// allocating `0x1019d6ec8`, initializing `0x1019da958`; the shared body they call,
@@ -177,12 +196,9 @@ extension KSVideoPlayer: UIViewRepresentable {
             state = playerLayer.state
         }
 
+        public init() {}
+
         public func makeView(url: URL, options: KSOptions) -> UIView {
-            defer {
-                DispatchQueue.main.async { [weak self] in
-                    self?.subtitleModel.url = url
-                }
-            }
             if let playerLayer {
                 if playerLayer.url == url {
                     return playerLayer.player.view ?? UIView()
@@ -203,13 +219,9 @@ extension KSVideoPlayer: UIViewRepresentable {
             onPlay = nil
             onFinish = nil
             onBufferChanged = nil
-            #if canImport(UIKit)
-            onSwipe = nil
-            #endif
             playerLayer = nil
             delayHide?.cancel()
             delayHide = nil
-            subtitleModel.selectedSubtitleInfo?.isEnabled = false
         }
 
         public func skip(interval: Int) {
@@ -279,6 +291,9 @@ extension KSVideoPlayer: UIViewRepresentable {
             #endif
         }
     }
+    public func makeCoordinator() -> Coordinator {
+        coordinator
+    }
 }
 
 extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
@@ -316,9 +331,8 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
     ///   absence is exhaustive rather than inferred: the else-arm is 22 instructions with no ObjC
     ///   selector references, and the selector `swipeGestureAction:` occurs ZERO times in the image
     ///   while four sibling KSPlayer `@objc` selectors each occur once — a real absence, not an
-    ///   `@objc` trie-visibility gap. `onSwipe` and `swipeGestureAction(_:)` are left DECLARED for
-    ///   now because `onSwipe` still has four source users including a public builder API; removing
-    ///   them is a view-layer unit.
+    ///   `@objc` trie-visibility gap. `onSwipe`, `swipeGestureAction(_:)` and the `onSwipe(_:)`
+    ///   builder are REMOVED: none has a Forward symbol or field record.
     public func player(layer: KSPlayerLayer, state: KSPlayerState) {
         Task {
             self.state = state
@@ -374,44 +388,6 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
     public func player(layer: KSPlayerLayer, url: URL) {
         onURLChanged?(layer, url)
     }
-}
-
-extension KSVideoPlayer: Equatable {
-    public static func == (lhs: KSVideoPlayer, rhs: KSVideoPlayer) -> Bool {
-        lhs.url == rhs.url
-    }
-}
-
-@MainActor
-public extension KSVideoPlayer {
-    func onBufferChanged(_ handler: @escaping (Int, TimeInterval) -> Void) -> Self {
-        coordinator.onBufferChanged = handler
-        return self
-    }
-
-    /// Playing to the end.
-    func onFinish(_ handler: @escaping (KSPlayerLayer, Error?) -> Void) -> Self {
-        coordinator.onFinish = handler
-        return self
-    }
-
-    func onPlay(_ handler: @escaping (TimeInterval, TimeInterval) -> Void) -> Self {
-        coordinator.onPlay = handler
-        return self
-    }
-
-    /// Playback status changes, such as from play to pause.
-    func onStateChanged(_ handler: @escaping (KSPlayerLayer, KSPlayerState) -> Void) -> Self {
-        coordinator.onStateChanged = handler
-        return self
-    }
-
-    #if canImport(UIKit)
-    func onSwipe(_ handler: @escaping (UISwipeGestureRecognizer.Direction) -> Void) -> Self {
-        coordinator.onSwipe = handler
-        return self
-    }
-    #endif
 }
 
 extension View {

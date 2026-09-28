@@ -9,15 +9,16 @@ import DOVIRPUShim
 import FFmpegKit
 import Libavformat
 import Libavutil
+import AVFoundation
 #if canImport(VideoToolbox)
 import VideoToolbox
 
 class VideoToolboxDecode: DecodeProtocol {
     // P2 Task 3 field delta (reflection ORDER = layout; −lastPosition, +9 new). ⚑ = inferred/opaque → P3.
-    private let maxFrameCount: Int = 0 // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
-    private let codecID: AVCodecID = AV_CODEC_ID_NONE // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private let maxFrameCount: Int
+    private let codecID: AVCodecID
     private let options: KSOptions
-    private let flags: VTDecodeFrameFlags = [] // ⚑ UNRESOLVED→P3: devirt-init-set; default placeholder
+    private let flags: VTDecodeFrameFlags
     private var startTime: Int64 = 0
     private var maxTimestamp: Int64 = 0
     private var lastTimestamp: Int64 = -1
@@ -42,12 +43,30 @@ class VideoToolboxDecode: DecodeProtocol {
             lastTimestamp = -1
         }
     }
-    private var formatDescriptionOut: CMFormatDescription? = nil // set in the deferred decodeFrame → P3
 
-    init(options: KSOptions, session: DecompressionSession) {
+    // Forward 0x101a6cc94 is the exported allocating entry of init?(assetTrack:options:asynchronous:).
+    // It is a CONVENIENCE init: the object is allocated only after DecompressionSession succeeds and
+    // the nil path has no swift_deallocPartialClassInstance (a designated failable init allocates first).
+    // The designated init (vtable slot 25) is dead-stripped; its labels are ours, its body is Forward's
+    // store sequence: options, codecID, maxFrameCount, options.decodeType = 0, session, flags (9 : 8).
+    init(options: KSOptions, session: DecompressionSession, asynchronous: Bool) {
         self.options = options
+        codecID = session.assetTrack.codecpar.pointee.codec_id
+        maxFrameCount = Int(max(session.assetTrack.reorderSize * 2, 4))
+        options.decodeType = .asynchronousHardware
         self.session = session
+        flags = asynchronous ? [._EnableAsynchronousDecompression, ._EnableTemporalProcessing] : [._EnableTemporalProcessing]
     }
+
+    convenience init?(assetTrack: FFmpegAssetTrack, options: KSOptions, asynchronous: Bool) {
+        guard let session = DecompressionSession(assetTrack: assetTrack, options: options) else {
+            return nil
+        }
+        self.init(options: options, session: session, asynchronous: asynchronous)
+    }
+
+    // Declared AFTER init: Forward's vtable has the init at slot 25 and this var's get/set/modify at 26-28.
+    private var formatDescriptionOut: CMFormatDescription? = nil // set in the deferred decodeFrame → P3
 
     // ⚠️ D1 CLOSED — the parameter is `UnsafeMutablePointer<AVPacket>`, and the guard below moved
     // with it. Read over the whole extent 0x101a6ce44-0x101a6d734:
@@ -85,7 +104,6 @@ class VideoToolboxDecode: DecodeProtocol {
         if needReconfig {
             // 解决从后台切换到前台，解码失败的问题
             session = DecompressionSession(assetTrack: session.assetTrack, options: options)!
-            doFlushCodec()
             needReconfig = false
         }
         let corePacket = packet.pointee
@@ -97,40 +115,36 @@ class VideoToolboxDecode: DecodeProtocol {
         for nalUnit in nalUnits {
             // L155: HEVC (kind 1) DV-RPU NAL (type 0x3e = 62).
             guard nalUnit.kind == 1, nalUnit.type == 62 else { continue }
-            // EPB-strip — H.265 emulation-prevention removal (decompile L162-214, transcribed).
-            // allocLen = nalUnit.length - 2 (the 2-byte HEVC NAL header is skipped). src = data + offset + 2.
+            // EPB-strip — H.265 emulation-prevention removal. Forward (0x101a6ce44) computes offset+2 with
+            // an overflow check BEFORE length-2, and bounds-checks each read with an unsigned
+            // `readIdx <u allocLen` trap and no add-overflow check: Span's checked subscript, not raw pointer math.
+            let start = Int(nalUnit.offset) + 2
             let allocLen = Int(nalUnit.length) - 2
             let stripped = UnsafeMutablePointer<UInt8>.allocate(capacity: allocLen)
-            let src = data + Int(nalUnit.offset) + 2
+            let src = UnsafeBufferPointer(start: data + start, count: allocLen).span
             var strippedLen = 0
             if allocLen != 0 {
-                var outPos = 0
                 var zeroRun = 0
                 var readIdx = 0
                 while true {
-                    var nextIdx = readIdx + 1
                     var byte = src[readIdx]
+                    readIdx += 1
                     if zeroRun == 2, byte == 0x03 {
-                        strippedLen = outPos
-                        if nextIdx == allocLen { break }
+                        if readIdx == allocLen { break }
                         zeroRun = 0
-                        byte = src[nextIdx]
-                        nextIdx = readIdx + 2
+                        byte = src[readIdx]
+                        readIdx += 1
                     }
-                    stripped[outPos] = byte
-                    strippedLen = outPos + 1
+                    stripped[strippedLen] = byte
+                    strippedLen += 1
                     if byte == 0 {
                         zeroRun += 1
-                        if nextIdx == allocLen { break }
+                        if readIdx == allocLen { break }
                     } else {
-                        if nextIdx == allocLen { break }
+                        if readIdx == allocLen { break }
                         zeroRun = 0
                     }
-                    outPos += 1
-                    readIdx = nextIdx
                 }
-            } else {
-                strippedLen = 0
             }
             // &doviContext ⇒ the compiler emits the exclusive begin/endAccess (decompile L216/218).
             ff_dovi_rpu_parse(&doviContext, stripped, strippedLen, 0)
@@ -185,7 +199,7 @@ class VideoToolboxDecode: DecodeProtocol {
                 // unwrap is OURS, not Forward's.
                 // ⚑[tool=export_trie_oracle ref=vt_output_handler_closure:0x101a6eb44 result=NOT_IN_TRIE]
                 guard let imageBuffer else { return }
-                let frame = VideoVTBFrame(pixelBuffer: imageBuffer, fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
+                let frame = VideoVTBFrame(pixelBuffer: imageBuffer, fps: session.assetTrack.nominalFrameRate, isKeyFrame: isKeyFrame, dovi: session.assetTrack.dovi, edrMetaData: nil, doviData: self.doviData, rpuBuffer: nil)
                 frame.timebase = session.assetTrack.timebase
                 if isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.maxTimestamp > 0 { // ⚑P3 lastPosition→maxTimestamp
                     self.startTime = self.maxTimestamp - timestamp // ⚑P3 lastPosition→maxTimestamp
@@ -275,7 +289,7 @@ class VideoToolboxDecode: DecodeProtocol {
 class DecompressionSession {
     fileprivate let formatDescription: CMFormatDescription
     fileprivate let decompressionSession: VTDecompressionSession
-    fileprivate var assetTrack: FFmpegAssetTrack
+    fileprivate let assetTrack: FFmpegAssetTrack
     init?(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.assetTrack = assetTrack
         guard let pixelFormatType = assetTrack.pixelFormatType, let formatDescription = assetTrack.formatDescription else {
@@ -371,3 +385,25 @@ extension CMVideoCodecType {
         }
     }
 }
+
+// ⚑ Forward-added protocol (absent from KSPlayer source). Resolved from the FFmpegAssetTrack.bitStreamFilter
+//   field-record symref → protocol descriptor 0x1039f0820 (kind=Protocol). Requirements deferred
+//   (minimal no-conformer declare). The field is a 16-byte class-existential (init nil): the descriptor's
+//   own class-constraint flag reads Any, so the class layout comes from the field-site `& AnyObject`,
+//   not the protocol — kept faithful to the descriptor.
+// ⚑[tool=name_type_at_addr ref=BitStreamFilter:0x1039f0820 result=protocol(kind=3,non-class-constrained)]
+// ⚑ `public` is FORCED by type visibility: FFmpegAssetTrack.bitStreamFilter carries a
+//   property descriptor (public-exclusive), and a public stored property's type must be
+//   public. The protocol's own access is not separately observable.
+// ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter:vpMV result=public ⇒ BitStreamFilter public by the type-visibility rule]
+public protocol BitStreamFilter {}
+
+// Nal3ToNal4BitStreamFilter @0x1039f0840 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (VideoToolboxDecode.swift..Anime4KPipeline.swift).
+// ⚑[tool=type_surface ref=Nal3ToNal4BitStreamFilter:0x1039f0840 result=enum Nal3ToNal4BitStreamFilter: BitStreamFilter]
+enum Nal3ToNal4BitStreamFilter: BitStreamFilter {}
+
+// AnnexbToCCBitStreamFilter @0x1039f085c — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (VideoToolboxDecode.swift..Anime4KPipeline.swift).
+// ⚑[tool=type_surface ref=AnnexbToCCBitStreamFilter:0x1039f085c result=enum AnnexbToCCBitStreamFilter: BitStreamFilter]
+enum AnnexbToCCBitStreamFilter: BitStreamFilter {}

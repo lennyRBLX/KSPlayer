@@ -244,13 +244,14 @@ class PixelBuffer: PixelBufferProtocol {
     let height: Int
     let planeCount: Int
     var aspectRatio: CGSize
+
+    var cvPixelBuffer: CVPixelBuffer? { nil }
     let leftShift: UInt8
     let isFullRangeVideo: Bool
     // ⚑ Forward-added HDR side-data field (binary PixelBuffer @+0x48; init @0x101a8a318 sets an empty
     // default). Reflection field-record is symbolic/unmapped → type inferred `Data` from the 16-byte
     // field size + empty-Data init default (sibling Resample.hdr10PlusData is `Data?`; layout-identical).
     var hdr10PlusData: Data?   // field record carries `Sg` — Data?, not a non-optional Data()
-    var cvPixelBuffer: CVPixelBuffer? { nil }
     var colorPrimaries: CFString?
     var transferFunction: CFString?
     var yCbCrMatrix: CFString?
@@ -344,7 +345,7 @@ class PixelBuffer: PixelBufferProtocol {
         if format == AV_PIX_FMT_RGB24 {
             image = CGImage.make(rgbData: buffers[0]!.contents().assumingMemoryBound(to: UInt8.self), linesize: Int(lineSize[0]), width: width, height: height)
         } else {
-            let scale = VideoSwresample(isDovi: false)
+            let scale = VideoSwresample(dovi: nil)
             image = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) })?.cgImage()
             scale.shutdown()
         }
@@ -365,4 +366,8 @@ extension CGSize {
             return nil
         }
     }
+}
+
+extension CVBuffer {
+    @used func bytesPerRowOfPlane(at: Int) -> Int { fatalError("L7: CVBuffer.bytesPerRowOfPlane — Forward body unread") }
 }

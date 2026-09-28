@@ -10,6 +10,9 @@
 
 import Foundation
 import KSPlayer
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Coordinates the convert-to-HLS pipeline (demuxer ↔ remuxer ↔ local server ↔ directory watcher) and
 /// surfaces playback timing/duration. Forward-new (ProAVPlayer module).
@@ -25,12 +28,12 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     // Binding now matches the binary's FieldRecord (flags 0x00000000 = `let`).
     private let assetTracks: [FFmpegAssetTrack]
     private let duration: Double
-    private let subtitles: [MediaPlayerTrack]  // existential array (mangle Say…_pG; non-optional)
+    let subtitles: [MediaPlayerTrack]  // existential array (mangle Say…_pG; non-optional) — internal (was private): ProAVPlayer.createPlayerItem task @0x101b77768 appends it to subtitleTracks
     // weak optional existential (mangle _pSgXw) → ConversionInfoDelegate (AnyObject). 3 reqs → M2.
-    private weak var delegate: ConversionInfoDelegate? = nil
+    weak var delegate: ConversionInfoDelegate? = nil   // internal (was private): ProAVPlayer.createPlayerItem task stores self
     var demuxerTime: Double = 0   // internal (was private, P34): ProAVPlayer.replaceCurrentItem's item-swap closure reads m3u8Info.demuxerTime cross-file
     private var currentPlaybackTime: Double = 0
-    let maxBufferDuration: Double  // internal (was private, P34): ProAVPlayer.conversionDidReachEnd reads m3u8Info.maxBufferDuration cross-file
+    let maxBufferDuration: Double  // internal (was private, P34): ProAVPlayer.endOfStream reads m3u8Info.maxBufferDuration cross-file
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
     let remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
     let demuxerIO: DemuxerIO
@@ -63,20 +66,30 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
         self.server = server                                                      // @0x60
         self.directoryWatcher = DirectoryWatcher()                               // FUN_101a04e20 (KSPlayer actor) @0x68  ⚑[tool=resolve_fun_pins ref=FUN_101a04e20:0x101a04e20 result=RESOLVES_UNIQUELY] = KSPlayer.DirectoryWatcher.__allocating_init() -> KSPlayer.DirectoryWatcher
         remuxerIOAction.delegate = self                                          // weak; RemuxerIOActionDelegate wt 0x1041e0b80
-        // ⚑ server route install — DEFERRED (owner-phase, binary-read not assumed): the binary registers a
-        //   handler on `server` under exclusive access (swift_beginAccess on server+0x20), passing the route
-        //   thunk FUN_101b6ba5c and its context box → the request processor FUN_101b68b38.
-        // ⚑ CORRECTION (this comment previously said "captures self+server"): the thunk captures self and a
-        //   Double, NOT `server`. The whole 3-instruction body is
-        //       ldr x1, [x20, #0x10] ; ldr d0, [x20, #0x18] ; b 0x101b68b38
-        //   and ctx+0x18 is loaded into an FP register, so it cannot be an object reference. Confirmed twice
-        //   more: the box destructor releases ONLY +0x10 (so +0x18 is trivial, not refcounted), and the
-        //   capture descriptor reads [ProAVPlayer.ConversionInfo, Swift.Double]. The Double is the init's
-        //   maxBufferDuration parameter (the same register stored to self.maxBufferDuration).
-        //   `server` is the RECEIVER of the install, not a capture — it is never stored into the box.
-        //   ⇒ the deferred handler is shaped `{ [self, maxBufferDuration] (req) in … }`.
-        //   ⚑[tool=llvm-objdump ref=FUN_101b6ba5c:0x101b6ba5c result=CAPTURES_SELF_PLUS_DOUBLE]
-        //   ⚑[tool=prefetch_decompiles ref=FUN_101b68b38:0x101b68b38 result=LOCATED]
+        server.ping()                                                            // FUN_101b70b64
+        // keepAliveBlockMap[dir.path] = thunk 0x101b6ba5c -> FUN_101b68b38 (box captures self + maxBufferDuration).
+        // 68b38 spawns Task(priority: nil) [weak self] (body 101b68cc0 chain): demuxerIO.state == .paused ->
+        // send(.resume) -> directoryWatcher.watchModify (vtable +0x88) with closure 6bb88 -> 6907c; that closure
+        // spawns the pause Task (6bc4c -> 69270: warning KSLog line 63, then send(.pause)).
+        server.keepAliveBlockMap[remuxerIOAction.dir.path] = { url in
+            Task { [weak self] in
+                guard let self else { return }
+                guard await self.demuxerIO.state == .paused else { return }
+                await self.demuxerIO.send(.resume)
+                await self.directoryWatcher.watchModify(fileURL: url) { [weak self] isModified in
+                    guard let self else { return }
+                    let start = self.remuxerIOAction.startPlayTime ?? 0
+                    let diff = (self.demuxerTime - start) - self.currentPlaybackTime
+                    if isModified, maxBufferDuration < diff {
+                        Task { [weak self] in
+                            guard let self else { return }
+                            KSLog("keepAlive url=\(url.lastPathComponent) send(.pause) ahead=\(diff), demuxerTime=\(self.demuxerTime)", file: "ProAVPlayer/ConversionInfo.swift", function: "init(server:remuxerIOAction:maxBufferDuration:)", line: 63)
+                            await self.demuxerIO.send(.pause)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── DemuxerIODelegate conformance (wt 0x1041e0b90). 4 instance-method reqs (conformance_walker):
@@ -140,12 +153,12 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
 
     /// `FUN_101b6abf8` — forward to the coordinator's own delegate (witness +0x10 = ConversionInfoDelegate req1).
     func demuxerDidReachEnd() {
-        delegate?.conversionDidReachEnd()
+        delegate?.endOfStream()
     }
 
     /// `FUN_101b6ac44` — forward the error (witness +0x18 = ConversionInfoDelegate req2).
     func demuxerDidFail(_ error: any Error) {
-        delegate?.conversionDidFail(error)
+        delegate?.failed(error: error)
     }
 
     /// `FUN_10000e52c` — empty in the binary (an outlined no-op in the low `__text` segment; segment
@@ -174,8 +187,42 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
                 _ = self
             }
         } else if (state & 1) != 0 {                                       // [tbz #0 bit-test — P38 partial, hand-read + audit]
-            delegate?.conversionDidUpdate()
+            delegate?.reconstructComplete()
         }
+    }
+
+    /// @0x101b69598 (nonisolated async; conts 0x101b6960c…0x101b69880). #file "ProAVPlayer/ConversionInfo.swift", KSLog line 87.
+    /// Seek (only if startPlayTime > 0, flags 1) → pump the demuxer until the first segment exists → start reading.
+    /// Then bind the demuxer delegate, clear KSOptions.isHDRScreen for HDR video on an SDR screen, and serve master.m3u8.
+    func run(startPlayTime: Double) async throws -> URL {
+        if startPlayTime > 0 {
+            _ = demuxerIO.formatContext.performSeek(time: startPlayTime, flags: 1)          // FUN_101a329d8
+        }
+        try await waitFirstSegment()                                                       // FUN_101b69c34
+        await demuxerIO.send(.startReading)                                                // FUN_101b7e9d0(0,0,0,2)
+        await demuxerIO.update(delegate: self)                                             // weakAssign, wt 0x1041e0b90 (inlined)
+        let isHDRScreen = await UIApplication.isHDRScreen                                  // FUN_101a02edc on MainActor
+        if demuxerIO.formatContext.assetTracks.contains(where: { $0.mediaType == .video && $0.dynamicRange != .sdr }), !isHDRScreen {
+            KSOptions.isHDRScreen = false                                                  // DAT_1044e5088 = 0
+        }
+        let url = remuxerIOAction.dir.appendingPathComponent("master.m3u8")
+        KSLog("local url=" + url.absoluteString, file: "ProAVPlayer/ConversionInfo.swift", function: "run(startPlayTime:)", line: 87)
+        return try server.getURL(for: url, local: false)                                   // 0x101b70ed4
+    }
+
+    /// FUN_101b69c34 (async, typed throws Int32 — `swift_willThrowTypedImpl` on Swift.Int32). The read is
+    /// `DemuxerIO.readPacket()` inlined on the demuxer executor (0x101b69dd0). ⚑ NAME INFERRED (no symbol).
+    private func waitFirstSegment() async throws(Int32) {
+        let path = remuxerIOAction.dir.appendingPathComponent("segment_0_00001.ts").path
+        while !Task.isCancelled, !FileManager.default.fileExists(atPath: path) {
+            try await demuxerIO.readPacket()
+        }
+    }
+
+    /// @0x101b6a22c (nonisolated async). Same body ProAVPlayer.reset() inlines. ⚑ NAME INFERRED (no symbol).
+    func close() async {
+        server.keepAliveBlockMap.removeValue(forKey: remuxerIOAction.dir.path)
+        await demuxerIO.send(.close)
     }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real
@@ -185,10 +232,9 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
 /// Coordinator delegate — weak-referenced ⇒ `AnyObject`. 3 instance-method requirements (protocol desc
 /// 0x1039f4fa0), witness-anchored via ConversionInfo's forwards (wt 0x1041e0b90 / 0x1041e0b80 call these at
 /// witness +0x8 / +0x10 / +0x18 = requirement index 0 / 1 / 2; kinds = Method per conformance_walker).
-/// ⚑ req NAMES INFERRED — no in-binary `#function`; the sole conformer is ProAVPlayer (wt 0x1041e1340,
-/// stripped) → the names firm up when ProAVPlayer's ConversionInfoDelegate conformance is reconstructed.
+/// Req names from the sole conformer's Forward symbols (ProAVPlayer wt 0x1041e1340).
 protocol ConversionInfoDelegate: AnyObject {
-    func conversionDidUpdate()                    // req0 (+0x8)  ⚑ name inferred — from remuxerDidChangeState (odd) forward
-    func conversionDidReachEnd()                  // req1 (+0x10) ⚑ name inferred — from demuxerDidReachEnd forward
-    func conversionDidFail(_ error: any Error)    // req2 (+0x18) ⚑ name inferred — from demuxerDidFail forward (error arg)
+    func reconstructComplete()                    // req0 (+0x8)  `$s11ProAVPlayerAAC19reconstructCompleteyyF` 0x101b7cc78
+    func endOfStream()                            // req1 (+0x10) `$s11ProAVPlayerAAC11endOfStreamyyF` 0x101b7cc80
+    func failed(error: any Error)                 // req2 (+0x18) `$s11ProAVPlayerAAC6failed5errorys5Error_p_tF` 0x101b7d3b4
 }

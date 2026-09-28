@@ -166,6 +166,7 @@ extension AVAudioFormat {
         }
     }
 
+    var layout: UnsafePointer<AudioChannelLayout>? { fatalError("L7: AVAudioFormat.layout — Forward body unread") }
     var sampleSize: UInt32 {
         switch commonFormat {
         case .pcmFormatFloat32:
@@ -330,4 +331,70 @@ extension AudioChannelLabel {
             return AV_CHAN_NONE
         }
     }
+}
+
+// PacketNalData @0x1039ee6a4 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (AVFFmpegExtension.swift..AudioEnginePlayer.swift).
+// ⚑[tool=type_surface ref=PacketNalData:0x1039ee6a4 result=struct PacketNalData]
+// ⚑[tool=field_surface ref=PacketNalData+NALUnit:fieldmd result=1 let / 3 let] Lazy owner (no build metadata); fields follow
+// Forward's record order, IsVar bits and resolved types.
+struct PacketNalData {
+    let nals: [PacketNalData.NALUnit]
+
+    struct NALUnit {
+        let type: PacketNalData.NALType
+        let start: Int
+        let count: Int
+    }
+
+    enum NALType: CustomStringConvertible, Equatable {
+        case h264(H264NALUnitType)
+        case h265(HEVCNALUnitType)
+        case vp9(VP9FrameType)
+        case av1(AV1OBUType)
+        case sei(UInt16)
+        case unknown(UInt8)
+        var description: String { fatalError("L7: CustomStringConvertible.description") }
+    }
+}
+
+// H264NALUnitType @0x1039ee6f8 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (AVFFmpegExtension.swift..AudioEnginePlayer.swift).
+// ⚑[tool=type_surface ref=H264NALUnitType:0x1039ee6f8 result=enum H264NALUnitType: UInt8]
+enum H264NALUnitType: UInt8 {
+    // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
+    case unspecified0, slice, dpa, dpb, dpc, idrSlice, sei, sps, pps, aud, endSequence, endStream, fillerData, spsExt, prefix, subSPS, dps, reserved17, reserved18, auxSlice, extSlice, depthExtSlice, reserved22, reserved23, unspecified24, unspecified25, unspecified26, unspecified27, unspecified28, unspecified29, unspecified30, unspecified31
+    var description: String { fatalError("L7: H264NALUnitType.description — Forward body unread") }
+}
+
+// HEVCNALUnitType @0x1039ee714 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (AVFFmpegExtension.swift..AudioEnginePlayer.swift).
+// ⚑[tool=type_surface ref=HEVCNALUnitType:0x1039ee714 result=enum HEVCNALUnitType: UInt8]
+enum HEVCNALUnitType: UInt8 {
+    // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
+    case trailN, trailR, tsaN, tsaR, stsaN, stsaR, radlN, radlR, raslN, raslR, vclN10, vclR11, vclN12, vclR13, vclN14, vclR15, blaWLp, blaWRadl, blaNLp, idrWRadl, idrNLp, craNut, rsvIrapVcl22, rsvIrapVcl23, rsvVcl24, rsvVcl25, rsvVcl26, rsvVcl27, rsvVcl28, rsvVcl29, rsvVcl30, rsvVcl31, vps, sps, pps, aud, eosNut, eobNut, fdNut, seiPrefix, seiSuffix, rsvNvcl41, rsvNvcl42, rsvNvcl43, rsvNvcl44, rsvNvcl45, rsvNvcl46, rsvNvcl47, unspec48, unspec49, unspec50, unspec51, unspec52, unspec53, unspec54, unspec55, unspec56, unspec57, unspec58, unspec59, unspec60, unspec61, unspec62, unspec63
+    var description: String { fatalError("L7: HEVCNALUnitType.description — Forward body unread") }
+}
+
+// VP9FrameType @0x1039ee730 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (AVFFmpegExtension.swift..AudioEnginePlayer.swift).
+// ⚑[tool=type_surface ref=VP9FrameType:0x1039ee730 result=enum VP9FrameType: UInt8]
+enum VP9FrameType: UInt8 {
+    // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
+    case keyFrame, interFrame
+    var description: String { fatalError("L7: VP9FrameType.description — Forward body unread") }
+}
+
+// AV1OBUType @0x1039ee74c — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (AVFFmpegExtension.swift..AudioEnginePlayer.swift).
+// ⚑[tool=type_surface ref=AV1OBUType:0x1039ee74c result=enum AV1OBUType: UInt8]
+enum AV1OBUType: UInt8 {
+    // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
+    case reserved0, sequenceHeader, temporalDelimiter, frameHeader, tileGroup, metadata, frame, redundantFrameHeader, tileList, padding
+    var description: String { fatalError("L7: AV1OBUType.description — Forward body unread") }
+}
+
+extension AVPacket {
+    var timestamp: Int64 { @used get { fatalError("L7: AVPacket.timestamp — Forward body unread") } }
+    var isKeyFrame: Bool { @used get { fatalError("L7: AVPacket.isKeyFrame — Forward body unread") } }
 }

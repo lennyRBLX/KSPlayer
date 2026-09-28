@@ -1,6 +1,8 @@
 import Foundation
 import KSPlayer    // AbstractAVIOContext (1C.4)
 import FFmpegKit   // AVIOInterruptCB (FFmpeg C struct — the L3 cancel field)
+import Libavformat
+import QuartzCore // CACurrentMediaTime — the init's open-cost timer; the binary calls _CACurrentMediaTime (QuartzCore) at 0x103459d54
 
 // CacheIOContext — the 28-field core download/read/cache context of the SEPARATE
 // PreLoadIOContext module: an AbstractAVIOContext that streams through an FFmpeg
@@ -1195,4 +1197,539 @@ public class CacheIOContext: AbstractAVIOContext, PlayList {
             try? FileManager.default.removeItem(at: parent.appendingPathComponent(name))
         }
     }
+}
+
+// CacheFileEntry — standalone cache-entry type (NO superclass). Shared dependency
+// for the Wave-2 cache contexts (CacheIOContext / ReadCacheIOContext reference it).
+// Reconstructed A+ structure-faithful from the Forward 1.3.17 binary:
+//   fields  — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative).
+//   inits   — s10 (101b900c4): inner FUN_101b90114 has explicit param→field stores  ⚑[tool=resolve_fun_pins ref=FUN_101b90114:0x101b90114 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(url: Foundation.URL, position: Swift.UInt64) throws -> PreLoadIOContext.CacheFileEntry?
+//             (url=param_1, position=param_2; saveFile=true) → GROUNDED framing,
+//             with the Foundation file-open/size-read detail UNRESOLVED→P8 (IO-completion).
+//             s9 (101b881f8): the DESIGNATED init, inner FUN_101b8fb0c — its  ⚑[tool=resolve_fun_pins ref=FUN_101b8fb0c:0x101b8fb0c result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(dir: Foundation.URL, position: Swift.UInt64, maxSize: Swift.UInt32?) throws -> PreLoadIOContext.CacheFileEntry
+//             param_1 (url-derivation base) type is not deterministically
+//             resolvable → left UNRESOLVED, no fabricated signature. — P2.
+//   methods — s12/s13/s14 (101b90620 / 101b906c8 / 101b9089c): CacheFileEntry's
+//             own logic; symbols devirtualized → method NAMES inferred from the
+//             readable body shape (marked `name inferred`). Faithful spine; the
+//             intricate FileHandle/Data-helper details are flagged UNRESOLVED.
+// superclass_conformance_gate reports the binary's own conformance list for this type as
+// ['CacheEntryProtocol', 'CustomStringConvertible'] (reverse-walk from the class
+// descriptor through each conformance descriptor's TypeRef). CustomStringConvertible is
+// declared here because its single requirement is now satisfied (see `description`
+// below).
+// s98: CacheEntryProtocol is now DECLARED. Its requirement set is no longer unrecovered —
+// the protocol descriptor is `$s8KSPlayer18CacheEntryProtocolMp` @0x1039edec8 (KSPlayer
+// module) and it has exactly 2 instance Getters, read off BOTH conformers' validated witness
+// tables. This type's own table is 0x1041e19e8: req0 @0x101b90b48 loads a 64-bit field through
+// a runtime field-offset global and returns it (= the stored `position`, UInt64); req1
+// @0x101b90b5c does the same for the 32-bit `size`. Both requirements are therefore satisfied
+// by stored properties already declared below — this adds the conformance, not any member.
+public class CacheFileEntry: CacheEntryProtocol, CustomStringConvertible { // not final: Forward vtable slots 10-14
+    // --- stored fields (binary __swift5_fieldmd order) ---
+    // file: backing FileHandle. s13/s14 fetch it at field offset 0x10 and drive
+    //   NSFileHandle::_offset / seekToOffset:error: / _write / _read on it.
+    // ⚑[tool=binding_gate ref=CacheFileEntry:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
+    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
+    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
+    //   • file — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
+    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
+    //   reconstruction/binding_refuted_s61.json
+    //   RESOLVED in session 62: `position` is now `let` — the init assigns it from its
+    //   `position` PARAMETER, so the `= 0` default was never observable. `file` still stands.
+    // ⚑ s114: `let`, NOT an IUO `var`. Two independent binary signals, both re-read here:
+    //   the field record's FLAGS word is 0 (= `let`; 0x2 would be IsVar), and the mangle
+    //   `So12NSFileHandleC` carries no `Sg`. Decisively, the designated init @0x101b90114 emits NO
+    //   implicit-nil default store for this field anywhere in its 226 instructions — an IUO `var`
+    //   always gets one in the prologue — and writes it exactly once, on the success path, by a
+    //   plain 8-byte `str x20,[x22,#0x10]` at 0x101b90488.
+    //   ⚑[tool=fieldrec ref=CacheFileEntry.file:0x103cc062c result=flags0-let-no-Sg]
+    let file: FileHandle
+    // url: source/destination URL of the cache file.
+    // ⚑ s114: `URL`, NOT `URL?` — the field record's tail is EMPTY (a `Sg` would make it Optional)
+    //   and its symref is Foundation's `URL` nominal type descriptor. The init's parameter is
+    //   non-optional for the same reason: it takes URL's own metadata and value witness, never
+    //   `Optional<URL>`'s.
+    //   ⚑[tool=bind_oracle ref=CacheFileEntry.url:0x104109b20 result=Foundation.URL-no-Sg]
+    let url: URL
+    // position: base byte offset of this entry within the underlying stream.
+    //   s13/s14 compute `offset - position`; accessed as `*(ulong *)` with an
+    //   UNSIGNED compare (`offset < position`) → 64-bit unsigned. Brief's `Int64`
+    //   ⚑ guess corrected to UInt64 per the decompile width/signedness.
+    public let position: UInt64  // type inferred — ⚑ (brief said Int64; decompile shows ulong/unsigned → UInt64)
+    // saveFile: whether the entry persists to disk. v4 concrete (gate PASS).
+    //   (Not read by s12/s13/s14 in the cached set; consulted elsewhere.)
+    private var saveFile: Bool = false
+    // size: bytes currently held by this entry. s13 increments it by the write
+    //   length; s12 compares it against maxSize + a 32MiB ceiling. Accessed as
+    //   `*(uint *)` with a CARRY4 (unsigned 32-bit overflow) trap → UInt32. Brief's
+    //   `Int64` ⚑ guess corrected to UInt32 per the decompile width/signedness.
+    public var size: UInt32 = 0 // type inferred — ⚑ (brief said Int64; decompile shows uint/CARRY4 → UInt32)
+    // maxSize: capacity ceiling for this entry. s12 compares size+delta against it
+    //   as `*(uint *)` and reads its +4 tag byte (`(char)puVar1[1]`) → 5-byte
+    //   optional. l2_field_gate binary property descriptor independently resolves
+    //   `UInt32?`. Brief's `Int64` ⚑ guess corrected to UInt32? (2 binary signals).
+    public var maxSize: UInt32? // type inferred — ⚑ (brief said Int64; l2 gate + decompile → UInt32?)
+
+    // --- inits ---
+    // s10 @101b900c4 → inner FUN_101b90114 (2 args; explicit field stores url=param_1, position=param_2).  ⚑[tool=resolve_fun_pins ref=FUN_101b90114:0x101b90114 result=RESOLVES_UNIQUELY] = PreLoadIOContext.CacheFileEntry.init(url: Foundation.URL, position: Swift.UInt64) throws -> PreLoadIOContext.CacheFileEntry?
+    // Arity inferred (no mangled init symbol exists); param→field stores are explicit in the inner init.
+    // Body opens the EXISTING cache file + reads its NSURLFileSizeKey size → faithful spine; the
+    // NSFileManager/URLResourceValues marshalling detail is UNRESOLVED.
+    /// @0x101b90114 (the initializing `…cfc`; the allocating thunk is 0x101b900c4), 226 instructions.
+    /// The trie gives the whole signature, and all three of its differences from the previous
+    /// spelling are read, not inferred:
+    /// `init(url: Foundation.URL, position: Swift.UInt64) throws -> CacheFileEntry?` — FAILABLE,
+    /// THROWING, and taking a NON-optional `url`.
+    /// ⚑[tool=export_trie_oracle ref=CacheFileEntry.init(url:position:):0x101b90114 result=ACSg-throws]
+    ///
+    ///   · the three declaration defaults are the only ones materialised in the prologue —
+    ///     `saveFile = false` (0x101b901c4), `size = 0` (0x101b901d4), `maxSize = nil` (0x101b901e4,
+    ///     payload zeroed + tag byte 1). `file`, `url` and `position` get none, which is what makes
+    ///     them non-defaulted `let`s.
+    ///   · FAILABILITY is a NULL class reference, not an enum tag: `Optional<CacheFileEntry>` for a
+    ///     class is a nullable pointer, so the nil path just sets x22 = 0 after
+    ///     `swift_deallocPartialClassInstance` (0x101b90310). It returns nil WITHOUT throwing — the
+    ///     swifterror register is restored from its entry spill.
+    ///   · there are exactly TWO throw paths and this body calls NO `swift_willThrow` of its own —
+    ///     both are propagations: from `URL.resourceValues(forKeys:)` and from
+    ///     `FileHandle(forUpdating:)`, whose shim converts an `NSError`. So the thrown value is a
+    ///     bridged Cocoa error, not a type declared in this module.
+    ///
+    /// ⚑ The old note said the init opens the file for READING. It does not: the selector is
+    ///   `fileHandleForUpdatingURL:error:`, i.e. `FileHandle(forUpdating:)`, read-write.
+    ///   ⚑[tool=decode_objc_selector ref=CacheFileEntry.init:0x10440b4a8 result=fileHandleForUpdatingURL:error:]
+    ///
+    /// ⚑ `size` comes from `URLResourceValues.fileSize` (an `Int?`) through a TRAPPING `UInt32(_:)`
+    ///   narrowing — traps at 0x101b90494 on negative and 0x101b90498 on > UInt32.max. It is NOT a
+    ///   FileManager attributes lookup and NOT a seek-to-end. The `forKeys:` argument is the
+    ///   one-element literal `[.fileSizeKey]`, built as a stack-promoted array whose sole element is
+    ///   the CoreFoundation global `NSURLFileSizeKey`.
+    ///   ⚑[tool=bind_oracle ref=URLResourceValues.fileSize:0x104109830 result=fileSizeSiSgvg]
+    ///
+    /// ⚑ Spellings the binary does not decide: whether `maxSize` is written `size` or
+    ///   `UInt32(fileSize)` (same register w20, one conversion), and whether `resourceValues(...)`
+    ///   is bound to a local or chained into `.fileSize`.
+    init?(url: URL, position: UInt64) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        if let fileSize = values.fileSize {
+            size = UInt32(fileSize)
+            maxSize = size
+        }
+        self.position = position
+        self.url = url
+        saveFile = true
+        file = try FileHandle(forUpdating: url)
+    }
+
+    init(dir: URL, position: UInt64, maxSize: UInt32?) throws {
+        self.position = position
+        self.maxSize = maxSize
+        self.url = dir.appendingPathComponent(position.description)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            _ = FileManager.default.createFile(atPath: url.path, contents: nil, attributes: nil)
+        } else {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let fileSize = values.fileSize {
+                size = UInt32(fileSize)
+                if self.maxSize == nil {
+                    self.maxSize = size
+                }
+            }
+        }
+        file = try FileHandle(forUpdating: url)
+    }
+
+    // --- description (vtable slot 11, between the two inits at 9/10 and the three
+    //     methods at 12/13/14 — so it is declared here, after the inits) ---
+
+    // s11 @0x101b9049c — `var description: String`. The NAME is not inferred: no mangled
+    //   name survives (recover_swift_function_name → None), but
+    //   superclass_conformance_gate independently proves this type conforms to
+    //   CustomStringConvertible in the binary, and slot 11 is the only get-only String
+    //   property in the vtable — so `description` is the witness, established rather than
+    //   guessed. The BODY is byte-exact too: the
+    //   three literals are recovered from the small-string immediates the decompile
+    //   loads, so the format string is not a guess.
+    //     "position=" str 0x6e6f697469736f70 = "position", bridgeObject 0xe9…003d = count 9, 9th byte '='
+    //     ",size="    str 0x00003d657a69732c = ",size=",   bridgeObject 0xe6…0000 = count 6
+    //     ",maxSize=" str 0x657a695378616d2c = ",maxSize", bridgeObject 0xe9…003d = count 9, 9th byte '='
+    //   Interpolation kinds corroborate the field order independently: `position`
+    //   (UInt64) and `size` (UInt32) each go through
+    //   `CustomStringConvertible.description` — two `get_description` calls — while
+    //   `maxSize` (UInt32?, an Optional and therefore NOT CustomStringConvertible)
+    //   falls to the generic `appendInterpolation<T>` → `_print_unlocked` with the
+    //   DefaultStringInterpolation metadata/TextOutputStream witness pair. The
+    //   `grow(0x1e)` is the 30-byte literal reserve (9 + 6 + 9 = 24 plus slack).
+    //   Both field reads are `swift_beginAccess` on the ivar-offset globals
+    //   `CacheFileEntry::size` / `CacheFileEntry::maxSize`, i.e. this class's own
+    //   `size` and `maxSize`, not a sibling's.
+    // ⚑[tool=superclass_conformance_gate ref=CacheFileEntry.description.getter:0x101b9049c result=CustomStringConvertible witness]
+    //   Interpolating `maxSize` (a UInt32?) directly is what the binary does — the generic
+    //   `appendInterpolation<T>` → `_print_unlocked` path only exists because the value is
+    //   an Optional. Swift emits an "interpolation produces a debug description for an
+    //   optional value" WARNING for it; the warning is the faithful reading and is not
+    //   silenced (a `String(describing:)` or `?? default` rewrite would change the
+    //   emitted call and break the body diff).
+    public var description: String {
+        "position=\(position),size=\(size),maxSize=\(maxSize)"
+    }
+
+    // --- methods (CacheFileEntry's own; names devirtualized → inferred) ---
+
+    // s12 @101b90620 — `func wouldOverflow(_:) -> Bool` (name inferred).
+    //   undefined8 FUN(uint param_1): returns 0/1. Faithful (full) reconstruction:
+    //   a capacity predicate. Reads size (uint); if size >= 0x2000001 (32MiB+1) →
+    //   true. Else reads maxSize and tests its +4 optional-tag byte
+    //   (`(char)puVar1[1] != '\x01'` == maxSize is non-nil); when non-nil, an
+    //   overflow-checked `maxSize < size + appending` → true. Else false.
+    //   NOTE: s12 does NOT read `saveFile`; the byte at maxSize+4 is the UInt32?
+    //   optional tag, not saveFile.
+    // ⚑ s106 RENAME `wouldOverflow(_:)` → `isOut(size:)`. The old name carried its own disclaimer,
+    //   "name inferred (devirt)", and the inference was never needed: the trie names 0x101b90620
+    //   `PreLoadIOContext.CacheFileEntry.isOut(size: Swift.UInt32) -> Swift.Bool` directly.
+    //   BOTH parts come from the trie — the base name and the argument label (`_` → `size:`).
+    //   Parameter type UInt32 and Bool return already matched, so this is a rename and not a
+    //   signature change; that distinction was checked by comparing parameters, not assumed.
+    //   No call sites: the tree-wide grep on the bare name returns only this declaration and its
+    //   own comment.
+    //   ⚑[tool=export_trie_oracle ref=CacheFileEntry.isOut(size:):0x101b90620 result=isOut-not-wouldOverflow]
+    func isOut(size appending: UInt32) -> Bool {
+        if size >= 0x2000001 {
+            return true
+        }
+        if let maxSize {
+            // CARRY4(size, appending) → unsigned-overflow trap in the binary; the
+            // sum is the faithful comparison target.
+            if maxSize < size + appending {
+                return true
+            }
+        }
+        return false
+    }
+
+    // s13 @101b906c8 — `func write(offset:buffer:length:) throws` (name inferred).
+    //   void FUN(ulong param_1, __int64 param_2, uint param_3): offset, buffer ptr,
+    //   length. Faithful spine: derive the FileHandle seek target from
+    //   `offset - position` (binary traps when offset < position), seek the file
+    //   if it is not already there (seekToOffset:error: → throws via
+    //   convertNSErrorToError), write the buffer bytes as Data, then size += length.
+    // UNRESOLVED: the exact Data construction/deallocator dance and the unnamed
+    //   helpers (FUN_100395fc0 build-Data, FUN_101b95a8c, FUN_10000627c) are not
+    //   resolvable from the cached decompile — spine preserved, helper detail TODO.
+    /// ⚑ s114: THE NAME IS INVENTED AND WAS PREVIOUSLY UNMARKED. It carried only
+    ///   "// name inferred (devirt)", which is not the marker grammar — one grep must separate every
+    ///   fabricated identifier from every derived fact, so it now carries the real thing. The base
+    ///   name `write` rests on NO binary evidence; the ARGUMENT LABELS do:
+    ///   this is vtable slot 13 (impl 0x101b906c8), reached from THREE call sites in TWO caller
+    ///   functions (addEntry calls it twice, at 0x101b8cdb4 and 0x101b8ce4c; addNewEntry once at
+    ///   0x101b8d494) — an earlier note here said "only two callers", conflating sites with functions.
+    ///   Those callers are the trie-named
+    ///   `CacheIOContext.addEntry(logicalPos:buffer:size:)` @0x101b8ccac and
+    ///   `addNewEntry(logicalPos:buffer:size:)` @0x101b8d2c8, which pass their three parameters
+    ///   STRAIGHT THROUGH (`mov x0,x24` / `ldur x1,[x29,#-0xe0]` / `ldur w2,[x29,#-0xc8]` /
+    ///   `bl 0x101b906c8` at 0x101b8d488-0x101b8d494). This class's own trie-named
+    ///   `isOut(size:)` independently confirms `size:` as this module's label for a byte count.
+    ///   ⚑[invented=write addr=0x101b906c8 exhaustion=name_exhaustion_gate approved=jweaver]
+    // ⚑ `buffer` IS MUTABLE, and that is read from the callers, not chosen. Both trie-named callers
+    //   pass their own parameter straight through (`mov x0,x25 / mov x1,x24 / mov x2,x23 / bl`), and
+    //   the trie types theirs `buffer: Swift.UnsafeMutablePointer<Swift.UInt8>` —
+    //   `CacheIOContext.addEntry(logicalPos:buffer:size:)` @0x101b8ccac and
+    //   `addNewEntry(logicalPos:buffer:size:)` @0x101b8d2c8. It was declared `UnsafePointer<UInt8>`;
+    //   the compiler surfaced the mismatch when the Data builder below was corrected.
+    func write(logicalPos: UInt64, buffer: UnsafeMutablePointer<UInt8>, size: Int32) throws {
+        let offset = logicalPos
+        let length = size
+        // ⚑ s114: the `guard let file` that stood here is GONE because `file` is a non-optional
+        //   `let` (field-record flags 0, no `Sg`, and the init emits no implicit-nil default).
+        //   A non-optional cannot be conditionally bound, and the binary has no nil test for it.
+        let target = offset - position // binary: traps if offset < position
+        if try file.offset() != target {
+            try file.seek(toOffset: target)
+        }
+        // THE BUILDER IS NO LONGER UNRESOLVED, AND THE OLD SPELLING WAS WRONG. It was
+        //   `Data(bytes: buffer, count: Int(length))`, a two-argument COPYING initializer. The binary
+        //   passes THREE arguments to 0x100395fc0 — `mov x0,x23` (buffer), `mov x1,x27` (count),
+        //   `mov x2,x25` (a third value) — and x25 is built from __got 0x104109b70 =
+        //   `_$s10Foundation4DataV11DeallocatorO4noneyA2EmFWC`, i.e. `Data.Deallocator.none`.
+        //   `Data(bytes:count:)` takes no deallocator; the only Data initializer with this shape is
+        //   `Data(bytesNoCopy:count:deallocator:)`. The difference is semantic, not cosmetic: the old
+        //   spelling COPIES the caller's buffer, the binary does not.
+        let data = Data(bytesNoCopy: buffer, count: Int(length), deallocator: .none)
+        try file.write(contentsOf: data)
+        // ⚑ `self.` is REQUIRED here, not stylistic: the `size:` parameter label recovered from the
+        //   callers shadows this class's `size` field, and without the qualifier this reads the
+        //   Int32 parameter instead of the UInt32 field. The compiler caught it.
+        self.size += UInt32(length) // binary: CARRY4 unsigned-overflow trap on size + length
+    }
+
+    // s14 @101b9089c — `func read(offset:length:) throws -> Data?` (name inferred).
+    //   void FUN(ulong param_1, int param_2): offset, length. Faithful spine:
+    //   same `offset - position` seek-target derivation + conditional
+    //   seekToOffset:error: (throws), then NSFileHandle::_read of `length` bytes.
+    // UNRESOLVED: the decompile shows the _read call but the returned-Data
+    //   marshalling is obscured — return shape is a best-effort spine.
+    /// ⚑ s114: THE NAME IS INVENTED AND WAS PREVIOUSLY UNMARKED — same defect as `write` above.
+    ///   All six naming routes are closed: no trie symbol (992 well-formed candidate manglings on
+    ///   this class, across both plain and `33_D69EFE14…` fileprivate forms, resolve to ZERO trie
+    ///   hits, and the trie is NOT access-filtered — it carries this module's `private` symbols, so
+    ///   the absence is real); no `#function`; no `#file`/`#line`; no string literal at all; the
+    ///   class publishes no ObjC method list; and the vtable route cannot eliminate because this
+    ///   class has TWO unnamed Method impls (slots 13 and 14).
+    ///   ⚑[invented=read addr=0x101b9089c exhaustion=name_exhaustion_gate approved=jweaver]
+    ///
+    /// ⚑ THE LABELS, unlike the base name, ARE evidence-backed. At the `ReadCacheIOContext.read`
+    ///   call site the value passed as the first argument is literally the stored field
+    ///   `ReadCacheIOContext.logicalPos` (offset global 0x104c639e0), and the SAME value is handed
+    ///   one instruction earlier to the trie-named `firstEntryContain(logicalPos:)` — so the
+    ///   module's own label for that value, in that position, is `logicalPos:`. Every exported
+    ///   `(UInt64, Int32)` method in this module labels the Int32 `size:`.
+    ///
+    /// ⚑ 🚨 `name_exhaustion_gate` ROUTE 5 IS BLIND TO THIS MODULE and must not be trusted here.
+    ///   It printed "not a vtable Impl in any class" for this address, which is FALSE: it is
+    ///   `CacheFileEntry` vtable slot 14. Its classmap holds 220 classes and contains NO
+    ///   `CacheFileEntry`, `CacheIOContext` or `CacheOnlyIOContext`, so the vtable route silently
+    ///   reports CLOSED for every PreLoadIOContext address. Route 5 closes here on the merits
+    ///   (two unnamed Method slots leave nothing to eliminate against) — but that had to be
+    ///   established by hand, not read off the gate.
+    ///   ⚑[tool=vtable_walk ref=CacheFileEntry.slot14:0x101b9089c result=slot14-Method-impl]
+    func read(logicalPos: UInt64, size: Int32) throws -> Data? {
+        let offset = logicalPos
+        let length = size
+        // ⚑ s114: same as `write` above — `file` is a non-optional `let`, so there is no binding
+        //   guard here and none in the binary.
+        let target = offset - position // binary: traps if offset < position
+        if try file.offset() != target {
+            try file.seek(toOffset: target)
+        }
+        return try file.read(upToCount: Int(length)) // UNRESOLVED: exact return marshalling unseen
+    }
+}
+
+// URLContextDownload — an AbstractAVIOContext that downloads through an FFmpeg
+// URLContext (libavformat protocol handler), used to populate the cache.
+// Reconstructed A+ structure-faithful from the Forward 1.3.17 binary:
+//   fields — __swift5_fieldmd reflection (NAMES + ORDER + COUNT authoritative);
+//            `context`/`keepAlive`/`isReadComplete` are v4 concrete (transcribed
+//            verbatim); `url` is ⚑ best-effort (confirmed via l2_field_gate).
+//   init   — real designated init s3 @101b90bc0 → SHARED inner FUN_101b90c58 (cached;  ⚑[tool=resolve_fun_pins ref=FUN_101b90c58:0x101b90c58 result=RESOLVES_UNIQUELY] = PreLoadIOContext.URLContextDownload.init(url: Foundation.URL, flags: Swift.Int32, options: Swift.UnsafeMutablePointer<Swift.OpaquePointer?>?, interrupt: __C.AVIOInterruptCB, isReadComplete: Swift.Bool) throws -> PreLoadIOContext.URLContextDownload
+//            also reused by CacheIOContext/ReadCacheIOContext to build their `download`).
+//            ⚑ THE INIT IS WRITTEN BELOW, all 264 instructions of it. The old note here called
+//            this body deep IO whose stripped calls only the P2 oracle could name; that was wrong.
+//            It makes ONE FFmpeg open call, named by argument shape against url.h:143.
+// UNRESOLVED: AbstractAVIOContext overrides (read/write/seek) are devirtualized in
+//   the binary (no readable body) → inherited, NOT reconstructed. — P2
+// URLContext is FFmpeg's libavformat *private* type — declared in FFmpegKit's
+//   avformat_shim.h, so it resolves via `import FFmpegKit` (added to this target's
+//   dependencies in Package.swift). PreLoadIOContext builds green via
+//   `swift build --target PreLoadIOContext`. NOTE: the KSPlayer xcodebuild scheme
+//   (validate_build.sh ios) does NOT compile PreLoadIOContext → verify this module
+//   with `swift build`.
+public class URLContextDownload: AbstractAVIOContext {
+    // --- stored fields (binary __swift5_fieldmd order) ---
+    // context: the FFmpeg URLContext driving the download. v4 concrete.
+    var context: UnsafeMutablePointer<URLContext>?
+    // keepAlive: whether the connection is kept open after a read. v4 concrete.
+    // ⚑ THE `= false` DEFAULTS ARE GONE, on the binary's evidence. The real init assigns both:
+    //   self+0x20 takes a COMPUTED value (the "multiple_requests" dictionary probe below) and
+    //   self+0x21 takes the `isReadComplete` PARAMETER. A stored constant would have neither store.
+    let keepAlive: Bool
+    // isReadComplete: whether the download has reached completion. v4 concrete.
+    let isReadComplete: Bool
+    // url: the source URL of the download. Inner init copies it via Foundation::URL
+    //   type-metadata + value-witness (dispositive → URL, not String).
+    // ⚑ THE s61 BINDING PIN IS DISCHARGED, AND THE OPTIONALITY WAS WRONG TOO. The pin said `let`
+    //   was impossible because `url` is "assigned after super.init()". It is not: the real init
+    //   below assigns every own field BEFORE the open, and `super.init` is inlined afterwards, so
+    //   `let` compiles. And the field record's typeref is a bare symref to `_$s10Foundation3URLVMn`
+    //   with tail `b''` — NO trailing `Sg` — so the type is `URL`, not `URL?`.
+    // ⚑[tool=fieldrec ref=URLContextDownload.url:0x1039f5a64 result=URL-no-Sg-flags-0-let]
+    let url: URL
+
+    /// @0x101b90c58, extent 0x101b90c58-0x101b91078, 264 instructions, one trie symbol, not
+    /// ICF-folded. 0x101b90bc0 is the allocating `cfC` entry and 0x101b90c44 the metadata accessor,
+    /// which is why the three looked adjacent and confusing. It genuinely throws: x21 is spilled at
+    /// entry, the error goes into x21, and both exits converge on `mov x21, x23`.
+    ///
+    /// ABI: x20 = self, x0 = &url (INDIRECT and OWNED — `URL` is resilient, so it arrives by
+    /// address and its value-witness `destroy` runs on both exits), w1 = flags, x2 = options,
+    /// x3+x4 = the 16-byte `AVIOInterruptCB` reassembled into a stack temporary at fp-0x70 whose
+    /// ADDRESS is what reaches the open, x5 = isReadComplete.
+    ///
+    /// Store order is the binary's: `context`, `url`, `isReadComplete`, `keepAlive`, then the open,
+    /// then the guard, and only then the superclass pair — every own field is initialized before the
+    /// throw, which is what lets the failure path end in `swift_deallocPartialClassInstance`.
+    ///
+    /// `keepAlive` is a dictionary probe, and its three branches are read, not guessed:
+    ///   · `cbz x25` @0x101b90cf8 — the `options` parameter is optional-chained.
+    ///   · `cbz x0` @0x101b90d1c — the entry pointer is nil-TESTED, i.e. `if let`, not force-unwrapped.
+    ///   · `cbz x0` @0x101b90d24 → `brk #0x1` @0x101b91074 — only `.value` traps, which is the
+    ///     implicit unwrap of an IUO `char *`.
+    /// "multiple_requests" is the ONLY dictionary key in the whole extent, and no dictionary WRITE
+    /// call appears anywhere in it — the probe is read-only.
+    /// ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]
+    ///
+    /// ⚑ The 8-argument open at 0x1030c03e4 is named by ARGUMENT SHAPE, not by the oracle:
+    ///   `ffmpeg_name_oracle --resolve` returns UNKNOWN with zero survivors there (14-member
+    ///   fingerprint class). The operands are (x0=&self.context, x1=the utf8CString buffer,
+    ///   w2=flags, x3=&interrupt, x4=options, x5=0, x6=0, x7=0), which matches url.h:143's
+    ///   `ffurl_open_whitelist(URLContext **, const char *, int, const AVIOInterruptCB *,
+    ///   AVDictionary **, const char *, const char *, URLContext *)` position for position with
+    ///   whitelist/blacklist/parent all NULL.
+    /// ⚑[tool=ffmpeg_name_oracle ref=0x1030c03e4 result=UNKNOWN-named-by-argument-shape]
+    ///
+    /// ⚑ FILE PLACEMENT DIVERGES AND IS NOT FIXED HERE. The `#fileID` literal reachable from this
+    ///   body decodes to "PreLoadIOContext/CacheIOContext.swift" and the `#line` immediate is 1043,
+    ///   so Forward declares this init in CacheIOContext.swift — where this class evidently also
+    ///   lived. Our CacheIOContext.swift is 1001 lines, so that line does not exist yet. A
+    ///   designated init cannot be declared outside its class's own file, so moving it is a
+    ///   file-placement unit of its own; it is recorded, not half-applied.
+    /// ⚑[tool=decode_string_literal ref=URLContextDownload.init.fileID:0x101b90c58 result=CacheIOContext.swift-line-1043]
+    ///
+    /// ⚑ The old `init(bufferSize:)` override that stood here was a compilable placeholder, not a
+    ///   binary member. It cannot survive `url` becoming a non-optional `let` — it initialized
+    ///   nothing — and with the real designated init written it has no reason to.
+    public init(url: URL, flags: Int32, options: UnsafeMutablePointer<OpaquePointer?>?, interrupt: AVIOInterruptCB, isReadComplete: Bool) throws {
+        context = nil
+        self.url = url
+        self.isReadComplete = isReadComplete
+        if let entry = av_dict_get(options?.pointee, "multiple_requests", nil, 0) {
+            keepAlive = String(cString: entry.pointee.value) == "1"
+        } else {
+            keepAlive = false
+        }
+        var interrupt = interrupt
+        let start = CACurrentMediaTime()
+        let ret = ffurl_open_whitelist(&context, url.ffmpegString, flags, &interrupt, options, nil, nil, nil)
+        // The bare form is deliberate: `KSLog(level: LogLevel = .warning, …)`, and the binary gates
+        // on `KSOptions.logLevel` tag >= 3 then dispatches at tag 3, which is `.warning`.
+        KSLog("url open cost time=\(CACurrentMediaTime() - start) result=\(ret)")
+        guard ret == 0 else {
+            throw KSPlayerError(errorCode: .formatOpenInput, avErrorCode: ret)
+        }
+        // ⚑ `super.init` is NOT called — it is inlined to a single 8-byte constant store of the
+        //   (readLimit, bufferSize) pair at self+0x10/+0x14, i.e. readLimit keeps its -1 default and
+        //   bufferSize is 262144. AbstractAVIOContext has exactly those two Int32 stored fields.
+        super.init(bufferSize: 256 * 1024)
+    }
+
+    // urlContext (base slot +0xa8) — io_open's terminal URLContext accessor.
+    //   URLContextDownload is the download-chain TERMINAL: it exposes its own FFmpeg
+    //   URLContext (the `context` field @+0x18) directly. The decompile is a checked-
+    //   exclusivity read of self.context (beginAccess then the load) — the beginAccess is
+    //   compiler-emitted instrumentation, invisible at source; the body is `{ context }`.
+    // ⚑[tool=prefetch_decompiles ref=FUN_10081cbbc:0x10081cbbc result=_swift_beginAccess(self+0x18);return*(self+0x18) == self.context]
+    // ⚑ s105: renamed with the base — see AbstractAVIOContext.nextAVOptions. Body 0x100822e00
+    // is a 1-instruction `b 0x10081cbbc`, and that target is a plain `return *(self+0x18)`, i.e.
+    // this class's first field `context`. The raw-pointer conversion is a no-op bitcast.
+    public override func nextAVOptions() -> UnsafeMutableRawPointer? { context.map { UnsafeMutableRawPointer($0) } }
+
+    /// @0x101b91150, 18 instructions. Trie: `URLContextDownload.fileSize() -> Swift.Int64`;
+    /// `override_table.py --impl 0x101b91150` answers YES at index 2, so it overrides
+    /// `AbstractAVIOContext.fileSize()`.
+    ///
+    ///   · a READ `swift_beginAccess` (flags 0, 0) on self+0x18 then `ldr x0,[x20,#0x18]` — this
+    ///     class's `context`, the field `nextAVOptions` above already pins at that offset.
+    ///   · `cbz x0` returns the immediate −1, which is exactly the base class's default body.
+    ///   · otherwise `x1 = 0`, `w2 = 0x10000` and one call. 0x10000 is `AVSEEK_SIZE`
+    ///     (avio.h:468 in this build), so the shape is (URLContext, pos 0, AVSEEK_SIZE) → Int64.
+    /// ⚑ The callee is NAMED FROM THIS BUILD'S HEADERS, not from the address: `ffmpeg_name_oracle`
+    ///   cannot narrow 0x1030c07ac (59 band candidates, and `ffurl_seek` is not among them), which
+    ///   is the expected `ffurl_*` negative. libavformat/url.h in FFmpeg-n8.1.1 shows why —
+    ///   `ffurl_seek` is a `static inline` wrapper that does nothing but
+    ///   `return ffurl_seek2(h, pos, whence)`, so it cannot survive as a call target at all; the
+    ///   exported function is `ffurl_seek2(void *urlcontext, int64_t pos, int whence)`. That name
+    ///   is independently corroborated inside the binary: the log literal this reconstruction
+    ///   already reads at LimitSeparatePreLoadIOContext carries the text "more ffurl_seek2 ".
+    /// ⚑[tool=override_table ref=URLContextDownload.fileSize:0x101b91150 result=YES-index-2]
+    /// ⚑[tool=ffmpeg_name_oracle ref=ffurl_seek2:0x1030c07ac result=NOT-UNIQUELY-NAMED-59-candidates]
+    /// ⚑[tool=export_trie_oracle ref=URLContextDownload.fileSize:0x101b91150 result=LOCATED]
+    ///
+    /// ⚑ s109: NOW DECLARED. The blocker was never the read — it was that `ffurl_seek2` was not
+    /// in scope, because the built Libavformat.framework exports only
+    /// avformat/avio/config/os_support/version and url.h is internal. FFmpegKit's
+    /// `avformat_shim.h` is where this reconstruction already restates internal libavformat
+    /// prototypes (`ff_isom_write_vpcc` sits there for exactly the same reason, with its own
+    /// header import commented out), and it already declares `URLContext` and
+    /// `ffurl_context_class` for this very file. The prototype was added there verbatim from
+    /// url.h:207 — `void *` for the context, not `URLContext *`.
+    override public func fileSize() -> Int64 {
+        guard let context else {
+            return -1
+        }
+        return ffurl_seek2(context, 0, AVSEEK_SIZE)
+    }
+
+    /// @0x101b91078, 30 instructions. `override_table.py --impl` answers YES at index 0.
+    ///
+    ///   · the nil-`context` arm returns the immediate 0xdfb9b0bb, which as an Int32 is
+    ///     −0x20464F45 = −MKTAG('E','O','F',' ') — `AVERROR_EOF`. The constant is decoded, not
+    ///     recognised: 0x45/0x4F/0x46/0x20 are 'E','O','F',' ' in MKTAG's byte order.
+    ///   · `ldrb w8,[x20,#0x21]` reads a one-byte field two bytes past `context` (+0x18, 8 bytes
+    ///     wide, so +0x20 and +0x21 are the two Bools this class declares in order — `keepAlive`
+    ///     then `isReadComplete`), and `cmp w8,#1` selects between two FFmpeg calls that take the
+    ///     same (context, buffer, size).
+    ///   · WHICH is which is derived structurally, not from the field's name reading nicely.
+    ///     Both are inlined `retry_transfer_wrapper` bodies and neither calls the other, so the
+    ///     discriminator is the wrapper's `size_min` argument: 0x1030c0994 opens with an extra
+    ///     `cmp w2,#0x1 / b.lt` — the guard the compiler needs when `size_min` is the runtime
+    ///     `size` and the loop may not run — while 0x1030bf914 has none, because its `size_min` is
+    ///     the constant 1. That makes 0x1030c0994 `ffurl_read_complete` (url.h:193, size_min=size)
+    ///     and 0x1030bf914 `ffurl_read2` (url.h:171, size_min=1). The `w8 == 1` arm takes the
+    ///     complete form, which is what the field name then agrees with.
+    /// ⚑[tool=override_table ref=URLContextDownload.read(buffer:size:):0x101b91078 result=YES-index-0]
+    /// ⚑[tool=export_trie_oracle ref=AbstractAVIOContext.read(buffer:size:):0x100137314 result=UnsafeMutablePointer]
+    override public func read(buffer: UnsafeMutablePointer<UInt8>?, size: Int32) -> Int32 {
+        guard let context else {
+            // AVERROR_EOF. The macro is not imported into Swift, so the value is written as the
+            // negated tag it decodes to rather than as the raw 0xdfb9b0bb the binary stores.
+            return -0x2046_4F45
+        }
+        return isReadComplete
+            ? ffurl_read_complete(context, buffer, size)
+            : ffurl_read2(context, buffer, size)
+    }
+
+    /// @0x101b910f0, 24 instructions. `override_table.py --impl` answers YES at index 1.
+    /// Identical to `fileSize()` above except that the two immediates are replaced by the
+    /// parameters: `x1 = x21` is `offset` and `x2 = x19` is `whence`, both moved out of x0/x1 in
+    /// the prologue before the `context` read. Same `cbz` → −1 guard.
+    /// ⚑[tool=override_table ref=URLContextDownload.seek(offset:whence:):0x101b910f0 result=YES-index-1]
+    override public func seek(offset: Int64, whence: Int32) -> Int64 {
+        guard let context else {
+            return -1
+        }
+        return ffurl_seek2(context, offset, whence)
+    }
+
+    /// @0x101b91198, 22 instructions. `override_table.py --impl` answers YES at index 3.
+    ///
+    /// Two exclusivity accesses on the SAME field, and their flags are what fix the shape:
+    ///   · first a READ (flags 0, 0) on self+0x18 whose loaded value only feeds `cbz` — nothing
+    ///     else consumes it — so it is a plain nil test and an early return.
+    ///   · then a second access with flags 0x21 (Modify|Tracking, the pair this reconstruction's
+    ///     KSOptions notes already decode) followed by `swift_endAccess`. Under it the call
+    ///     receives `x0 = x20 + 0x18` — the ADDRESS of `context`, not its value.
+    /// A callee taking `URLContext **` under a tracked modify is `ffurl_closep` (url.h:234), the
+    /// form that nils the caller's pointer, NOT `ffurl_close` (url.h:235) which takes one star and
+    /// would have been handed the loaded value instead. The prototype is restated in FFmpegKit's
+    /// avformat_shim.h alongside ffurl_seek2, after the URLContext typedef it needs.
+    /// ⚑[tool=override_table ref=URLContextDownload.close():0x101b91198 result=YES-index-3]
+    override public func close() {
+        guard context != nil else {
+            return
+        }
+        ffurl_closep(&context)
+    }
+
+    // ⚠️ s109 CORRECTION: this note used to include `seek(offset:whence:)` in the
+    //   "devirtualized in the binary (no readable body)" list. That was wrong — the trie names
+    //   `URLContextDownload.seek(offset:whence:)` at 0x101b910f0 and its 24-instruction body is
+    //   read and declared above. `read(buffer:size:)` and `write(buffer:size:)` are unaffected by
+    //   this correction and remain unlisted in the trie for this class.
+    // UNRESOLVED: read(buffer:size:) / write(buffer:size:) overrides are devirtualized in the
+    //   binary (no readable body) — inherited from AbstractAVIOContext, NOT reconstructed. — P2
 }

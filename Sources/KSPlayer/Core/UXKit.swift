@@ -4,6 +4,11 @@
 //
 //  Created by kintan on 2018/3/9.
 //
+import Foundation
+import QuartzCore
+import AVFoundation
+import CryptoKit
+import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #else
@@ -15,6 +20,8 @@ import AppKit
 /// Its checked `Int` conversions and integer-equality guard precede the two fit branches;
 /// the source below preserves that conversion order and trapping Swift.Int behavior.
 extension CGSize {
+    public var ratio: Double { fatalError("L7: CGSize.ratio — Forward body unread") }
+    public static var one: CGSize { fatalError("L7: CGSize.one — Forward body unread") }
     func within(ratio: Double) -> CGSize {
         guard ratio != 0 else { return self }
         let integerWidth = Int(width)
@@ -26,36 +33,35 @@ extension CGSize {
             return CGSize(width: Double(integerWidth), height: Double(Int(width / ratio)))
         }
     }
+    public func convert(rect: CGRect, playRatio: Double, toSize: CGSize) -> CGRect { fatalError("L7: CGSize.convert — Forward body unread") }
 }
 
-extension UIView {
-    /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.addSub(view:):0x1019f245c result=162-instr]
-    /// The binary carries this extension and the source did not — it surfaced because
-    /// `MetalPlayView.didStartPIP` fails to compile without it. All three calls are decoded from
-    /// their selrefs / bind table, none guessed:
-    ///   · `bl 0x10346d9a0` → selref 0x10440e430 = **`superview`**, sent to the ARGUMENT (`view`),
-    ///     then `objc_retainAutoreleasedReturnValue`. A nil result (`cbz x0`) falls straight through
-    ///     to the add, which is why the nil case adds rather than returns.
-    ///   · `bl 0x103458674` → __got 0x104113618 =
-    ///     `static NSObject.== (NSObject, NSObject) -> Bool`, comparing that superview with `self`
-    ///     (`objc_retain_x20` / `objc_retain_x19` supply the two operands). `tbz w20,#0` returns
-    ///     when they ARE equal.
-    ///   · `bl 0x10345df80` → selref 0x10440a5a8 = **`addSubview:`**, sent to `self` with `view`.
-    /// ⚑[tool=decode_objc_selector ref=0x10440e430 result='superview']
-    /// ⚑[tool=decode_objc_selector ref=0x10440a5a8 result='addSubview:']
-    /// ⚑[tool=bind_oracle ref=__got:0x104113618 result=NSObject.==]
-    ///
-    /// ⚑ It is `addSubview` guarded by an identity check, NOT a bare `addSubview` — re-adding a
-    ///   view already owned by `self` is what the guard suppresses. Substituting a plain
-    ///   `addSubview` compiles and drops that.
-    /// ⚑ Placed in this file because it must build on both platforms (MetalPlayView is
-    ///   cross-platform); UIKitExtend.swift's UIView extension is UIKit-only.
-    func addSub(view: UIView) {
-        if view.superview == self {
-            return
-        }
-        addSubview(view)
+/// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIFont.with(weight:):0x1019f1e40]
+/// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIFont.italic.getter:0x1019f2054]
+/// These are needed by KSOptions.textFont(width:style:). `italic` is `mov w0, #1; b 0x1019f205c`, and
+/// 0x1019f205c is a private helper outside the trie that ORs the symbolic traits. Both bodies send
+/// fontWithDescriptor:size: with `pointSize`, and both fall back to `self` when it returns nil.
+/// ⚑ The trie's with(angle:) @0x1019f2150 is not reconstructed here (it is outside this chain).
+#if canImport(UIKit)
+public extension UIFont {
+    func with(weight: UIFont.Weight) -> UIFont {
+        let descriptor = fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
+        return UIFont(descriptor: descriptor, size: pointSize) as UIFont? ?? self
     }
+
+    var italic: UIFont {
+        with(traits: .traitItalic)
+    }
+
+    private func with(traits: UIFontDescriptor.SymbolicTraits) -> UIFont { // name inferred
+        let symbolicTraits = fontDescriptor.symbolicTraits.union(traits)
+        let descriptor = fontDescriptor.withSymbolicTraits(symbolicTraits) ?? fontDescriptor
+        return UIFont(descriptor: descriptor, size: pointSize) as UIFont? ?? self
+    }
+}
+#endif
+
+extension UIView {
 
     /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.didStartPIP(to:):0x10000e52c result=1-instr-empty]
     /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.didStopPIP():0x10000e52c result=1-instr-empty]
@@ -91,6 +97,11 @@ extension UIView {
         return layer
     }
 
+    #if canImport(UIKit)
+    // ⚑[tool=member_add ref=UIView.backingScaleFactor:0x1019f2398 result=dne; Forward order backingLayer 0x1019f237c < this < viewController 0x1019f23e4]
+    var backingScaleFactor: CGFloat { @used get { fatalError("L7: UIView.backingScaleFactor — Forward body unread") } }
+    #endif
+
     var cornerRadius: CGFloat {
         get {
             backingLayer?.cornerRadius ?? 0
@@ -98,6 +109,33 @@ extension UIView {
         set {
             backingLayer?.cornerRadius = newValue
         }
+    }
+    /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIView.addSub(view:):0x1019f245c result=162-instr]
+    /// The binary carries this extension and the source did not — it surfaced because
+    /// `MetalPlayView.didStartPIP` fails to compile without it. All three calls are decoded from
+    /// their selrefs / bind table, none guessed:
+    ///   · `bl 0x10346d9a0` → selref 0x10440e430 = **`superview`**, sent to the ARGUMENT (`view`),
+    ///     then `objc_retainAutoreleasedReturnValue`. A nil result (`cbz x0`) falls straight through
+    ///     to the add, which is why the nil case adds rather than returns.
+    ///   · `bl 0x103458674` → __got 0x104113618 =
+    ///     `static NSObject.== (NSObject, NSObject) -> Bool`, comparing that superview with `self`
+    ///     (`objc_retain_x20` / `objc_retain_x19` supply the two operands). `tbz w20,#0` returns
+    ///     when they ARE equal.
+    ///   · `bl 0x10345df80` → selref 0x10440a5a8 = **`addSubview:`**, sent to `self` with `view`.
+    /// ⚑[tool=decode_objc_selector ref=0x10440e430 result='superview']
+    /// ⚑[tool=decode_objc_selector ref=0x10440a5a8 result='addSubview:']
+    /// ⚑[tool=bind_oracle ref=__got:0x104113618 result=NSObject.==]
+    ///
+    /// ⚑ It is `addSubview` guarded by an identity check, NOT a bare `addSubview` — re-adding a
+    ///   view already owned by `self` is what the guard suppresses. Substituting a plain
+    ///   `addSubview` compiles and drops that.
+    /// ⚑ Placed in this file because it must build on both platforms (MetalPlayView is
+    ///   cross-platform); UIKitExtend.swift's UIView extension is UIKit-only.
+    func addSub(view: UIView) {
+        if view.superview == self {
+            return
+        }
+        addSubview(view)
     }
 }
 
@@ -119,3 +157,50 @@ protocol KSSliderDelegate: AnyObject {
      */
     func slider(value: Double, event: ControlEvents)
 }
+
+open class LayerContainerView: UIView {
+    #if canImport(UIKit)
+    override open class var layerClass: AnyClass {
+        CAGradientLayer.self
+    }
+    #else
+    override public init(frame: CGRect) {
+        super.init(frame: frame)
+        layer = CAGradientLayer()
+    }
+
+    @available(*, unavailable)
+    public required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    #endif
+    public var gradientLayer: CAGradientLayer {
+        // swiftlint:disable force_cast
+        layer as! CAGradientLayer
+        // swiftlint:enable force_cast
+    }
+}
+
+// DisplayLinkProtocol abstracts UIKit's CADisplayLink (iOS/tvOS/visionOS) and the CVDisplayLink-backed macOS
+// shim (the `CADisplayLink` class in MetalPlayView.swift) behind one interface, so MetalPlayView.displayLink can
+// hold either. Reconstructed from the binary protocol descriptor @0x1039ee41c (class-bound = AnyObject; 13
+// witness requirements; iOS conformance WT @0x1041d64d0). NOTE (binary-indifferent): timestamp/duration are 2 of
+// CADisplayLink's 3 get-only timing properties {timestamp, duration, targetTimestamp} — protocol requirement
+// names are absent from Swift metadata and these two getter witnesses are dead-stubbed, so the exact pair (and
+// their order) is not binary-observable; any 2 recompile to the identical witness table. {timestamp, duration}
+// chosen as the primitives (targetTimestamp = timestamp + duration, the shim's derived convenience).
+protocol DisplayLinkProtocol: AnyObject {
+    var isPaused: Bool { get set }                             // witness i0-2 (i1 set = setPaused:)
+    var preferredFramesPerSecond: Int { get set }             // witness i3-5 (dead-stubbed: the pre-iOS-15 fps branch)
+    var preferredFrameRateRange: CAFrameRateRange { get set }  // witness i6-8 (i7 set = setPreferredFrameRateRange:)
+    var timestamp: TimeInterval { get }                       // witness i9  (binary-indifferent, see note)
+    var duration: TimeInterval { get }                        // witness i10 (binary-indifferent, see note)
+    func add(to runloop: RunLoop, forMode mode: RunLoop.Mode) // witness i11 (called concretely in init)
+    func invalidate()                                         // witness i12 (= invalidate)
+}
+
+// One unguarded conformance covers both platforms: on iOS/tvOS/visionOS `CADisplayLink` is UIKit's (its native
+// properties satisfy every requirement); on macOS it is the CVDisplayLink-backed shim (whose members do). Either
+// way an empty extension. Binary iOS conformance WT @0x1041d64d0 (10 dead-stubbed + 3 live witnesses:
+// setPaused: / setPreferredFrameRateRange: / invalidate).
+extension CADisplayLink: DisplayLinkProtocol {}

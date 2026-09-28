@@ -32,7 +32,7 @@ class FFmpegDecode: DecodeProtocol {
         codecContext?.pointee.time_base = assetTrack.timebase.rational
         filter = MEFilter(timebase: assetTrack.timebase, isAudio: assetTrack.mediaType == .audio, nominalFrameRate: assetTrack.nominalFrameRate, options: options)
         if assetTrack.mediaType == .video {
-            frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, isDovi: assetTrack.dovi != nil)
+            frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, dovi: assetTrack.dovi)
         } else {
             frameChange = AudioSwresample(audioDescriptor: assetTrack.audioDescriptor!)
         }
@@ -115,34 +115,7 @@ class FFmpegDecode: DecodeProtocol {
         // `assetTrack` (field 8); this class sets both in `init` (:21-25), which is where the
         // `assetTrack.mediaType == .video` test actually lives in Forward.
         if isVideo {
-            // ⚑ Forward retyped FFmpegAssetTrack.codecpar value→pointer, so the synthetic CC codecpar is
-            //   heap-allocated (stable pointer the track stores) — the alloc folds into the compound `if`
-            //   to match the binary (FUN_101a23404 L33-38: alloc-fail skips the block, not a return).
-            //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_alloc:0x1029f543c result=CONFIRMED]
-            //   ⚑ ownership/free deferred to the FFmpegAssetTrack lifecycle audit (the alloc'd params are now owned by the track; the base value-copy had no free step).
-            if let currentCodecContext = self.codecContext,
-               Int32(currentCodecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0,
-               assetTrack.closedCaptionsTrack == nil,
-               let codecpar = avcodec_parameters_alloc() {
-                codecpar.pointee.codec_type = AVMEDIA_TYPE_SUBTITLE
-                codecpar.pointee.codec_id = AV_CODEC_ID_EIA_608
-                if let subtitleAssetTrack = FFmpegAssetTrack(codecpar: codecpar) {
-                    subtitleAssetTrack.name = "Closed Captions"
-                    subtitleAssetTrack.startTime = assetTrack.startTime
-                    subtitleAssetTrack.timebase = assetTrack.timebase
-                    // ⚑[tool=export_trie_oracle ref=FUN_101a23404:0x101a23404 result=NOT_IN_TRIE — enclosing function
-                    //   unnamed (a real negative, not a lookup failure); identified by its own body, below]
-                    // Call @0x101a235a0 (thunk 0x101a3340c) inside that function: `w1 = 0x80` @0x101a23594 and
-                    // `w3 = 1` @0x101a2359c, both binary-read — so frameCapacity is 128 here, not the 255 source
-                    // carried. Site identified by its own body: `str d0,[x0]` @0x101a23480 writes the
-                    // codec_type/codec_id pair, swift_allocObject(351) @0x101a23498 is the FFmpegAssetTrack, and
-                    // the result is stored to +0x100 (`subtitle`) @0x101a235ac.
-                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
-                    subtitleAssetTrack.subtitle = subtitle
-                    assetTrack.closedCaptionsTrack = subtitleAssetTrack
-                    subtitle.decode()
-                }
-            }
+            addClosedCaptionsTrack(assetTrack: assetTrack)
         }
         while true {
             let result = avcodec_receive_frame(self.codecContext, coreFrame)
@@ -201,7 +174,8 @@ class FFmpegDecode: DecodeProtocol {
                         // has NOT been read, so these two lines are unverified at their new
                         // spelling and are the first thing to check when that unit is opened.
                         // ⚑[tool=function_extents ref=FFmpegDecode.decodeFrame:0x101a2220c result=closure-extent-not-in-this-range]
-                        frame.size = packet.pointee.size
+                        // `frame.size = packet.pointee.size` dropped: Forward's `size` is a get-only requirement
+                        // (ObjectQueueItem, 5 getters; MEFrame adds no size setter), so no MEFrame-typed store can exist.
                         frame.position = packet.pointee.pos
                         frame.duration = avframe.pointee.duration
                         if frame.duration == 0, avframe.pointee.sample_rate != 0, frame.timebase.num != 0 {
@@ -255,6 +229,17 @@ class FFmpegDecode: DecodeProtocol {
         }
     }
 
+    // vtable slot 14 — method descriptor @0x1039ef1f4 (descriptor 0x1039ef150 + 0xa4): flags 0x10
+    // (kind Method, instance, not dynamic, not async) with a NULL impl (rel ptr 0 at 0x1039ef1f8).
+    // It sits between decodeFrame (slot 13, 0x101a2220c) and doFlushCodec (slot 15, 0x101a23330).
+    // No `Tq` method-descriptor symbol in the export trie (decodeFrame/doFlushCodec/shutdown/decode
+    // all have one) ⇒ non-public; the null impl ⇒ never referenced, so WMO dropped the body — the
+    // same null-impl pattern as the 12 private stored-property accessors in slots 0-11.
+    // ⚑ NAME, SIGNATURE AND BODY ARE NOT RECOVERABLE (nothing references it; the descriptor carries
+    //   no type). This declaration only occupies the slot so doFlushCodec/shutdown/decode/
+    //   addClosedCaptionsTrack land on slots 15/16/17/18 as in Forward. Name INVENTED.
+    private func vtableSlot14() {}
+
     func doFlushCodec() {
         bestEffortTimestamp = Int64(0)
         // seek之后要清空下，不然解码可能还会有缓存，导致返回的数据是之前seek的。
@@ -273,6 +258,38 @@ class FFmpegDecode: DecodeProtocol {
         bestEffortTimestamp = Int64(0)
         if codecContext != nil {
             avcodec_flush_buffers(codecContext)
+        }
+    }
+
+    // slot 0x128 @0x101a23404 (private) — called from decodeFrame when isVideo; the CC checks live here.
+    private func addClosedCaptionsTrack(assetTrack: FFmpegAssetTrack) {
+        // ⚑ Forward retyped FFmpegAssetTrack.codecpar value→pointer, so the synthetic CC codecpar is
+        //   heap-allocated (stable pointer the track stores) — the alloc folds into the compound `if`
+        //   to match the binary (FUN_101a23404 L33-38: alloc-fail skips the block, not a return).
+        //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_alloc:0x1029f543c result=CONFIRMED]
+        //   ⚑ ownership/free deferred to the FFmpegAssetTrack lifecycle audit (the alloc'd params are now owned by the track; the base value-copy had no free step).
+        if let currentCodecContext = self.codecContext,
+           Int32(currentCodecContext.pointee.properties) & FF_CODEC_PROPERTY_CLOSED_CAPTIONS != 0,
+           assetTrack.closedCaptionsTrack == nil,
+           let codecpar = avcodec_parameters_alloc() {
+            codecpar.pointee.codec_type = AVMEDIA_TYPE_SUBTITLE
+            codecpar.pointee.codec_id = AV_CODEC_ID_EIA_608
+            if let subtitleAssetTrack = FFmpegAssetTrack(codecpar: codecpar, stream: nil) {
+                subtitleAssetTrack.name = "Closed Captions"
+                subtitleAssetTrack.startTime = assetTrack.startTime
+                subtitleAssetTrack.timebase = assetTrack.timebase
+                // ⚑[tool=export_trie_oracle ref=FUN_101a23404:0x101a23404 result=NOT_IN_TRIE — enclosing function
+                //   unnamed (a real negative, not a lookup failure); identified by its own body, below]
+                // Call @0x101a235a0 (thunk 0x101a3340c) inside that function: `w1 = 0x80` @0x101a23594 and
+                // `w3 = 1` @0x101a2359c, both binary-read — so frameCapacity is 128 here, not the 255 source
+                // carried. Site identified by its own body: `str d0,[x0]` @0x101a23480 writes the
+                // codec_type/codec_id pair, swift_allocObject(351) @0x101a23498 is the FFmpegAssetTrack, and
+                // the result is stored to +0x100 (`subtitle`) @0x101a235ac.
+                let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
+                subtitleAssetTrack.subtitle = subtitle
+                assetTrack.closedCaptionsTrack = subtitleAssetTrack
+                subtitle.decode()
+            }
         }
     }
 }

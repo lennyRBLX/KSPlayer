@@ -706,7 +706,7 @@ public class LimitSeparatePreLoadIOContext: CacheIOContext, PreLoadProtocol {
             return 0
         }
         let delta = fakeUrlPos - logicalPos
-        return delta > UInt64(Int64.max) ? .max : Int64(delta)
+        return delta <= UInt64(Int64.max) ? Int64(delta) : .max // @0x101ba4bb4 `cmn x8,#1; csel gt`
     }
 
     /// ⚑[tool=disassemble ref=LimitSeparatePreLoadIOContext.position.getter:0x101ba41f4 result=20-instr]

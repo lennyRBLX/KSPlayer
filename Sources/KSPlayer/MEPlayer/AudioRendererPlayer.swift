@@ -55,6 +55,10 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
         }
     }
 
+    var isPaused: Bool {
+        synchronizer.rate == 0
+    }
+
     // periodicTimeObserver @+0x48 (field 3, Any? — 32-byte existential 0x48..0x67).
     private var periodicTimeObserver: Any?
     // flushTime @+0x68 (field 4) — the FLUSH-PENDING flag. flush()/stop()/request()-on-eof set it;
@@ -72,10 +76,6 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
     // timestamp @+0xa0 (field 9, Int64) — the running-MAX nanosecond media clock handed to the
     // inherited sampleBuffer(nanoseconds:). init = -1; play() resets it to -1.
     private var timestamp: Int64 = -1
-
-    var isPaused: Bool {
-        synchronizer.rate == 0
-    }
 
     public required override init() {
         super.init()

@@ -79,13 +79,9 @@ class VideoSwresample: FrameChange {
     private let dstFormat: AVPixelFormat?
     private let fps: Float
     // Forward-NEW DV/HDR fields (declared in reflection order after `fps`).
-    // ⚑[tool=binding_gate ref=VideoSwresample:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • dovi — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    private var dovi: DOVIDecoderConfigurationRecord?
+    // `let`, supplied by the init: every Forward construction site (e.g. FFmpegDecode 0x101a21d60, the
+    // PixelBufferProtocol scaler 0x101a8acd4) stores dovi at +0x4c/+0x54 right after fps.
+    private let dovi: DOVIDecoderConfigurationRecord?
     // P3a: KSDOVIMetadata is the serializer's imported-C 3008-byte DV metadata layout.
     // Its nested Bool at metadata offset 0x457 supplies Optional's extra inhabitant; keep this
     // field optional so MemoryLayout<KSDOVIMetadata?> remains 0xbc0.
@@ -99,32 +95,21 @@ class VideoSwresample: FrameChange {
     private var edrMetaData: EDRMetaData?
     private var hdr10PlusData: Data? // ⚑ §7-walled → type inferred
     private var rpuBuffer: Data? // ⚑ §7-walled → the ~104-byte +0xc20 inline buffer; layout NOT guessed
-    // UNRESOLVED → DV-render: init devirt; isDovi not stored (field removed); the DV/HDR fields are populated
-    // decoder-side by s32 (see below), not in init.
-    init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, isDovi _: Bool) {
+    // The DV/HDR side-data fields are populated decoder-side by processSideData (s32), not in init.
+    init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, dovi: DOVIDecoderConfigurationRecord?) {
         self.dstWidth = dstWidth
         self.dstHeight = dstHeight
         self.dstFormat = dstFormat
         self.fps = fps
+        self.dovi = dovi
     }
 
-    // UNRESOLVED → DV-render/HDR-pixelBuffer-decoration: Forward's change (slot28 @0x101a660dc) copies the
-    // DV/HDR state into the VideoVTBFrame AND decorates the pixelBuffer via Forward-NEW infra: the shared
-    // FUN_101a88b68 colorspace helper (PQ/HLG from dovi.dv_bl_signal_compatibility_id) + a PixelBufferProtocol
-    // HDR-attachment EXPANSION (binary 40 reqs vs source 28; the Data→CVBufferSetAttachment cluster FUN_101a8a180).
-    // That ~12-requirement protocol layer is unverifiable with current tools (no witness-table verifier) →
-    // DEFERRED as a unit with transfer (slot30). Kept upstream with isDovi → `dovi != nil` to compile.
+    // slot28 @0x101a660dc: transfer(frame:) → pixelBuffer.hdr10PlusData = hdr10PlusData → VideoVTBFrame
+    // (whose inlined init runs the colorspace helper; change itself does not call it).
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
         let pixelBuffer = try transfer(frame: avframe.pointee)
         pixelBuffer.hdr10PlusData = hdr10PlusData
-        configureColorSpace(dovi: dovi, pixelBuffer: pixelBuffer)
-        let frame = VideoVTBFrame(pixelBuffer: pixelBuffer, fps: fps, isDovi: dovi != nil)
-        frame.isKeyFrame = avframe.pointee.flags & AV_FRAME_FLAG_KEY != 0
-        frame.dovi = dovi
-        frame.edrMetaData = edrMetaData
-        frame.doviData = doviData
-        frame.rpuBuffer = rpuBuffer
-        return frame
+        return VideoVTBFrame(pixelBuffer: pixelBuffer, fps: fps, isKeyFrame: avframe.pointee.flags & AV_FRAME_FLAG_KEY != 0, dovi: dovi, edrMetaData: edrMetaData, doviData: doviData, rpuBuffer: rpuBuffer)
     }
 
     // T2 — slot29 @0x101a662e8. sws spine FAITHFUL (body-audited).
@@ -323,7 +308,10 @@ class VideoSwresample: FrameChange {
                         if let destinationPacket = closedCaptionsPacket.corePacket {
                             destinationPacket.pointee.flags |= AV_PKT_FLAG_KEY
                             destinationPacket.pointee.size = Int32(sideData.size)
-                            let buffer = av_buffer_ref(sideData.buf)
+                        }
+                        // Forward 0x101a67670: av_buffer_ref runs unconditionally, after the corePacket nil test.
+                        let buffer = av_buffer_ref(sideData.buf)
+                        if let destinationPacket = closedCaptionsPacket.corePacket {
                             destinationPacket.pointee.data = buffer?.pointee.data
                             destinationPacket.pointee.buf = buffer
                         }
@@ -348,7 +336,8 @@ class VideoSwresample: FrameChange {
                     }
                     if assetTrack.dovi == nil,
                        frame.color_trc == AVCOL_TRC_UNSPECIFIED,
-                       options.hardwareDecode {
+                       options.hardwareDecode,
+                       options.display !== KSOptions.displayEnumDovi {
                         options.display = KSOptions.displayEnumDovi
                     }
                 } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
@@ -415,7 +404,7 @@ class VideoSwresample: FrameChange {
 }
 
 // ⚑[invented=configureColorSpace addr=0x101a88b68 exhaustion=name_exhaustion_gate approved=orchestrator]
-private func configureColorSpace(dovi: DOVIDecoderConfigurationRecord?, pixelBuffer: PixelBufferProtocol) {
+func configureColorSpace(dovi: DOVIDecoderConfigurationRecord?, pixelBuffer: PixelBufferProtocol) {
     if pixelBuffer.transferFunction == nil, let dovi {
         switch dovi.dv_bl_signal_compatibility_id {
         case 0, 1:

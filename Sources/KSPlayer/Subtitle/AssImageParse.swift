@@ -4,13 +4,15 @@
 //
 //  Forward 1.3.17 — NEW ASS-image parser + the incremental image-renderer actor (P4 M1 structure). Bodies → P4 M2.
 //
+import libass
+import SwiftUI
 import CoreGraphics
 import Foundation
 
 // AssImageParse @0x1039f14f8 — stateless parser (:KSParseProtocol, §8.5).
 // parsePart INHERITS the KSParseProtocol extension default `{ [] }` (witness 0x10002d9dc, shared with
 // FFmpegSubtitleParse) — ASS-image is rendered via AssIncrementImageRenderer (Batch 5), not this text path.
-public class AssImageParse: KSParseProtocol {
+public final class AssImageParse: KSParseProtocol {
     public init() {}
 
     // ⚑ s105: the binary declares this member ON THIS CLASS — the trie carries
@@ -59,11 +61,12 @@ public class AssImageParse: KSParseProtocol {
     //   (AssIncrementImageRenderer) is Batch 5 (deferred) so NO regression. Unblock: a symbolicated/app-context
     //   build or the upstream Forward source. Full decode -> ledger later.101 + subtitle spec 8.8.
     public func canParse(scanner: Scanner) -> Bool { false }
+    public func parse(url: URL, scanner: Scanner) throws -> KSSubtitleProtocol { fatalError("L7: AssImageParse.parse — Forward body unread") }
 }
 
 // AssIncrementImageRenderer @0x1039f1534 — NEW `actor` ($defaultActor; type_kind_gate). Fields reflection-ordered
 // (uuid/header/subtitles/fontsDir/renderer/basicFontSize), types §8.3/§8.6. Bodies → P4 M2.
-actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitleProtocol conformer (reverse-walk-confirmed)
+final actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitleProtocol conformer (reverse-walk-confirmed)
     private let uuid: UUID = UUID()                                                  // ⚑ UUID inferred (GOT-indirect) → recon/mangle-evidenced
     private var header: String?
     // ⚑ s105 RETYPE: the tuple elements are Int64, not Double. The l2 gate reads the field
@@ -73,22 +76,53 @@ actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitlePr
     // than suppressed. Nothing reads the field yet (the render bodies are still deferred),
     // so the retype has no use sites to ripple through.
     private var subtitles: [(subtitle: String, start: Int64, duration: Int64)] = [] // §8.6
-    // ⚑[tool=binding_gate ref=AssIncrementImageRenderer:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
-    //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
-    //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
-    //   • fontsDir — `var x: T?` gets an implicit nil; `let x: T?` would need an explicit `= nil`, asserting it is PERMANENTLY nil
-    //   Real divergence, not fixable by a keyword flip. Detail + the full 33:
-    //   reconstruction/binding_refuted_s61.json
-    private var fontsDir: String?
+    // ⚑[tool=field_surface ref=AssIncrementImageRenderer.fontsDir:idx3 result=let String?] The record
+    //   flags word is 0 (`let`). Forward sets it from `init(fontsDir:header:)` (0x101a92d2c); that
+    //   init is not reconstructed, so the init below assigns it under an L7 marker.
+    private let fontsDir: String?
     private var renderer: AssImageRenderer
     private var basicFontSize: Int = 0
     // ⚑ init shape inferred → M2 witness-verify
     init(renderer: AssImageRenderer) {
         self.renderer = renderer
+        fontsDir = nil // L7: Forward takes this from init(fontsDir:header:) @0x101a92d2c, not read
     }
     // ⚑ UNRESOLVED → P4 M2: the incremental libass-render async methods
+    func flush() { fatalError("L7: AssIncrementImageRenderer.flush — Forward body unread") }
+    func add(subtitle: String, start: Int64, duration: Int64) { fatalError("L7: AssIncrementImageRenderer.add — Forward body unread") }
+    init(content: String) { fatalError("L7: AssIncrementImageRenderer.init — Forward body unread") }
+
+    init(fontsDir: String?, header: String) { fatalError("L7: AssIncrementImageRenderer.init — Forward body unread") }
+    func updateTextStyle() { fatalError("L7: AssIncrementImageRenderer.updateTextStyle — Forward body unread") }
+    // ⚑ UNRESOLVED → P4 M2 (Batch 5): search — serves rendered parts (KSSubtitleProtocol req). Signature migrated
+    //   to search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
+    // ⚑[tool=member_surface ref=AssIncrementImageRenderer.search(with:) result=Forward sync (no Ya); body has no swift_task_* call]
+    nonisolated func search(with _: KSSubtitleQuery) -> [SubtitlePart] { [] }
+}
+
+// AssImageRenderer @0x1039f1584 — Forward 1.3.17. vtable 3, 7 stored fields (reflection-authoritative:
+// uuid/library/renderer/currentTrack/alignments/margins/size), types §8.3/§8.6. libass pointers held as
+// OpaquePointer? (libass not imported at M1 — M2 may refine currentTrack to UnsafeMutablePointer<ass_track>).
+// Method bodies → P4 M2 (dataflow_AssImageRenderer.json: 4 corroborated + 10 flagged).
+final class AssImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitleProtocol conformer (reverse-walk-confirmed, pre-commit gate)
+    // ⚑[tool=field_surface ref=AssImageRenderer:fieldmd result=var/let/let/var/var/var/var]
+    //   Record flags: uuid is IsVar; library and renderer are not. alignments resolves to
+    //   [Int32], margins to [(left: Int32, right: Int32, vertical: Int32)].
+    private var uuid: UUID = UUID()
+    private let library: OpaquePointer?                    // ass_library* (§8.6)
+    private let renderer: OpaquePointer?                   // ass_renderer* (§8.6)
+    private var currentTrack: UnsafeMutablePointer<ass_track>? // §8.3 (libass; reflection-resolved)
+    private var alignments: [Int32] = []
+    private var margins: [(left: Int32, right: Int32, vertical: Int32)] = []
+    private var size: CGSize = .zero
+
+    init() {
+        library = nil // L7: Forward's libass init body not read
+        renderer = nil // L7: Forward's libass init body not read
+    }
+    // ⚑ UNRESOLVED → P4 M2: the libass init/render bodies
 
     // ⚑ UNRESOLVED → P4 M2 (Batch 5): search — serves rendered parts (KSSubtitleProtocol req). Signature migrated
     //   to search(with: KSSubtitleQuery) async (session 21, P55 ripple); body still a deferred stub.
-    nonisolated func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
+    func search(with _: KSSubtitleQuery) async -> [SubtitlePart] { [] }
 }

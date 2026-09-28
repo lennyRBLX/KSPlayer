@@ -151,16 +151,19 @@ open class IOSVideoPlayerView: VideoPlayerView {
     private var bottomBackgroundHeightConstraint: NSLayoutConstraint?
     private var speedUpdateTimer: Timer?
     private var smoothedSpeed: Double = 0
+    private lazy var settingsView = SettingsView()
+    private lazy var customProgressView: CustomProgressView = {
+        let view = CustomProgressView(playView: self, frame: .zero)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
     // ⚑[tool=export_trie_oracle ref=$s8KSPlayer18IOSVideoPlayerViewC026$__lazy_storage_$_settingsD033_99D4461AEE15ECA71DEBF361B80F60DDLLAA08SettingsD0CSgvpfi:0x10002d9d4 result=pinned]
     // ⚑[tool=export_trie_oracle ref=$s8KSPlayer18IOSVideoPlayerViewC032$__lazy_storage_$_customProgressD033_99D4461AEE15ECA71DEBF361B80F60DDLLAA06CustomhD0CSgvpfi:0x10002d9d4 result=pinned]
     // Field slots 63 and 65 are `private lazy var settingsView: SettingsView` and
     // `private lazy var customProgressView: CustomProgressView` — names AND exact types recovered
-    // from their getter/setter/modify signatures in the orphan trie. NOT declared here because
-    // neither class exists in the reconstruction yet (they are part of the 11-unit SettingsView /
-    // CustomProgressView stand-up), so declaring them could not compile. This is a pinned deferral,
-    // not an unknown: it refutes the standing note that those two are "NOT_IN_TRIE — no class AND no
-    // recoverable name". Both are gate-invisible either way (l2_field_gate drops `$`-prefixed records
-    // on the binary side and `lazy` on the source side, symmetrically).
+    // from their getter/setter/modify signatures in the orphan trie; declared below `smoothedSpeed`.
+    // Both are gate-invisible (l2_field_gate drops `$`-prefixed records on the binary side and
+    // `lazy` on the source side, symmetrically).
     override open var isMaskShow: Bool {
         didSet {
             fullScreenDelegate?.player(isMaskShow: isMaskShow, isFullScreen: landscapeButton.isSelected)
@@ -226,6 +229,15 @@ open class IOSVideoPlayerView: VideoPlayerView {
         ])
         #endif
         addNotification()
+        setupBackgrounds()
+        setupTopLeftButtons()
+        setupTopRightButton()
+        setupSideButtons()
+        setupBottomControls()
+        setupCenterControls()
+        setupVideoInfoLabels()
+        setupScreenshotPreview()
+        setupTopStatusBar()
     }
 
     override open func resetPlayer() {
@@ -699,6 +711,758 @@ extension IOSVideoPlayerView {
         #sourceLocation()
     }
 
+    private func setupBackgrounds() {
+        [topLeftBackground, topRightBackground, bottomBackground, leftBackgroundView].forEach {
+            $0.layer.cornerRadius = 10
+            $0.clipsToBounds = true
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.backgroundColor = .clear
+            addSubview($0)
+        }
+        leftBackgroundView.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        topLeftBackgroundLeadingConstraint = topLeftBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? 20 : 15)
+        topRightBackgroundTrailingConstraint = topRightBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? -20 : -15)
+        leftBackgroundViewLeadingConstraint = leftBackgroundView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? 33 : 10)
+        bottomBackgroundLeadingConstraint = bottomBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? 20 : 15)
+        bottomBackgroundTrailingConstraint = bottomBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? -20 : -15)
+        bottomBackgroundHeightConstraint = bottomBackground.heightAnchor.constraint(equalToConstant: 100)
+        NSLayoutConstraint.activate([
+            topLeftBackground.safeAreaLayoutGuide.topAnchor.constraint(equalTo: topAnchor, constant: 40),
+            topLeftBackground.topAnchor.constraint(equalTo: topAnchor, constant: 40),
+            topLeftBackgroundLeadingConstraint!,
+            topRightBackground.topAnchor.constraint(equalTo: topAnchor, constant: 40),
+            topRightBackgroundTrailingConstraint!,
+            leftBackgroundViewLeadingConstraint!,
+            leftBackgroundView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            leftBackgroundView.widthAnchor.constraint(equalToConstant: 50),
+            leftBackgroundView.heightAnchor.constraint(equalToConstant: 100),
+            bottomBackgroundLeadingConstraint!,
+            bottomBackgroundTrailingConstraint!,
+            bottomBackground.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            bottomBackgroundHeightConstraint!,
+        ])
+    }
+
+    private func setupTopLeftButtons() {
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        aspectFillButton.setImage(UIImage(systemName: "rectangle.arrowtriangle.2.inward", withConfiguration: config), for: .normal)
+        aspectFillButton.tintColor = .white
+        aspectFillButton.backgroundColor = .clear
+        aspectFillButton.addTarget(self, action: #selector(handleAspectFillButtonTapped), for: .touchUpInside)
+        #if !os(xrOS)
+        let stack = UIStackView(arrangedSubviews: [backButton, aspectFillButton, routeButton, landscapeButton])
+        #else
+        let stack = UIStackView(arrangedSubviews: [backButton, aspectFillButton, landscapeButton])
+        #endif
+        stack.axis = .horizontal
+        stack.spacing = 15
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        topLeftBackground.addSubview(stack)
+        var constraints = [
+            stack.topAnchor.constraint(equalTo: topLeftBackground.topAnchor, constant: -5),
+            stack.leadingAnchor.constraint(equalTo: topLeftBackground.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: topLeftBackground.trailingAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: topLeftBackground.bottomAnchor, constant: -10),
+            stack.heightAnchor.constraint(equalToConstant: 35),
+            aspectFillButton.widthAnchor.constraint(equalToConstant: 30),
+            aspectFillButton.heightAnchor.constraint(equalToConstant: 30),
+            backButton.widthAnchor.constraint(equalToConstant: 30),
+            backButton.heightAnchor.constraint(equalToConstant: 30),
+            landscapeButton.widthAnchor.constraint(equalToConstant: 30),
+            landscapeButton.heightAnchor.constraint(equalToConstant: 30),
+        ]
+        #if !os(xrOS)
+        constraints += [
+            routeButton.widthAnchor.constraint(equalToConstant: 30),
+            routeButton.heightAnchor.constraint(equalToConstant: 30),
+        ]
+        #endif
+        NSLayoutConstraint.activate(constraints)
+    }
+
+    private func setupTopRightButton() {
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        screenShotButton.setImage(UIImage(systemName: "camera.fill", withConfiguration: config), for: .normal)
+        screenShotButton.tintColor = .white
+        screenShotButton.addTarget(self, action: #selector(handleScreenshot), for: .touchUpInside)
+        unifiedSettingsButton.setImage(UIImage(systemName: "gear", withConfiguration: config), for: .normal)
+        unifiedSettingsButton.tintColor = .white
+        unifiedSettingsButton.addTarget(self, action: #selector(handleUnifiedSettingsButtonTapped), for: .touchUpInside)
+        toolBar.playbackRateButton.setImage(UIImage(systemName: "speedometer", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)), for: .normal)
+        toolBar.playbackRateButton.setTitle("", for: .normal)
+        toolBar.playbackRateButton.tintColor = .white
+        let stack = UIStackView(arrangedSubviews: [toolBar.pipButton, screenShotButton, toolBar.playbackRateButton, unifiedSettingsButton])
+        stack.axis = .horizontal
+        stack.spacing = 15
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        topRightBackground.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topRightBackground.topAnchor, constant: -5),
+            stack.leadingAnchor.constraint(equalTo: topRightBackground.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: topRightBackground.trailingAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: topRightBackground.bottomAnchor, constant: -10),
+            stack.heightAnchor.constraint(equalToConstant: 35),
+            toolBar.pipButton.widthAnchor.constraint(equalToConstant: 30),
+            toolBar.pipButton.heightAnchor.constraint(equalToConstant: 30),
+            screenShotButton.widthAnchor.constraint(equalToConstant: 30),
+            screenShotButton.heightAnchor.constraint(equalToConstant: 30),
+            toolBar.playbackRateButton.widthAnchor.constraint(equalToConstant: 30),
+            toolBar.playbackRateButton.heightAnchor.constraint(equalToConstant: 30),
+            unifiedSettingsButton.widthAnchor.constraint(equalToConstant: 30),
+            unifiedSettingsButton.heightAnchor.constraint(equalToConstant: 30),
+        ])
+    }
+
+    private func setupSideButtons() {
+        leftBackgroundView.isHidden = false
+        lockButton.removeFromSuperview()
+        lockButton.translatesAutoresizingMaskIntoConstraints = false
+        lockButton.backgroundColor = .clear
+        lockButton.layer.cornerRadius = 0
+        lockButton.isHidden = false
+        let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        lockButton.setImage(UIImage(systemName: "lock", withConfiguration: config), for: .normal)
+        lockButton.setImage(UIImage(systemName: "lock.open", withConfiguration: config), for: .selected)
+        lockButton.tintColor = .white
+        let stack = UIStackView(arrangedSubviews: [lockButton])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        leftBackgroundView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            lockButton.widthAnchor.constraint(equalToConstant: 50),
+            lockButton.heightAnchor.constraint(equalToConstant: 50),
+            stack.centerXAnchor.constraint(equalTo: leftBackgroundView.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: leftBackgroundView.centerYAnchor),
+        ])
+        toolBar.timeSlider.heightAnchor.constraint(equalToConstant: 30).isActive = true
+    }
+
+    private func setupBottomControls() {
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        previousButton.setImage(UIImage(systemName: "backward.end.fill", withConfiguration: config), for: .normal)
+        previousButton.tintColor = .white
+        previousButton.backgroundColor = .clear
+        nextButton.setImage(UIImage(systemName: "forward.end.fill", withConfiguration: config), for: .normal)
+        nextButton.tintColor = .white
+        nextButton.backgroundColor = .clear
+        audioMenuButton.setImage(UIImage(systemName: "speaker.wave.2", withConfiguration: config), for: .normal)
+        audioMenuButton.tintColor = .white
+        audioMenuButton.backgroundColor = .clear
+        audioMenuButton.addTarget(self, action: #selector(handleAudioMenuButtonTapped), for: .touchUpInside)
+        subtitleMenuButton.setImage(UIImage(systemName: "captions.bubble", withConfiguration: config), for: .normal)
+        subtitleMenuButton.tintColor = .white
+        subtitleMenuButton.backgroundColor = .clear
+        subtitleMenuButton.addTarget(self, action: #selector(handleSubtitleMenuButtonTapped), for: .touchUpInside)
+        let rightStack = UIStackView(arrangedSubviews: [toolBar.definitionButton, audioMenuButton, subtitleMenuButton])
+        rightStack.axis = .horizontal
+        rightStack.spacing = 20
+        rightStack.alignment = .center
+        rightStack.translatesAutoresizingMaskIntoConstraints = false
+        let infoStack = UIStackView(arrangedSubviews: [videoInfoContainer, rightStack])
+        infoStack.axis = .horizontal
+        infoStack.distribution = .equalSpacing
+        infoStack.alignment = .center
+        infoStack.translatesAutoresizingMaskIntoConstraints = false
+        videoInfoContainer.setContentCompressionResistancePriority(.init(750), for: .horizontal)
+        videoInfoContainer.setContentHuggingPriority(.init(750), for: .horizontal)
+        rightStack.setContentCompressionResistancePriority(.init(750), for: .horizontal)
+        rightStack.setContentHuggingPriority(.init(750), for: .horizontal)
+        let progressStack = UIStackView(arrangedSubviews: [customProgressView])
+        progressStack.spacing = 10
+        progressStack.alignment = .center
+        progressStack.translatesAutoresizingMaskIntoConstraints = false
+        let playStack = UIStackView(arrangedSubviews: [previousButton, toolBarPlayButton, nextButton])
+        playStack.spacing = 8
+        playStack.alignment = .center
+        playStack.translatesAutoresizingMaskIntoConstraints = false
+        let leftSpacer = UIView()
+        leftSpacer.translatesAutoresizingMaskIntoConstraints = false
+        let rightSpacer = UIView()
+        rightSpacer.translatesAutoresizingMaskIntoConstraints = false
+        let controlStack = UIStackView(arrangedSubviews: [leftSpacer, playStack, rightSpacer])
+        controlStack.distribution = .fill
+        controlStack.alignment = .center
+        controlStack.translatesAutoresizingMaskIntoConstraints = false
+        bottomBackground.addSubview(infoStack)
+        bottomBackground.addSubview(progressStack)
+        bottomBackground.addSubview(controlStack)
+        NSLayoutConstraint.activate([
+            infoStack.topAnchor.constraint(equalTo: bottomBackground.topAnchor, constant: 8),
+            infoStack.leadingAnchor.constraint(equalTo: bottomBackground.leadingAnchor, constant: 15),
+            infoStack.trailingAnchor.constraint(equalTo: bottomBackground.trailingAnchor, constant: -15),
+            infoStack.heightAnchor.constraint(equalToConstant: 30),
+            progressStack.topAnchor.constraint(equalTo: infoStack.bottomAnchor, constant: 14),
+            progressStack.leadingAnchor.constraint(equalTo: bottomBackground.leadingAnchor, constant: 7),
+            progressStack.trailingAnchor.constraint(equalTo: bottomBackground.trailingAnchor, constant: -7),
+            customProgressView.heightAnchor.constraint(equalToConstant: 30),
+            controlStack.topAnchor.constraint(equalTo: progressStack.bottomAnchor, constant: 16),
+            controlStack.leadingAnchor.constraint(equalTo: bottomBackground.leadingAnchor, constant: 15),
+            controlStack.trailingAnchor.constraint(equalTo: bottomBackground.trailingAnchor, constant: -15),
+            controlStack.bottomAnchor.constraint(equalTo: bottomBackground.bottomAnchor, constant: -4),
+            controlStack.heightAnchor.constraint(equalToConstant: 35),
+            leftSpacer.widthAnchor.constraint(equalTo: rightSpacer.widthAnchor),
+        ])
+        [previousButton, toolBarPlayButton, nextButton].forEach {
+            $0.widthAnchor.constraint(equalToConstant: 35).isActive = true
+            $0.heightAnchor.constraint(equalToConstant: 35).isActive = true
+            $0.setContentCompressionResistancePriority(.init(999), for: .horizontal)
+            $0.setContentHuggingPriority(.init(999), for: .horizontal)
+            $0.contentEdgeInsets = .zero
+        }
+        [audioMenuButton, subtitleMenuButton, toolBar.definitionButton].forEach {
+            $0.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            $0.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        }
+    }
+
+    private func setupCenterControls() {
+        playPauseButton.setImage(UIImage(systemName: "play.fill", withConfiguration: playButtonConfig), for: .normal)
+        playPauseButton.tintColor = .white
+        playPauseButton.addTarget(self, action: #selector(handlePlayPause), for: .touchUpInside)
+        toolBarPlayButton.setImage(UIImage(systemName: "play.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)), for: .normal)
+        toolBarPlayButton.tintColor = .white
+        toolBarPlayButton.backgroundColor = .clear
+        toolBarPlayButton.tintColor = .white
+        toolBarPlayButton.backgroundColor = .clear
+        toolBarPlayButton.addTarget(self, action: #selector(handlePlayPause), for: .touchUpInside)
+        jumpbackButton.setImage(UIImage(systemName: "gobackward", withConfiguration: jumpButtonConfig), for: .normal)
+        jumpbackButton.tintColor = .white
+        jumpForwardButton.setImage(UIImage(systemName: "goforward", withConfiguration: jumpButtonConfig), for: .normal)
+        jumpForwardButton.tintColor = .white
+        jumpbackButton.addTarget(self, action: #selector(handleJumpBack), for: .touchUpInside)
+        jumpForwardButton.addTarget(self, action: #selector(handleJumpForward), for: .touchUpInside)
+        let stack = UIStackView(arrangedSubviews: [jumpbackButton, playPauseButton, jumpForwardButton])
+        stack.axis = .horizontal
+        stack.spacing = 60
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    private func setupVideoInfoLabels() {
+        func createLabel(_ text: String) -> UILabel {
+            let label = UILabel()
+            label.text = text
+            label.textColor = .white
+            label.font = .systemFont(ofSize: 12, weight: .bold)
+            label.backgroundColor = .clear
+            label.layer.cornerRadius = 4
+            label.clipsToBounds = true
+            label.textAlignment = .center
+            return label
+        }
+        codecLabel = createLabel("AV1")
+        resolutionLabel = createLabel("2160P")
+        fpsLabel = createLabel("60FPS")
+        bitrateLabel = createLabel("12kbps")
+        videoInfoContainer.addArrangedSubview(codecLabel!)
+        videoInfoContainer.addArrangedSubview(resolutionLabel!)
+        videoInfoContainer.addArrangedSubview(fpsLabel!)
+        videoInfoContainer.addArrangedSubview(bitrateLabel!)
+    }
+
+    private func setupScreenshotPreview() {
+        screenshotPreviewView = UIView()
+        screenshotPreviewView?.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        screenshotPreviewView?.layer.cornerRadius = 12
+        screenshotPreviewView?.clipsToBounds = true
+        screenshotPreviewView?.translatesAutoresizingMaskIntoConstraints = false
+        screenshotPreviewView?.alpha = 0
+        screenshotPreviewView?.layer.borderWidth = 2
+        screenshotPreviewView?.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+        if let previewView = screenshotPreviewView {
+            addSubview(previewView)
+            let imageView = UIImageView()
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.tag = 100
+            previewView.addSubview(imageView)
+            NSLayoutConstraint.activate([
+                previewView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -30),
+                previewView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -100),
+                previewView.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.25),
+                previewView.heightAnchor.constraint(equalTo: previewView.widthAnchor, multiplier: 0.5625),
+                imageView.topAnchor.constraint(equalTo: previewView.topAnchor),
+                imageView.leadingAnchor.constraint(equalTo: previewView.leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: previewView.trailingAnchor),
+                imageView.bottomAnchor.constraint(equalTo: previewView.bottomAnchor),
+            ])
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(dismissScreenshotPreview))
+            swipe.direction = .right
+            previewView.addGestureRecognizer(swipe)
+            previewView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(dismissScreenshotPreview)))
+        }
+        if promptLabel.superview == nil {
+            addSubview(promptLabel)
+            promptLabel.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                promptLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+                promptLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -50),
+                promptLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.7),
+                promptLabel.heightAnchor.constraint(equalToConstant: 40),
+            ])
+        }
+    }
+
+    private func setupTopStatusBar() {
+        currentItemTitleLabel = UILabel()
+        currentItemTitleLabel!.textColor = .white
+        currentItemTitleLabel!.font = .systemFont(ofSize: 14)
+        updateTimeLabel()
+        networkStatusImageView = UIImageView()
+        networkStatusImageView!.tintColor = .white
+        updateNetworkStatusImageView()
+        networkStatusImageView!.contentMode = .scaleAspectFit
+        networkStatusImageView!.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            networkStatusImageView!.widthAnchor.constraint(equalToConstant: 20),
+            networkStatusImageView!.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        displayTitleLabel = UILabel()
+        displayTitleLabel!.textColor = .white
+        displayTitleLabel!.font = .boldSystemFont(ofSize: 15)
+        displayTitleLabel!.text = ""
+        displayTitleLabel!.lineBreakMode = .byTruncatingTail
+        displayTitleLabel!.numberOfLines = 1
+        displayTitleLabel!.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
+        batteryImageView = UIImageView()
+        batteryImageView!.tintColor = .white
+        updateBatteryStatusImageView()
+        batteryImageView!.contentMode = .scaleAspectFit
+        batteryImageView!.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            batteryImageView!.widthAnchor.constraint(equalToConstant: 20),
+            batteryImageView!.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        networkSpeedLabel = UILabel()
+        networkSpeedLabel!.textColor = .white
+        networkSpeedLabel!.font = .systemFont(ofSize: 12)
+        networkSpeedLabel!.textAlignment = .left
+        let leftStack = UIStackView(arrangedSubviews: [currentItemTitleLabel!])
+        leftStack.axis = .horizontal
+        leftStack.spacing = 10
+        leftStack.alignment = .center
+        let rightStack = UIStackView(arrangedSubviews: [networkSpeedLabel!, networkStatusImageView!, batteryImageView!])
+        rightStack.axis = .horizontal
+        rightStack.spacing = 8
+        rightStack.alignment = .center
+        topStatusBar = UIStackView(arrangedSubviews: [leftStack, displayTitleLabel!, rightStack])
+        topStatusBar!.axis = .horizontal
+        topStatusBar!.distribution = .equalSpacing
+        topStatusBar!.alignment = .center
+        topStatusBar!.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(topStatusBar!)
+        topStatusLeadingConstraint = topStatusBar!.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? 30 : 25)
+        topStatusTrailingConstraint = topStatusBar!.trailingAnchor.constraint(equalTo: trailingAnchor, constant: UIDevice.current.userInterfaceIdiom == .phone ? -30 : -25)
+        NSLayoutConstraint.activate([
+            topStatusLeadingConstraint!,
+            topStatusTrailingConstraint!,
+            topStatusBar!.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 5),
+            topStatusBar!.heightAnchor.constraint(equalToConstant: 30),
+        ])
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.updateTimeLabel()
+        }
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        NotificationCenter.default.addObserver(self, selector: #selector(batteryLevelDidChange(_:)), name: UIDevice.batteryLevelDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(batteryStateDidChange(_:)), name: UIDevice.batteryStateDidChangeNotification, object: nil)
+        startSpeedUpdateTimer()
+        updateBatteryStatusImageView()
+    }
+
+    private func customAutoFadeOutViewWithAnimation() {
+        customDelayItem?.cancel()
+        guard toolBarPlayButton.isSelected else {
+            return
+        }
+        customDelayItem = DispatchWorkItem { [weak self] in
+            self?.isMaskShow = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + KSOptions.animateDelayTimeInterval, execute: customDelayItem!)
+    }
+
+    @objc private func handleAspectFillButtonTapped() {
+        guard let player = playerLayer?.player else {
+            return
+        }
+        let message: String
+        switch player.contentMode {
+        case .scaleAspectFit:
+            player.contentMode = .scaleAspectFill
+            message = "切换到：裁剪填充"
+        case .scaleAspectFill:
+            player.contentMode = .scaleToFill
+            message = "切换到：拉伸填充"
+        default:
+            player.contentMode = .scaleAspectFit
+            message = "切换到：适应填充"
+        }
+        showPromptMessage(message)
+    }
+
+    @objc private func handleJumpBack() {
+        if let currentTime = playerLayer?.player.currentPlaybackTime {
+            playerLayer?.seek(time: currentTime - 10, autoPlay: true, completion: nil)
+        }
+    }
+
+    @objc private func handleJumpForward() {
+        if let currentTime = playerLayer?.player.currentPlaybackTime, let playerLayer {
+            playerLayer.seek(time: currentTime + 10, autoPlay: playerLayer.options.isSeekedAutoPlay, completion: nil)
+        }
+    }
+
+    @objc private func handlePlayPause() {
+        guard let player = playerLayer?.player else {
+            return
+        }
+        if player.isPlaying {
+            pause()
+        } else if player.playbackState == .finished {
+            let resource = resource
+            let definitionIndex = currentDefinition
+            resetPlayer()
+            if let resource {
+                set(resource: resource, definitionIndex: definitionIndex, isSetUrl: true)
+            }
+        } else {
+            play()
+        }
+    }
+
+    @objc private func handleScreenshot() {
+        guard let playerLayer else {
+            return
+        }
+        let player = playerLayer.player
+        let flashView = UIView(frame: bounds)
+        flashView.backgroundColor = .white
+        flashView.alpha = 0
+        addSubview(flashView)
+        UIView.animate(withDuration: 0.1, animations: {
+            flashView.alpha = 0.8
+        }) { _ in
+            UIView.animate(withDuration: 0.1, animations: {
+                flashView.alpha = 0
+            }) { _ in
+                flashView.removeFromSuperview()
+            }
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task { @MainActor in
+            if let cgImage = await player.thumbnailImageAtCurrentTime() {
+                let image = UIImage(cgImage: cgImage)
+                DispatchQueue.main.async {
+                    if let previewView = self.screenshotPreviewView, let imageView = previewView.viewWithTag(100) as? UIImageView {
+                        imageView.image = image
+                        previewView.alpha = 0
+                        previewView.transform = CGAffineTransform(scaleX: 0.5, y: 0.5).concatenating(CGAffineTransform(translationX: 50, y: 20))
+                        UIView.animate(withDuration: 0.25, delay: 0.1, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.2, options: [], animations: {
+                            previewView.alpha = 1
+                            previewView.transform = .identity
+                        })
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            if previewView.alpha == 1 {
+                                UIView.animate(withDuration: 0.3) {
+                                    previewView.alpha = 0
+                                }
+                            }
+                        }
+                    }
+                    self.showPromptMessage("Screenshot saved")
+                }
+                UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.image(_:didFinishSavingWithError:contextInfo:)), nil)
+            }
+        }
+    }
+
+    @objc private func image(_: UIImage, didFinishSavingWithError _: Error?, contextInfo _: UnsafeRawPointer) {}
+
+    @objc private func dismissScreenshotPreview() {
+        guard let previewView = screenshotPreviewView else {
+            return
+        }
+        UIView.animate(withDuration: 0.3, animations: {
+            previewView.alpha = 0
+            previewView.transform = CGAffineTransform(translationX: 150, y: 0)
+        }) { _ in
+            previewView.transform = .identity
+        }
+    }
+
+    private func updateTimeLabel() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        currentItemTitleLabel?.text = formatter.string(from: Date())
+    }
+
+    private func updateNetworkStatusImageView() {
+        let queue = DispatchQueue(label: "NetworkMonitor")
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                if path.status == .satisfied {
+                    if path.usesInterfaceType(.wifi) {
+                        self?.networkStatusImageView?.image = UIImage(systemName: "wifi", withConfiguration: config)
+                    } else if path.usesInterfaceType(.cellular) {
+                        self?.networkStatusImageView?.image = UIImage(systemName: "antenna.radiowaves.left.and.right", withConfiguration: config)
+                    } else {
+                        self?.networkStatusImageView?.image = UIImage(systemName: "xmark.circle", withConfiguration: config)
+                    }
+                } else {
+                    self?.networkStatusImageView?.image = UIImage(systemName: "xmark.circle", withConfiguration: config)
+                }
+            }
+        }
+        monitor.start(queue: queue)
+    }
+
+    private func updateBatteryStatusImageView() {
+        let level = UIDevice.current.batteryLevel
+        let state = UIDevice.current.batteryState
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        let name: String
+        switch state {
+        case .charging, .full, .unknown:
+            name = "battery.100.bolt"
+        case .unplugged:
+            if level < 0.95 {
+                name = level >= 0.65 ? "battery.75" : level >= 0.35 ? "battery.50" : "battery.25"
+            } else {
+                name = "battery.100"
+            }
+        @unknown default:
+            name = "battery.100"
+        }
+        DispatchQueue.main.async {
+            self.batteryImageView?.image = UIImage(systemName: name, withConfiguration: config)
+        }
+    }
+
+    @objc private func batteryLevelDidChange(_: Notification) {
+        updateBatteryStatusImageView()
+    }
+
+    @objc private func batteryStateDidChange(_: Notification) {
+        updateBatteryStatusImageView()
+    }
+
+    private func startSpeedUpdateTimer() {
+        speedUpdateTimer?.invalidate()
+        speedUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.updateNetworkSpeed()
+        }
+    }
+
+    private func updateNetworkSpeed() {
+        guard let playerLayer else {
+            networkSpeedLabel?.text = "0 KB/s"
+            return
+        }
+        let speed = playerLayer.player.dynamicInfo.networkSpeed
+        smoothedSpeed = Double(speed) * 0.3 + smoothedSpeed * 0.7
+        func formatSpeed(_ bytes: Int) -> String {
+            let kb = Double(bytes) / 1024
+            let mb = kb / 1024
+            return mb >= 1 ? String(format: "%.1f MB/s", mb) : String(format: "%.0f KB/s", kb)
+        }
+        networkSpeedLabel?.text = formatSpeed(Int(smoothedSpeed))
+    }
+
+    @objc private func handleAudioMenuButtonTapped() {
+        showAudioMenu()
+    }
+
+    private func showAudioMenu() {
+        guard let playerLayer else {
+            showPromptMessage("播放器未就绪")
+            return
+        }
+        let player = playerLayer.player
+        let audioTracks = player.tracks(mediaType: .audio)
+        guard !audioTracks.isEmpty else {
+            showPromptMessage("没有可用的音频轨道")
+            return
+        }
+        var actions: [UIAction] = []
+        for (index, track) in audioTracks.enumerated() {
+            let title = track.description.isEmpty ? "音频轨道 \(index + 1)" : track.description
+            actions.append(UIAction(title: title, state: track.isEnabled ? .on : .off) { [weak self] _ in
+                player.select(track: track)
+                self?.showPromptMessage("已切换到：\(title)")
+            })
+        }
+        audioMenuButton.menu = UIMenu(title: "选择音频轨道", children: actions)
+        audioMenuButton.showsMenuAsPrimaryAction = true
+    }
+
+    @objc private func handleSubtitleMenuButtonTapped() {
+        guard subtitleMenuButton.menu == nil else {
+            return
+        }
+        guard playerLayer?.subtitleModel != nil else {
+            showPromptMessage("字幕功能未就绪")
+            return
+        }
+        let first = createSubtitleSubMenu(title: "First Subtitle", isSecondary: false)
+        let second = createSubtitleSubMenu(title: "Second Subtitle", isSecondary: true)
+        subtitleMenuButton.menu = UIMenu(title: "Subtitles", children: [first, second])
+        subtitleMenuButton.showsMenuAsPrimaryAction = true
+    }
+
+    private func createSubtitleSubMenu(title: String, isSecondary: Bool) -> UIMenu {
+        let ffmpegSubtitles = playerLayer?.subtitleModel.subtitleInfos.compactMap { $0 as? FFmpegAssetTrack } ?? []
+        let urlSubtitles = playerLayer?.subtitleModel.subtitleInfos.compactMap { $0 as? URLSubtitleInfo } ?? []
+        let ffmpegMenu = generateFFmpegMenu(selectedSubtitle: (isSecondary ? playerLayer?.subtitleModel.secondarySubtitleInfo : playerLayer?.subtitleModel.selectedSubtitleInfo) as? FFmpegAssetTrack, list: ffmpegSubtitles, isSecondary: isSecondary)
+        let urlMenu = generateURLMenu(selectedSubtitle: (isSecondary ? playerLayer?.subtitleModel.secondarySubtitleInfo : playerLayer?.subtitleModel.selectedSubtitleInfo) as? URLSubtitleInfo, list: urlSubtitles, isSecondary: isSecondary)
+        let disableAction = UIAction(title: "Disable Subtitle", state: (isSecondary ? playerLayer?.subtitleModel.secondarySubtitleInfo : playerLayer?.subtitleModel.selectedSubtitleInfo) == nil ? .on : .off) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            if isSecondary {
+                playerLayer?.subtitleModel.secondarySubtitleInfo = nil
+            } else {
+                playerLayer?.subtitleModel.selectedSubtitleInfo = nil
+            }
+            subtitleMenuButton.menu = UIMenu(title: "Subtitles", children: [createSubtitleSubMenu(title: "First Subtitle", isSecondary: false), createSubtitleSubMenu(title: "Second Subtitle", isSecondary: true)])
+        }
+        let localAction = UIAction(title: "Local Subtitle") { [weak self] _ in
+            self?.openFilePicker(isSecondary: isSecondary)
+        }
+        return UIMenu(title: title, children: [ffmpegMenu, urlMenu, disableAction, localAction])
+    }
+
+    private func generateFFmpegMenu(selectedSubtitle: FFmpegAssetTrack?, list: [FFmpegAssetTrack], isSecondary: Bool) -> UIMenu {
+        var actions: [UIAction] = list.map { track in
+            let title = track.name.isEmpty ? "Track \(track.trackID)" : track.name
+            return UIAction(title: title, state: (selectedSubtitle != nil && track === selectedSubtitle) ? .on : .off) { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                if isSecondary {
+                    playerLayer?.subtitleModel.secondarySubtitleInfo = track
+                } else {
+                    playerLayer?.select(subtitleInfo: track, isSecondary: false)
+                }
+                subtitleMenuButton.menu = UIMenu(title: "Subtitles", children: [createSubtitleSubMenu(title: "First Subtitle", isSecondary: false), createSubtitleSubMenu(title: "Second Subtitle", isSecondary: true)])
+                showPromptMessage("Switched to: " + (track.name.isEmpty ? "Track \(track.trackID)" : track.name))
+            }
+        }
+        if actions.isEmpty {
+            actions.append(UIAction(title: "No FFmpeg Subtitles", attributes: .disabled) { _ in })
+        }
+        return UIMenu(title: "Internal Subtitles", children: actions)
+    }
+
+    private func generateURLMenu(selectedSubtitle: URLSubtitleInfo?, list: [URLSubtitleInfo], isSecondary: Bool) -> UIMenu {
+        var actions: [UIAction] = list.map { info in
+            UIAction(title: info.name, state: (selectedSubtitle != nil && info === selectedSubtitle) ? .on : .off) { [weak self] _ in
+                guard let self else {
+                    return
+                }
+                if isSecondary {
+                    playerLayer?.subtitleModel.secondarySubtitleInfo = info
+                } else {
+                    playerLayer?.select(subtitleInfo: info, isSecondary: false)
+                }
+                subtitleMenuButton.menu = UIMenu(title: "Subtitles", children: [createSubtitleSubMenu(title: "First Subtitle", isSecondary: false), createSubtitleSubMenu(title: "Second Subtitle", isSecondary: true)])
+                showPromptMessage("Switched to: " + info.name)
+            }
+        }
+        if actions.isEmpty {
+            actions.append(UIAction(title: "No External Subtitles", attributes: .disabled) { _ in })
+        }
+        return UIMenu(title: "External Subtitles", children: actions)
+    }
+
+    private func openFilePicker(isSecondary: Bool) {
+        let documentPicker = UIDocumentPickerViewController(documentTypes: [kUTTypePlainText as String, "public.subtitle"], in: .open)
+        documentPicker.delegate = self
+        documentPicker.allowsMultipleSelection = false
+        objc_setAssociatedObject(documentPicker, &subtitlePickerIsSecondaryKey, isSecondary, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        viewController?.present(documentPicker, animated: true)
+    }
+
+    private func updateVideMetaLabel() {
+        let meta = getVideoMeta()
+        if let value = meta["Codec Format"] {
+            codecLabel?.text = value
+        } else {
+            codecLabel?.alpha = 0
+        }
+        if let value = meta["Resolution"] {
+            resolutionLabel?.text = value
+        } else {
+            resolutionLabel?.alpha = 0
+        }
+        if let value = meta["Frame Rate"] {
+            fpsLabel?.text = value
+        } else {
+            fpsLabel?.alpha = 0
+        }
+        if let value = meta["Bitrate"] {
+            bitrateLabel?.text = value
+        } else {
+            bitrateLabel?.alpha = 0
+        }
+    }
+
+    private func getVideoMeta() -> [String: String] {
+        let videoMeta: [String: String] = [:]
+        guard let player = playerLayer?.player else {
+            return videoMeta
+        }
+        let tracks = player.tracks(mediaType: .video)
+        if let track = tracks.first(where: { $0.isEnabled }) as? AVMediaPlayerTrack {
+            return [
+                "Codec Format": track.formatDescription.map { $0.mediaSubType.description } ?? "Unknown",
+                "Title": track.name,
+                "Frame Rate": String(format: "%.2f", track.nominalFrameRate) + "FPS",
+                "Bitrate": "\(player.dynamicInfo.videoBitrate / 1024)Kbps",
+                "Color Depth": "\(track.bitDepth)bit",
+            ]
+        }
+        if let track = tracks.first(where: { $0.isEnabled }) as? FFmpegAssetTrack {
+            return [
+                "Codec Format": track.codecName,
+                "Title": track.name,
+                "Resolution": (track.formatDescription?.naturalSize ?? .zero).string,
+                "Frame Rate": String(format: "%.2f", track.nominalFrameRate) + "FPS",
+                "Bitrate": "\(player.dynamicInfo.videoBitrate / 1024)Kbps",
+                "Color Depth": "\(track.bitDepth)bit",
+            ]
+        }
+        return videoMeta
+    }
+
+    @objc private func handleUnifiedSettingsButtonTapped() {
+        showUnifiedSettings()
+    }
+
+    @objc private func handleSettingsButtonTapped() {
+        showUnifiedSettings()
+    }
+
+    private func showUnifiedSettings() {
+        isMaskShow = false
+        settingsView.playerView = self
+        settingsView.onDismiss = { [weak self] in
+            guard let self else {
+                return
+            }
+            settingsView.dismiss()
+            isMaskShow = true
+        }
+        settingsView.show(in: self)
+    }
+
     @objc private func orientationChanged(notification _: Notification) {
         guard isHorizonal() else {
             return
@@ -706,6 +1470,8 @@ extension IOSVideoPlayerView {
         updateUI(isFullScreen: UIApplication.isLandscape)
     }
 }
+
+private nonisolated(unsafe) var subtitlePickerIsSecondaryKey: UInt8 = 0
 
 public class AirplayStatusView: UIView {
     override public init(frame: CGRect) {
@@ -746,12 +1512,6 @@ public class AirplayStatusView: UIView {
 public extension KSOptions {
     /// func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask
     internal nonisolated(unsafe) static var supportedInterfaceOrientations = UIInterfaceOrientationMask.portrait
-}
-
-extension UIApplication {
-    static var isLandscape: Bool {
-        UIApplication.shared.windows.first?.windowScene?.interfaceOrientation.isLandscape ?? false
-    }
 }
 
 // MARK: - menu
@@ -857,6 +1617,136 @@ public class MenuController {
                 return UIKeyCommand.inputDownArrow
             }
         }
+    }
+}
+#endif
+
+//  Reconstructed from Forward-TF 1.3.17. Class descriptor 0x1039f3a94.
+#if canImport(UIKit) && canImport(CallKit)
+import UIKit
+
+// Superclass read from the class descriptor's SuperclassType field at desc+0x14, which holds the
+// relative pointer 0x0023a334 -> 0x103c2dddc, whose mangled bytes are `So6UIViewC` = ObjC UIView.
+// ⚑[tool=export_trie_oracle ref=CustomProgressView:0x1039f3a94 result=NO_ORPHAN_SUBTREE]
+// The class exports NOTHING: `export_trie_oracle --class CustomProgressView` returns "no orphan
+// subtree found", so every member name below is unrecovered, not merely unread.
+class CustomProgressView: UIView {
+    // Field records, in reflection order, from FieldDescriptor 0x103cbf188 (NumFields=4). Types are
+    // the resolved binary types, not inferred from use.
+    // ⚑[tool=dump_binary_field_types ref=CustomProgressView:0x1039f3a94 result=4-fields-resolved]
+    //
+    // The four direct field-offset globals are an unexported contiguous run at
+    // 0x1044f1050..0x1044f1068 (stride 8, static values 8/16/24/32), bounded on the left by the
+    // pointer-valued global at 0x1044f1048. Entry i is field record i. These are PRE-metadata-init
+    // static values and are global identities, NOT runtime byte offsets.
+    // ⚑[tool=fieldrec ref=CustomProgressView:0x1039f3a94 result=NumFields-4]
+    let playView: IOSVideoPlayerView          // record 0, flags=0, offset-global 0x1044f1050
+    var progressSlider: KSSlider              // record 1, flags=2, offset-global 0x1044f1058
+    var currentTimeLabel: UILabel             // record 2, flags=2, offset-global 0x1044f1060
+    var totalTimeLabel: UILabel               // record 3, flags=2, offset-global 0x1044f1068
+
+    // Designated init, body @0x101b13374 (288 B / 72 instr), read end to end. It is NOT in the
+    // vtable's Init slot (idx9 carries Impl=NULL) and `locate_class_init` found 0 construction
+    // sites; it was reached instead from the metadata accessor's xrefs, which is the check that
+    // tool names when it returns 0.
+    // ⚑[tool=locate_class_init ref=CustomProgressView:0x1039f3a94 result=0-construction-sites]
+    // ⚑[invented=init(playView:frame:) addr=0x101b13374 exhaustion=name_exhaustion_gate approved=user-blanket-s115]
+    //
+    // ⚠️ PARAMETER ORDER IS NOT DETERMINED BY THE BINARY. `playView` arrives in x0 and the CGRect
+    // in v0-v3 (saved to v11/v10/v9/v8 across the field stores at 0x101b13394-0x101b133a0). Swift
+    // allocates integer and floating-point parameters from separate register banks, so the
+    // register assignment is identical under either declaration order. The labels are read; their
+    // ORDER is a choice, and it is flagged rather than asserted.
+    init(playView: IOSVideoPlayerView, frame: CGRect) {
+        // str x0, [x20, offset-global 0x1044f1050] @0x101b133b0 — entry0, confirming the mapping.
+        self.playView = playView
+        // The three subviews are read off playView.toolBar, not constructed. Both the intermediate
+        // and the three fields were named from their vpWvd symbols after BOTH offset resolvers
+        // refused ("NOT RECOVERED — do not guess it") for IOSVideoPlayerView and VideoPlayerView.
+        // ⚑[tool=export_trie_oracle ref=PlayerView.toolBar:0x1044e7508 result=vpWvd-named]
+        // ⚑[tool=export_trie_oracle ref=PlayerToolBar.timeSlider:0x1044e7460 result=vpWvd-named]
+        // ⚑[tool=export_trie_oracle ref=PlayerToolBar.currentTimeLabel:0x1044e7448 result=vpWvd-named]
+        // ⚑[tool=export_trie_oracle ref=PlayerToolBar.totalTimeLabel:0x1044e7450 result=vpWvd-named]
+        let toolBar = playView.toolBar
+        progressSlider = toolBar.timeSlider
+        currentTimeLabel = toolBar.currentTimeLabel
+        totalTimeLabel = toolBar.totalTimeLabel
+        super.init(frame: frame)   // objc_msgSendSuper2 @0x101b13454, v0-v3 restored from v11-v8
+        setupUI()                  // bl 0x101b134a0 @0x101b13464 — the sole call site of setupUI
+    }
+
+    // COMPILER-FORCED, NOT READ FROM THE BINARY. UIView declares `required init?(coder:)`, so any
+    // subclass declaring a designated init must restate it. vtable idx11 is a Method with
+    // Impl=NULL and was NOT read; this stub is what the language demands, not a reconstruction.
+    // ⚑[tool=vtable_impl_oracle ref=CustomProgressView:idx11 result=Impl-NULL-unread]
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    // ⚑[invented=setupUI addr=0x101b134a0 exhaustion=name_exhaustion_gate approved=user-blanket-s115]
+    // vtable idx10 / slot24 (VTableOffset=14), flags=0x0010 Method, Impl == body (no branch thunk).
+    // Extent 0x101b134a0-0x101b13ac8, 1576 B / 394 instr.
+    //
+    // The NAME is invented. Every recovery route was run and every one failed:
+    //   export trie at the body ....... NOT IN TRIE (a real negative)
+    //   vtable Impl ................... equal to the body, so there is no thunk to name instead
+    //   #function / #file literal ..... none present
+    //   objc selector sent / IMP ...... not an IMP in any of 220 classes' method lists
+    //   unique string literal ......... 0 literals
+    // ⚑[tool=name_exhaustion_gate ref=CustomProgressView.setupUI:0x101b134a0 result=EXHAUSTED]
+    //
+    // The gate's DEFAULT verdict is INLINE-INSTEAD, because the body has exactly one call site
+    // image-wide (0x101b13464, inside the 72-instruction FUN_101b13374). That heuristic is refused
+    // here on structural grounds, not for convenience: this address occupies a vtable slot as a
+    // `Method`, and the compiler only emits a vtable slot for a declared, overridable member. A
+    // one-site inline expression never gets one. Hence --allow-single-site.
+    func setupUI() {
+        backgroundColor = .clear
+
+        progressSlider.translatesAutoresizingMaskIntoConstraints = false
+        progressSlider.minimumTrackTintColor = .white
+        progressSlider.maximumTrackTintColor = .gray
+        // UIGraphicsImageRenderer(size:) with d0=d1=1.0 at 0x101b13578/0x101b1357c, then
+        // imageWithActions: over a heap block allocated by _swift_allocObject(32, 7).
+        let thumbImage = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { context in
+            UIColor.clear.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        progressSlider.setThumbImage(thumbImage, for: .normal)       // x3 = 0
+        progressSlider.setThumbImage(thumbImage, for: .highlighted)  // x3 = 1
+        progressSlider.setThumbImage(thumbImage, for: .selected)     // x3 = 4
+        progressSlider.setMinimumTrackImage(nil, for: .normal)       // x2 = 0, x3 = 0
+        progressSlider.setMaximumTrackImage(nil, for: .normal)       // x2 = 0, x3 = 0
+
+        currentTimeLabel.translatesAutoresizingMaskIntoConstraints = false
+        totalTimeLabel.translatesAutoresizingMaskIntoConstraints = false
+        // ofSize: is the immediate 14.0 at 0x101b136ec; the weight is loaded indirectly through the
+        // __got slot 0x10410b018, so it is read as a bound symbol rather than an inline constant.
+        // ⚑[tool=body_fingerprint ref=CustomProgressView.setupUI:0x101b136e0 result=got-0x10410b018]
+        let font = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold)
+        currentTimeLabel.font = font
+        totalTimeLabel.font = font
+        currentTimeLabel.textColor = .white
+        totalTimeLabel.textColor = .white
+
+        addSubview(progressSlider)
+        addSubview(currentTimeLabel)
+        addSubview(totalTimeLabel)
+
+        // Eight constraints, stored into the array buffer at [x24, #0x20 ... #0x58]
+        // (_swift_allocObject(96, 7) at 0x101b137f0), then bridged to NSArray and passed to
+        // +[NSLayoutConstraint activateConstraints:] at 0x101b13a8c.
+        NSLayoutConstraint.activate([
+            progressSlider.leadingAnchor.constraint(equalTo: currentTimeLabel.trailingAnchor, constant: 12),
+            progressSlider.trailingAnchor.constraint(equalTo: totalTimeLabel.leadingAnchor, constant: -12),
+            progressSlider.centerYAnchor.constraint(equalTo: centerYAnchor),
+            progressSlider.heightAnchor.constraint(equalToConstant: 30),
+            currentTimeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            currentTimeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            totalTimeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            totalTimeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
     }
 }
 #endif

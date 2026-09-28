@@ -84,43 +84,6 @@ public extension KSPlayerLayerDelegate {
 @MainActor
 open class KSPlayerLayer: NSObject {
     public weak var delegate: KSPlayerLayerDelegate?
-
-    /// ⚑ 0x10000e52c — a bare `ret`. The body is empty; `time` is never read.
-    /// The address is heavily ICF-folded (it is the image's canonical empty body), so it carries
-    /// no information unique to this method beyond the fact that the method does nothing — which
-    /// is the whole of what is declared here. Signature from the trie:
-    /// `KSPlayer.KSPlayerLayer.preview(time: Swift.Double?) -> ()`.
-    open func preview(time _: Double?) {}
-
-    /// ⚑ 0x10000e52c — a bare `ret`, the same canonical empty body as `preview` above. The
-    /// parameter is never read.
-    /// Trie: `KSPlayer.KSPlayerLayer.updateUIView(__C.UIView) -> ()` — ONE unlabelled parameter.
-    /// It is NOT SwiftUI's `UIViewRepresentable.updateUIView(_:context:)`, which takes a second
-    /// `context` argument; this is a plain method that happens to share the base name.
-    /// `UIView` resolves on every platform here: PlayerDefines declares
-    /// `public typealias UIView = NSView` in its non-UIKit branch.
-    open func updateUIView(_: UIView) {}
-
-    /// ⚑ 0x1019ceaf4 is a 3-instruction thunk (`mov x0,x1 / mov x1,x2 / b 0x1019d58f8`); the body
-    /// is the 32 instructions there, read in full. Every callee named from the bind table:
-    ///   swift_unknownObjectWeakLoadStrong  ⚑[tool=bind_oracle ref=0x1041130e8 result=libswiftCore]
-    ///   swift_getObjectType                ⚑[tool=bind_oracle ref=0x104112f08 result=libswiftCore]
-    ///   swift_unknownObjectRelease         ⚑[tool=bind_oracle ref=0x1041130a0 result=libswiftCore]
-    /// Shape: weak-load `delegate`, return if nil, then dispatch witness-table slot +0x48 with
-    /// self, then release. The `?.` is the nil check; the retain/release pair is what a weak load
-    /// compiles to, not source.
-    ///
-    /// SLOT +0x48 WAS DECODED, NOT COUNTED off the protocol's declaration order — FrameOutput
-    /// proved that order can be wrong. Coordinator's KSPlayerLayerDelegate witness table
-    /// (0x1041d4d18, conformance descriptor 0x103567f38) has 11 requirements, and +0x48 is index
-    /// 8. Reqs 0-4 carry real bodies and 5-10 all carry the canonical empty body 0x10000e52c —
-    /// which matches this protocol exactly: five `player(...)` requirements Coordinator
-    /// implements, six with empty extension defaults it does not. That 5/6 split is what
-    /// corroborates the ordering, so index 8 is `playerDidClear(layer:)`.
-    /// ⚑[tool=decode_witness_table ref=Coordinator:KSPlayerLayerDelegate:0x1041d4d18 result=req8]
-    open func playerDidClear(player _: some MediaPlayerProtocol) {
-        delegate?.playerDidClear(layer: self)
-    }
     @Published
     public var bufferingProgress: UInt8 = 0
     @Published
@@ -151,32 +114,14 @@ open class KSPlayerLayer: NSObject {
     // internal, not public: MetalSubtitleView is an internal type, so `public` cannot compile.
     // The binary's access level for this field is not tool-readable (the impl oracle is
     // final-types-only and this class is open), so the narrowest spelling that builds is used.
-    private(set) var subtitleView = MetalSubtitleView()
+    // Forward: `let` (field flags 0, no vtable g/s/m; trie has only vg/vpMV/vpWvd).
+    let subtitleView = MetalSubtitleView()
 
     public var player: MediaPlayerProtocol {
         didSet {
             KSLog("player is \(player)")
             state = .initialized
-            runOnMainThread { [weak self] in
-                guard let self else { return }
-                let oldView = oldValue.view
-                if let superview = oldView.superview {
-                    let view = player.view
-                    #if canImport(UIKit)
-                    superview.insertSubview(view, belowSubview: oldView)
-                    #else
-                    superview.addSubview(view, positioned: .below, relativeTo: oldView)
-                    #endif
-                    view.translatesAutoresizingMaskIntoConstraints = false
-                    NSLayoutConstraint.activate([
-                        view.topAnchor.constraint(equalTo: superview.topAnchor),
-                        view.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
-                        view.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
-                        view.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
-                    ])
-                }
-                oldValue.view.removeFromSuperview()
-            }
+            replaceAndConstrainPlayerView(player: player, replacing: oldValue)
             player.playbackRate = oldValue.playbackRate
             player.playbackVolume = oldValue.playbackVolume
             player.delegate = self
@@ -188,35 +133,10 @@ open class KSPlayerLayer: NSObject {
     }
 
     public private(set) var url: URL {
+        // observer @0x1019c9a68: forwards url then options to subtitleModel; player replace lives in set(url:options:).
         didSet {
-            let firstPlayerType: MediaPlayerProtocol.Type
-            if isWirelessRouteActive {
-                // airplay的话，默认使用KSAVPlayer
-                firstPlayerType = KSAVPlayer.self
-            } else if options.display.isSphere {
-                // AR模式只能用KSMEPlayer
-                // swiftlint:disable force_cast
-                firstPlayerType = NSClassFromString("KSPlayer.KSMEPlayer") as! MediaPlayerProtocol.Type
-                // swiftlint:enable force_cast
-            } else {
-                firstPlayerType = KSOptions.firstPlayerType
-            }
-            if type(of: player) == firstPlayerType {
-                if url == oldValue {
-                    if isAutoPlay {
-                        play()
-                    }
-                } else {
-                    stop()
-                    player.replace(url: url, options: options)
-                    if isAutoPlay {
-                        prepareToPlay()
-                    }
-                }
-            } else {
-                stop()
-                player = firstPlayerType.init(url: url, options: options)
-            }
+            subtitleModel.url = url
+            subtitleModel.options = options
         }
     }
 
@@ -240,56 +160,7 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
-    // Slot 58 @0x1019cc0ac, `$s8KSPlayer0A5LayerC6change5state...`; OVERRIDDEN by KSComplexPlayerLayer.
-    // Read: `cbnz w22` skips to the delegate unless .initialized; str xzr via 0x1044e6190 = shouldSeekTo
-    // (the [weak self] seek-completion closure 0x1019ce420 clears the same global); 0x101a04674 and
-    // 0x101a03fd4 are runOnMainThread's inlined assumeIsolated("KSPlayer/Utility.swift", 22) / Task arms; closure 0x1019cc278 = setIdleTimerDisabled:NO.
-    open func change(state: KSPlayerState) {
-        if state == .initialized {
-            shouldSeekTo = 0
-            runOnMainThread { UIApplication.shared.isIdleTimerDisabled = false }
-        }
-        delegate?.player(layer: self, state: state)
-    }
-
-    public func changePlaybackTime(player: some MediaPlayerProtocol, time: TimeInterval) {
-        if player.isPlaying {
-            // outlined literal array object 0x1044e61c0: count 2, elements [5, 4] = [.paused, .bufferFinished]
-            if [KSPlayerState.paused, .bufferFinished].contains(state) {
-                subtitleView.dynamicRange = options.dynamicRange
-                var size = subtitleView.frame.size
-                if size.width == 0 || size.height == 0 {
-                    size = player.view.frame.size
-                }
-                let naturalSize = player.naturalSize
-                let ratio = naturalSize.width == 0 || naturalSize.height == 0
-                    ? 16.0 / 9.0
-                    : naturalSize.width / naturalSize.height
-                subtitleModel.subtitle(currentTime: time, playRatio: ratio, screenSize: size)
-            }
-        }
-        delegate?.player(layer: self, currentTime: time, totalTime: player.duration)
-        if player.playbackState == .playing, player.loadState == .playable, state == .buffering {
-            state = .bufferFinished
-        }
-    }
-
-    private lazy var timer: Timer = .scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-        MainActor.assumeIsolated {
-            guard let self, self.player.isReadyToPlay else {
-                return
-            }
-            self.delegate?.player(layer: self, currentTime: self.player.currentPlaybackTime, totalTime: self.player.duration)
-            if self.player.playbackState == .playing, self.player.loadState == .playable, self.state == .buffering {
-                // 一个兜底保护，正常不能走到这里
-                self.state = .bufferFinished
-            }
-            if self.player.isPlaying {
-                MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = self.player.currentPlaybackTime
-            }
-        }
-    }
-
+    // `timer` (lazy Timer) REMOVED — no field record, no lazy storage, no vtable entries in Forward.
     // ⚠️ `urls` REMOVED — it was in source and absent from the binary's reflection field records
     // (l2_field_gate REAL_FLAG). The binary puts it on the SUBCLASS: the same probe on
     // KSComplexPlayerLayer returns PASS with src=[URL] bin=[URL], and that class already declares
@@ -303,7 +174,7 @@ open class KSPlayerLayer: NSObject {
     // `variable initialization expression of KSPlayerLayer.playerTickClock : Swift.ContinuousClock`
     // gives both the type and the fact that it carries a declaration default;
     // `KSPlayerLayer.playerTickTask.getter : Swift.Task<(), Swift.Never>?` gives the other.
-    private var playerTickClock = ContinuousClock()
+    private let playerTickClock = ContinuousClock()
     private var playerTickTask: Task<(), Never>?
     var isAutoPlay: Bool
     private var isWirelessRouteActive = false
@@ -314,7 +185,7 @@ open class KSPlayerLayer: NSObject {
     private var bufferingStartTime: TimeInterval = 0
     // Binary fields 16 and 17. `KSPlayerLayer.subtitleModel.getter : KSPlayer.SubtitleModel` and
     // `KSPlayerLayer.isAutoReplaceAndConstrainPlayerView.getter : Swift.Bool`.
-    public private(set) var subtitleModel = SubtitleModel()
+    public let subtitleModel: SubtitleModel
     public var isAutoReplaceAndConstrainPlayerView = false
     /// `required` is READ, not stylistic. `PlayerView.set(url:options:)` @0x1019fe394 constructs
     /// through `KSOptions.playerLayerType` — a `KSPlayerLayer.Type` — by loading metatype slot
@@ -323,15 +194,14 @@ open class KSPlayerLayer: NSObject {
     /// `KSPlayerLayer.__allocating_init(url:options:delegate:)`.
     /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.__allocating_init(url:options:delegate:):0x1019ca3c4 result=OWNER_MATCH]
     ///
-    /// ⚑ SEPARATE, UNFIXED DIVERGENCE — the LABEL SET. The binary carries exactly three
-    ///   KSPlayerLayer initialisers and none of them has an `isAutoPlay:` parameter:
-    ///     init(url:options:delegate:)   init(item:url:delegate:)   init()
-    ///   This declaration's `isAutoPlay:` therefore has no counterpart, and because Swift mangles
-    ///   defaulted parameters into the symbol it makes this a 4-label init the binary does not
-    ///   have. Left in place deliberately: removing it changes THIS initialiser's body (the field
-    ///   would have to come from elsewhere) and belongs to its own unit, not to the
-    ///   PlayerView.set(url:options:) unit that only needed `required` to compile faithfully.
-    public required init(url: URL, isAutoPlay: Bool = KSOptions.isAutoPlay, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
+    /// ⚑ LABEL SET FIXED — the binary carries exactly three KSPlayerLayer initialisers and none has
+    ///   `isAutoPlay:`: init(url:options:delegate:), init(item:url:delegate:), init(). The field is
+    ///   filled from the options: `ldrb w8,[x28,#0x45]` (KSOptions+0x45 = isAutoPlay) @0x1019ca7a4 →
+    ///   `strb w8,[x24,*0x104c63520]` @0x1019ca7b0. KSComplexPlayerLayer inherits this required init.
+    /// ⚑[tool=member_surface ref=KSPlayerLayer.init(url:options:delegate:):0x1019ca41c result=labels url,options,delegate]
+    /// isolation (body calls): Forward 0x1019ca41c — none; pre-edit build — `$sScMMa`. Re-read post-build
+    ///   in the receipt. KSComplexPlayerLayer.init 0x1019d0238 loads `$sScMMa` in Forward.
+    public required init(url: URL, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
         self.url = url
         self.options = options
         self.delegate = delegate
@@ -345,7 +215,9 @@ open class KSPlayerLayer: NSObject {
             firstPlayerType = KSOptions.firstPlayerType
         }
         player = firstPlayerType.init(url: url, options: options)
-        self.isAutoPlay = isAutoPlay
+        // Forward init 0x1019ca41c calls SubtitleModel.init(url:options:) at 0x1019ca7ec; no default_init row for subtitleModel.
+        subtitleModel = SubtitleModel(url: url, options: options)
+        self.isAutoPlay = options.isAutoPlay
         super.init()
         player.playbackRate = options.startPlayRate
         // ⚑ The `if options.registerRemoteControll { registerRemoteControllEvent() }` statement that
@@ -405,6 +277,36 @@ open class KSPlayerLayer: NSObject {
         MPRemoteCommandCenter.shared().enableLanguageOptionCommand.removeTarget(nil)
         options.playerLayerDeinit()
     }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
+    /// Mangled `…0A5LayerC10makeUIViewSo0D0CyF` — returns `UIView`, non-optional.
+    ///
+    ///   · offset global 0x104c634f0 is `player`'s own `vpWvd`
+    ///     (`…0A5LayerC6playerAA19MediaPlayerProtocol_pvpWvd`), read by name. That type has no
+    ///     `Sg`, so `player` is a non-optional existential — matching the body, which does
+    ///     `ldp x20, x19, [x19]` for the (instance, witness-table) pair with NO null test.
+    ///   · `ldr x22,[x19,#0x28]` selects witness 4 and `blr` returns its result unchanged.
+    ///
+    /// ⚑ Witness 4 is NAMED, not counted — which matters, because MediaPlayerProtocol's indices
+    ///   are shifted by unrecovered requirements and an index argument would be worthless here.
+    ///   `KSMEPlayer : MediaPlayerProtocol` slot 4 is `KSPlayer.KSMEPlayer.view.getter : UIView`.
+    ///   That is also what forced the requirement's type correction above: the getter mangles
+    ///   `So6UIViewCvg` with no `Sg`, and property witnesses are invariant, so the requirement is
+    ///   `UIView`. Without that correction this body could only be spelled with a force-unwrap
+    ///   the binary does not contain.
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot4=view.getter:UIView]
+    public func makeUIView() -> UIView {
+        player.view
+    }
+
+    /// ⚑ 0x10000e52c — a bare `ret`, the same canonical empty body as `preview` above. The
+    /// parameter is never read.
+    /// Trie: `KSPlayer.KSPlayerLayer.updateUIView(__C.UIView) -> ()` — ONE unlabelled parameter.
+    /// It is NOT SwiftUI's `UIViewRepresentable.updateUIView(_:context:)`, which takes a second
+    /// `context` argument; this is a plain method that happens to share the base name.
+    /// `UIView` resolves on every platform here: PlayerDefines declares
+    /// `public typealias UIView = NSView` in its non-UIKit branch.
+    open func updateUIView(_: UIView) {}
 
     // ⚑ p2 OPTIONALITY DERIVED s102, closing divergence 1 of KSPlayerLayer_setUrlOptions_slot55_s84.
     //   The trie INDEX (57,138 names — the only complete source for an overload set) carries exactly
@@ -479,6 +381,79 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
+    // slot 56 @0x1019cba60. state .initialized → .preparing through the Published setter (0x1019c9cd4);
+    // `self.url = url` runs the url observer (0x1019c9a68). Action from MEPlayerItem.resumeFromPreload @0x101a4755c.
+    public func replace(item: MEPlayerItem, url: URL) -> Bool {
+        guard let player = player as? KSMEPlayer else {
+            return false
+        }
+        state = .initialized
+        isAutoPlay = options.isAutoPlay
+        player.replace(item: item)
+        options = item.options
+        self.url = url
+        let action = item.resumeFromPreload()
+        state = .preparing
+        switch action {
+        case .waitForOpened:
+            break
+        case .resumeFromPaused, .readyImmediate:
+            player.sourceDidOpenedSync()
+            readyToPlay(player: player) // vtable +0x300
+        case .cannotResume:
+            KSLog("[KSPlayerLayer] replace: preload item cannot resume", file: "KSPlayer/KSPlayerLayer.swift", function: "replace(item:url:)", line: 315)
+            return false
+        }
+        return true
+    }
+
+    // slot 57 @0x1019cbde8. url is taken only from a `.left` io.
+    public func replace(playerItem: MEPlayerItem) {
+        guard let player = player as? KSMEPlayer else {
+            return
+        }
+        options = playerItem.options
+        if case let .left(url) = playerItem.io {
+            self.url = url
+        }
+        state = .initialized
+        player.replace(item: playerItem)
+    }
+
+    // Slot 58 @0x1019cc0ac, `$s8KSPlayer0A5LayerC6change5state...`; OVERRIDDEN by KSComplexPlayerLayer.
+    // Read: `cbnz w22` skips to the delegate unless .initialized; str xzr via 0x1044e6190 = shouldSeekTo
+    // (the [weak self] seek-completion closure 0x1019ce420 clears the same global); 0x101a04674 and
+    // 0x101a03fd4 are runOnMainThread's inlined assumeIsolated("KSPlayer/Utility.swift", 22) / Task arms; closure 0x1019cc278 = setIdleTimerDisabled:NO.
+    open func change(state: KSPlayerState) {
+        if state == .initialized {
+            shouldSeekTo = 0
+            runOnMainThread { UIApplication.shared.isIdleTimerDisabled = false }
+        }
+        delegate?.player(layer: self, state: state)
+    }
+
+    public func changePlaybackTime(player: some MediaPlayerProtocol, time: TimeInterval) {
+        if player.isPlaying {
+            // outlined literal array object 0x1044e61c0: count 2, elements [5, 4] = [.paused, .bufferFinished]
+            if [KSPlayerState.paused, .bufferFinished].contains(state) {
+                subtitleView.dynamicRange = options.dynamicRange
+                var size = subtitleView.frame.size
+                if size.width == 0 || size.height == 0 {
+                    size = player.view.frame.size
+                }
+                let naturalSize = player.naturalSize
+                let ratio = naturalSize.width == 0 || naturalSize.height == 0
+                    ? 16.0 / 9.0
+                    : naturalSize.width / naturalSize.height
+                subtitleModel.subtitle(currentTime: time, playRatio: ratio, screenSize: size)
+            }
+        }
+        delegate?.player(layer: self, currentTime: time, totalTime: player.duration)
+        if player.playbackState == .playing, player.loadState == .playable, state == .buffering {
+            state = .bufferFinished
+        }
+    }
+
     // FIVE SOURCE STATEMENTS ARE ABSENT FROM THE BINARY BODY and are removed here:
     //   · `runOnMainThread { UIApplication.shared.isIdleTimerDisabled = true }` — the extent's ONLY
     //     swift_allocObject is the seek completion box below, and there is no UIApplication reference;
@@ -512,6 +487,13 @@ open class KSPlayerLayer: NSObject {
     open func pause() {
         isAutoPlay = false
         player.pause()
+    }
+
+    // slot 62 @0x1019ccbc0 — selectedSubtitleInfo willSet 0x101ab2540, player.reset() witness +0x130.
+    open func reset() {
+        subtitleModel.selectedSubtitleInfo = nil
+        player.reset()
+        state = .initialized
     }
 
     // SIX SOURCE STATEMENTS HAVE NO COUNTERPART and are removed: bufferedCount = 0,
@@ -576,6 +558,13 @@ open class KSPlayerLayer: NSObject {
             completion?(false)
         }
     }
+
+    /// ⚑ 0x10000e52c — a bare `ret`. The body is empty; `time` is never read.
+    /// The address is heavily ICF-folded (it is the image's canonical empty body), so it carries
+    /// no information unique to this method beyond the fact that the method does nothing — which
+    /// is the whole of what is declared here. Signature from the trie:
+    /// `KSPlayer.KSPlayerLayer.preview(time: Swift.Double?) -> ()`.
+    open func preview(time _: Double?) {}
 
     // The eight members below are CLASS-BODY declarations in Forward 1.3.17, not extension
     // members: each occupies a slot in KSPlayerLayer's vtable (descriptor 0x1039ecf38,
@@ -840,6 +829,89 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
+    public func changeBuffering(player _: some MediaPlayerProtocol, progress: UInt8) {
+        bufferingProgress = progress
+    }
+
+    public func playBack(player _: some MediaPlayerProtocol, loopCount: Int) {
+        self.loopCount = loopCount
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.reachEndOfStream(player:):0x1019ce750 result=32-instr]
+    /// The generic `player` parameter is UNUSED — the body never touches the generic triple, only
+    /// `self` and the delegate — so it is spelled `_`.
+    ///
+    ///   · offset global 0x1044e6138 is `delegate`'s own `vpWvd`
+    ///     (`…0A5LayerC8delegateAA0aB8Delegate_pSgvpWvd`), read by name, not inferred.
+    ///   · `bl 0x10345d180` → __got 0x1041130e8 → `swift_unknownObjectWeakLoadStrong`, and the
+    ///     `cbz x0` on its result is the `?.` — this is the weak delegate load, which is why the
+    ///     whole call is skipped when the delegate has been released.
+    ///     ⚑[tool=bind_oracle ref=__got:0x1041130e8 result=swift_unknownObjectWeakLoadStrong]
+    ///   · `ldr x19,[x19,#0x8]` takes the existential's witness table, then `ldr x8,[x19,#0x30]`
+    ///     selects the witness and `blr` passes `self` with the loaded delegate as swiftself.
+    ///
+    /// ⚑ THE WITNESS INDEX IS SAFE HERE, and it is worth saying why, because the same move is NOT
+    ///   safe on MediaPlayerProtocol. `decode_witness_table` reads witness *i* at `wt + 8 + 8i`, so
+    ///   `#0x30` is index 5. KSPlayerLayerDelegate's requirement kinds are `FFFFFFFFFFF` — ELEVEN
+    ///   requirements, every one a Method, no properties to expand into accessor triples and no
+    ///   BaseProtocol slot — and the source declares exactly eleven methods. The counts and kinds
+    ///   agree exactly, so index 5 is unambiguously the sixth, `playerDidEOF(layer:)`, which is
+    ///   also what an end-of-stream notification should call.
+    ///   ⚑[tool=protocol_signature ref=KSPlayerLayerDelegate:0x1039ecebc result=11-methods-exact-match]
+    ///
+    /// ⚑ NOT a MediaPlayerDelegate conformance method, despite the shape: that protocol does not
+    ///   declare it. It carries its own `…Tq` method descriptor, i.e. a new overridable slot on
+    ///   this class. (Separately, MediaPlayerDelegate's descriptor reports EIGHT requirements
+    ///   against the source's five — three unrecovered methods — but nothing shows this is one of
+    ///   them, so it was not added there.)
+    public func reachEndOfStream(player _: some MediaPlayerProtocol) {
+        delegate?.playerDidEOF(layer: self)
+    }
+
+    // THE SECOND-PLAYER FALLBACK IS ABSENT from the binary: the error arm goes straight from the
+    // error retain to the state write, with no type(of:) comparison and no KSOptions read. Three
+    // further statements are absent too — `timer.fireDate = Date.distantFuture`, `bufferedCount = 1`
+    // (the extent stores to no field of self except through the Published setter) and the
+    // `if error == nil { nextPlayer() }` tail.
+    // ORDER: both arms write state first; player.duration is then read on BOTH arms (the error arm's
+    // result is dead: `blr` via [[x24,#8],#8] @0x1019cea60), and only the nil arm reaches the
+    // currentTime delegate call. LOG OVERLOAD: _convertErrorToNSError → `KSLog(_ error: Error)`.
+    // Log line 565 (0x235) is the #line Forward passes.
+    public func finish(player: some MediaPlayerProtocol, error: Error?) {
+        if let error {
+            state = .error
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 565)
+            KSLog(error)
+#sourceLocation()
+        } else {
+            state = .playedToTheEnd
+        }
+        let duration = player.duration
+        if error == nil { delegate?.player(layer: self, currentTime: duration, totalTime: duration) }
+        delegate?.player(layer: self, finish: error)
+    }
+
+    /// ⚑ 0x1019ceaf4 is a 3-instruction thunk (`mov x0,x1 / mov x1,x2 / b 0x1019d58f8`); the body
+    /// is the 32 instructions there, read in full. Every callee named from the bind table:
+    ///   swift_unknownObjectWeakLoadStrong  ⚑[tool=bind_oracle ref=0x1041130e8 result=libswiftCore]
+    ///   swift_getObjectType                ⚑[tool=bind_oracle ref=0x104112f08 result=libswiftCore]
+    ///   swift_unknownObjectRelease         ⚑[tool=bind_oracle ref=0x1041130a0 result=libswiftCore]
+    /// Shape: weak-load `delegate`, return if nil, then dispatch witness-table slot +0x48 with
+    /// self, then release. The `?.` is the nil check; the retain/release pair is what a weak load
+    /// compiles to, not source.
+    ///
+    /// SLOT +0x48 WAS DECODED, NOT COUNTED off the protocol's declaration order — FrameOutput
+    /// proved that order can be wrong. Coordinator's KSPlayerLayerDelegate witness table
+    /// (0x1041d4d18, conformance descriptor 0x103567f38) has 11 requirements, and +0x48 is index
+    /// 8. Reqs 0-4 carry real bodies and 5-10 all carry the canonical empty body 0x10000e52c —
+    /// which matches this protocol exactly: five `player(...)` requirements Coordinator
+    /// implements, six with empty extension defaults it does not. That 5/6 split is what
+    /// corroborates the ordering, so index 8 is `playerDidClear(layer:)`.
+    /// ⚑[tool=decode_witness_table ref=Coordinator:KSPlayerLayerDelegate:0x1041d4d18 result=req8]
+    open func playerDidClear(player _: some MediaPlayerProtocol) {
+        delegate?.playerDidClear(layer: self)
+    }
+
     // STOOD UP from the binary — this member had no source counterpart at all. Body @0x1019ceb00,
     // extent 0x1019ceb00-0x1019ced14, 532 B, 133 instructions, vtable idx76 / slot103, NOT ICF-folded
     // (exactly one symbol at the address). It is the call target of
@@ -902,35 +974,26 @@ open class KSPlayerLayer: NSObject {
         }
     }
 
-    public func changeBuffering(player _: some MediaPlayerProtocol, progress: UInt8) {
-        bufferingProgress = progress
-    }
-
-    public func playBack(player _: some MediaPlayerProtocol, loopCount: Int) {
-        self.loopCount = loopCount
-    }
-
-    // THE SECOND-PLAYER FALLBACK IS ABSENT from the binary: the error arm goes straight from the
-    // error retain to the state write, with no type(of:) comparison and no KSOptions read. Three
-    // further statements are absent too — `timer.fireDate = Date.distantFuture`, `bufferedCount = 1`
-    // (the extent stores to no field of self except through the Published setter) and the
-    // `if error == nil { nextPlayer() }` tail.
-    // ORDER: both arms write state first; player.duration is then read on BOTH arms (the error arm's
-    // result is dead: `blr` via [[x24,#8],#8] @0x1019cea60), and only the nil arm reaches the
-    // currentTime delegate call. LOG OVERLOAD: _convertErrorToNSError → `KSLog(_ error: Error)`.
-    // Log line 565 (0x235) is the #line Forward passes.
-    public func finish(player: some MediaPlayerProtocol, error: Error?) {
-        if let error {
-            state = .error
-#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 565)
-            KSLog(error)
-#sourceLocation()
-        } else {
-            state = .playedToTheEnd
-        }
-        let duration = player.duration
-        if error == nil { delegate?.player(layer: self, currentTime: duration, totalTime: duration) }
-        delegate?.player(layer: self, finish: error)
+    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.pipStop(restoreUserInterface:):0x1019ced14 result=46-instr]
+    /// `player` comes from its own `vpWvd` (offset global 0x104c634f0) and is loaded as the
+    /// non-optional (instance, witness-table) pair with no null test, exactly as in `makeUIView`.
+    ///
+    /// BOTH witness slots are NAMED, neither is counted — the same discipline `makeUIView` needed,
+    /// because this protocol's indices are shifted by unrecovered requirements:
+    ///   · `ldr x24,[x21,#0xf8]` → witness 30 of MediaPlayerProtocol. `KSMEPlayer`'s table
+    ///     (0x1041d7c68) names it `KSPlayer.KSMEPlayer.pipController.getter :
+    ///     (any KSPictureInPictureProtocol)?`. Its result is a two-word optional existential, and
+    ///     the `cbz x20` that follows is the `?.`.
+    ///   · the second dispatch reloads the witness table from THAT result (`x21` is reassigned to
+    ///     the returned `x1`), so `ldr x8,[x21,#0x48]` is witness 8 of KSPictureInPictureProtocol,
+    ///     not of MediaPlayerProtocol. `KSPictureInPictureController`'s table (0x1041d45a0) names
+    ///     it `stop(restoreUserInterface:)`.
+    ///   · `and w0, w19, #0x1` narrows the incoming Bool to its low bit and passes it as that
+    ///     call's only argument, which is what fixes the argument as `restoreUserInterface`.
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot30=pipController.getter]
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=slot8=stop(restoreUserInterface:)]
+    public func pipStop(restoreUserInterface: Bool) {
+        player.pipController?.stop(restoreUserInterface: restoreUserInterface)
     }
 
     #if canImport(UIKit) && !os(xrOS)
@@ -979,68 +1042,7 @@ open class KSPlayerLayer: NSObject {
             break
         }
     }
-    #endif
-}
 
-// MARK: - MediaPlayerDelegate
-
-// The five witnesses (readyToPlay, changeLoadState, changeBuffering, playBack, finish) are
-// declared in the class body above, where their vtable slots put them. Where Forward 1.3.17
-// declares the CONFORMANCE itself is not decidable from the binary, so it is left exactly where
-// this reconstruction already had it rather than moved onto the class line.
-extension KSPlayerLayer: MediaPlayerDelegate {}
-
-// MARK: - AVPictureInPictureControllerDelegate
-
-// THE CONFORMANCE IS ON THE SUBCLASS. All six AVPictureInPictureControllerDelegate callbacks are
-// implemented on KSComplexPlayerLayer in the binary, and none on KSPlayerLayer — the same
-// belongs-on-the-subclass shape `urls` had. Three of the six were already declared in
-// KSComplexPlayerLayer's class body (failedToStartPictureInPictureWithError,
-// WillStartPictureInPicture, WillStopPictureInPicture); the two below were the ones stranded up
-// here, and moving them takes the conformance with them.
-//   KSComplexPlayerLayer.pictureInPictureControllerDidStopPictureInPicture       0x1019d2bac
-//   KSComplexPlayerLayer.pictureInPictureController(_:restoreUserInterface…:)    0x1019d3220
-@available(tvOS 14.0, *)
-extension KSComplexPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
-    /// @0x1019d2bac is ONE instruction — `b 0x1019d62ec` — into an 81-instruction body, which is
-    /// where the four statements below are read from. The previous spelling kept only the third.
-    ///   1019d6338  ldr x24,[x22,#0x28] / blr    MediaPlayback req4 = player.view.getter
-    ///   1019d6360  bl 0x103460dc0                selref 0x10440b138 = 'didStopPIP'
-    ///   1019d6378  ldr x24,[x22,#0x28] / blr    player.view.getter AGAIN (a second fetch)
-    ///   1019d63a4  bl 0x1019cf5d8                addSubtitle(to:)
-    ///   1019d63bc  ldr x24,[x21,#0xf8] / blr    witness +0xf8 = req30 = pipController.getter
-    ///   1019d63e8  cbz x20                       the Optional chain on pipController
-    ///   1019d63f8  ldr x8,[x21,#0x48] / w0 = 0  witness +0x48 = stop(restoreUserInterface:),
-    ///                                            argument FALSE — read, not inferred
-    /// ⚑[tool=decode_objc_selector ref=KSComplexPlayerLayer.didStopPIP:0x103460dc0 result=didStopPIP]
-    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.req30:0x1019a0e40 result=pipController.getter]
-    ///
-    /// ⚑ THE BODY IS NOT COMPLETE. It ends `mov x20, x19` / `bl 0x1019d2bb0` — a 227-instruction
-    ///   NOT_IN_TRIE function taking `self`, which has NOT been read. That statement is deliberately
-    ///   absent rather than guessed; writing it needs 0x1019d2bb0 as its own unit.
-    /// ⚑[tool=function_extents ref=KSComplexPlayerLayer.DidStopPIP.tail:0x1019d2bb0 result=227-instr-unread]
-    public func pictureInPictureControllerDidStopPictureInPicture(_: AVPictureInPictureController) {
-        player.view.didStopPIP()
-        addSubtitle(to: player.view)
-        player.pipController?.stop(restoreUserInterface: false)
-    }
-
-    /// @0x1019d3220, 45 instructions, read in full. The previous spelling was `isPipActive = false`,
-    /// which has no counterpart at all — `isPipActive` has zero symbols image-wide. The body takes a
-    /// read access on `self.player`, loads the two-word existential, and calls witness `[wtable+0x48]`
-    /// under a `cbz` optional chain. That slot is req8 of the 10-requirement
-    /// `KSPictureInPictureController : KSPictureInPictureProtocol` table (wt 0x1041d45a0), i.e.
-    /// `stop(restoreUserInterface:)`, and the argument is `mov w0, #0x1` — TRUE, the opposite of the
-    /// value the sibling callback above passes.
-    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req8-stop-restoreUserInterface]
-    public func pictureInPictureController(_: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler _: @escaping (Bool) -> Void) {
-        player.pipController?.stop(restoreUserInterface: true)
-    }
-}
-
-// MARK: - private functions
-
-extension KSPlayerLayer {
     /// @0x1019cf5d8, 191 instructions, one symbol at the address (no ICF fold). `private` is read
     /// off the trie's module-hash discriminator:
     ///   $s8KSPlayer0A5LayerC11addSubtitle33_B3181C2628785004269C41BC3433122FLL2toySo6UIViewC_tF
@@ -1120,6 +1122,68 @@ extension KSPlayerLayer {
             subtitleView.heightAnchor.constraint(equalTo: view.heightAnchor),
         ])
     }
+    #endif
+
+    // slot 81 @0x1019cf8d4 (private); runOnMainThread inlined, closure 0x1019cfabc captures only the two players.
+    // replacing.view is re-read for each use; autoresizingMask 0x12 when the old view uses autoresizing.
+    private func replaceAndConstrainPlayerView(player: MediaPlayerProtocol, replacing: MediaPlayerProtocol) {
+        guard isAutoReplaceAndConstrainPlayerView else {
+            return
+        }
+        runOnMainThread {
+            if let superview = replacing.view.superview {
+                let view = player.view
+                #if canImport(UIKit)
+                superview.insertSubview(view, belowSubview: replacing.view)
+                #else
+                superview.addSubview(view, positioned: .below, relativeTo: replacing.view)
+                #endif
+                view.frame = replacing.view.frame
+                if replacing.view.translatesAutoresizingMaskIntoConstraints {
+                    #if canImport(UIKit)
+                    view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                    #else
+                    view.autoresizingMask = [.width, .height]
+                    #endif
+                } else {
+                    view.translatesAutoresizingMaskIntoConstraints = false
+                    NSLayoutConstraint.activate([
+                        view.topAnchor.constraint(equalTo: superview.topAnchor),
+                        view.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
+                        view.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
+                        view.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
+                    ])
+                }
+            }
+            replacing.view.removeFromSuperview()
+        }
+    }
+}
+
+// MARK: - private functions
+
+extension KSPlayerLayer {
+
+    @objc private func enterBackground() {
+        guard state.isPlaying, !player.isExternalPlaybackActive else {
+            return
+        }
+        if #available(tvOS 14.0, *), player.pipController?.isPictureInPictureActive == true {
+            return
+        }
+
+        if KSOptions.canBackgroundPlay {
+            player.enterBackground()
+            return
+        }
+        pause()
+    }
+
+    @objc private func enterForeground() {
+        if KSOptions.canBackgroundPlay {
+            player.enterForeground()
+        }
+    }
 
     private func updateNowPlayingInfo() {
         if MPNowPlayingInfoCenter.default().nowPlayingInfo == nil {
@@ -1157,28 +1221,6 @@ extension KSPlayerLayer {
         }
     }
 
-    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.pipStop(restoreUserInterface:):0x1019ced14 result=46-instr]
-    /// `player` comes from its own `vpWvd` (offset global 0x104c634f0) and is loaded as the
-    /// non-optional (instance, witness-table) pair with no null test, exactly as in `makeUIView`.
-    ///
-    /// BOTH witness slots are NAMED, neither is counted — the same discipline `makeUIView` needed,
-    /// because this protocol's indices are shifted by unrecovered requirements:
-    ///   · `ldr x24,[x21,#0xf8]` → witness 30 of MediaPlayerProtocol. `KSMEPlayer`'s table
-    ///     (0x1041d7c68) names it `KSPlayer.KSMEPlayer.pipController.getter :
-    ///     (any KSPictureInPictureProtocol)?`. Its result is a two-word optional existential, and
-    ///     the `cbz x20` that follows is the `?.`.
-    ///   · the second dispatch reloads the witness table from THAT result (`x21` is reassigned to
-    ///     the returned `x1`), so `ldr x8,[x21,#0x48]` is witness 8 of KSPictureInPictureProtocol,
-    ///     not of MediaPlayerProtocol. `KSPictureInPictureController`'s table (0x1041d45a0) names
-    ///     it `stop(restoreUserInterface:)`.
-    ///   · `and w0, w19, #0x1` narrows the incoming Bool to its low bit and passes it as that
-    ///     call's only argument, which is what fixes the argument as `restoreUserInterface`.
-    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot30=pipController.getter]
-    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=slot8=stop(restoreUserInterface:)]
-    public func pipStop(restoreUserInterface: Bool) {
-        player.pipController?.stop(restoreUserInterface: restoreUserInterface)
-    }
-
     /// @0x1019d007c, 47 instructions. Trie: `KSPlayerLayer.isPictureInPictureActive.getter
     /// : Swift.Bool`. It carries a `vpMV`, so it is public; there is no `vs` setter, so it is
     /// get-only, and no `Tq`, so it is not an overridable requirement.
@@ -1202,79 +1244,6 @@ extension KSPlayerLayer {
     /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req0=0x1019c7680]
     public var isPictureInPictureActive: Bool {
         player.pipController?.isPictureInPictureActive ?? false
-    }
-
-    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
-    /// Mangled `…0A5LayerC10makeUIViewSo0D0CyF` — returns `UIView`, non-optional.
-    ///
-    ///   · offset global 0x104c634f0 is `player`'s own `vpWvd`
-    ///     (`…0A5LayerC6playerAA19MediaPlayerProtocol_pvpWvd`), read by name. That type has no
-    ///     `Sg`, so `player` is a non-optional existential — matching the body, which does
-    ///     `ldp x20, x19, [x19]` for the (instance, witness-table) pair with NO null test.
-    ///   · `ldr x22,[x19,#0x28]` selects witness 4 and `blr` returns its result unchanged.
-    ///
-    /// ⚑ Witness 4 is NAMED, not counted — which matters, because MediaPlayerProtocol's indices
-    ///   are shifted by unrecovered requirements and an index argument would be worthless here.
-    ///   `KSMEPlayer : MediaPlayerProtocol` slot 4 is `KSPlayer.KSMEPlayer.view.getter : UIView`.
-    ///   That is also what forced the requirement's type correction above: the getter mangles
-    ///   `So6UIViewCvg` with no `Sg`, and property witnesses are invariant, so the requirement is
-    ///   `UIView`. Without that correction this body could only be spelled with a force-unwrap
-    ///   the binary does not contain.
-    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot4=view.getter:UIView]
-    public func makeUIView() -> UIView {
-        player.view
-    }
-
-    /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.reachEndOfStream(player:):0x1019ce750 result=32-instr]
-    /// The generic `player` parameter is UNUSED — the body never touches the generic triple, only
-    /// `self` and the delegate — so it is spelled `_`.
-    ///
-    ///   · offset global 0x1044e6138 is `delegate`'s own `vpWvd`
-    ///     (`…0A5LayerC8delegateAA0aB8Delegate_pSgvpWvd`), read by name, not inferred.
-    ///   · `bl 0x10345d180` → __got 0x1041130e8 → `swift_unknownObjectWeakLoadStrong`, and the
-    ///     `cbz x0` on its result is the `?.` — this is the weak delegate load, which is why the
-    ///     whole call is skipped when the delegate has been released.
-    ///     ⚑[tool=bind_oracle ref=__got:0x1041130e8 result=swift_unknownObjectWeakLoadStrong]
-    ///   · `ldr x19,[x19,#0x8]` takes the existential's witness table, then `ldr x8,[x19,#0x30]`
-    ///     selects the witness and `blr` passes `self` with the loaded delegate as swiftself.
-    ///
-    /// ⚑ THE WITNESS INDEX IS SAFE HERE, and it is worth saying why, because the same move is NOT
-    ///   safe on MediaPlayerProtocol. `decode_witness_table` reads witness *i* at `wt + 8 + 8i`, so
-    ///   `#0x30` is index 5. KSPlayerLayerDelegate's requirement kinds are `FFFFFFFFFFF` — ELEVEN
-    ///   requirements, every one a Method, no properties to expand into accessor triples and no
-    ///   BaseProtocol slot — and the source declares exactly eleven methods. The counts and kinds
-    ///   agree exactly, so index 5 is unambiguously the sixth, `playerDidEOF(layer:)`, which is
-    ///   also what an end-of-stream notification should call.
-    ///   ⚑[tool=protocol_signature ref=KSPlayerLayerDelegate:0x1039ecebc result=11-methods-exact-match]
-    ///
-    /// ⚑ NOT a MediaPlayerDelegate conformance method, despite the shape: that protocol does not
-    ///   declare it. It carries its own `…Tq` method descriptor, i.e. a new overridable slot on
-    ///   this class. (Separately, MediaPlayerDelegate's descriptor reports EIGHT requirements
-    ///   against the source's five — three unrecovered methods — but nothing shows this is one of
-    ///   them, so it was not added there.)
-    public func reachEndOfStream(player _: some MediaPlayerProtocol) {
-        delegate?.playerDidEOF(layer: self)
-    }
-
-    @objc private func enterBackground() {
-        guard state.isPlaying, !player.isExternalPlaybackActive else {
-            return
-        }
-        if #available(tvOS 14.0, *), player.pipController?.isPictureInPictureActive == true {
-            return
-        }
-
-        if KSOptions.canBackgroundPlay {
-            player.enterBackground()
-            return
-        }
-        pause()
-    }
-
-    @objc private func enterForeground() {
-        if KSOptions.canBackgroundPlay {
-            player.enterForeground()
-        }
     }
 }
 
@@ -1306,255 +1275,6 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     // private, and the trie prints the module-hash discriminator on all three accessors:
     // `(enterBackgroundTask in _B3181C2628785004269C41BC3433122F) : Swift.Task<(), Swift.Never>?`
     private var enterBackgroundTask: Task<(), Never>?
-
-    /// @0x1019d1bc0, 68 instructions. `override` is not inferred from the superclass having a
-    /// `pause()` — `override_table.py --class KSComplexPlayerLayer --impl 0x1019d1bc0` answers
-    /// YES at index 4, i.e. this address is an Impl in the class's own override table.
-    ///
-    ///   · `strb wzr` through offset global 0x104c63520 is the first statement. That global is NOT
-    ///     `urls`, which is trie-pinned at 0x104c63528 — the three globals are not in field-record
-    ///     order, so position proves nothing here. The BYTE store does: of this class's three
-    ///     fields only `isPictureInPictureStoped` is a Bool, and `wzr` makes it `false`.
-    ///   · `player` (offset global 0x104c634f0) is read under a (0, 0) beginAccess and dispatched
-    ///     at witness offset 0x128. KSMEPlayer's MediaPlayerProtocol table (0x1041d7c68) holds a
-    ///     thunk there whose whole body is `b 0x101a4390c` = `KSMEPlayer.pause()`, so the slot is
-    ///     `pause()`.
-    ///   · the MediaPlayer classref 0x104410a10 is `MPNowPlayingInfoCenter`; selref 0x10440b040 is
-    ///     `defaultCenter` and selref 0x10440d8c8 is `setPlaybackState:` with the immediate 2,
-    ///     which is `MPNowPlayingPlaybackState.paused`.
-    ///   · `player` is re-read and dispatched at 0xf8 — `pipController.getter`, the same slot
-    ///     `pipStop` and `isPictureInPictureActive` use — and the `cbz` on its first word is the
-    ///     `?.`. The final dispatch is at offset 0x28 of THAT result's table, i.e. req4 of
-    ///     KSPictureInPictureProtocol = `invalidatePlaybackState`.
-    /// ⚑ req4 is a REAL requirement of the binary protocol but is pinned rather than declared, for
-    ///   the availability reason recorded in KSPictureInPictureController.swift. The concrete
-    ///   downcast below is OURS, not the binary's — the binary dispatches through the witness
-    ///   table. It is the spelling `KSMEPlayer.play()` already uses for this same requirement, so
-    ///   the two call sites stay consistent rather than each inventing a workaround.
-    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.pause:0x1019d1bc0 result=YES-index-4]
-    /// ⚑[tool=decode_objc_selector ref=0x10440d8c8 result=setPlaybackState:]
-    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot0x128=pause]
-    override public func pause() {
-        isPictureInPictureStoped = false
-        player.pause()
-        MPNowPlayingInfoCenter.default().playbackState = .paused
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
-    }
-
-    /// @0x1019d1a8c, 77 instructions. The `pause()` MIRROR, and the two corroborate each other at
-    /// every shared address — but the shapes are NOT symmetric and the asymmetry is read, not
-    /// assumed: `play()` calls `super.play()` where `pause()` calls `player.pause()` through the
-    /// witness, and `play()` writes no field where `pause()` clears `isPictureInPictureStoped`.
-    ///
-    ///   · `bl 0x1019cc5f8` is a DIRECT call to `KSPlayer.KSPlayerLayer.play() -> ()`, named in the
-    ///     trie. A direct (non-virtual) call to the superclass's own implementation of the method
-    ///     this address overrides is `super.play()`. `override` is not inferred from that: it is
-    ///     ⚑[tool=override_table ref=KSComplexPlayerLayer.play:0x1019d1a8c result=YES-index-3].
-    ///   · classref 0x104410a10 is `MPNowPlayingInfoCenter`; the sends are `defaultCenter` then
-    ///     `setPlaybackState:` with the immediate **1**. `pause()` reads 2 = `.paused` at the same
-    ///     pair of selrefs, so 1 = `.playing` — the pairing is what makes both readings evidence
-    ///     rather than one lookup. (`MPNowPlayingPlaybackState` is an imported NS_ENUM, so what
-    ///     crosses `objc_msgSend` is the rawValue, not a Swift case index.)
-    ///   · `player` (offset global 0x104c634f0, its own `vpWvd`) is read under a (0, 0)
-    ///     beginAccess and dispatched at witness offset **0xf8** — `pipController.getter`, the same
-    ///     slot `pause`, `pipStop` and `isPictureInPictureActive` use — and the `cbz x20` on the
-    ///     first word of the returned two-word optional existential is the `?.`.
-    ///   · the dispatch on THAT result is at offset **0x28** of its table = req4 of
-    ///     KSPictureInPictureProtocol = `invalidatePlaybackState`, identical to `pause()`.
-    ///   · the tail is offset **0x50** of `static KSOptions.pictureInPictureType`'s table (global
-    ///     0x104c632c0, read under its own `swift_once` at token 0x1044e5178 with initialiser
-    ///     0x1019bc7a8). 0x50 = 8*10, and word 0 of a witness table is the conformance descriptor,
-    ///     so that is **req9** — `static play(layer: KSComplexPlayerLayer)`. The call passes
-    ///     `x0 = self` with the METATYPE in x20 (swiftself), which is the static-method shape, and
-    ///     the result is discarded because req9's witness is the bare-`ret` ICF fold, i.e. empty.
-    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req9@0x50=static-play]
-    /// ⚑[tool=bind_oracle ref=0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
-    /// ⚑ The `#available` guard and the concrete `as?` downcast are OURS, carried over verbatim
-    ///   from `pause()` above: the binary dispatches through the witness table and emits no
-    ///   version check. req4 is iOS 15 while the protocol is tvOS 14, so every call site needs the
-    ///   guard to compile. Keeping the two spellings identical is deliberate — see the note on
-    ///   `pause()` for why this file does not let each call site invent its own workaround.
-    override public func play() {
-        super.play()
-        MPNowPlayingInfoCenter.default().playbackState = .playing
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
-        KSOptions.pictureInPictureType.play(layer: self)
-    }
-
-    /// @0x1019d1890, 127 instructions. `override` is read, not inferred from the superclass having
-    /// a `change(state:)`: ⚑[tool=override_table ref=KSComplexPlayerLayer.change:0x1019d1890 result=YES-index-2]
-    ///
-    /// THE BODY IS THE SUPERCLASS'S 115-INSTRUCTION `change(state:)` FOLLOWED BY ONE STATEMENT.
-    /// Instruction for instruction, 0x1019d1890+0 .. +0x1b4 is `KSPlayerLayer.change(state:)`
-    /// @0x1019cc0ac: the same `str xzr` through offset global 0x1044e6190, the same
-    /// `NSThread.isMainThread` fork, the same two arms (`MainActor.assumeIsolated` @0x101a04674 and
-    /// `swift_task_create` @0x101a03fd4), the SAME closure body @0x1019cc278, and the same weak
-    /// `delegate` load and witness dispatch. The subclass then adds 12 instructions the superclass
-    /// does not have. Nothing else differs.
-    ///
-    /// ⚑ THE SUPER CALL IS INLINED, NOT EMITTED — there is no `bl 0x1019cc0ac` here, so this is a
-    ///   READING and not a direct observation, and it is recorded as such. `play()` above proves a
-    ///   `super.` call CAN survive as a direct `bl`, but the superclass's `play()` is 186
-    ///   instructions against `change(state:)`'s 115, so an inliner threshold between the two is
-    ///   consistent with both. What decides it is that the alternative — the author re-writing all
-    ///   four of the superclass's statements here — would put four statements in THIS file that
-    ///   nothing in the binary distinguishes from the superclass's own. `super.change(state:)` adds
-    ///   none. That is the spelling with no invented content, so it is the one written.
-    /// ⚑[tool=function_extents ref=KSPlayerLayer.change:0x1019cc0ac result=115-instr]
-    /// ⚑[tool=body_fingerprint ref=KSComplexPlayerLayer.change:0x1019d1890 result=superclass-prefix-plus-12]
-    ///
-    /// ⚑ The superclass's interior is NOT reproduced here and is NOT this row's debt: the
-    ///   `str xzr` at 0x1019cc114 goes through offset global 0x1044e6190, which is a genuine
-    ///   2-way tie on KSPlayerLayer and stays OPEN under the session-113 A1 rule — it is
-    ///   `double`-class (`str d8` in `seek(time:autoPlay:completion:)` @0x1019cd038, `ldr d8` in
-    ///   `readyToPlay(player:)` @0x1019cda08), and the only two Double fields on the class are
-    ///   `shouldSeekTo` and `bufferingStartTime`, NEITHER of which carries a vpWvd.
-    /// ⚑[tool=recover_field_by_access ref=KSPlayerLayer:0x1044e6190 result=AMBIGUOUS-2]
-    ///
-    /// The one added statement, read in full at 0x1019d1a44-0x1019d1a70:
-    ///   · `tst w19, #0xff` / `b.ne` — the same guard the body opens with, on the low byte of
-    ///     `state`. KSPlayerState's case 0 is `.initialized`, so this arm runs on `.initialized`.
-    ///     ⚠️ It is a SECOND, separate test: the delegate notification at the join is reached from
-    ///     both edges of the first one, so it is unconditional and this guard covers only the
-    ///     statement below it.
-    ///   · classref 0x104410a10 is `MPNowPlayingInfoCenter` — the same classref `pause()` and
-    ///     `play()` above already use — then `defaultCenter`, i.e. `.default()`.
-    ///   · the send is `setNowPlayingInfo:` with `x2 = #0x0`, so the assigned value is **nil**.
-    /// ⚑[tool=bind_oracle ref=0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
-    /// ⚑[tool=decode_objc_selector ref=0x10440d808 result=setNowPlayingInfo:]
-    /// ⚑[tool=decode_objc_selector ref=0x10440b040 result=defaultCenter]
-    /// ⚑ ACCESS is not independently provable for a method — see the note on
-    ///   `removeRemoteControllEvent()` below. `public` is what the two overrides above this one
-    ///   use for the same situation (an override of an `open` superclass method), and this file
-    ///   does not let each override pick its own spelling.
-    override public func change(state: KSPlayerState) {
-        super.change(state: state)
-        if state == .initialized {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        }
-    }
-
-    /// The trie address 0x1019d27a4 is a ONE-instruction thunk (`b 0x1019d5d38`); the body is the
-    /// 181 instructions there. ⚑[tool=function_extents ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=181-instr]
-    ///
-    /// Twelve statements, all of one shape and every piece of each one decoded:
-    ///   · classref 0x104410a18 is `MPRemoteCommandCenter`; the receiver comes from
-    ///     `_objc_opt_self` on it and then a `sharedCommandCenter` send, i.e. `.shared()`.
-    ///   · the twelve command selectors, IN THIS ORDER, are the twelve sends between them:
-    ///     play, pause, togglePlayPause, stop, nextTrack, previousTrack, changeRepeatMode,
-    ///     changePlaybackRate, skipForward, skipBackward, changePlaybackPosition,
-    ///     enableLanguageOption.
-    ///   · every `removeTarget:` passes `x2 = #0x0`. The argument is **nil**, not `self` — the
-    ///     swiftself register is never read anywhere in the body, so this method does not touch
-    ///     its own instance at all.
-    ///
-    /// ⚑ `.shared()` is re-sent for EVERY command rather than hoisted into a local, and that is
-    ///   read rather than styled: a `let center = …` would emit one `sharedCommandCenter` send,
-    ///   and the body emits twelve, one before each command getter.
-    /// ⚑[tool=bind_oracle ref=0x104410a18 result=_OBJC_CLASS_$_MPRemoteCommandCenter]
-    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=NO]
-    /// ⚑ ACCESS not independently proven: the trie name carries no private discriminator, so it is
-    ///   not `private`, and nothing distinguishes `internal` from `public` for a METHOD — the
-    ///   `vpMV` proof applies only to properties and `vtable_impl_oracle` proves access only on a
-    ///   `final` type or an actor, which this class is not. `internal` is the narrower of the two
-    ///   remaining spellings and is what a helper with no external call site needs.
-    func removeRemoteControllEvent() {
-        MPRemoteCommandCenter.shared().playCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().togglePlayPauseCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().stopCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().nextTrackCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().previousTrackCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().changeRepeatModeCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().changePlaybackRateCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipForwardCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().enableLanguageOptionCommand.removeTarget(nil)
-    }
-
-    /// @0x1019d1424, 128 instructions. This is Forward's PiP-start entry — there is no
-    /// `isPipActive` flag anywhere in the image, and this method plus
-    /// `KSPlayerLayer.pipStop(restoreUserInterface:)` @0x1019ced14 are the whole mechanism.
-    /// Its one caller read so far is `VideoPlayerView.onButtonPressed` @0x101b2ad6c.
-    ///
-    /// The branch written below is read:
-    ///   1019d1480  ldr x8,[0x104c634f0] / beginAccess   &self.player, read access
-    ///   1019d14b0  ldr x26,[x23,#0xf8] / blr            witness +0xf8 = req30 = pipController.getter
-    ///   1019d14dc  cbz x20                              the Optional test
-    ///   1019d14ec  ldr x8,[x23,#0x38] / x0 = x21 = self / blr
-    /// Witness +0x38 is req6 of `KSPictureInPictureController : KSPictureInPictureProtocol`, and
-    /// req6 is `start(layer: KSComplexPlayerLayer)` — so `self` is passed as `layer:`, which is
-    /// also why this member sits on the SUBCLASS: the requirement's parameter type is the subclass.
-    /// ⚑[tool=export_trie_oracle ref=KSPictureInPictureProtocol.req6:0x1019c75cc result=start(layer:)]
-    ///
-    /// ⚑ THE `else` BRANCH IS NOT WRITTEN. 0x1019d1508-0x1019d1608 is the nil-pipController path:
-    ///   it reloads `player`, calls the unnamed 0x1019d1d70 with the player's metadata and witness
-    ///   table, then a metadata accessor and a value-witness call with two `#1` immediates — i.e.
-    ///   it CONSTRUCTS a controller. Both helpers are real trie negatives, so writing that arm needs
-    ///   0x1019d1d70 as its own unit. Leaving it out is deliberate; guessing a constructor here
-    ///   would be invention.
-    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pipStart.elseArm:0x1019d1d70 result=NOT_IN_TRIE]
-    public func pipStart() {
-        if let pipController = player.pipController {
-            pipController.start(layer: self)
-        }
-    }
-
-    /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]
-    /// The row's own body is `mov x0, x1` / `b 0x1019d6430` — it DROPS the controller argument and
-    /// tail-calls an 85-instruction handler. That handler is one KSLog call, and every piece of it
-    /// is read:
-    ///   · `ldrb w8,[0x1044e5173]` / `cmp w8,#2` / `b.lo` — the level gate. 2 is the CASE INDEX for
-    ///     `.error`, the encoding this file's own KSLog notes already establish.
-    ///   · `w6 = 0x398 = 920` — the line number, and `#file` is the 28-character
-    ///     'KSPlayer/KSPlayerLayer.swift'. `#function` is the 69-character string at 0x103d34b80,
-    ///     exactly the length of this member's own name.
-    ///   · the error goes through `_convertErrorToNSError` (__got 0x104109940) and an NSError
-    ///     class-metadata fetch (0x1019d5bd8) into the existential buffer.
-    /// ⚑ There is NO message literal, and that absence is evidenced rather than assumed. The KSLog
-    ///   commentary at KSOptions.swift:1370 describes this exact sequence for the `Error` overload,
-    ///   and notes that a `.localizedDescription` message would instead carry a String through the
-    ///   statically-known CustomStringConvertible witness and leave an accessor call — this body
-    ///   has neither. So the spelling is the bare `KSLog(error)`, whose @inlinable body expands to
-    ///   `KSLog(level: .error, error() as NSError, …)` — which is what the disassembly shows.
-    /// ⚑ ACCESS not independently proven: the trie name carries no discriminator, so it is not
-    ///   private, and `public` matches the sibling delegate callbacks on the superclass and the
-    ///   ObjC visibility an @objc delegate method needs. It is not otherwise established.
-    public func pictureInPictureController(_: AVPictureInPictureController,
-                                           failedToStartPictureInPictureWithError error: Error)
-    {
-        KSLog(error)
-    }
-
-    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStartPictureInPicture:0x1019d29d0 result=34-instr]
-    /// Two statements, both read:
-    ///   · `strb wzr, [x20, <global 0x104c63530>]` writes a ZERO BYTE. Of this class's three
-    ///     fields only `isPictureInPictureStoped: Bool` is one byte (`urls` is an Array,
-    ///     `enterBackgroundTask` a Task?), so the target is identified by TYPE, not by adjacency —
-    ///     which matters because that global carries no `vpWvd`.
-    ///   · `player` comes from its own `vpWvd` (offset global 0x104c634f0) and is loaded as the
-    ///     two-word existential; `ldr x22,[x19,#0xd8]` then selects witness **26**.
-    ///
-    /// ⚑ Witness 26 is NAMED, not counted — this protocol's indices are shifted by unrecovered
-    ///   requirements, so an index argument would be worthless. Escalation: `KSMEPlayer`'s witness
-    ///   at that slot is an unnamed forwarding thunk, so follow it — it loads `KSMEPlayer.videoOutput`
-    ///   (global 0x1044ea160) and tail-calls 0x103468f80, whose selref 0x10440d1a8 decodes to
-    ///   **`setContentMode:`**. So requirement 26 is `contentMode`'s SETTER, which also matches the
-    ///   protocol's kind table (req25/26/27 = one `{get set}` triple).
-    /// ⚑[tool=decode_objc_selector ref=0x10440d1a8 result='setContentMode:']
-    /// ⚑[tool=protocol_signature ref=MediaPlayerProtocol:0x1039ed6c4 result=req26=Setter]
-    ///
-    /// ⚑ The argument is `mov w0, #1` — a CASE INDEX, not a rawValue. `UIViewContentMode` is
-    ///   `UIView.ContentMode` (UIKitExtend.swift:167), whose case 1 is `.scaleAspectFit`.
-    public func pictureInPictureControllerWillStartPictureInPicture(_: AVPictureInPictureController) {
-        isPictureInPictureStoped = false
-        player.contentMode = .scaleAspectFit
-    }
 
     /// @0x1019d27a8, 96 instructions. Every operand is read, and the one that looked like a blocker
     /// was not a member at all.
@@ -1641,7 +1361,7 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     ///   is 'KSPlayer/KSPlayerLayer.swift' — this file. The inner `first(where:)` closure carries
     ///   line 1108, a 6-line gap that this reconstruction reproduces exactly.
     /// ⚑[tool=decode_string_literal ref=KSComplexPlayerLayer.registerRemoteControllEvent:0x103d34a00 result='KSPlayer/KSPlayerLayer.swift']
-    public func registerRemoteControllEvent() {
+    public final func registerRemoteControllEvent() {
         let remoteCommand = MPRemoteCommandCenter.shared()
         remoteCommand.playCommand.addTarget { [weak self] _ in
             guard let self else {
@@ -1741,96 +1461,39 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
             return .success
         }
     }
-
-    /// @0x1019d3518, 94 instructions. The exact MIRROR of `playNextURL()` above — same four
-    /// statements, differing only in the bound and the step — read end to end:
-    ///   · `ldr x22,[self,0x104c63528]` then `ldr x8,[x22,#0x10]` / `cmp x8,#2` / `b.lo` is the
-    ///     count guard. `recover_field_offsets` names 0x104c63528 `urls`.
-    ///   · `bl 0x1019c835c` is the unspecialized stdlib `firstIndex(of:)` over `[URL]` that
-    ///     `playNextURL` also calls, returning `(index, isNil)` in (x0, w1). The guard is
-    ///     `cmp w27,#1` / `ccmp x23,#1,#8,ne` / `b.lt` — found AND `index >= 1`, where
-    ///     `playNextURL` instead bounds `index < urls.count - 1`.
-    ///   · `strb #1` into 0x104c63520 (`isPictureInPictureStoped`) sits AFTER both guards.
-    ///   · `sub x9,x23,#0x1` is the step — `index - 1`, against `playNextURL`'s `index + 1` — and
-    ///     `set(url:options:)` @0x1019cb674 is called with `x1 = #0`, i.e. `options: nil`.
-    ///
-    /// ⚑ THE NAME IS INVENTED, and this is the whole basis for it. The address is a real trie
-    ///   negative, carries no `#function`/`#file`/`#line`/string literal, is an IMP in none of the
-    ///   220 ObjC method lists, and sits in no vtable — every route closed, so the gate verdicts
-    ///   EXHAUSTED. It is not stdlib and not glue: it reads THREE of this class's own field-offset
-    ///   globals and calls a KSPlayerLayer member, and at 94 instructions with 3 call sites it is
-    ///   neither the outlined-glue shape nor INLINE-INSTEAD.
-    ///   The name comes from the CALLER SET, not from what reads well: of its three call sites, one
-    ///   is `KSVideoPlayerModel.previous()` @0x101accdb0, whose mirror `KSVideoPlayerModel.next()`
-    ///   @0x101acccfc has the identical shape and calls `playNextURL()` through vtable +0x3e0
-    ///   (slot 12). `next -> playNextURL` is therefore read; `previous -> playPreviousURL` is the
-    ///   spelling that pairing implies, and it is a FABRICATED IDENTIFIER, not a recovered one.
-    ///   ⚑[invented=playPreviousURL addr=0x1019d3518 exhaustion=name_exhaustion_gate approved=jweaver]
-    ///
-    /// ⚑ Access is `internal`, not `public`: the address is absent from the export trie (so not
-    ///   public) and absent from the class's 13-slot vtable, yet it is called from another file
-    ///   (KSVideoPlayerModel), which rules out `private`/`fileprivate`.
-    ///   ⚑[tool=vtable_walk ref=KSComplexPlayerLayer:0x1039ed208 result=13-slots-no-such-impl]
-    func playPreviousURL() {
-        guard urls.count >= 2 else {
-            return
-        }
-        guard let index = urls.firstIndex(of: url), index >= 1 else {
-            return
-        }
-        // ⚑ FIELD REBOUND. This store goes through offset global 0x104c63520, and that global is
-        //   `KSPlayerLayer.isAutoPlay`, NOT `KSComplexPlayerLayer.isPictureInPictureStoped`. The
-        //   proof is structural rather than a tie-break: `KSPlayerLayer.play()` @0x1019cc5f8 — a
-        //   SUPERCLASS method, which cannot address a subclass field — writes `mov w9,#0x1 /
-        //   strb w9,[x20,x8]` through it, and `pause()` writes `wzr` through the same global.
-        //   Both fields are real and DISTINCT: KSPlayerLayer record 10 `isAutoPlay: Sb` (17 fields)
-        //   versus KSComplexPlayerLayer record 1 `isPictureInPictureStoped: Sb` (3 fields).
-        //   The old binding came from a `recover_field_by_access` UNIQUE whose byte-class tie-break
-        //   was run against the WRONG class's field set.
-        // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.play:0x1019cc5f8 result=superclass-writes-0x104c63520]
-        isAutoPlay = true
-        set(url: urls[index - 1], options: nil)
+    public required init(url: URL, options: KSOptions, delegate: KSPlayerLayerDelegate? = nil) {
+        super.init(url: url, options: options, delegate: delegate)
     }
 
-    open func playNextURL() {
-        guard urls.count >= 2 else {
-            return
-        }
-        guard let index = urls.firstIndex(of: url), index < urls.count - 1 else {
-            return
-        }
-        // ⚑ Same rebinding as playPreviousURL above — this body writes 0x104c63520 too, verified in
-        //   its own extent (0x1019d27a8), so it is `isAutoPlay`, not `isPictureInPictureStoped`.
-        isAutoPlay = true
-        set(url: urls[index + 1], options: nil)
-    }
+    required public init?(coder: NSCoder) { fatalError("L7: KSComplexPlayerLayer.init — Forward body unread") }
+    public init(item: MEPlayerItem, url: URL, delegate: KSPlayerLayerDelegate?) { fatalError("L7: KSComplexPlayerLayer.init — Forward body unread") }
 
-    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStopPictureInPicture:0x1019d2b98 result=1-instr-thunk]
-    /// ⚑ The trie address is a THUNK (`b 0x1019d61b8`); the real body is the 77 instructions there.
+    /// @0x1019d1424, 128 instructions. This is Forward's PiP-start entry — there is no
+    /// `isPipActive` flag anywhere in the image, and this method plus
+    /// `KSPlayerLayer.pipStop(restoreUserInterface:)` @0x1019ced14 are the whole mechanism.
+    /// Its one caller read so far is `VideoPlayerView.onButtonPressed` @0x101b2ad6c.
     ///
-    ///   · `player` and witness **26** are the same pair `WillStart` above uses — that slot is
-    ///     `contentMode`'s setter, named by following KSMEPlayer's forwarding thunk to a
-    ///     `setContentMode:` send. Here the value is NOT a literal case: it is read from
-    ///     `self.options` (its own `vpWvd`, offset global 0x104c634e0) at `+0x68`.
-    ///   · `+0x68` is `KSOptions.contentMode`, recovered by `recover_field_offsets` — KSOptions is
-    ///     `metadata_init=1`, so `field_offset_vector` refuses it and the static vector reads 0x0.
-    ///     ⚑[tool=recover_field_offsets ref=KSOptions result=contentMode@0x68]
-    ///   So this RESTORES the player's content mode from options, where WillStart forced
-    ///   `.scaleAspectFit`. The pairing is what makes both readings mutually corroborating.
+    /// The branch written below is read:
+    ///   1019d1480  ldr x8,[0x104c634f0] / beginAccess   &self.player, read access
+    ///   1019d14b0  ldr x26,[x23,#0xf8] / blr            witness +0xf8 = req30 = pipController.getter
+    ///   1019d14dc  cbz x20                              the Optional test
+    ///   1019d14ec  ldr x8,[x23,#0x38] / x0 = x21 = self / blr
+    /// Witness +0x38 is req6 of `KSPictureInPictureController : KSPictureInPictureProtocol`, and
+    /// req6 is `start(layer: KSComplexPlayerLayer)` — so `self` is passed as `layer:`, which is
+    /// also why this member sits on the SUBCLASS: the requirement's parameter type is the subclass.
+    /// ⚑[tool=export_trie_oracle ref=KSPictureInPictureProtocol.req6:0x1019c75cc result=start(layer:)]
     ///
-    /// ⚑ The trailing call is `Swift.print(_:separator:terminator:)` (__got 0x104112a40) — the
-    ///   `w1=0x20` / `w3=0x0a` operands are the one-character `" "` and `"\n"` defaults, which is
-    ///   how the overload is identified. Its argument is a LARGE string: the pointer is stored
-    ///   biased by `-0x20` with the high bit set, so the characters begin at 0x103d34bd0, and the
-    ///   count word is `0x32` (50) tagged `0xD000…`. Decoded, those 50 bytes are exactly this
-    ///   method's own name.
-    ///   ⚑[tool=decode_string_literal ref=0x103d34bd0 result='pictureInPictureControllerWillStopPictureInPicture']
-    /// ⚑ Written as a plain literal, not `#function`: `#function` would render
-    ///   `pictureInPictureControllerWillStopPictureInPicture(_:)` including the argument label,
-    ///   which is 4 characters longer than the 50 the count word states.
-    public func pictureInPictureControllerWillStopPictureInPicture(_: AVPictureInPictureController) {
-        player.contentMode = options.contentMode
-        print("pictureInPictureControllerWillStopPictureInPicture")
+    /// ⚑ THE `else` BRANCH IS NOT WRITTEN. 0x1019d1508-0x1019d1608 is the nil-pipController path:
+    ///   it reloads `player`, calls the unnamed 0x1019d1d70 with the player's metadata and witness
+    ///   table, then a metadata accessor and a value-witness call with two `#1` immediates — i.e.
+    ///   it CONSTRUCTS a controller. Both helpers are real trie negatives, so writing that arm needs
+    ///   0x1019d1d70 as its own unit. Leaving it out is deliberate; guessing a constructor here
+    ///   would be invention.
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pipStart.elseArm:0x1019d1d70 result=NOT_IN_TRIE]
+    public func pipStart() {
+        if let pipController = player.pipController {
+            pipController.start(layer: self)
+        }
     }
 
     /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.set(urls:):0x1019d181c result=29-instr]
@@ -1869,5 +1532,380 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     public func set(urls: [URL]) {
         self.urls = []
         self.urls.append(contentsOf: urls)
+    }
+
+    /// @0x1019d1890, 127 instructions. `override` is read, not inferred from the superclass having
+    /// a `change(state:)`: ⚑[tool=override_table ref=KSComplexPlayerLayer.change:0x1019d1890 result=YES-index-2]
+    ///
+    /// THE BODY IS THE SUPERCLASS'S 115-INSTRUCTION `change(state:)` FOLLOWED BY ONE STATEMENT.
+    /// Instruction for instruction, 0x1019d1890+0 .. +0x1b4 is `KSPlayerLayer.change(state:)`
+    /// @0x1019cc0ac: the same `str xzr` through offset global 0x1044e6190, the same
+    /// `NSThread.isMainThread` fork, the same two arms (`MainActor.assumeIsolated` @0x101a04674 and
+    /// `swift_task_create` @0x101a03fd4), the SAME closure body @0x1019cc278, and the same weak
+    /// `delegate` load and witness dispatch. The subclass then adds 12 instructions the superclass
+    /// does not have. Nothing else differs.
+    ///
+    /// ⚑ THE SUPER CALL IS INLINED, NOT EMITTED — there is no `bl 0x1019cc0ac` here, so this is a
+    ///   READING and not a direct observation, and it is recorded as such. `play()` above proves a
+    ///   `super.` call CAN survive as a direct `bl`, but the superclass's `play()` is 186
+    ///   instructions against `change(state:)`'s 115, so an inliner threshold between the two is
+    ///   consistent with both. What decides it is that the alternative — the author re-writing all
+    ///   four of the superclass's statements here — would put four statements in THIS file that
+    ///   nothing in the binary distinguishes from the superclass's own. `super.change(state:)` adds
+    ///   none. That is the spelling with no invented content, so it is the one written.
+    /// ⚑[tool=function_extents ref=KSPlayerLayer.change:0x1019cc0ac result=115-instr]
+    /// ⚑[tool=body_fingerprint ref=KSComplexPlayerLayer.change:0x1019d1890 result=superclass-prefix-plus-12]
+    ///
+    /// ⚑ The superclass's interior is NOT reproduced here and is NOT this row's debt: the
+    ///   `str xzr` at 0x1019cc114 goes through offset global 0x1044e6190, which is a genuine
+    ///   2-way tie on KSPlayerLayer and stays OPEN under the session-113 A1 rule — it is
+    ///   `double`-class (`str d8` in `seek(time:autoPlay:completion:)` @0x1019cd038, `ldr d8` in
+    ///   `readyToPlay(player:)` @0x1019cda08), and the only two Double fields on the class are
+    ///   `shouldSeekTo` and `bufferingStartTime`, NEITHER of which carries a vpWvd.
+    /// ⚑[tool=recover_field_by_access ref=KSPlayerLayer:0x1044e6190 result=AMBIGUOUS-2]
+    ///
+    /// The one added statement, read in full at 0x1019d1a44-0x1019d1a70:
+    ///   · `tst w19, #0xff` / `b.ne` — the same guard the body opens with, on the low byte of
+    ///     `state`. KSPlayerState's case 0 is `.initialized`, so this arm runs on `.initialized`.
+    ///     ⚠️ It is a SECOND, separate test: the delegate notification at the join is reached from
+    ///     both edges of the first one, so it is unconditional and this guard covers only the
+    ///     statement below it.
+    ///   · classref 0x104410a10 is `MPNowPlayingInfoCenter` — the same classref `pause()` and
+    ///     `play()` above already use — then `defaultCenter`, i.e. `.default()`.
+    ///   · the send is `setNowPlayingInfo:` with `x2 = #0x0`, so the assigned value is **nil**.
+    /// ⚑[tool=bind_oracle ref=0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
+    /// ⚑[tool=decode_objc_selector ref=0x10440d808 result=setNowPlayingInfo:]
+    /// ⚑[tool=decode_objc_selector ref=0x10440b040 result=defaultCenter]
+    /// ⚑ ACCESS is not independently provable for a method — see the note on
+    ///   `removeRemoteControllEvent()` below. `public` is what the two overrides above this one
+    ///   use for the same situation (an override of an `open` superclass method), and this file
+    ///   does not let each override pick its own spelling.
+    override public func change(state: KSPlayerState) {
+        super.change(state: state)
+        if state == .initialized {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+    }
+
+    /// @0x1019d1a8c, 77 instructions. The `pause()` MIRROR, and the two corroborate each other at
+    /// every shared address — but the shapes are NOT symmetric and the asymmetry is read, not
+    /// assumed: `play()` calls `super.play()` where `pause()` calls `player.pause()` through the
+    /// witness, and `play()` writes no field where `pause()` clears `isPictureInPictureStoped`.
+    ///
+    ///   · `bl 0x1019cc5f8` is a DIRECT call to `KSPlayer.KSPlayerLayer.play() -> ()`, named in the
+    ///     trie. A direct (non-virtual) call to the superclass's own implementation of the method
+    ///     this address overrides is `super.play()`. `override` is not inferred from that: it is
+    ///     ⚑[tool=override_table ref=KSComplexPlayerLayer.play:0x1019d1a8c result=YES-index-3].
+    ///   · classref 0x104410a10 is `MPNowPlayingInfoCenter`; the sends are `defaultCenter` then
+    ///     `setPlaybackState:` with the immediate **1**. `pause()` reads 2 = `.paused` at the same
+    ///     pair of selrefs, so 1 = `.playing` — the pairing is what makes both readings evidence
+    ///     rather than one lookup. (`MPNowPlayingPlaybackState` is an imported NS_ENUM, so what
+    ///     crosses `objc_msgSend` is the rawValue, not a Swift case index.)
+    ///   · `player` (offset global 0x104c634f0, its own `vpWvd`) is read under a (0, 0)
+    ///     beginAccess and dispatched at witness offset **0xf8** — `pipController.getter`, the same
+    ///     slot `pause`, `pipStop` and `isPictureInPictureActive` use — and the `cbz x20` on the
+    ///     first word of the returned two-word optional existential is the `?.`.
+    ///   · the dispatch on THAT result is at offset **0x28** of its table = req4 of
+    ///     KSPictureInPictureProtocol = `invalidatePlaybackState`, identical to `pause()`.
+    ///   · the tail is offset **0x50** of `static KSOptions.pictureInPictureType`'s table (global
+    ///     0x104c632c0, read under its own `swift_once` at token 0x1044e5178 with initialiser
+    ///     0x1019bc7a8). 0x50 = 8*10, and word 0 of a witness table is the conformance descriptor,
+    ///     so that is **req9** — `static play(layer: KSComplexPlayerLayer)`. The call passes
+    ///     `x0 = self` with the METATYPE in x20 (swiftself), which is the static-method shape, and
+    ///     the result is discarded because req9's witness is the bare-`ret` ICF fold, i.e. empty.
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req9@0x50=static-play]
+    /// ⚑[tool=bind_oracle ref=0x104410a10 result=_OBJC_CLASS_$_MPNowPlayingInfoCenter]
+    /// ⚑ The `#available` guard and the concrete `as?` downcast are OURS, carried over verbatim
+    ///   from `pause()` above: the binary dispatches through the witness table and emits no
+    ///   version check. req4 is iOS 15 while the protocol is tvOS 14, so every call site needs the
+    ///   guard to compile. Keeping the two spellings identical is deliberate — see the note on
+    ///   `pause()` for why this file does not let each call site invent its own workaround.
+    override public func play() {
+        super.play()
+        MPNowPlayingInfoCenter.default().playbackState = .playing
+        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
+            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+        }
+        KSOptions.pictureInPictureType.play(layer: self)
+    }
+
+    /// @0x1019d1bc0, 68 instructions. `override` is not inferred from the superclass having a
+    /// `pause()` — `override_table.py --class KSComplexPlayerLayer --impl 0x1019d1bc0` answers
+    /// YES at index 4, i.e. this address is an Impl in the class's own override table.
+    ///
+    ///   · `strb wzr` through offset global 0x104c63520 is the first statement. That global is NOT
+    ///     `urls`, which is trie-pinned at 0x104c63528 — the three globals are not in field-record
+    ///     order, so position proves nothing here. The BYTE store does: of this class's three
+    ///     fields only `isPictureInPictureStoped` is a Bool, and `wzr` makes it `false`.
+    ///   · `player` (offset global 0x104c634f0) is read under a (0, 0) beginAccess and dispatched
+    ///     at witness offset 0x128. KSMEPlayer's MediaPlayerProtocol table (0x1041d7c68) holds a
+    ///     thunk there whose whole body is `b 0x101a4390c` = `KSMEPlayer.pause()`, so the slot is
+    ///     `pause()`.
+    ///   · the MediaPlayer classref 0x104410a10 is `MPNowPlayingInfoCenter`; selref 0x10440b040 is
+    ///     `defaultCenter` and selref 0x10440d8c8 is `setPlaybackState:` with the immediate 2,
+    ///     which is `MPNowPlayingPlaybackState.paused`.
+    ///   · `player` is re-read and dispatched at 0xf8 — `pipController.getter`, the same slot
+    ///     `pipStop` and `isPictureInPictureActive` use — and the `cbz` on its first word is the
+    ///     `?.`. The final dispatch is at offset 0x28 of THAT result's table, i.e. req4 of
+    ///     KSPictureInPictureProtocol = `invalidatePlaybackState`.
+    /// ⚑ req4 is a REAL requirement of the binary protocol but is pinned rather than declared, for
+    ///   the availability reason recorded in KSPictureInPictureController.swift. The concrete
+    ///   downcast below is OURS, not the binary's — the binary dispatches through the witness
+    ///   table. It is the spelling `KSMEPlayer.play()` already uses for this same requirement, so
+    ///   the two call sites stay consistent rather than each inventing a workaround.
+    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.pause:0x1019d1bc0 result=YES-index-4]
+    /// ⚑[tool=decode_objc_selector ref=0x10440d8c8 result=setPlaybackState:]
+    /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot0x128=pause]
+    override public func pause() {
+        isPictureInPictureStoped = false
+        player.pause()
+        MPNowPlayingInfoCenter.default().playbackState = .paused
+        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
+            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
+        }
+    }
+    override public func readyToPlay<A>(player: A) where A: MediaPlayerProtocol { fatalError("L7: KSComplexPlayerLayer.readyToPlay — Forward body unread") }
+    public final func reCheckSubtitle() { fatalError("L7: KSComplexPlayerLayer.reCheckSubtitle — Forward body unread") }
+    override public func finish<A>(player: A, error: Error?) where A: MediaPlayerProtocol { fatalError("L7: KSComplexPlayerLayer.finish — Forward body unread") }
+    override public func stop() { fatalError("L7: KSComplexPlayerLayer.stop — Forward body unread") }
+
+    /// The trie address 0x1019d27a4 is a ONE-instruction thunk (`b 0x1019d5d38`); the body is the
+    /// 181 instructions there. ⚑[tool=function_extents ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=181-instr]
+    ///
+    /// Twelve statements, all of one shape and every piece of each one decoded:
+    ///   · classref 0x104410a18 is `MPRemoteCommandCenter`; the receiver comes from
+    ///     `_objc_opt_self` on it and then a `sharedCommandCenter` send, i.e. `.shared()`.
+    ///   · the twelve command selectors, IN THIS ORDER, are the twelve sends between them:
+    ///     play, pause, togglePlayPause, stop, nextTrack, previousTrack, changeRepeatMode,
+    ///     changePlaybackRate, skipForward, skipBackward, changePlaybackPosition,
+    ///     enableLanguageOption.
+    ///   · every `removeTarget:` passes `x2 = #0x0`. The argument is **nil**, not `self` — the
+    ///     swiftself register is never read anywhere in the body, so this method does not touch
+    ///     its own instance at all.
+    ///
+    /// ⚑ `.shared()` is re-sent for EVERY command rather than hoisted into a local, and that is
+    ///   read rather than styled: a `let center = …` would emit one `sharedCommandCenter` send,
+    ///   and the body emits twelve, one before each command getter.
+    /// ⚑[tool=bind_oracle ref=0x104410a18 result=_OBJC_CLASS_$_MPRemoteCommandCenter]
+    /// ⚑[tool=override_table ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=NO]
+    /// ⚑ ACCESS not independently proven: the trie name carries no private discriminator, so it is
+    ///   not `private`, and nothing distinguishes `internal` from `public` for a METHOD — the
+    ///   `vpMV` proof applies only to properties and `vtable_impl_oracle` proves access only on a
+    ///   `final` type or an actor, which this class is not. `internal` is the narrower of the two
+    ///   remaining spellings and is what a helper with no external call site needs.
+    /// `final`: Forward's vtable has no slot for it. With no caller the build strips a final method that Forward
+    ///   keeps, so `@used`. ⚑[tool=member_add ref=KSComplexPlayerLayer.removeRemoteControllEvent result=fix retained_unused]
+    @used final func removeRemoteControllEvent() {
+        MPRemoteCommandCenter.shared().playCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().togglePlayPauseCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().stopCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().nextTrackCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().previousTrackCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().changeRepeatModeCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().changePlaybackRateCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().skipForwardCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.removeTarget(nil)
+        MPRemoteCommandCenter.shared().enableLanguageOptionCommand.removeTarget(nil)
+    }
+
+    /// @0x1019d3518, 94 instructions. The exact MIRROR of `playNextURL()` above — same four
+    /// statements, differing only in the bound and the step — read end to end:
+    ///   · `ldr x22,[self,0x104c63528]` then `ldr x8,[x22,#0x10]` / `cmp x8,#2` / `b.lo` is the
+    ///     count guard. `recover_field_offsets` names 0x104c63528 `urls`.
+    ///   · `bl 0x1019c835c` is the unspecialized stdlib `firstIndex(of:)` over `[URL]` that
+    ///     `playNextURL` also calls, returning `(index, isNil)` in (x0, w1). The guard is
+    ///     `cmp w27,#1` / `ccmp x23,#1,#8,ne` / `b.lt` — found AND `index >= 1`, where
+    ///     `playNextURL` instead bounds `index < urls.count - 1`.
+    ///   · `strb #1` into 0x104c63520 (`isPictureInPictureStoped`) sits AFTER both guards.
+    ///   · `sub x9,x23,#0x1` is the step — `index - 1`, against `playNextURL`'s `index + 1` — and
+    ///     `set(url:options:)` @0x1019cb674 is called with `x1 = #0`, i.e. `options: nil`.
+    ///
+    /// ⚑ THE NAME IS INVENTED, and this is the whole basis for it. The address is a real trie
+    ///   negative, carries no `#function`/`#file`/`#line`/string literal, is an IMP in none of the
+    ///   220 ObjC method lists, and sits in no vtable — every route closed, so the gate verdicts
+    ///   EXHAUSTED. It is not stdlib and not glue: it reads THREE of this class's own field-offset
+    ///   globals and calls a KSPlayerLayer member, and at 94 instructions with 3 call sites it is
+    ///   neither the outlined-glue shape nor INLINE-INSTEAD.
+    ///   The name comes from the CALLER SET, not from what reads well: of its three call sites, one
+    ///   is `KSVideoPlayerModel.previous()` @0x101accdb0, whose mirror `KSVideoPlayerModel.next()`
+    ///   @0x101acccfc has the identical shape and calls `playNextURL()` through vtable +0x3e0
+    ///   (slot 12). `next -> playNextURL` is therefore read; `previous -> playPreviousURL` is the
+    ///   spelling that pairing implies, and it is a FABRICATED IDENTIFIER, not a recovered one.
+    ///   ⚑[invented=playPreviousURL addr=0x1019d3518 exhaustion=name_exhaustion_gate approved=jweaver]
+    ///
+    /// ⚑ Access is `internal`, not `public`: the address is absent from the export trie (so not
+    ///   public) and absent from the class's 13-slot vtable, yet it is called from another file
+    ///   (KSVideoPlayerModel), which rules out `private`/`fileprivate`.
+    ///   ⚑[tool=vtable_walk ref=KSComplexPlayerLayer:0x1039ed208 result=13-slots-no-such-impl]
+    final func playPreviousURL() {
+        guard urls.count >= 2 else {
+            return
+        }
+        guard let index = urls.firstIndex(of: url), index >= 1 else {
+            return
+        }
+        // ⚑ FIELD REBOUND. This store goes through offset global 0x104c63520, and that global is
+        //   `KSPlayerLayer.isAutoPlay`, NOT `KSComplexPlayerLayer.isPictureInPictureStoped`. The
+        //   proof is structural rather than a tie-break: `KSPlayerLayer.play()` @0x1019cc5f8 — a
+        //   SUPERCLASS method, which cannot address a subclass field — writes `mov w9,#0x1 /
+        //   strb w9,[x20,x8]` through it, and `pause()` writes `wzr` through the same global.
+        //   Both fields are real and DISTINCT: KSPlayerLayer record 10 `isAutoPlay: Sb` (17 fields)
+        //   versus KSComplexPlayerLayer record 1 `isPictureInPictureStoped: Sb` (3 fields).
+        //   The old binding came from a `recover_field_by_access` UNIQUE whose byte-class tie-break
+        //   was run against the WRONG class's field set.
+        // ⚑[tool=export_trie_oracle ref=KSPlayerLayer.play:0x1019cc5f8 result=superclass-writes-0x104c63520]
+        isAutoPlay = true
+        set(url: urls[index - 1], options: nil)
+    }
+
+    open func playNextURL() {
+        guard urls.count >= 2 else {
+            return
+        }
+        guard let index = urls.firstIndex(of: url), index < urls.count - 1 else {
+            return
+        }
+        // ⚑ Same rebinding as playPreviousURL above — this body writes 0x104c63520 too, verified in
+        //   its own extent (0x1019d27a8), so it is `isAutoPlay`, not `isPictureInPictureStoped`.
+        isAutoPlay = true
+        set(url: urls[index + 1], options: nil)
+    }
+
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStartPictureInPicture:0x1019d29d0 result=34-instr]
+    /// Two statements, both read:
+    ///   · `strb wzr, [x20, <global 0x104c63530>]` writes a ZERO BYTE. Of this class's three
+    ///     fields only `isPictureInPictureStoped: Bool` is one byte (`urls` is an Array,
+    ///     `enterBackgroundTask` a Task?), so the target is identified by TYPE, not by adjacency —
+    ///     which matters because that global carries no `vpWvd`.
+    ///   · `player` comes from its own `vpWvd` (offset global 0x104c634f0) and is loaded as the
+    ///     two-word existential; `ldr x22,[x19,#0xd8]` then selects witness **26**.
+    ///
+    /// ⚑ Witness 26 is NAMED, not counted — this protocol's indices are shifted by unrecovered
+    ///   requirements, so an index argument would be worthless. Escalation: `KSMEPlayer`'s witness
+    ///   at that slot is an unnamed forwarding thunk, so follow it — it loads `KSMEPlayer.videoOutput`
+    ///   (global 0x1044ea160) and tail-calls 0x103468f80, whose selref 0x10440d1a8 decodes to
+    ///   **`setContentMode:`**. So requirement 26 is `contentMode`'s SETTER, which also matches the
+    ///   protocol's kind table (req25/26/27 = one `{get set}` triple).
+    /// ⚑[tool=decode_objc_selector ref=0x10440d1a8 result='setContentMode:']
+    /// ⚑[tool=protocol_signature ref=MediaPlayerProtocol:0x1039ed6c4 result=req26=Setter]
+    ///
+    /// ⚑ The argument is `mov w0, #1` — a CASE INDEX, not a rawValue. `UIViewContentMode` is
+    ///   `UIView.ContentMode` (UIKitExtend.swift:167), whose case 1 is `.scaleAspectFit`.
+    public final func pictureInPictureControllerWillStartPictureInPicture(_: AVPictureInPictureController) {
+        isPictureInPictureStoped = false
+        player.contentMode = .scaleAspectFit
+    }
+    public final func pictureInPictureControllerDidStartPictureInPicture(_ p0: AVPictureInPictureController) { fatalError("L7: KSComplexPlayerLayer.pictureInPictureControllerDidStartPictureInPicture — Forward body unread") }
+
+    /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStopPictureInPicture:0x1019d2b98 result=1-instr-thunk]
+    /// ⚑ The trie address is a THUNK (`b 0x1019d61b8`); the real body is the 77 instructions there.
+    ///
+    ///   · `player` and witness **26** are the same pair `WillStart` above uses — that slot is
+    ///     `contentMode`'s setter, named by following KSMEPlayer's forwarding thunk to a
+    ///     `setContentMode:` send. Here the value is NOT a literal case: it is read from
+    ///     `self.options` (its own `vpWvd`, offset global 0x104c634e0) at `+0x68`.
+    ///   · `+0x68` is `KSOptions.contentMode`, recovered by `recover_field_offsets` — KSOptions is
+    ///     `metadata_init=1`, so `field_offset_vector` refuses it and the static vector reads 0x0.
+    ///     ⚑[tool=recover_field_offsets ref=KSOptions result=contentMode@0x68]
+    ///   So this RESTORES the player's content mode from options, where WillStart forced
+    ///   `.scaleAspectFit`. The pairing is what makes both readings mutually corroborating.
+    ///
+    /// ⚑ The trailing call is `Swift.print(_:separator:terminator:)` (__got 0x104112a40) — the
+    ///   `w1=0x20` / `w3=0x0a` operands are the one-character `" "` and `"\n"` defaults, which is
+    ///   how the overload is identified. Its argument is a LARGE string: the pointer is stored
+    ///   biased by `-0x20` with the high bit set, so the characters begin at 0x103d34bd0, and the
+    ///   count word is `0x32` (50) tagged `0xD000…`. Decoded, those 50 bytes are exactly this
+    ///   method's own name.
+    ///   ⚑[tool=decode_string_literal ref=0x103d34bd0 result='pictureInPictureControllerWillStopPictureInPicture']
+    /// ⚑ Written as a plain literal, not `#function`: `#function` would render
+    ///   `pictureInPictureControllerWillStopPictureInPicture(_:)` including the argument label,
+    ///   which is 4 characters longer than the 50 the count word states.
+    public final func pictureInPictureControllerWillStopPictureInPicture(_: AVPictureInPictureController) {
+        player.contentMode = options.contentMode
+        print("pictureInPictureControllerWillStopPictureInPicture")
+    }
+
+    /// ⚑[tool=disassemble ref=KSComplexPlayerLayer.pictureInPictureController(_:failedToStartPictureInPictureWithError:):0x1019d342c result=2-instr-thunk]
+    /// The row's own body is `mov x0, x1` / `b 0x1019d6430` — it DROPS the controller argument and
+    /// tail-calls an 85-instruction handler. That handler is one KSLog call, and every piece of it
+    /// is read:
+    ///   · `ldrb w8,[0x1044e5173]` / `cmp w8,#2` / `b.lo` — the level gate. 2 is the CASE INDEX for
+    ///     `.error`, the encoding this file's own KSLog notes already establish.
+    ///   · `w6 = 0x398 = 920` — the line number, and `#file` is the 28-character
+    ///     'KSPlayer/KSPlayerLayer.swift'. `#function` is the 69-character string at 0x103d34b80,
+    ///     exactly the length of this member's own name.
+    ///   · the error goes through `_convertErrorToNSError` (__got 0x104109940) and an NSError
+    ///     class-metadata fetch (0x1019d5bd8) into the existential buffer.
+    /// ⚑ There is NO message literal, and that absence is evidenced rather than assumed. The KSLog
+    ///   commentary at KSOptions.swift:1370 describes this exact sequence for the `Error` overload,
+    ///   and notes that a `.localizedDescription` message would instead carry a String through the
+    ///   statically-known CustomStringConvertible witness and leave an accessor call — this body
+    ///   has neither. So the spelling is the bare `KSLog(error)`, whose @inlinable body expands to
+    ///   `KSLog(level: .error, error() as NSError, …)` — which is what the disassembly shows.
+    /// ⚑ ACCESS not independently proven: the trie name carries no discriminator, so it is not
+    ///   private, and `public` matches the sibling delegate callbacks on the superclass and the
+    ///   ObjC visibility an @objc delegate method needs. It is not otherwise established.
+    public final func pictureInPictureController(_: AVPictureInPictureController,
+                                           failedToStartPictureInPictureWithError error: Error)
+    {
+        KSLog(error)
+    }
+}
+
+// MARK: - MediaPlayerDelegate
+
+// The five witnesses (readyToPlay, changeLoadState, changeBuffering, playBack, finish) are
+// declared in the class body above, where their vtable slots put them. Where Forward 1.3.17
+// declares the CONFORMANCE itself is not decidable from the binary, so it is left exactly where
+// this reconstruction already had it rather than moved onto the class line.
+extension KSPlayerLayer: MediaPlayerDelegate {}
+
+// MARK: - AVPictureInPictureControllerDelegate
+
+// THE CONFORMANCE IS ON THE SUBCLASS. All six AVPictureInPictureControllerDelegate callbacks are
+// implemented on KSComplexPlayerLayer in the binary, and none on KSPlayerLayer — the same
+// belongs-on-the-subclass shape `urls` had. Three of the six were already declared in
+// KSComplexPlayerLayer's class body (failedToStartPictureInPictureWithError,
+// WillStartPictureInPicture, WillStopPictureInPicture); the two below were the ones stranded up
+// here, and moving them takes the conformance with them.
+//   KSComplexPlayerLayer.pictureInPictureControllerDidStopPictureInPicture       0x1019d2bac
+//   KSComplexPlayerLayer.pictureInPictureController(_:restoreUserInterface…:)    0x1019d3220
+@available(tvOS 14.0, *)
+extension KSComplexPlayerLayer: @preconcurrency AVPictureInPictureControllerDelegate {
+    /// @0x1019d2bac is ONE instruction — `b 0x1019d62ec` — into an 81-instruction body, which is
+    /// where the four statements below are read from. The previous spelling kept only the third.
+    ///   1019d6338  ldr x24,[x22,#0x28] / blr    MediaPlayback req4 = player.view.getter
+    ///   1019d6360  bl 0x103460dc0                selref 0x10440b138 = 'didStopPIP'
+    ///   1019d6378  ldr x24,[x22,#0x28] / blr    player.view.getter AGAIN (a second fetch)
+    ///   1019d63a4  bl 0x1019cf5d8                addSubtitle(to:)
+    ///   1019d63bc  ldr x24,[x21,#0xf8] / blr    witness +0xf8 = req30 = pipController.getter
+    ///   1019d63e8  cbz x20                       the Optional chain on pipController
+    ///   1019d63f8  ldr x8,[x21,#0x48] / w0 = 0  witness +0x48 = stop(restoreUserInterface:),
+    ///                                            argument FALSE — read, not inferred
+    /// ⚑[tool=decode_objc_selector ref=KSComplexPlayerLayer.didStopPIP:0x103460dc0 result=didStopPIP]
+    /// ⚑[tool=export_trie_oracle ref=MediaPlayerProtocol.req30:0x1019a0e40 result=pipController.getter]
+    ///
+    /// ⚑ THE BODY IS NOT COMPLETE. It ends `mov x20, x19` / `bl 0x1019d2bb0` — a 227-instruction
+    ///   NOT_IN_TRIE function taking `self`, which has NOT been read. That statement is deliberately
+    ///   absent rather than guessed; writing it needs 0x1019d2bb0 as its own unit.
+    /// ⚑[tool=function_extents ref=KSComplexPlayerLayer.DidStopPIP.tail:0x1019d2bb0 result=227-instr-unread]
+    public func pictureInPictureControllerDidStopPictureInPicture(_: AVPictureInPictureController) {
+        player.view.didStopPIP()
+        addSubtitle(to: player.view)
+        player.pipController?.stop(restoreUserInterface: false)
+    }
+
+    /// @0x1019d3220, 45 instructions, read in full. The previous spelling was `isPipActive = false`,
+    /// which has no counterpart at all — `isPipActive` has zero symbols image-wide. The body takes a
+    /// read access on `self.player`, loads the two-word existential, and calls witness `[wtable+0x48]`
+    /// under a `cbz` optional chain. That slot is req8 of the 10-requirement
+    /// `KSPictureInPictureController : KSPictureInPictureProtocol` table (wt 0x1041d45a0), i.e.
+    /// `stop(restoreUserInterface:)`, and the argument is `mov w0, #0x1` — TRUE, the opposite of the
+    /// value the sibling callback above passes.
+    /// ⚑[tool=decode_witness_table ref=KSPictureInPictureController:KSPictureInPictureProtocol:0x1041d45a0 result=req8-stop-restoreUserInterface]
+    public func pictureInPictureController(_: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler _: @escaping (Bool) -> Void) {
+        player.pipController?.stop(restoreUserInterface: true)
     }
 }

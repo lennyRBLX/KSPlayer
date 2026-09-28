@@ -69,13 +69,6 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
     // Listen to play time change
     public var playTimeDidChange: ((TimeInterval, TimeInterval) -> Void)?
     public var backBlock: (() -> Void)?
-    public convenience init() {
-        #if os(macOS)
-        self.init(frame: .zero)
-        #else
-        self.init(frame: CGRect(origin: .zero, size: KSOptions.sceneSize))
-        #endif
-    }
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -257,6 +250,13 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
     }
 
     open func playerDidClear(layer _: KSPlayerLayer) {}
+    public convenience init() {
+        #if os(macOS)
+        self.init(frame: .zero)
+        #else
+        self.init(frame: CGRect(origin: .zero, size: KSOptions.sceneSize))
+        #endif
+    }
 }
 
 public extension PlayerView {

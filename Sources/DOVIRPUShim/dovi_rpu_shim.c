@@ -23,7 +23,7 @@
 //
 
 #include "dovi_rpu_shim.h"
-#include <stdlib.h>
+#include <stddef.h>
 
 // ── Inline-size guards (deterministic, compile-time) ──
 // The reconstructed Swift fields embed these types BY VALUE; their sizes MUST equal the
@@ -61,94 +61,13 @@ _Static_assert(offsetof(KSDOVIMetadata, comp) == 0xb0, "KSDOVIMetadata.comp offs
 _Static_assert(sizeof(DOVIContext) == 224,     "DOVIContext must be 224 B (binary inline 0xE0; dovi_rpu.h sizeof)");
 
 // ── Private FFmpeg API declarations ──
-// Defined in libavcodec/dovi_rpu.h (not shipped in FFmpegKit public headers);
-// the symbols exist in the Libavcodec/Libavutil static archives (verified via
-// `nm`: ff_dovi_ctx_unref, ff_dovi_ctx_flush, ff_dovi_rpu_parse,
-// ff_dovi_get_metadata are T in Libavcodec; av_free is T in Libavutil).
-//
-// API NOTE (FFmpeg 8.x):
-//   The old `ff_dovi_ctx_alloc` / `ff_dovi_ctx_free` heap-owning lifecycle
-//   was removed upstream. The current lifecycle is:
-//     1. Caller owns the `DOVIContext` storage (zero-initialized).
-//     2. `ff_dovi_ctx_unref(ctx)` releases internal allocations (`dm`, `vdr`,
-//        `ext_blocks`, `rpu_buf`); the struct itself stays usable.
-//     3. To "free" entirely: call `ff_dovi_ctx_unref` then `free()` the buffer.
-//
-// Signatures (libavcodec/dovi_rpu.h):
-//   void ff_dovi_ctx_unref(DOVIContext *s);                                  // full reset
-//   void ff_dovi_ctx_flush(DOVIContext *s);                                  // per-frame/seek reset
-//   int  ff_dovi_rpu_parse(DOVIContext *s, const uint8_t *rpu, size_t sz, int err_recognition);
-//   int  ff_dovi_get_metadata(DOVIContext *s, AVDOVIMetadata **out_metadata);// caller owns *out
+// Defined in libavcodec/dovi_rpu.h (not shipped in FFmpegKit public headers); the symbols
+// exist in the Libavcodec static archive (nm: T). Forward calls them directly from Swift:
+//   ff_dovi_rpu_parse    @ 0x102a3b9ac (8632 B)  ← VideoToolboxDecode.decodeFrame 0x101a6d0b8
+//   ff_dovi_get_metadata @ 0x102a3b744 (452 B)   ← VideoToolboxDecode.decodeFrame 0x101a6d0f4
+//   ff_dovi_ctx_unref    @ 0x102a3b4e0 (236 B)   ← VideoToolboxDecode shutdown     0x101a6ece4
+// (sizes equal the FFmpegKit archive's dovi_rpu.o / dovi_rpudec.o bodies, ffmpeg_lib_index by_sym).
+// No ks_dovi_* wrapper exists in Forward, so none is defined here.
 extern void ff_dovi_ctx_unref(DOVIContext *ctx);
-extern void ff_dovi_ctx_flush(DOVIContext *ctx);
 extern int ff_dovi_rpu_parse(DOVIContext *ctx, const uint8_t *rpu, size_t rpu_size, int err_recognition);
 extern int ff_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata);
-extern void av_free(void *ptr);
-
-// Caller-owned `DOVIContext` size. The FFmpeg struct is opaque to us; this
-// constant is a generous upper bound large enough to fit any reasonable
-// `DOVIContext` layout in FFmpeg 8.x (it embeds the inline `cfg` and `header`
-// records plus a 16-wide `vdr` pointer array — a few hundred bytes — well under
-// this bound). All bytes are zero-initialized so `ff_dovi_ctx_unref` against an
-// unused context is a safe no-op (it only `av_freep`s nullable internal pointers).
-#define KS_DOVI_CTX_SIZE 4096
-
-DOVIContext *ks_dovi_ctx_alloc(void) {
-    // Caller-owned storage, zero-initialized. `calloc` gives both zero-init and
-    // a heap pointer matching the prior shim contract; FFmpeg 8.x removed the
-    // `ff_dovi_ctx_alloc` heap-owning helper (it no longer exists to call).
-    return (DOVIContext *)calloc(1, KS_DOVI_CTX_SIZE);
-}
-
-void ks_dovi_ctx_free(DOVIContext *ctx) {
-    if (ctx) {
-        // Release internal allocations first, then free the caller-owned buffer.
-        // `ff_dovi_ctx_unref` against a still-empty context is a documented no-op.
-        ff_dovi_ctx_unref(ctx);
-        free(ctx);
-    }
-}
-
-void ks_dovi_ctx_flush(DOVIContext *ctx) {
-    if (ctx) {
-        ff_dovi_ctx_flush(ctx);
-    }
-}
-
-int ks_dovi_rpu_parse(DOVIContext *ctx,
-                      const uint8_t *data,
-                      size_t size) {
-    if (!ctx || !data || size == 0) {
-        return -1;
-    }
-
-    // RE: ff_dovi_rpu_parse(self.doviContext, buf, outPos, 0)
-    // The 4th arg is err_recognition (0 = lenient).
-    return ff_dovi_rpu_parse(ctx, data, size, 0);
-}
-
-int ks_dovi_get_metadata(DOVIContext *ctx, AVDOVIMetadata **out_metadata) {
-    if (!ctx || !out_metadata) {
-        return -1;
-    }
-    *out_metadata = NULL;
-
-    // RE: ff_dovi_get_metadata @ 0x102a3b744 (CORRECTED; the prior 0x102402568
-    // was wrong — font code — per the 1B.1 deterministic audit). It calls
-    // av_dovi_metadata_alloc (@ 0x10323b430) and assembles a fresh combined AVDOVIMetadata
-    // (header + mapping + color + extension blocks) into *out_metadata,
-    // returning its size (> 0), 0 if none, or a negative AVERROR. Ownership of
-    // *out_metadata passes to the caller (free with ks_dovi_metadata_free).
-    //
-    // The previous implementation read ctx->dm directly at +0x08: that offset
-    // is the `enable` int (not a pointer), and ctx->dm is an
-    // AVDOVIColorMetadata* (color-only), so the old path was UB and the wrong
-    // type. Always go through ff_dovi_get_metadata.
-    return ff_dovi_get_metadata(ctx, out_metadata);
-}
-
-void ks_dovi_metadata_free(AVDOVIMetadata *metadata) {
-    // AVDOVIMetadata is a single av_dovi_metadata_alloc'd flat buffer; the
-    // sub-structs live at internal offsets within it, so one av_free suffices.
-    av_free(metadata);
-}

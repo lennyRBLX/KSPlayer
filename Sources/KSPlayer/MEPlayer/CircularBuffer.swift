@@ -24,21 +24,20 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     //   param4→+0x32 (isClearItem) and a constant false→+0x33 (destroyed), object size 0x4c.
     private let isClearItem: Bool
     private var destroyed = false
-    @inline(__always)
-    private var _count: UInt { tailIndex &- headIndex }
-    // ⚑ `count` is `Swift.UInt` in the binary (trie: `KSPlayer.CircularBuffer.count.getter : Swift.UInt`), as are
-    //   `pop(wait:where:)`'s predicate arity type and `search`. Left as `Int` here: computed members are outside
-    //   l2_field_gate's field surface, so this is recorded member-signature debt, not part of the arity unit.
-    @inline(__always)
-    public var count: Int {
-//        condition.lock()
-//        defer { condition.unlock() }
-        Int(tailIndex &- headIndex)
-    }
 
     private var mask: UInt
     public private(set) var maxCount: UInt
     public internal(set) var fps: Float = 24
+    @inline(__always)
+    private var _count: UInt { tailIndex &- headIndex }
+    // ⚑[tool=member_surface ref=CircularBuffer.count.getter:0x101a160f8 result=Swift.UInt] — as is `pop(wait:where:)`'s
+    //   predicate arity (0x101a167b4). Both bodies: no swift_task_*/ScM call (lock-guarded, nonisolated).
+    @inline(__always)
+    public var count: UInt {
+//        condition.lock()
+//        defer { condition.unlock() }
+        tailIndex &- headIndex
+    }
     // ⚑[tool=export_trie_oracle ref=CircularBuffer.__allocating_init:$s8KSPlayer14CircularBufferC15initialCapacity6sorted9expanding11isClearItemACyxGSu_S3btcfC result=initialCapacity:UInt,sorted:Bool,expanding:Bool,isClearItem:Bool]
     //   All four labels and their order are read from the export trie, not inferred. The four DEFAULTS below are
     //   NOT binary-readable (ZERO `default argument N of …` trie symbols). 0x101a16238 `cbz x0→brk` precedes the stores; the later `sub` is flagless.
@@ -95,7 +94,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         }
     }
 
-    public func pop(wait: Bool = false, where predicate: ((Item, Int) -> Bool)? = nil) -> Item? {
+    public func pop(wait: Bool = false, where predicate: ((Item, UInt) -> Bool)? = nil) -> Item? {
         condition.lock()
         defer { condition.unlock() }
         if destroyed {
@@ -116,7 +115,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             assertionFailure("value is nil of index: \(index) headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count), mask: \(mask)")
             return nil
         }
-        if let predicate, !predicate(item, Int(_count)) {
+        if let predicate, !predicate(item, _count) {
             return nil
         } else {
             headIndex &+= 1
@@ -148,6 +147,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         }
         return result
     }
+    public func seek(seconds: Double, needKeyFrame: Bool) -> (UInt, Double)? { fatalError("L7: CircularBuffer.seek — Forward body unread") }
 
     public func flush() {
         condition.lock()

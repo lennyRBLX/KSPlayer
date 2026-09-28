@@ -23,79 +23,7 @@ public final class MEPlayerItem: @unchecked Sendable {
     //   (FUN_101a4bae0) + name_type_at_addr; residual generic/closure exactness flagged  ⚑[tool=resolve_fun_pins ref=FUN_101a4bae0:0x101a4bae0 result=RESOLVES_UNIQUELY] = KSPlayer.MEPlayerItem.init(io: KSPlayer.Either<Foundation.URL, KSPlayer.AbstractAVIOContext>, options: KSPlayer.KSOptions) -> KSPlayer.MEPlayerItem
     //   // ⚑ UNRESOLVED (field-record None ⟹ l2 UNCHECKED, non-blocking). The 17 base fields are
     //   removed; every method that used them is stubbed // ⚑ UNRESOLVED pending its Forward-body commit.
-    private var io: Either<URL, AbstractAVIOContext>                 // 1 ⚑[tool=name_type_at_addr ref=io:0x103566d40 result=Either<_,AbstractAVIOContext>] first param URL (sibling KSAVPlayer.io)
-    public let options: KSOptions                                   // 2
-    public var isPreload = false                                    // 3
-    private var ioTask: Task<Void, Never>?                           // 4 ⚑ UNRESOLVED generics (Task confirmed, nil-init)
-    private let ioWaiterLock = NSLock()                              // 5
-    private var ioWaiter: CheckedContinuation<Void, Never>?          // 6 ⚑[tool=name_type_at_addr ref=ioWaiter:0x1035647f8 result=ScC<(),_>] error-param pending
-    fileprivate var formatContext: FormatContext?                        // 7
-    private var remuxer: Remuxer?                                    // 8
-    private var seekTime = TimeInterval(0)                           // 9
-    private var seekUsePacketCache = false                           // 10
-    // ⚑ `@Sendable` is READ, not added for concurrency: the trie spells this field
-    //   `(@Sendable (Swift.Bool) -> ())?`. In Swift 6 @Sendable is part of the function type, so the
-    //   un-annotated source spelling emitted a different mangle from the binary's. Surfaced by the s75
-    //   l2_field_gate export-trie signal, which resolved a type this field previously reported as bin=None.
-    private var seekingCompletionHandler: (@Sendable (Bool) -> Void)?          // 11
-    // 没有音频数据可以渲染
-    private var isAudioStalled = true                               // 12
-    private var audioClock = KSClock()                              // 13
-    private var videoClock = KSClock()                              // 14
-    private var isFirst = true                                     // 15
-    private var isSeek = false                                     // 16
-    private var needRecordTimeIndex = false                        // 17
-    private let playbackSnapshotRecordInterval = 0.5               // 18
-    private var lastPlaybackSnapshotRecordTime: Double?            // 19
-    private let timeIndexRecordInterval = 1.0                      // 20
-    private var lastTimeIndexRecordTime: Double?                   // 21
-    private var needSeekItemTrack = true                          // 22
-    private var allPlayerItemTracks = [PlayerItemTrackProtocol]()  // 23
-    private var videoAudioTracks = [CapacityProtocol]()           // 24
-    private var videoTrack: SyncPlayerItemTrack<VideoVTBFrame>?    // 25
-    private var audioTrack: SyncPlayerItemTrack<AudioFrame>?       // 26
-    private var subtitleTrack: SyncPlayerItemTrack<SubtitleFrame>? // 27 (nil-init parallel; SubtitleFrame: MEFrame, Model.swift:245)
-    private var videoAdaptation: VideoAdaptationState?            // 28
-    fileprivate var pbArray = [PBClass]()                             // 29
-    private var interrupt = false                                // 30
-    private var prePosition: Int64 = 0                           // 31 ⚑ UNRESOLVED: single-word 0-init; Int64|Int|Double pending assignment site
-    // 32 — the saved default AVFormatContext.io_open, boxed as a Swift closure (2-word [fn,ctx], the
-    //   io_open C signature); ioOpen() falls back to it when there is no ioContext / addSub declines. The
-    //   install (saving + boxing formatCtx's original io_open) is the ⚑UNRESOLVED openAndFindStream arm.
-    // ⚑[tool=decompile ref=defaultIOOpen:0x101a53560 result=io_open-signature-closure]
-    fileprivate var defaultIOOpen: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?) -> Int32)? // 32
-    // 33 — the saved default AVFormatContext.io_close2, boxed as a Swift closure (2-word [fn,ctx],
-    //   the io_close2 signature (AVFormatContext*, AVIOContext*) -> Int32); ioClose() always delegates
-    //   to it after the pbArray cleanup. The install (boxing formatCtx's original io_close2) is the
-    //   ⚑UNRESOLVED openAndFindStream arm.
-    // ⚑[tool=decompile ref=defaultIOClose:0x101a53924 result=io_close2-signature-closure]
-    fileprivate var defaultIOClose: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<AVIOContext>?) -> Int32)? // 33
-    public private(set) var chapters: [Chapter] = []            // 34
-    public private(set) var duration: TimeInterval = 0          // 35
-    public private(set) var fileSize: Int64 = 0                // 36 MediaPlayback.fileSize Int64 (bin field-record Int? UNCHECKED — kept Int64 per protocol)
-    public private(set) var naturalSize = CGSize.zero        // 37 ⚑ bin field-record CGSize? (init nil), but MediaPlayback requires non-optional CGSize → kept CGSize; CGSize? deferred with the protocol migration
-    private var state = State.idle {                         // 38 RESOLVED: nested MEPlayerItem.State (10 cases; desc @0x1039ef8b0, Model.swift). Was base MESourceState.
-        didSet {
-            switch state {
-            case .ready:                          // base `opened` (raw 2); renamed in Forward
-                delegate?.sourceDidOpened()
-            case .reading:
-                timer?.fireDate = Date.distantPast
-            case .closed:
-                timer?.invalidate()
-            case .failed:
-                delegate?.sourceDidFailed(error: nil) // ⚑ UNRESOLVED: base passed removed `error` field; Forward error-source pending
-                timer?.fireDate = Date.distantFuture
-            case .idle, .opening, .seeking, .paused, .endOfStream, .finished:
-                // ⚑ endOfStream (raw 6, NEW in Forward): base-derived no-op; Forward state.didSet body pending its own audit
-                break
-            }
-        }
-    }
-    private var timer: Timer?                                // 39 Forward NSTimer? nil-init (base was `lazy var timer: Timer = .scheduledTimer`); scheduling site pending. Timer === NSTimer (reflection emits NSTimer)
-    private let preloadClock = ContinuousClock()            // 40 ⚑ init calls Swift.ContinuousClock.init(); ContinuousClock vs .Instant pending
-    private var lastPacketMediaType: AVFoundation.AVMediaType = .video // 41 init AVMediaTypeVideo (AVFoundation constant; codebase disambiguates from FFmpeg AVMediaType)
-    public weak var delegate: MEPlayerDelegate?                    // 42
+    var io: Either<URL, AbstractAVIOContext>                 // 1 internal (read by KSPlayerLayer.replace(playerItem:) @0x1019cbde8 via its field offset); ⚑[tool=name_type_at_addr ref=io:0x103566d40 result=Either<_,AbstractAVIOContext>] first param URL (sibling KSAVPlayer.io)
 
     /// ⚑[tool=disassemble ref=MEPlayerItem.isIdle.getter:0x101a4a8b8 result=6-instr]
     /// `ldr x8,[0x1044ea208]` / `ldrb w8,[x20,x8]` / `cmp w8,#0` / `cset w0,eq`.
@@ -122,212 +50,10 @@ public final class MEPlayerItem: @unchecked Sendable {
         formatContext?.ioContext
     }
 
-    /// ⚑[tool=disassemble ref=MEPlayerItem.playbackRate:0x101a4affc/0x101a480e4 result=getter-18-setter-29]
-    /// getter: reads the ivar at offset-global 0x1044ea228, then `ldr d0,[x19,#0x10]` and
-    ///   `fcvt s0, d0` — a Double member converted to Float.
-    /// setter: `fcvt d8, s0` once, then writes `[x19,#0x10]` under a MODIFY access twice — first
-    ///   through offset-global 0x1044ea220, then through 0x1044ea228. It updates BOTH clocks.
-    ///
-    /// `+0x10` is `KSClock.rate`: that struct's layout is already recorded at KSOptions.swift:1421
-    /// as lastMediaTime (+0) · position (+0x8) · rate (+0x10, `Sd`) · time, with rate's own default
-    /// read from its vpfi. So the Double at +0x10 is `rate` and nothing else.
-    ///
-    /// WHICH clock is which is read, not taken from the global ordering: `setVideo(time:position:)`
-    /// touches 0x1044ea228 and no other clock global, and its source body sets `videoClock`. That
-    /// fixes 0x228 = videoClock, leaving 0x220 = audioClock — consistent with their adjacent field
-    /// records (12, 13) and their declaration order above.
-    /// ⚠️ The reversed query labels 0x1044ea228 "playbackRate" and that label is WRONG — this
-    /// getter reads another field's offset and then +0x10 inside it, so the single-global rule
-    /// mis-attributes. The name came from `setVideo`, not from that map.
-    ///
-    /// No `_modify` is written: Swift synthesises the modify coroutine for a computed property
-    /// with a getter and setter, which is what the third body @0x101a4b044 is.
-    /// Access read from its vpMV; `KSClock.rate` is `internal(set)`, settable from this module.
-    public var playbackRate: Float {
-        get {
-            Float(videoClock.rate)
-        }
-        set {
-            audioClock.rate = Double(newValue)
-            videoClock.rate = Double(newValue)
-        }
-    }
-
-    public var isIdle: Bool {
-        state == .idle
-    }
-
-    /// ⚑[tool=disassemble ref=MEPlayerItem.isReusable.getter:0x101a4b404 result=19-instr]
-    /// Same `state` load, then a five-way set-membership test in the shape the compiler uses for a
-    /// multi-case `switch`: four constants compared at once via `cmeq.4h` against the vector at
-    /// 0x1044ea360, plus the fifth as a scalar at +0x4. Those five bytes read `01 02 03 04 05`.
-    /// Against `MEPlayerItem.State` that is opening/ready/reading/seeking/paused — every state
-    /// between `.idle` and the terminal group, which is what makes the name coherent.
-    /// ⚑ The five happen to be contiguous, so a range test would compile to the same answer; the
-    /// binary emits an explicit five-way membership, so the switch form is written.
-    public var isReusable: Bool {
-        switch state {
-        case .opening, .ready, .reading, .seeking, .paused:
-            return true
-        default:
-            return false
-        }
-    }
-
-    public var currentPlaybackTime: TimeInterval {
-        state == .seeking ? seekTime : mainClock().time.seconds // ⚑ UNRESOLVED: base subtracted removed `startTime`
-    }
-
-    // ⚑ Forward moved the per-stream FFmpegAssetTracks into FormatContext (FormatContext.swift:59 `assetTracks`
-    //   @+0x40); MEPlayerItem's stored `assetTracks` field is removed. This computed bridge reads the migrated
-    //   source so the external reader KSMEPlayer.tracks(mediaType:) stays green (Forward may instead read
-    //   formatContext.assetTracks directly — resolved when KSMEPlayer.tracks migrates).
-    var assetTracks: [FFmpegAssetTrack] { formatContext?.assetTracks ?? [] }
-
-    public lazy var dynamicInfo = DynamicInfo {
-        toDictionary(nil) // ⚑ UNRESOLVED: base read self.formatCtx.pointee.metadata (removed field); FormatContext raw-ptr accessor pending
-    } bytesRead: {
-        0 // ⚑ UNRESOLVED: base read self.formatCtx.pointee.pb.pointee.bytes_read (removed field)
-    } audioBitrate: { [weak self] in
-        Int(8 * (self?.audioTrack?.bitrate ?? 0))
-    } videoBitrate: { [weak self] in
-        Int(8 * (self?.videoTrack?.bitrate ?? 0))
-    }
-
-    nonisolated(unsafe) private static var onceInitial: Void = {
-        var result = avformat_network_init()
-        av_log_set_callback { ptr, level, format, args in
-            guard let format else {
-                return
-            }
-            var log = String(cString: format)
-            let arguments: CVaListPointer? = args
-            if let arguments {
-                log = NSString(format: log, arguments: arguments) as String
-            }
-            if let ptr {
-                let avclass = ptr.assumingMemoryBound(to: UnsafePointer<AVClass>.self).pointee
-                if avclass == avfilter_get_class() {
-                    let context = ptr.assumingMemoryBound(to: AVFilterContext.self).pointee
-                    if let opaque = context.graph?.pointee.opaque {
-                        let options = Unmanaged<KSOptions>.fromOpaque(opaque).takeUnretainedValue()
-                        options.filter(log: log)
-                    }
-                }
-            }
-            // 找不到解码器
-            if log.hasPrefix("parser not found for codec") {
-                KSLog(level: .error, log)
-            }
-            KSLog(level: LogLevel(rawValue: level) ?? .warning, log)
-        }
-    }()
-
-    public convenience init(url: URL, options: KSOptions) {
-        self.init(io: .left(url), options: options)
-    }
-
-    // Ref designated entry 0x101a4bae0 copies the supplied Either directly.
-    public init(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
-        self.io = io
-        self.options = options
-        _ = MEPlayerItem.onceInitial
-    }
-
     func select(track: some MediaPlayerTrack) -> Bool {
         // ⚑ UNRESOLVED (commit-1 stub): base body used the removed `assetTracks` field + findBestAudio/seek.
         //   Forward body deferred to its own commit (allPlayerItemTracks-based track selection).
         false
-    }
-}
-
-// MARK: private functions
-
-extension MEPlayerItem {
-    // openAndFindStream() — the open/find/WIRE path (the read loop is readThread/reading). FAITHFUL-PARTIAL:
-    //   the interrupt closure + openFormatContext/FormatContext wiring + fileSize/duration/formatName/chapters
-    //   + the createCodec call are reconstructed; the leading KSLog, close/reset call, custom-AVIO install,
-    //   pbArray append, io.right AVIO path, and KSOptions rate×duration store are flagged // ⚑ UNRESOLVED.
-    // ⚑[tool=recover_swift_function_name ref=openAndFindStream:0x101a4d3d0 result=#function/throws/no-params]
-    private func openAndFindStream() throws {
-        // ⚑ UNRESOLVED: leading KSLog(.debug, …) gated on `2 < logLevel` (prologue global DAT_1044e5173) — message deferred.
-        // ⚑ UNRESOLVED: a close/reset call precedes the open to reset prior state; method identity + body deferred.
-        //   ⚑[tool=recover_swift_function_name ref=closeReset:0x101a531fc result=no-#function/739B]
-
-        // ⚑ the binary does NOT project `io` here — it hands the WHOLE Either to openFormatContext:
-        //   `bl 0x10002e588` @0x101a4d5a8 copies `self.io` into a stack alloca, `mov x0,x26` @0x101a4d618 passes
-        //   the alloca pointer, and the throw path destroys it with the SAME cache/name pair
-        //   (0x1044e4778 / 0x103566d40 = Either<URL, AbstractAVIOContext>) @0x101a4d64c. The projection switch
-        //   that used to stand here is REMOVED — the projection lives inside openFormatContext.
-
-        // Interrupt callback — FAITHFUL. A `{ [weak self] }` closure (compiler HeapLocalVariable box, metadata
-        //   kind 0x400 — NOT a user class): abort blocking IO when self is gone, an interrupt was requested, or
-        //   state is terminal ((state & 0xfe)==8 ≡ .closed || .failed).
-        //   ⚑[tool=read_memory ref=weakSelfBox:0x1041d8340 result=HeapLocalVariable/[weak self]]
-        //   ⚑[tool=decompile ref=interruptTrampoline:0x101a534e0 result=self==nil||interrupt||terminal]
-        let interruptContext = IOInterruptContext { [weak self] in
-            guard let self else { return true }
-            if self.interrupt { return true }
-            return self.state == .closed || self.state == .failed
-        }
-
-        // ⚑ call site @0x101a4d630, arguments MEASURED @0x101a4d618-2c: `mov x0,x26`(the io copy),
-        //   `mov x1,x24`(the IOInterruptContext built at 0x101a4d610), `mov x2,x23`(self.options via field-offset
-        //   global 0x104c63690), `mov x3,#0`/`mov x4,#0`(inFormat nil), `mov x21,x25`(swifterror). NO d0 is set —
-        //   `time: 0` was the Ghidra `double param_1` phantom and is REMOVED.
-        //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
-        let (formatCtx, fileSize, ioContext) = try openFormatContext(io: io, interrupt: interruptContext,
-                                                                     options: options, inFormat: nil)
-
-        // FormatContext init. The former `duration: 0` argument is GONE — it satisfied a phantom
-        //   `double param_1` that Ghidra's default __swiftcall prototype prepends; the trie, the
-        //   prologue @0x101a350e8-fc and every call site all give five parameters, no `duration:`.
-        //   RESOLVED: the `fileSize: 0` / `ioContext: nil` placeholders are gone. The three returns are
-        //   destructured at 0x101a4d66c-74 (`mov x25,x0` / `mov x27,x1` / `mov x20,x2`).
-        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: fileSize,
-                                          interrupt: interruptContext, ioContext: ioContext,
-                                          fontsDir: options.fontsDir)
-        self.formatContext = formatContext
-
-        // Custom-AVIO install (unconditional) — save + BOX the format context's default io_open/io_close2
-        //   into defaultIOOpen/defaultIOClose (each a Swift closure that captures the original C fn-ptr and
-        //   forwards to it — the compiler emits the boxed-closure thin entry, storing the captured fn-ptr in
-        //   the box), stash self in the format context's opaque, and install our two @convention(c) thunks
-        //   (ioOpen/ioClose are context-free statics → the compiler emits the matching adapters). The
-        //   AVFormatContext fields are accessed symbolically; `formatCtx` is the AVFormatContext* the
-        //   FormatContext wraps (== the openFormatContext local, stored at FormatContext+0x18). Order matches
-        //   the binary: box io_open → opaque=self → io_open thunk → box io_close2 → io_close2 thunk.
-        // ⚑[tool=decompile ref=customAVIOInstall:0x101a4d3d0 result=saves formatCtx.io_open@+0x1c0/io_close2@+0x1c8 (boxed→defaultIOOpen/Close), opaque@+0x1a0=self, installs the ioOpen/ioClose thunks]
-        // ⚑[tool=decompile ref=boxTrampolineOpen:0x101a5a0c4 result=io_open boxed-closure thin-entry: loads captured fn-ptr @box+0x10 and forwards]
-        // ⚑[tool=decompile ref=boxTrampolineClose:0x101a5a0bc result=io_close2 boxed-closure thin-entry]
-        // ⚑[tool=decompile ref=ioOpenThunk:0x101a53560 result=@convention(c) adapter the compiler emits for MEPlayerItem.ioOpen]
-        // ⚑[tool=decompile ref=ioCloseThunk:0x101a53924 result=@convention(c) adapter for MEPlayerItem.ioClose]
-        if let defaultOpen = formatCtx.pointee.io_open {
-            defaultIOOpen = { s, pb, url, flags, options in defaultOpen(s, pb, url, flags, options) }
-        } else {
-            defaultIOOpen = nil
-        }
-        formatCtx.pointee.opaque = Unmanaged.passUnretained(self).toOpaque()
-        formatCtx.pointee.io_open = ioOpen
-        if let defaultClose = formatCtx.pointee.io_close2 {
-            defaultIOClose = { s, pb in defaultClose(s, pb) }
-        } else {
-            defaultIOClose = nil
-        }
-        formatCtx.pointee.io_close2 = ioClose
-        // ⚑ UNRESOLVED: pbArray append — allocs a PBClass and appends it to self.pbArray (field 29), then on a
-        //   successful dynamic-cast writes KSOptions seekUsePacketCache=false + a formatContextOptions entry.
-        //   ⚑[tool=decompile ref=pbClassAlloc:0x101a5a030 result=deferred-PBClass-body]
-
-        options.formatName = formatContext.formatName        // String @+0x48 (DERIVED from iformat.name)
-        self.fileSize = formatContext.fileSize               // +0x30
-        self.duration = formatContext.duration               // +0x28
-        // ⚑ UNRESOLVED: KSOptions rate×duration — `if options[+0x38] > 0 { options[+0x30] = options[+0x38] ×
-        //   formatContext.duration }` (two KSOptions Double fields; offset→name mapping deferred).
-        self.chapters = formatContext.chapters               // FormatContext.chapters getter (DONE, commit-2a)
-
-        //   ⚑[tool=get_xrefs_to ref=createCodec:0x101a53c44 result=argless]
-        createCodec()                                        // track-set builder (argless, reads self.formatContext; slice-1 reconstructed)
     }
 
     // ioOpen / ioClose (the custom-AVIO open/close2 callbacks) are declared at FILE SCOPE (below PBClass):
@@ -405,6 +131,310 @@ extension MEPlayerItem {
         }
     }
 
+    // Ref designated entry 0x101a4bae0 copies the supplied Either directly.
+    public init(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
+        self.io = io
+        self.options = options
+        _ = MEPlayerItem.onceInitial
+    }
+
+    public var currentPlaybackTime: TimeInterval {
+        state == .seeking ? seekTime : mainClock().time.seconds // ⚑ UNRESOLVED: base subtracted removed `startTime`
+    }
+
+    public var isIdle: Bool {
+        state == .idle
+    }
+    public let options: KSOptions                                   // 2
+    public var isPreload = false                                    // 3
+    private var ioTask: Task<Void, Never>?                           // 4 ⚑ UNRESOLVED generics (Task confirmed, nil-init)
+    private let ioWaiterLock = NSLock()                              // 5
+    private var ioWaiter: CheckedContinuation<Void, Never>?          // 6 ⚑[tool=name_type_at_addr ref=ioWaiter:0x1035647f8 result=ScC<(),_>] error-param pending
+    fileprivate var formatContext: FormatContext?                        // 7
+    private var remuxer: Remuxer?                                    // 8
+    private var seekTime = TimeInterval(0)                           // 9
+    private var seekUsePacketCache = false                           // 10
+    // ⚑ `@Sendable` is READ, not added for concurrency: the trie spells this field
+    //   `(@Sendable (Swift.Bool) -> ())?`. In Swift 6 @Sendable is part of the function type, so the
+    //   un-annotated source spelling emitted a different mangle from the binary's. Surfaced by the s75
+    //   l2_field_gate export-trie signal, which resolved a type this field previously reported as bin=None.
+    private var seekingCompletionHandler: (@Sendable (Bool) -> Void)?          // 11
+    // 没有音频数据可以渲染
+    private var isAudioStalled = true                               // 12
+    private var audioClock = KSClock()                              // 13
+    private var videoClock = KSClock()                              // 14
+    private var isFirst = true                                     // 15
+    private var isSeek = false                                     // 16
+    private var needRecordTimeIndex = false                        // 17
+    private let playbackSnapshotRecordInterval = 0.5               // 18
+    private var lastPlaybackSnapshotRecordTime: Double?            // 19
+    private let timeIndexRecordInterval = 1.0                      // 20
+    private var lastTimeIndexRecordTime: Double?                   // 21
+    private var needSeekItemTrack = true                          // 22
+    private var allPlayerItemTracks = [PlayerItemTrackProtocol]()  // 23
+    private var videoAudioTracks = [CapacityProtocol]()           // 24
+    private var videoTrack: SyncPlayerItemTrack<VideoVTBFrame>?    // 25
+    private var audioTrack: SyncPlayerItemTrack<AudioFrame>?       // 26
+    private var subtitleTrack: SyncPlayerItemTrack<SubtitleFrame>? // 27 (nil-init parallel; SubtitleFrame: MEFrame, Model.swift:245)
+    private var videoAdaptation: VideoAdaptationState?            // 28
+    fileprivate var pbArray = [PBClass]()                             // 29
+    private var interrupt = false                                // 30
+    private var prePosition: Int64 = 0                           // 31 ⚑ UNRESOLVED: single-word 0-init; Int64|Int|Double pending assignment site
+    // 32 — the saved default AVFormatContext.io_open, boxed as a Swift closure (2-word [fn,ctx], the
+    //   io_open C signature); ioOpen() falls back to it when there is no ioContext / addSub declines. The
+    //   install (saving + boxing formatCtx's original io_open) is the ⚑UNRESOLVED openAndFindStream arm.
+    // ⚑[tool=decompile ref=defaultIOOpen:0x101a53560 result=io_open-signature-closure]
+    fileprivate var defaultIOOpen: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<UnsafeMutablePointer<AVIOContext>?>?, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<OpaquePointer?>?) -> Int32)? // 32
+    // 33 — the saved default AVFormatContext.io_close2, boxed as a Swift closure (2-word [fn,ctx],
+    //   the io_close2 signature (AVFormatContext*, AVIOContext*) -> Int32); ioClose() always delegates
+    //   to it after the pbArray cleanup. The install (boxing formatCtx's original io_close2) is the
+    //   ⚑UNRESOLVED openAndFindStream arm.
+    // ⚑[tool=decompile ref=defaultIOClose:0x101a53924 result=io_close2-signature-closure]
+    fileprivate var defaultIOClose: ((UnsafeMutablePointer<AVFormatContext>?, UnsafeMutablePointer<AVIOContext>?) -> Int32)? // 33
+    public private(set) var chapters: [Chapter] = []            // 34
+
+    /// ⚑[tool=disassemble ref=MEPlayerItem.playbackRate:0x101a4affc/0x101a480e4 result=getter-18-setter-29]
+    /// getter: reads the ivar at offset-global 0x1044ea228, then `ldr d0,[x19,#0x10]` and
+    ///   `fcvt s0, d0` — a Double member converted to Float.
+    /// setter: `fcvt d8, s0` once, then writes `[x19,#0x10]` under a MODIFY access twice — first
+    ///   through offset-global 0x1044ea220, then through 0x1044ea228. It updates BOTH clocks.
+    ///
+    /// `+0x10` is `KSClock.rate`: that struct's layout is already recorded at KSOptions.swift:1421
+    /// as lastMediaTime (+0) · position (+0x8) · rate (+0x10, `Sd`) · time, with rate's own default
+    /// read from its vpfi. So the Double at +0x10 is `rate` and nothing else.
+    ///
+    /// WHICH clock is which is read, not taken from the global ordering: `setVideo(time:position:)`
+    /// touches 0x1044ea228 and no other clock global, and its source body sets `videoClock`. That
+    /// fixes 0x228 = videoClock, leaving 0x220 = audioClock — consistent with their adjacent field
+    /// records (12, 13) and their declaration order above.
+    /// ⚠️ The reversed query labels 0x1044ea228 "playbackRate" and that label is WRONG — this
+    /// getter reads another field's offset and then +0x10 inside it, so the single-global rule
+    /// mis-attributes. The name came from `setVideo`, not from that map.
+    ///
+    /// No `_modify` is written: Swift synthesises the modify coroutine for a computed property
+    /// with a getter and setter, which is what the third body @0x101a4b044 is.
+    /// Access read from its vpMV; `KSClock.rate` is `internal(set)`, settable from this module.
+    public var playbackRate: Float {
+        get {
+            Float(videoClock.rate)
+        }
+        set {
+            audioClock.rate = Double(newValue)
+            videoClock.rate = Double(newValue)
+        }
+    }
+    public private(set) var duration: TimeInterval = 0          // 35
+    public private(set) var fileSize: Int64 = 0                // 36 MediaPlayback.fileSize Int64 (bin field-record Int? UNCHECKED — kept Int64 per protocol)
+    public private(set) var naturalSize: CGSize? = nil       // 37 ⚑[tool=field_surface ref=MEPlayerItem.naturalSize result=forward CGSize?; vpfi 0x100232cd4] — MEPlayerItem is not MediaPlayback
+    private var state = State.idle {                         // 38 RESOLVED: nested MEPlayerItem.State (10 cases; desc @0x1039ef8b0, Model.swift). Was base MESourceState.
+        didSet {
+            switch state {
+            case .ready:                          // base `opened` (raw 2); renamed in Forward
+                delegate?.sourceDidOpened()
+            case .reading:
+                timer?.fireDate = Date.distantPast
+            case .closed:
+                timer?.invalidate()
+            case .failed:
+                delegate?.sourceDidFailed(error: nil) // ⚑ UNRESOLVED: base passed removed `error` field; Forward error-source pending
+                timer?.fireDate = Date.distantFuture
+            case .idle, .opening, .seeking, .paused, .endOfStream, .finished:
+                // ⚑ endOfStream (raw 6, NEW in Forward): base-derived no-op; Forward state.didSet body pending its own audit
+                break
+            }
+        }
+    }
+    private var timer: Timer?                                // 39 Forward NSTimer? nil-init (base was `lazy var timer: Timer = .scheduledTimer`); scheduling site pending. Timer === NSTimer (reflection emits NSTimer)
+    private let preloadClock = ContinuousClock()            // 40 ⚑ init calls Swift.ContinuousClock.init(); ContinuousClock vs .Instant pending
+    private var lastPacketMediaType: AVFoundation.AVMediaType = .video // 41 init AVMediaTypeVideo (AVFoundation constant; codebase disambiguates from FFmpeg AVMediaType)
+
+    nonisolated(unsafe) private static var onceInitial: Void = {
+        var result = avformat_network_init()
+        av_log_set_callback { ptr, level, format, args in
+            guard let format else {
+                return
+            }
+            var log = String(cString: format)
+            let arguments: CVaListPointer? = args
+            if let arguments {
+                log = NSString(format: log, arguments: arguments) as String
+            }
+            if let ptr {
+                let avclass = ptr.assumingMemoryBound(to: UnsafePointer<AVClass>.self).pointee
+                if avclass == avfilter_get_class() {
+                    let context = ptr.assumingMemoryBound(to: AVFilterContext.self).pointee
+                    if let opaque = context.graph?.pointee.opaque {
+                        let options = Unmanaged<KSOptions>.fromOpaque(opaque).takeUnretainedValue()
+                        options.filter(log: log)
+                    }
+                }
+            }
+            // 找不到解码器
+            if log.hasPrefix("parser not found for codec") {
+                KSLog(level: .error, log)
+            }
+            KSLog(level: LogLevel(rawValue: level) ?? .warning, log)
+        }
+    }()
+
+    public convenience init(url: URL, options: KSOptions) {
+        self.init(io: .left(url), options: options)
+    }
+
+    // ⚑ Forward moved the per-stream FFmpegAssetTracks into FormatContext (FormatContext.swift:59 `assetTracks`
+    //   @+0x40); MEPlayerItem's stored `assetTracks` field is removed. This computed bridge reads the migrated
+    //   source so the external reader KSMEPlayer.tracks(mediaType:) stays green (Forward may instead read
+    //   formatContext.assetTracks directly — resolved when KSMEPlayer.tracks migrates).
+    var assetTracks: [FFmpegAssetTrack] { formatContext?.assetTracks ?? [] }
+
+    public lazy var dynamicInfo = DynamicInfo {
+        toDictionary(nil) // ⚑ UNRESOLVED: base read self.formatCtx.pointee.metadata (removed field); FormatContext raw-ptr accessor pending
+    } bytesRead: {
+        0 // ⚑ UNRESOLVED: base read self.formatCtx.pointee.pb.pointee.bytes_read (removed field)
+    } audioBitrate: { [weak self] in
+        Int(8 * (self?.audioTrack?.bitrate ?? 0))
+    } videoBitrate: { [weak self] in
+        Int(8 * (self?.videoTrack?.bitrate ?? 0))
+    }
+    func send(_ p0: MEPlayerItem.Event) { fatalError("L7: MEPlayerItem.send — Forward body unread") }
+
+    // field 42 — after `$__lazy_storage_$_dynamicInfo` (41) in the field record.
+    // ⚑[tool=field_surface ref=MEPlayerItem.delegate result=forward index 42]
+    public weak var delegate: MEPlayerDelegate?
+
+    /// ⚑[tool=disassemble ref=MEPlayerItem.isReusable.getter:0x101a4b404 result=19-instr]
+    /// Same `state` load, then a five-way set-membership test in the shape the compiler uses for a
+    /// multi-case `switch`: four constants compared at once via `cmeq.4h` against the vector at
+    /// 0x1044ea360, plus the fifth as a scalar at +0x4. Those five bytes read `01 02 03 04 05`.
+    /// Against `MEPlayerItem.State` that is opening/ready/reading/seeking/paused — every state
+    /// between `.idle` and the terminal group, which is what makes the name coherent.
+    /// ⚑ The five happen to be contiguous, so a range test would compile to the same answer; the
+    /// binary emits an explicit five-way membership, so the switch form is written.
+    public var isReusable: Bool {
+        switch state {
+        case .opening, .ready, .reading, .seeking, .paused:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+// MARK: private functions
+
+extension MEPlayerItem {
+    // openAndFindStream() — the open/find/WIRE path (the read loop is readThread/reading). FAITHFUL-PARTIAL:
+    //   the interrupt closure + openFormatContext/FormatContext wiring + fileSize/duration/formatName/chapters
+    //   + the createCodec call are reconstructed; the leading KSLog, close/reset call, custom-AVIO install,
+    //   pbArray append, io.right AVIO path, and KSOptions rate×duration store are flagged // ⚑ UNRESOLVED.
+    // ⚑[tool=recover_swift_function_name ref=openAndFindStream:0x101a4d3d0 result=#function/throws/no-params]
+    private func openAndFindStream() throws {
+        KSLog("[MEPlayerItem] openAndFindStream", line: 627) // level 3 (.warning default), `2 < logLevel` gate; line 0x273
+        closeFormatContext() // 0x101a531fc @0x101a4d584
+
+        // ⚑ the binary does NOT project `io` here — it hands the WHOLE Either to openFormatContext:
+        //   `bl 0x10002e588` @0x101a4d5a8 copies `self.io` into a stack alloca, `mov x0,x26` @0x101a4d618 passes
+        //   the alloca pointer, and the throw path destroys it with the SAME cache/name pair
+        //   (0x1044e4778 / 0x103566d40 = Either<URL, AbstractAVIOContext>) @0x101a4d64c. The projection switch
+        //   that used to stand here is REMOVED — the projection lives inside openFormatContext.
+
+        // Interrupt callback — FAITHFUL. A `{ [weak self] }` closure (compiler HeapLocalVariable box, metadata
+        //   kind 0x400 — NOT a user class): abort blocking IO when self is gone, an interrupt was requested, or
+        //   state is terminal ((state & 0xfe)==8 ≡ .closed || .failed).
+        //   ⚑[tool=read_memory ref=weakSelfBox:0x1041d8340 result=HeapLocalVariable/[weak self]]
+        //   ⚑[tool=decompile ref=interruptTrampoline:0x101a534e0 result=self==nil||interrupt||terminal]
+        let interruptContext = IOInterruptContext { [weak self] in
+            guard let self else { return true }
+            if self.interrupt { return true }
+            return self.state == .closed || self.state == .failed
+        }
+
+        // ⚑ call site @0x101a4d630, arguments MEASURED @0x101a4d618-2c: `mov x0,x26`(the io copy),
+        //   `mov x1,x24`(the IOInterruptContext built at 0x101a4d610), `mov x2,x23`(self.options via field-offset
+        //   global 0x104c63690), `mov x3,#0`/`mov x4,#0`(inFormat nil), `mov x21,x25`(swifterror). NO d0 is set —
+        //   `time: 0` was the Ghidra `double param_1` phantom and is REMOVED.
+        //   ⚑[tool=llvm-objdump ref=openFormatContext:0x101a392a0 result=3-TUPLE-RETURN]
+        let (formatCtx, fileSize, ioContext) = try openFormatContext(io: io, interrupt: interruptContext,
+                                                                     options: options, inFormat: nil)
+
+        // FormatContext init. The former `duration: 0` argument is GONE — it satisfied a phantom
+        //   `double param_1` that Ghidra's default __swiftcall prototype prepends; the trie, the
+        //   prologue @0x101a350e8-fc and every call site all give five parameters, no `duration:`.
+        //   RESOLVED: the `fileSize: 0` / `ioContext: nil` placeholders are gone. The three returns are
+        //   destructured at 0x101a4d66c-74 (`mov x25,x0` / `mov x27,x1` / `mov x20,x2`).
+        let formatContext = FormatContext(formatCtx: formatCtx, fileSize: fileSize,
+                                          interrupt: interruptContext, ioContext: ioContext,
+                                          fontsDir: options.fontsDir)
+        self.formatContext = formatContext
+
+        // Custom-AVIO install (unconditional) — save + BOX the format context's default io_open/io_close2
+        //   into defaultIOOpen/defaultIOClose (each a Swift closure that captures the original C fn-ptr and
+        //   forwards to it — the compiler emits the boxed-closure thin entry, storing the captured fn-ptr in
+        //   the box), stash self in the format context's opaque, and install our two @convention(c) thunks
+        //   (ioOpen/ioClose are context-free statics → the compiler emits the matching adapters). The
+        //   AVFormatContext fields are accessed symbolically; `formatCtx` is the AVFormatContext* the
+        //   FormatContext wraps (== the openFormatContext local, stored at FormatContext+0x18). Order matches
+        //   the binary: box io_open → opaque=self → io_open thunk → box io_close2 → io_close2 thunk.
+        // ⚑[tool=decompile ref=customAVIOInstall:0x101a4d3d0 result=saves formatCtx.io_open@+0x1c0/io_close2@+0x1c8 (boxed→defaultIOOpen/Close), opaque@+0x1a0=self, installs the ioOpen/ioClose thunks]
+        // ⚑[tool=decompile ref=boxTrampolineOpen:0x101a5a0c4 result=io_open boxed-closure thin-entry: loads captured fn-ptr @box+0x10 and forwards]
+        // ⚑[tool=decompile ref=boxTrampolineClose:0x101a5a0bc result=io_close2 boxed-closure thin-entry]
+        // ⚑[tool=decompile ref=ioOpenThunk:0x101a53560 result=@convention(c) adapter the compiler emits for MEPlayerItem.ioOpen]
+        // ⚑[tool=decompile ref=ioCloseThunk:0x101a53924 result=@convention(c) adapter for MEPlayerItem.ioClose]
+        if let defaultOpen = formatCtx.pointee.io_open {
+            defaultIOOpen = { s, pb, url, flags, options in defaultOpen(s, pb, url, flags, options) }
+        } else {
+            defaultIOOpen = nil
+        }
+        formatCtx.pointee.opaque = Unmanaged.passUnretained(self).toOpaque()
+        formatCtx.pointee.io_open = ioOpen
+        if let defaultClose = formatCtx.pointee.io_close2 {
+            defaultIOClose = { s, pb in defaultClose(s, pb) }
+        } else {
+            defaultIOClose = nil
+        }
+        formatCtx.pointee.io_close2 = ioClose
+        // pbArray append + preload tuning (PBClass alloc 0x101a5a030; dynamicCast to PreLoadProtocol existential 0x1039ede48)
+        if let ioContext = formatContext.ioContext {
+            pbArray.append(PBClass(pb: formatCtx.pointee.pb))
+            if ioContext is PreLoadProtocol {
+                options.playbackTimeInterval = 0.02 // KSOptions+0x50 = 0x3f947ae147ae147b
+                options.seekUsePacketCache = false
+                options.formatContextOptions["cues_parsing_deferred"] = 0
+            }
+        }
+
+        options.formatName = formatContext.formatName        // String @+0x48 (DERIVED from iformat.name)
+        // Forward re-reads self.formatContext (optional, nil → 0) for these three reads.
+        self.fileSize = self.formatContext?.fileSize ?? 0     // +0x30
+        self.duration = self.formatContext?.duration ?? 0     // +0x28
+        if options.startPlayTimePercentage > 0 {              // KSOptions+0x38 → +0x30
+            options.startPlayTime = options.startPlayTimePercentage * (self.formatContext?.duration ?? 0)
+        }
+        self.chapters = formatContext.chapters()             // FormatContext.chapters() @0x101a362d0 (method, trie ...C8chaptersSayAA7ChapterVGyF)
+
+        //   ⚑[tool=get_xrefs_to ref=createCodec:0x101a53c44 result=argless]
+        createCodec()                                        // track-set builder (argless, reads self.formatContext; slice-1 reconstructed)
+    }
+
+    // FUN_101a531fc — callers openAndFindStream @0x101a4d584 and FUN_101a4cfe4. ⚑ name INFERRED.
+    //   Drops the top-level pb from pbArray, closes the FormatContext, then frees every remaining sub-context.
+    private func closeFormatContext() {
+        if let index = pbArray.firstIndex(where: { $0.pb == formatContext?.formatCtx.pointee.pb }) {
+            pbArray.remove(at: index)
+        }
+        formatContext?.close() // 0x101a3302c
+        formatContext = nil
+        for pbClass in pbArray {
+            if let pb = pbClass.pb {
+                if pb.pointee.buffer != nil {
+                    av_freep(&pb.pointee.buffer)
+                }
+                avio_context_free(&pbClass.pb)
+            }
+        }
+        pbArray = []
+    }
+
     // createCodec() = FUN_101a53c44 (~2145 lines w/ 3 inline closures FUN_101a556b0/36964/36cf0). ARGLESS —
     //   reads self.formatContext (the commit-1 `formatCtx:` param was the BASE signature; Forward is argless).
     //   Being reconstructed in SLICES (this body is too large/intricate for one reliable partial). SLICE 1 =
@@ -418,60 +448,9 @@ extension MEPlayerItem {
         audioTrack = nil
         videoAudioTracks = []
         allPlayerItemTracks.forEach { $0.shutdown() }   // witness+0x80 = PlayerItemTrackProtocol.shutdown()
-        guard let formatContext else { return }         // self.formatContext; nil → early return (no track build)
+        createSubtitleTracks() // FUN_101a556b0 @0x101a53db4, before the formatContext nil check
+        guard formatContext != nil else { return } // cbz @0x101a53dc4
 
-        // SLICE 2 (closure FUN_101a556b0): rebuild the subtitle tracks from formatContext.assetTracks. Every track
-        //   is disabled (track.isEnabled = false — the disable-all reset; slices 3/4 re-enable the selected
-        //   video/audio). The `discard` values the disasm writes (non-sub→ALL, image-sub→ALL, text-sub→DEFAULT) are
-        //   exactly what the isEnabled setter yields for newValue=false, so this IS `isEnabled = false`. For subtitle
-        //   tracks a SyncPlayerItemTrack<SubtitleFrame> is built: image subtitles share the single self.subtitleTrack
-        //   (frameCapacity 8, built once); text subtitles get a per-track one (frameCapacity 128). BOTH branches were
-        //   disasm-confirmed to build SyncPlayerItemTrack<SubtitleFrame> (metadata 0x10356ac50), which is why
-        //   track.subtitle (+0x100) is homogeneous. delegate = self is a weak assign (+0x40).
-        allPlayerItemTracks = []
-        for track in formatContext.assetTracks {
-            track.isEnabled = false
-            if track.mediaType == .subtitle {
-                if track.isImageSubtitle {
-                    if subtitleTrack == nil {
-                        // ⚑[tool=llvm-objdump ref=FUN_101a556b0:0x101a556b0 result=NO-CAP-8-CALL-SITE] This branch has
-                        //   NO counterpart in the closure it reconstructs: a BL scan of 0x101a556b0..0x101a55de4 finds
-                        //   exactly ONE track construction, 0x101a55918 (cap 128, the text branch below). So the
-                        //   comment above is wrong on two counts — this body builds no cap-8 track at all, and the
-                        //   image path elsewhere (subtitleAssetTrackMap 0x101a367b4) builds AsyncPlayerItemTrack, not
-                        //   Sync. `expanding: false` is taken from the analogous image path (w3=0 @0x101a367a8); it is
-                        //   NOT read from this function, which emits no such call. Re-deriving SLICE 2 is its own unit.
-                        let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options, expanding: false)
-                        allPlayerItemTracks.append(subtitle)    // append BEFORE delegate: the binary's append endAccess barrier (0x101a55a74) precedes the delegate weakAssign (0x101a55a88) — matches the text branch order
-                        subtitle.delegate = self
-                        subtitleTrack = subtitle
-                    }
-                    track.subtitle = subtitleTrack
-                } else {
-                    // `expanding: true` is binary-read: w3=1 @0x101a55914, the call at 0x101a55918.
-                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
-                    subtitle.delegate = self
-                    track.subtitle = subtitle
-                    allPlayerItemTracks.append(subtitle)
-                }
-            }
-        }
-        // ⚑ UNRESOLVED (SLICE 2 — the 2nd-pass embed-subtitle registration, Forward-ADDED): the subtitle
-        //   FFmpegAssetTracks are collected + cast to [any SubtitleInfo] (FFmpegAssetTrack: SubtitleInfo via
-        //   EmbedDataSouce.swift; conformance witness 0x1041d7668) and passed to a KSOptions method at
-        //   vtable[0x768], whose result gets a follow-on witness[+0x40](true) dispatch. That method is Forward-
-        //   added: absent from source AND the origin/forward base, and statically unresolvable (metadata slot
-        //   md+0x768 is an unbound pattern value 0x105395200 with no function).
-        //   ⚠️ NAMED (session 63) — the P43 negative above is REFUTED. It concluded "statically
-        //   unresolvable" from source ✗ / base ✗ / static metadata ✗; none of those three can see
-        //   the ORPHANED export trie, which carries exactly one KSOptions member taking a subtitle
-        //   track array:
-        //       KSPlayer.KSOptions.wantedSubtitle(tracks: [KSPlayer.SubtitleInfo]) -> KSPlayer.SubtitleInfo?
-        //   That signature matches this call site precisely: [any SubtitleInfo] in, an OPTIONAL out
-        //   feeding the follow-on witness[+0x40](true) dispatch. The body is still not reconstructed
-        //   — what changes is that the method is no longer nameless, and "absent from source AND the
-        //   origin/forward base" is now a Forward-ADDED method with a known signature.
-        // ⚑[tool=export_trie_oracle ref=KSOptions.wantedSubtitle(tracks:) result=NAMED — supersedes the get_function_by_address FAILED-SEARCH]
         // ⚑ UNRESOLVED (SLICE 3 — audio, closures FUN_101a36964/36cf0 + tail): audio sample-rate sampling
         //   (audioStreamBasicDescription) + max-reduction + the KSOptions.vtable[0x6f8] call + AudioPlayerItemTrack
         //   (FUN_101a383a8/33444) construction.
@@ -480,6 +459,36 @@ extension MEPlayerItem {
         // ⚑ UNRESOLVED (SLICE 5 — adaptation): videoAdaptation rebuild + naturalSize.
 
         isAudioStalled = false   // tail (@0x101a55d??): *(self + ::isAudioStalled) = 0, unconditional on the non-nil path
+    }
+
+    // FUN_101a556b0 — ⚑ name INVENTED. Reads the nil-tolerant `assetTracks` (twice). Every track is disabled;
+    //   image subtitles share one AsyncPlayerItemTrack (cap 8, init 0x101a3839c @0x101a55a0c, w3=0), text
+    //   subtitles are re-enabled (`str wzr,[stream,#0x44]` @0x101a558ec) and get a Sync track (cap 128, w3=1).
+    private func createSubtitleTracks() {
+        allPlayerItemTracks = []
+        for track in assetTracks {
+            track.isEnabled = false
+            if track.mediaType == .subtitle {
+                if track.isImageSubtitle {
+                    if subtitleTrack == nil {
+                        let subtitle = AsyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 8, options: options, expanding: false)
+                        allPlayerItemTracks.append(subtitle)
+                        subtitle.delegate = self
+                        subtitleTrack = subtitle
+                    }
+                    track.subtitle = subtitleTrack
+                } else {
+                    track.isEnabled = true
+                    let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 128, options: options, expanding: true)
+                    subtitle.delegate = self
+                    track.subtitle = subtitle
+                    allPlayerItemTracks.append(subtitle)
+                }
+            }
+        }
+        // 2nd pass: FUN_101aaf12c cast, KSOptions vtable+0x768 = wantedSubtitle(tracks:), witness +0x40 (isEnabled.set) w0=1
+        let subtitleInfos: [any SubtitleInfo] = assetTracks.filter { $0.mediaType == .subtitle }
+        options.wantedSubtitle(tracks: subtitleInfos)?.isEnabled = true
     }
 
     private func read() {
@@ -566,6 +575,47 @@ extension MEPlayerItem {
             return true
         }
         return formatContext.duration != 0.0
+    }
+
+    // MEPlayerItem.ResumeAction @0x1039ef7dc — raw values 0...3 in this order (resumeFromPreload returns, w21).
+    enum ResumeAction {
+        case waitForOpened
+        case resumeFromPaused
+        case readyImmediate
+        case cannotResume
+    }
+
+    // @0x101a4755c — called by KSPlayerLayer.replace(item:url:) @0x1019cba60.
+    func resumeFromPreload() -> ResumeAction {
+        guard isPreload else {
+            return .cannotResume
+        }
+        let action: ResumeAction
+        switch state {
+        case .opening:
+            action = .waitForOpened
+        case .ready, .reading, .seeking:
+            action = .readyImmediate
+        case .paused:
+            action = .resumeFromPaused
+        case .idle, .endOfStream, .finished, .closed, .failed:
+            isPreload = false
+            KSLog("[MEPlayerItem] resumeFromPreload: state=\(state) cannot resume", file: "KSPlayer/MEPlayerItem.swift", function: "resumeFromPreload()", line: 592)
+            return .cannotResume
+        }
+        isPreload = false
+        KSLog("[MEPlayerItem] resumeFromPreload: state=\(state), action=\(action)", file: "KSPlayer/MEPlayerItem.swift", function: "resumeFromPreload()", line: 595)
+        switch action {
+        case .resumeFromPaused:
+            allPlayerItemTracks.forEach { $0.decode() }
+            // ⚑ Forward sends event tag 3 through MEPlayerItem.send(_:) @0x101a48b04 (not declared); resume() stands in.
+            resume()
+        case .readyImmediate:
+            allPlayerItemTracks.forEach { $0.decode() }
+        default:
+            break
+        }
+        return action
     }
 
     public func prepareToPlay() {
@@ -710,7 +760,7 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             return nil
         }
         var type: ClockProcessType = force ? .next : .remain
-        let predicate: ((VideoVTBFrame, Int) -> Bool)? = force ? nil : { [weak self] frame, count -> Bool in
+        let predicate: ((VideoVTBFrame, UInt) -> Bool)? = force ? nil : { [weak self] frame, count -> Bool in
             guard let self else { return true }
             // DynamicInfo.audioVideoSyncDiff is Float in the binary (field record `Sf`), not Double, so
             // the base's one-line tuple assignment from the Double-returning videoClockSync has to spell
@@ -725,7 +775,8 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             let (syncDiff, syncType) = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
             self.dynamicInfo.audioVideoSyncDiff = Float(syncDiff)
             type = syncType
-            return type != .remain
+            if case .remain = type { return false } // was `type != .remain`; payload case drops synthesized ==
+            return true
         }
         let frame = videoTrack.getOutputRender(where: predicate)
         switch type {
@@ -733,7 +784,9 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             break
         case .next:
             break
-        case .dropNextFrame:
+        case .empty: // L7: Forward's .empty handling unread; no source producer yet
+            break
+        case .dropFrame: // L7: Forward drops `count` frames; body still drops one
             if videoTrack.getOutputRender(where: nil) != nil {
                 dynamicInfo.droppedVideoFrameCount += 1
             }
@@ -744,15 +797,6 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
         case .seek:
             videoTrack.outputRenderQueue.flush()
             videoTrack.seekTime = mainClock().time.seconds
-        case .dropNextPacket:
-            if let videoTrack = videoTrack as? AsyncPlayerItemTrack {
-                let packet = videoTrack.packetQueue.pop { item, _ -> Bool in
-                    !item.isKeyFrame
-                }
-                if packet != nil {
-                    dynamicInfo.droppedVideoPacketCount += 1
-                }
-            }
         case .dropGOPPacket:
             if let videoTrack = videoTrack as? AsyncPlayerItemTrack {
                 var packet: Packet? = nil
@@ -873,7 +917,7 @@ private func ioClose(_ s: UnsafeMutablePointer<AVFormatContext>?,
 //   flagged (l2 UNCHECKED, non-blocking; the prePosition residue pattern). Construction is inlined in
 //   openAndFindStream (the pbArray-append arm, itself deferred): +0x10=pb, +0x18=0, +0x20=0.
 // ⚑[tool=dump_binary_field_types ref=PBClass:0x1044ea688 result=pb/_bytesRead/add]
-private final class PBClass {
+private class PBClass {
     var pb: UnsafeMutablePointer<AVIOContext>?   // +0x10 — fieldmd concrete
     var _bytesRead: Int64 = 0                    // +0x18 ⚑ UNRESOLVED type: fieldmd-unmapped; 0-init byte counter (incremented in the deferred custom-AVIO read cb); Int64 defensible, precise type pending that arm
     var add: Int64 = 0                           // +0x20 ⚑ UNRESOLVED type: fieldmd-unmapped; 0-init single word (name "add"); used only in the deferred custom-AVIO path — placeholder pending that arm
@@ -964,5 +1008,17 @@ extension AbstractAVIOContext {
         // FFmpeg-token check false-positives on the field name here (scoped bypass, see commit note).
         context?.pointee.av_class = withUnsafeMutablePointer(to: &Self.avClass) { UnsafePointer($0) }
         return context
+    }
+}
+
+// MEPlayerItem.Event @0x1039ef7f8 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: fwd_file (MEPlayerItem.swift).
+// ⚑[tool=type_surface ref=MEPlayerItem.Event:0x1039ef7f8 result=enum Event]
+extension MEPlayerItem {
+    enum Event {
+        case seek(to: Double, useCache: Bool, completion: (@Sendable (Bool) -> ())?)
+        case trackFinished(CapacityProtocol)
+        case failed(Error)
+        case open, startReading, startDecode, pause, resume, endOfStream, close, opened
     }
 }

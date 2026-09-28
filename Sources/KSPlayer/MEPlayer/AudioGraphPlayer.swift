@@ -19,7 +19,7 @@ import AudioToolbox
 import AVFAudio
 import CoreAudio
 
-public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProcessor {
+public final class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProcessor {
     public private(set) var audioUnitForDynamicsProcessor: AudioUnit
     private let graph: AUGraph
     // ⚑ s105 IUO ALIGNMENT. These were `AudioUnit!`. The l2 gate reads the binary record as
@@ -48,21 +48,6 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
 
     public func pause() {
         AUGraphStop(graph)
-    }
-
-    /// ⚑ 0x101a11138 — the full AUGraph teardown, in this order. The body loads ONE field and
-    /// passes it to three calls plus a tail-call; `graph` is this class's only `AUGraph`-typed
-    /// field, so the operand is forced by TYPE rather than inferred from its +0x58 offset.
-    /// Each callee is a lazy stub through __got, named from the dyld chained-fixup bind table:
-    /// ⚑[tool=bind_oracle ref=AUGraphStop:0x10410ace8 result=AudioToolbox]
-    /// ⚑[tool=bind_oracle ref=AUGraphUninitialize:0x10410acf0 result=AudioToolbox]
-    /// ⚑[tool=bind_oracle ref=AUGraphClose:0x10410acb8 result=AudioToolbox]
-    /// ⚑[tool=bind_oracle ref=DisposeAUGraph:0x10410ad90 result=AudioToolbox]
-    public func invalidate() {
-        AUGraphStop(graph)
-        AUGraphUninitialize(graph)
-        AUGraphClose(graph)
-        DisposeAUGraph(graph)
     }
 
     public var playbackRate: Float {
@@ -267,6 +252,21 @@ public class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamicsProces
     // flush() is NOT overridden: FrameOutput requirement 2 resolves to the inherited
     // AudioBaseOutput.flush @0x101a117b0.
     public func stop() {
+        AUGraphStop(graph)
+        AUGraphUninitialize(graph)
+        AUGraphClose(graph)
+        DisposeAUGraph(graph)
+    }
+
+    /// ⚑ 0x101a11138 — the full AUGraph teardown, in this order. The body loads ONE field and
+    /// passes it to three calls plus a tail-call; `graph` is this class's only `AUGraph`-typed
+    /// field, so the operand is forced by TYPE rather than inferred from its +0x58 offset.
+    /// Each callee is a lazy stub through __got, named from the dyld chained-fixup bind table:
+    /// ⚑[tool=bind_oracle ref=AUGraphStop:0x10410ace8 result=AudioToolbox]
+    /// ⚑[tool=bind_oracle ref=AUGraphUninitialize:0x10410acf0 result=AudioToolbox]
+    /// ⚑[tool=bind_oracle ref=AUGraphClose:0x10410acb8 result=AudioToolbox]
+    /// ⚑[tool=bind_oracle ref=DisposeAUGraph:0x10410ad90 result=AudioToolbox]
+    public func invalidate() {
         AUGraphStop(graph)
         AUGraphUninitialize(graph)
         AUGraphClose(graph)

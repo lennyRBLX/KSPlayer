@@ -40,7 +40,7 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     let mediaType: AVFoundation.AVMediaType
     let outputRenderQueue: CircularBuffer<Frame>
     var isLoopModel = false
-    var frameCount: Int { outputRenderQueue.count }
+    var frameCount: Int { Int(outputRenderQueue.count) }
     var frameMaxCount: Int {
         Int(outputRenderQueue.maxCount)
     }
@@ -103,7 +103,7 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         }
     }
 
-    func getOutputRender(where predicate: ((Frame, Int) -> Bool)?) -> Frame? {
+    func getOutputRender(where predicate: ((Frame, UInt) -> Bool)?) -> Frame? {
         let outputFecthRender = outputRenderQueue.pop(where: predicate)
         if outputFecthRender == nil {
             if state == .finished, frameCount == 0 {
@@ -121,17 +121,18 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         outputRenderQueue.shutdown()
     }
 
-    private var lastPacketBytes = Int32(0)
+    // ⚑[tool=field_surface ref=SyncPlayerItemTrack.lastPacketBytes:idx10 result=Int64]
+    private var lastPacketBytes = Int64(0)
     private var lastPacketSeconds = Double(-1)
     // Forward-added stored field, every part binary-read: __swift5_fieldmd names it and places it here, between
     // lastPacketSeconds and bitrate (field 13 of 14, `var Sb`), and the init @0x101a33460 seeds it with
     // `strb wzr, [x20, #0x78]` @0x101a3853c-analogue — i.e. false. Its READER is not reconstructed yet; the
     // related `CircularBuffer.seek(seconds:needKeyFrame:)` in the trie is the likely consumer, its own unit.
     var isNeedKeyFrame = false
-    // ⚑ `bitrate` is `Swift.Int` in __swift5_fieldmd (field 14, `var Si`), not the `Double` spelled here. The init's
-    //   `str xzr, [x20, #0x80]` cannot discriminate the two (both are 8 zero bytes), and doDecode's arithmetic below
-    //   is the body that would settle it — left as recorded type debt, its own unit.
-    var bitrate = Double(0)
+    // ⚑[tool=field_surface ref=SyncPlayerItemTrack.bitrate:idx13 result=Int] `Swift.Int` in __swift5_fieldmd;
+    //   the init's `str xzr, [x20, #0x80]` is the zero. doDecode's conversions below follow the type; that
+    //   body's exact arithmetic is its own unit.
+    var bitrate = 0
     // THE PACKET IS UNWRAPPED ONCE, AT THE TOP, AND THE RAW POINTER IS WHAT REACHES THE DECODER.
     // `decodeFrame` takes `UnsafeMutablePointer<AVPacket>` in Forward, not `Packet` — see the
     // DecodeProtocol requirement below — so `corePacket` has to be non-optional before the call.
@@ -160,12 +161,12 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                 lastPacketBytes = 0
                 lastPacketSeconds = seconds
             } else if diff > 1 {
-                bitrate = Double(lastPacketBytes) / diff
+                bitrate = Int(Double(lastPacketBytes) / diff)
                 lastPacketBytes = 0
                 lastPacketSeconds = seconds
             }
         }
-        lastPacketBytes += packet.size
+        lastPacketBytes += Int64(packet.size)
         let decoder = decoderMap.value(for: packet.assetTrack!.trackID, default: makeDecode(assetTrack: packet.assetTrack!))
 //        var startTime = CACurrentMediaTime()
         decoder.decodeFrame(from: corePacket) { [weak self] result in
@@ -217,11 +218,13 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
 
 final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     private let operationQueue = OperationQueue()
-    private var decodeOperation: BlockOperation!
+    // ⚑[tool=field_surface ref=AsyncPlayerItemTrack.decodeTask:idx1 result=NSBlockOperation?] Forward's
+    //   record names this field `decodeTask` (was `decodeOperation`); `!` and `?` mangle alike.
+    private var decodeTask: BlockOperation!
     // 无缝播放使用的PacketQueue
     private var loopPacketQueue: CircularBuffer<Packet>?
     var packetQueue = CircularBuffer<Packet>()
-    override var packetCount: Int { packetQueue.count }
+    override var packetCount: Int { Int(packetQueue.count) }
     override var isLoopModel: Bool {
         didSet {
             if isLoopModel {
@@ -232,7 +235,7 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
                     packetQueue.shutdown()
                     packetQueue = loopPacketQueue
                     self.loopPacketQueue = nil
-                    if decodeOperation.isFinished {
+                    if decodeTask.isFinished {
                         decode()
                     }
                 }
@@ -267,22 +270,22 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     override func decode() {
         isEndOfFile = false
         guard operationQueue.operationCount == 0 else { return }
-        decodeOperation = BlockOperation { [weak self] in
+        decodeTask = BlockOperation { [weak self] in
             guard let self else { return }
             Thread.current.name = self.operationQueue.name
             Thread.current.stackSize = KSOptions.stackSize
             self.decodeThread()
         }
-        decodeOperation.queuePriority = .veryHigh
-        decodeOperation.qualityOfService = .userInteractive
-        operationQueue.addOperation(decodeOperation)
+        decodeTask.queuePriority = .veryHigh
+        decodeTask.qualityOfService = .userInteractive
+        operationQueue.addOperation(decodeTask)
     }
 
     private func decodeThread() {
         state = .decoding
         isEndOfFile = false
         decoderMap.values.forEach { $0.decode() }
-        outerLoop: while !decodeOperation.isCancelled {
+        outerLoop: while !decodeTask.isCancelled {
             switch state {
             case .idle:
                 break outerLoop
@@ -309,7 +312,7 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     }
 
     override func seek(time: TimeInterval) {
-        if decodeOperation.isFinished {
+        if decodeTask.isFinished {
             decode()
         }
         packetQueue.flush()
@@ -323,18 +326,6 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
         }
         super.shutdown()
         packetQueue.shutdown()
-    }
-}
-
-public extension Dictionary {
-    mutating func value(for key: Key, default defaultValue: @autoclosure () -> Value) -> Value {
-        if let value = self[key] {
-            return value
-        } else {
-            let value = defaultValue()
-            self[key] = value
-            return value
-        }
     }
 }
 
@@ -367,9 +358,9 @@ extension SyncPlayerItemTrack {
                 return SubtitleDecode(assetTrack: assetTrack, options: options)
             } else {
                 if mediaType == .video, options.asynchronousDecompression, options.hardwareDecode,
-                   let session = DecompressionSession(assetTrack: assetTrack, options: options)
+                   let decode = VideoToolboxDecode(assetTrack: assetTrack, options: options, asynchronous: true)
                 {
-                    return VideoToolboxDecode(options: options, session: session)
+                    return decode
                 } else {
                     return FFmpegDecode(assetTrack: assetTrack, options: options)
                 }

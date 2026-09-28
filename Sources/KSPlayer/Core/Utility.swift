@@ -8,6 +8,8 @@
 import AVFoundation
 import CryptoKit
 import SwiftUI
+import Dispatch
+import Foundation
 
 #if canImport(UIKit)
 import UIKit
@@ -17,30 +19,8 @@ import AppKit
 #if canImport(MobileCoreServices)
 import MobileCoreServices.UTType
 #endif
-open class LayerContainerView: UIView {
-    #if canImport(UIKit)
-    override open class var layerClass: AnyClass {
-        CAGradientLayer.self
-    }
-    #else
-    override public init(frame: CGRect) {
-        super.init(frame: frame)
-        layer = CAGradientLayer()
-    }
 
-    @available(*, unavailable)
-    public required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    #endif
-    public var gradientLayer: CAGradientLayer {
-        // swiftlint:disable force_cast
-        layer as! CAGradientLayer
-        // swiftlint:enable force_cast
-    }
-}
-
-class GIFCreator {
+final class GIFCreator {
     private let destination: CGImageDestination
     private let frameProperties: CFDictionary
     private(set) var firstImage: UIImage?
@@ -120,6 +100,11 @@ public extension UIColor {
             return nil
         }
     }
+    convenience public init(bgr: Int, alpha: CGFloat) { fatalError("L7: UIColor.init — Forward body unread") }
+    public var abgr: Int { fatalError("L7: UIColor.abgr — Forward body unread") }
+    public var assColor: String { fatalError("L7: UIColor.assColor — Forward body unread") }
+    public var data: Data { fatalError("L7: UIColor.data — Forward body unread") }
+    convenience public init?(data: Data) { fatalError("L7: UIColor.init — Forward body unread") }
 
     convenience init(abgr hex: Int) {
         let alpha = 1 - (CGFloat(hex >> 24 & 0xFF) / 255)
@@ -157,7 +142,7 @@ public extension UIColor {
 }
 
 extension AVAsset {
-    public func generateGIF(beginTime: TimeInterval, endTime: TimeInterval, interval: Double = 0.2, savePath: URL, progress: @escaping (Double) -> Void, completion: @escaping (Error?) -> Void) {
+    public func generateGIF(beginTime: TimeInterval, endTime: TimeInterval, interval: Double = 0.2, savePath: URL, progress: @escaping (Double) -> Void, completion: @escaping @Sendable (Error?) -> Void) { // ⚑[tool=member_surface ref=AVAsset.generateGIF:0x1019e5948 result=completion Yb @Sendable; no swift_task_*/ScM call]
         let count = Int(ceil((endTime - beginTime) / interval))
         let timesM = (0 ..< count).map { NSValue(time: CMTime(seconds: beginTime + Double($0) * interval)) }
         let imageGenerator = createImageGenerator()
@@ -334,7 +319,7 @@ extension CGPoint {
 
 extension CGSize {
     var reverse: CGSize {
-        CGSize(width: height, height: width)
+        @used get { CGSize(width: height, height: width) }
     }
 
     var toPoint: CGPoint {
@@ -343,6 +328,14 @@ extension CGSize {
 
     var isHorizonal: Bool {
         width > height
+    }
+}
+
+// Forward 0x1019e76c4 `CGSize.string.getter`: Int(width) + "x" + Int(height) (trapping Int
+// conversions). Callers: IOSVideoPlayerView.getVideoMeta() and ProAVPlayer 0x101b6c180.
+public extension CGSize {
+    var string: String {
+        "\(Int(width))x\(Int(height))"
     }
 }
 
@@ -373,6 +366,277 @@ public func runOnMainThread(block: @escaping @MainActor @Sendable () -> Void) {
     }
 }
 
+/// Allows to "box" another value.
+final class Box<T> {
+    let value: T
+
+    init(_ value: T) {
+        self.value = value
+    }
+}
+
+extension Array {
+    init(tuple: (Element, Element, Element, Element, Element, Element, Element, Element)) {
+        self.init([tuple.0, tuple.1, tuple.2, tuple.3, tuple.4, tuple.5, tuple.6, tuple.7])
+    }
+
+    init(tuple: (Element, Element, Element, Element)) {
+        self.init([tuple.0, tuple.1, tuple.2, tuple.3])
+    }
+
+    var tuple8: (Element, Element, Element, Element, Element, Element, Element, Element) {
+        (self[0], self[1], self[2], self[3], self[4], self[5], self[6], self[7])
+    }
+
+    var tuple4: (Element, Element, Element, Element) {
+        (self[0], self[1], self[2], self[3])
+    }
+
+    // 归并排序才是稳定排序。系统默认是快排
+    func mergeSortBottomUp(isOrderedBefore: (Element, Element) -> Bool) -> [Element] {
+        let n = count
+        var z = [self, self] // the two working arrays
+        var d = 0 // z[d] is used for reading, z[1 - d] for writing
+        var width = 1
+        while width < n {
+            var i = 0
+            while i < n {
+                var j = i
+                var l = i
+                var r = i + width
+
+                let lmax = Swift.min(l + width, n)
+                let rmax = Swift.min(r + width, n)
+
+                while l < lmax, r < rmax {
+                    if isOrderedBefore(z[d][l], z[d][r]) {
+                        z[1 - d][j] = z[d][l]
+                        l += 1
+                    } else {
+                        z[1 - d][j] = z[d][r]
+                        r += 1
+                    }
+                    j += 1
+                }
+                while l < lmax {
+                    z[1 - d][j] = z[d][l]
+                    j += 1
+                    l += 1
+                }
+                while r < rmax {
+                    z[1 - d][j] = z[d][r]
+                    j += 1
+                    r += 1
+                }
+
+                i += width * 2
+            }
+
+            width *= 2 // in each step, the subarray to merge becomes larger
+            d = 1 - d // swap active array
+        }
+        return z[d]
+    }
+}
+
+//  Binary-faithful reconstruction (Forward 1.3.17, KSPlayer module).
+//  Fires on HLS-segment directory changes; consumed later by HLSCacheIOContext.
+//  Provenance / scope (honest 5-of-9 vtable coverage):
+//    - `DirectoryWatcher` is a Swift `actor` — slot-4 init calls
+//      `_swift_defaultActor_initialize()` (the executor-init the compiler
+//      synthesizes for `actor`); we declare `actor` and do NOT emit that call
+//      or the `$defaultActor` ivar ourselves.
+//    - ONE real stored field: `source` @ +0x70 (binary __swift5_fieldmd, after
+//      filtering the synthesized actor-executor ivar). Type taken from the
+//      makeFileSystemObjectSource call in slots 5/6 (the binary wins; its
+//      property descriptor is stripped → l2_field_gate marks it UNCHECKED).
+//    - Slots 0–2 are `source`'s getter/setter/read accessors — SYNTHESIZED by
+//      declaring the stored `var source`; nothing is written for them.
+//    - Slots 3 (isWatching), 4 (init), 7 (stop) are small + fully reconstructed.
+//    - Slots 5 & 6 are substantive (379 / 434 instr): the observable SPINE
+//      (open → makeFileSystemObjectSource(eventMask:) → setEventHandler /
+//      setCancelHandler → activate → store source) is reconstructed faithfully;
+//      the event/cancel-handler CLOSURE INTERNALS are not cleanly recoverable
+//      from the decompile and are left `// UNRESOLVED` with compiling stubs
+//      (fabricating 379 instr of closure logic is the cardinal failure).
+//    - All method NAMES are INFERRED — every slot is devirtualized (no symbols).
+//      ⚠️ s97: FALSE for slot 3. The orphaned export trie names it outright —
+//      `$s8KSPlayer16DirectoryWatcherC10isWatchingSbvg` = DirectoryWatcher.isWatching.getter :
+//      Swift.Bool, one symbol at 0x101a04e10, not folded. The blanket "no symbols" claim came from
+//      a tool that cannot see that trie; re-check the other slots against it before trusting them.
+//    - Slot 8 is UNRESOLVED (null descriptor address) — declared as nothing.
+// UNRESOLVED slot 8 @descriptor 0x1039ee53c — devirtualized; follow-callees later.
+/// Watches an HLS-segment directory (or a not-yet-existing file's container)
+/// via a `DispatchSource` file-system-object source, firing a caller-supplied
+/// handler on `.write` / `.delete` events.
+///
+/// `actor` (binary: init calls `_swift_defaultActor_initialize`). Mangled
+/// `_TtC8KSPlayer16DirectoryWatcher`. Method names below are INFERRED — the
+/// vtable is devirtualized so no symbol survives.
+// P3b: `public` — the Forward-new ProAVPlayer module (a separate SPM target) references this type
+// cross-module (RemuxerIOAction/ConversionInfo hold a `directoryWatcher: DirectoryWatcher` field;
+// field-record symref → KSPlayer.DirectoryWatcher desc 0x1039ee53c). A separate target can only see a
+// public type, so Forward made it public. Type-level public suffices (members stay internal until M2).
+public actor DirectoryWatcher {
+    // FAITHFUL field (binary __swift5_fieldmd @ +0x70). Built by
+    // `DispatchSource.makeFileSystemObjectSource(...)` in slots 5/6, whose static
+    // return type is `any DispatchSourceFileSystemObject` → declared as such.
+    // (Accessors = vtable slots 0–2, synthesized by this stored `var`.)
+    var source: DispatchSourceFileSystemObject?   // @ +0x70
+
+    // MARK: idx3 slot15 @0x101a04e10 — isWatching (4 instr) · name RECOVERED, not inferred (s97)
+    // ⚑[tool=export_trie_oracle ref=KSPlayer.DirectoryWatcher.isWatching:0x101a04e10 result=name-recovered]
+
+    /// `true` while a source is installed. Binary: `return *(self+0x70) != 0`.
+    public var isWatching: Bool {
+        return source != nil
+    }
+
+    // MARK: slot 4 @0x101a04e20 — init() (14 instr)
+
+    /// Parameter-less designated init. Body sets `source = nil` only; the
+    /// `_swift_defaultActor_initialize()` the binary emits here is the
+    /// compiler-synthesized actor executor setup — NOT written by hand.
+    public init() {                              // public (was internal, P34): ConversionInfo (ProAVPlayer) constructs it cross-module
+        source = nil                              // *(self+0x70) = 0
+    }
+
+    // MARK: slot 5 @0x101a04e78 — watchModify(fileURL:completion:) (379 instr) · name RECOVERED (s109)
+
+    /// Watches `fileURL`'s own path.
+    ///
+    /// ⚑ s109 RENAME + RE-SIGNATURE. This was `startWatching(url:handler:qos:)`, self-declared
+    /// "name inferred" with labels "inferred (no symbol)". The trie names 0x101a04e78
+    /// `KSPlayer.DirectoryWatcher.watchModify(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ())`
+    /// — so the name, both labels, the completion's `Bool` parameter, and the ARITY were all wrong.
+    /// The old third parameter `qos: DispatchQoS` did not exist: the note above admitted it came
+    /// from decompiler `param_3`, but the demangled signature takes two parameters and the
+    /// `DispatchQoS` in the body is the argument to `DispatchQueue.global(qos:)`, not an input.
+    @used package func watchModify(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
+        // Tear down any existing source first (identical to stop()'s body —
+        // binary inlines it at the top: cancel live source, then *(self+0x70)=0).
+        source?.cancel()
+        source = nil
+
+        // open(fileURL.path.utf8CString, O_EVTONLY)  — 0x8000 == O_EVTONLY.
+        let fd = fileURL.path.withCString { open($0, O_EVTONLY) }
+        guard fd >= 0, source == nil else { return }     // (-1 < fd) && *(self+0x70)==0
+
+        // queue = DispatchQueue.global(qos: .default)  (binary: global(QoSClass.default))
+        let queue = DispatchQueue.global(qos: .default)
+        // makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write,.delete], queue: queue)
+        // eventMask = [.write, .delete]  (binary: _get_delete + _get_write → SetAlgebra.init)
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write, .delete], queue: queue
+        )
+
+        // setEventHandler — the block @0x101a06254 is an 18-instruction partial-apply forwarder
+        // (it recomputes the URL's size/alignment off the value witness to locate the captures)
+        // onto the real body @0x101a05464. That body is READ: NSFileManager `defaultManager`,
+        // `URL.path.getter`, `String._bridgeToObjectiveC`, then `fileExistsAtPath:` — and its BOOL
+        // result is passed straight to the completion (`mov x0, <result>` then `blr` the callback).
+        // ⚑ UNRESOLVED: after the completion call the body builds a weak-self box and a 40-byte
+        //   context and creates a Task through the shared specialization 0x101a03fd4
+        //   (async function pointer 0x1035697f0). That trailing task is not reconstructed.
+        // ⚑[tool=bind_oracle ref=_OBJC_CLASS_$_NSFileManager:0x104410520 result=Foundation]
+        source.setEventHandler {
+            completion(FileManager.default.fileExists(atPath: fileURL.path))
+        }
+        // setCancelHandler { ... }  — second closure (capturing handler/qos/fd),
+        // __Block_copy + _setCancelHandler. Cancel handlers for an fs source
+        // conventionally close(fd).
+        // UNRESOLVED slot 5 cancel-handler body @0x101a063ec —
+        // closure internals not faithfully recoverable.
+        source.setCancelHandler {
+            close(fd)   // stub: balance the opened descriptor on cancel
+        }
+
+        source.activate()                          // OS_dispatch_source.activate()
+        self.source = source                       // *(self+0x70) = source; release old
+    }
+
+    // MARK: slot 6 @0x101a0578c — watchNew(fileURL:completion:) (434 instr) · name RECOVERED (s109)
+
+    /// Watches the CONTAINER of `url` (its parent directory) — used to detect a
+    /// not-yet-existing file appearing. Distinct vtable slot → a SECOND method.
+    /// Same spine as `watchModify(fileURL:completion:)` but it derives the path
+    /// via `url.deletingLastPathComponent().path` (keeping `lastPathComponent`)
+    /// and the eventMask is `[.write]` ONLY (the decompile calls `_get_write`
+    /// but NOT `_get_delete`, unlike slot 5).
+    /// ⚑ s109 RENAME + RE-SIGNATURE, same as slot 5. The trie names 0x101a0578c
+    /// `KSPlayer.DirectoryWatcher.watchNew(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ())`.
+    /// Name, labels, completion type and arity were all inferred and all wrong; there is no
+    /// `qos:` parameter.
+    @used func watchNew(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
+        // Tear down any existing source first (inlined cancel + clear).
+        source?.cancel()
+        source = nil
+
+        // lastPathComponent is captured (binary: get_lastPathComponent → SVar32,
+        // retained across the call); the watched path is the parent directory.
+        let lastPathComponent = fileURL.lastPathComponent
+        let parent = fileURL.deletingLastPathComponent()   // URL.deletingLastPathComponent()
+
+        // open(parent.path.utf8CString, O_EVTONLY)
+        let fd = parent.path.withCString { open($0, O_EVTONLY) }
+        guard fd >= 0, source == nil else { return }       // fd<0 → cleanup+return; else needs *(self+0x70)==0
+
+        let queue = DispatchQueue.global(qos: .default)
+        // eventMask = [.write]  (binary slot 6: only _get_write — no _get_delete)
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write], queue: queue
+        )
+
+        // setEventHandler — block @0x101a06364 forwards to the real body @0x101a05e54, which IS
+        // read and differs from slot 5's in exactly one way that matters. It rebuilds the watched
+        // file's path with `URL.appendingPathComponent` from the captured `lastPathComponent`,
+        // runs the same NSFileManager `defaultManager` / `fileExistsAtPath:` check, and then
+        // `cbz w20` — on NOT-exists it skips the callback entirely; only the exists path reaches
+        // `mov w0, #1` and the `blr`. So this one fires ONLY when the file appears, and always
+        // with `true`, where slot 5 passes the check's result through.
+        // ⚑[tool=bind_oracle ref=Foundation.URL.appendingPathComponent:0x104109a70 result=appendingPathComponent]
+        source.setEventHandler {
+            if FileManager.default.fileExists(atPath: parent.appendingPathComponent(lastPathComponent).path) {
+                completion(true)
+            }
+        }
+        // setCancelHandler { ... } — second closure (handler/qos/fd).
+        // UNRESOLVED slot 6 cancel-handler body @0x101a063ec —
+        // closure internals not faithfully recoverable.
+        source.setCancelHandler {
+            close(fd)   // stub: balance the opened descriptor on cancel
+        }
+
+        source.activate()                          // OS_dispatch_source.activate()
+        self.source = source                       // *(self+0x70) = source; release old
+    }
+
+    // MARK: slot 7 @0x101a06150 — stop (24 instr) · name inferred
+
+    /// Cancels the installed source and clears it. Binary: if `source != nil`
+    /// → retain, `OS_dispatch_source.cancel()`, release; then `source = nil`.
+    // ⚑ s105 RENAME: was `stop()`, self-declared "name inferred". The trie names
+    // 0x101a06150 `cancel()` and carries exactly ONE symbol there, and no `stop` symbol
+    // exists on this class. Body unchanged — only the name was invented.
+    // ⚑[tool=export_trie_oracle ref=DirectoryWatcher.cancel:0x101a06150 result=name-recovered]
+    @used func cancel() {
+        source?.cancel()                          // guarded cancel on the live source
+        source = nil                              // *(self+0x70) = 0; release old
+    }
+}
+
+public extension Dictionary {
+    mutating func value(for key: Key, default defaultValue: @autoclosure () -> Value) -> Value {
+        if let value = self[key] {
+            return value
+        } else {
+            let value = defaultValue()
+            self[key] = value
+            return value
+        }
+    }
+}
+
 public extension URL {
     var isMovie: Bool {
         if let typeID = try? resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier as CFString? {
@@ -397,6 +661,63 @@ public extension URL {
     var isPlaylist: Bool {
         ["cue", "m3u", "pls"].contains(pathExtension.lowercased())
     }
+
+    func parsePlaylist() async throws -> [(String, URL, [String: String])] {
+        let data = try await data()
+        var entrys = data.parsePlaylist()
+        for i in 0 ..< entrys.count {
+            var entry = entrys[i]
+            if entry.1.path.hasPrefix("./") {
+                entry.1 = deletingLastPathComponent().appendingPathComponent(entry.1.path).standardized
+                entrys[i] = entry
+            }
+        }
+        return entrys
+    }
+
+    func data(userAgent: String? = nil) async throws -> Data {
+        if isFileURL {
+            return try Data(contentsOf: self)
+        } else {
+            var request = URLRequest(url: self)
+            if let userAgent {
+                request.addValue(userAgent, forHTTPHeaderField: "User-Agent")
+            }
+            let (data, _) = try await URLSession.shared.data(for: request)
+            return data
+        }
+    }
+    public func string(userAgent: String?, encoding: String.Encoding?) async throws -> String? { fatalError("L7: URL.string — Forward body unread") }
+
+    // ⚑[tool=member_surface ref=URL.download:0x1019f457c result=completion Yb @Sendable; no swift_task_*/ScM call]
+    func download(userAgent: String? = nil, completion: @escaping @Sendable (String, URL) -> Void) {
+        var request = URLRequest(url: self)
+        if let userAgent {
+            request.addValue(userAgent, forHTTPHeaderField: "User-Agent")
+        }
+        let task = URLSession.shared.downloadTask(with: request) { url, response, _ in
+            guard let url, let response else {
+                return
+            }
+            // 下载的临时文件要马上就用。不然可能会马上被清空
+            completion(response.suggestedFilename ?? url.lastPathComponent, url)
+        }
+        task.resume()
+    }
+
+    func relativePath(base: URL) -> String {
+        guard scheme == base.scheme, host == base.host else {
+            return path
+        }
+        let baseComponents = base.standardized.pathComponents
+        let components = standardized.pathComponents
+        var i = 0
+        while i < baseComponents.count, i < components.count, baseComponents[i] == components[i] {
+            i += 1
+        }
+        return components[i...].joined(separator: "/")
+    }
+    public func parseSubtitle(userAgent: String?, encoding: String.Encoding?) async throws -> (KSSubtitleProtocol, SubtitleRenderMode) { fatalError("L7: URL.parseSubtitle — Forward body unread") }
 
     // The string Forward hands to FFmpeg for a URL. 232 B / 58 instr @0x1019f59c4.
     // ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=public-get-only]
@@ -431,47 +752,6 @@ public extension URL {
             return string.removingPercentEncoding ?? string
         }
         return string
-    }
-
-    func parsePlaylist() async throws -> [(String, URL, [String: String])] {
-        let data = try await data()
-        var entrys = data.parsePlaylist()
-        for i in 0 ..< entrys.count {
-            var entry = entrys[i]
-            if entry.1.path.hasPrefix("./") {
-                entry.1 = deletingLastPathComponent().appendingPathComponent(entry.1.path).standardized
-                entrys[i] = entry
-            }
-        }
-        return entrys
-    }
-
-    func data(userAgent: String? = nil) async throws -> Data {
-        if isFileURL {
-            return try Data(contentsOf: self)
-        } else {
-            var request = URLRequest(url: self)
-            if let userAgent {
-                request.addValue(userAgent, forHTTPHeaderField: "User-Agent")
-            }
-            let (data, _) = try await URLSession.shared.data(for: request)
-            return data
-        }
-    }
-
-    func download(userAgent: String? = nil, completion: @escaping ((String, URL) -> Void)) {
-        var request = URLRequest(url: self)
-        if let userAgent {
-            request.addValue(userAgent, forHTTPHeaderField: "User-Agent")
-        }
-        let task = URLSession.shared.downloadTask(with: request) { url, response, _ in
-            guard let url, let response else {
-                return
-            }
-            // 下载的临时文件要马上就用。不然可能会马上被清空
-            completion(response.suggestedFilename ?? url.lastPathComponent, url)
-        }
-        task.resume()
     }
 }
 
@@ -808,10 +1088,12 @@ extension URL: Identifiable {
 
 extension String: Identifiable {
     public var id: Self { self }
+    public var localeLanguageCode: String? { fatalError("L7: String.localeLanguageCode — Forward body unread") }
 }
 
 extension Float: Identifiable {
     public var id: Self { self }
+    @used func toString(for p0: TimeType) -> String { fatalError("L7: Float.toString — Forward body unread") }
 }
 
 public enum Either<Left, Right> {
@@ -819,80 +1101,22 @@ public enum Either<Left, Right> {
 }
 
 public extension Either {
+    internal var left: Left? { get { fatalError("L7: Either.left — Forward body unread") } }
     init(_ left: Left, or _: Right.Type) { self = .left(left) }
     init(_ left: Left) { self = .left(left) }
     init(_ right: Right) { self = .right(right) }
+    internal var right: Right? { get { fatalError("L7: Either.right — Forward body unread") } }
 }
 
-/// Allows to "box" another value.
-final class Box<T> {
-    let value: T
-
-    init(_ value: T) {
-        self.value = value
-    }
-}
-
-extension Array {
-    init(tuple: (Element, Element, Element, Element, Element, Element, Element, Element)) {
-        self.init([tuple.0, tuple.1, tuple.2, tuple.3, tuple.4, tuple.5, tuple.6, tuple.7])
-    }
-
-    init(tuple: (Element, Element, Element, Element)) {
-        self.init([tuple.0, tuple.1, tuple.2, tuple.3])
-    }
-
-    var tuple8: (Element, Element, Element, Element, Element, Element, Element, Element) {
-        (self[0], self[1], self[2], self[3], self[4], self[5], self[6], self[7])
-    }
-
-    var tuple4: (Element, Element, Element, Element) {
-        (self[0], self[1], self[2], self[3])
-    }
-
-    // 归并排序才是稳定排序。系统默认是快排
-    func mergeSortBottomUp(isOrderedBefore: (Element, Element) -> Bool) -> [Element] {
-        let n = count
-        var z = [self, self] // the two working arrays
-        var d = 0 // z[d] is used for reading, z[1 - d] for writing
-        var width = 1
-        while width < n {
-            var i = 0
-            while i < n {
-                var j = i
-                var l = i
-                var r = i + width
-
-                let lmax = Swift.min(l + width, n)
-                let rmax = Swift.min(r + width, n)
-
-                while l < lmax, r < rmax {
-                    if isOrderedBefore(z[d][l], z[d][r]) {
-                        z[1 - d][j] = z[d][l]
-                        l += 1
-                    } else {
-                        z[1 - d][j] = z[d][r]
-                        r += 1
-                    }
-                    j += 1
-                }
-                while l < lmax {
-                    z[1 - d][j] = z[d][l]
-                    j += 1
-                    l += 1
-                }
-                while r < rmax {
-                    z[1 - d][j] = z[d][r]
-                    j += 1
-                    r += 1
-                }
-
-                i += width * 2
-            }
-
-            width *= 2 // in each step, the subarray to merge becomes larger
-            d = 1 - d // swap active array
-        }
-        return z[d]
-    }
+// BitWriter @0x1039ee5b8 — declaration shape read from the Forward context descriptor (kind, parent,
+// conformances, case names); members not reconstructed. Placement: fwd_file (Utility.swift).
+// ⚑[tool=type_surface ref=BitWriter:0x1039ee5b8 result=struct BitWriter]
+// ⚑[tool=field_surface ref=BitWriter:fieldmd result=2 var] Lazy owner (no build metadata); fields follow
+// Forward's record order, IsVar bits and resolved types.
+struct BitWriter {
+    var data: [UInt8]
+    var bitPosition: Int
+    init(size: Int) { fatalError("L7: BitWriter.init — Forward body unread") }
+    func putBits(_ p0: UInt8, _ p1: Int) { fatalError("L7: BitWriter.putBits — Forward body unread") }
+    func toData() -> Data { fatalError("L7: BitWriter.toData — Forward body unread") }
 }

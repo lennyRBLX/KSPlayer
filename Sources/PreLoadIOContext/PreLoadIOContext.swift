@@ -316,6 +316,35 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
         return min(duration, mapped)
     }
 
+    // s35 @0x101ba8200 — trie `PreLoadIOContext.(cachedByteRanges in _9C48347E4CB6F61630CF322AB4AC2CD9)(clampedTo:)`
+    //   (private). Caller: cachedTimeRanges(duration:) @0x101ba70a8. It walks entryList (+0x88) and clamps each
+    //   entry to `limit`. `size` is read only when position < limit (`b.ls` plus `cbz` on limit - position).
+    //   Touching ranges are coalesced; the checked `+` traps at 0x101ba8418.
+    private func cachedByteRanges(clampedTo limit: UInt64) -> [(start: UInt64, end: UInt64)] {
+        var ranges: [(start: UInt64, end: UInt64)] = []
+        var current: (start: UInt64, end: UInt64)?
+        for entry in entryList {
+            let start = min(entry.position, limit)
+            var end = limit
+            if entry.position < limit {
+                end = entry.position + min(UInt64(entry.size), limit - entry.position)
+            }
+            guard start < end else { continue }
+            if let c = current {
+                if start == c.end {
+                    current = (c.start, end)
+                    continue
+                }
+                ranges.append(c)
+            }
+            current = (start, end)
+        }
+        if let current {
+            ranges.append(current)
+        }
+        return ranges
+    }
+
     // 🚨 A SECOND FABRICATED DUPLICATE WAS DELETED HERE — `func reportThumbnailProgress(_:_:)`,
     //   tagged "name inferred (devirt)" at s36 @0x101bab2d8 with a `_ = a; _ = b` stub body. The
     //   trie names that address
@@ -672,7 +701,7 @@ public class PreLoadIOContext: CacheIOContext, PreLoadProtocol, PreLoadPlaybackP
             return 0
         }
         let delta = fakeUrlPos - logicalPos
-        return delta > UInt64(Int64.max) ? .max : Int64(delta)
+        return delta <= UInt64(Int64.max) ? Int64(delta) : .max // @0x101ba9e90 `cmn x8,#1; csel gt`
     }
 
     // ⚑ CARRIED FROM THE DELETED `reportThumbnailProgress` DUPLICATE (same address):
