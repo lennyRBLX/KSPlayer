@@ -576,8 +576,9 @@ open class KSPlayerLayer: NSObject {
                 completion?(true)
                 return
             }
-            // Called immediately before the player seek; subtitleModel is binary field 16.
-            subtitleModel.invalidateParts()
+            // Called immediately before the player seek; subtitleModel is binary field 16. Forward's `bl` targets the
+            // file-private `(invalidateParts in _912797…)`, reachable from this file only via the inlined public wrapper.
+            subtitleModel.cleanParts()
             player.seek(time: time) { [weak self] finished in
                 guard let self else { return }
                 if finished, autoPlay {
@@ -1009,10 +1010,16 @@ open class KSPlayerLayer: NSObject {
         if let track = subtitleInfo as? any MediaPlayerTrack, track.isImageSubtitle, options.isSeekImageSubtitle {
             player.select(track: track)
         }
+        // Forward 0x1019cec64..0x1019cecd8: one modify access, then `cbz x19; cmp x19,x8; b.ne` (new value on the
+        // left) guards the willSet call AND the store; identical → straight to the epilogue.
         if isSecondary {
-            subtitleModel.secondarySubtitleInfo = subtitleInfo
+            if subtitleInfo !== subtitleModel.secondarySubtitleInfo {
+                subtitleModel.secondarySubtitleInfo = subtitleInfo
+            }
         } else {
-            subtitleModel.selectedSubtitleInfo = subtitleInfo
+            if subtitleInfo !== subtitleModel.selectedSubtitleInfo {
+                subtitleModel.selectedSubtitleInfo = subtitleInfo
+            }
         }
     }
 
@@ -1157,12 +1164,14 @@ open class KSPlayerLayer: NSObject {
         }
         view.addSubview(subtitleView)
         subtitleView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
+        // Forward 0x1019cf774: the 4-element array is built BEFORE `objc_opt_self(NSLayoutConstraint)`.
+        let constraints = [
             subtitleView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             subtitleView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             subtitleView.widthAnchor.constraint(equalTo: view.widthAnchor),
             subtitleView.heightAnchor.constraint(equalTo: view.heightAnchor),
-        ])
+        ]
+        NSLayoutConstraint.activate(constraints)
     }
     #endif
 
@@ -1757,9 +1766,12 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
                 self.player = options.playerTypes[index + 1].init(url: url, options: options)
                 return
             }
-            super.finish(player: player, error: error)
-        } else {
-            super.finish(player: player, error: nil)
+        }
+        // Forward 0x1019d21f8 (errorRelease of the binding) precedes super.finish at 0x1019d220c: the call takes
+        // the Optional PARAMETER, not a re-wrapped binding (no errorRetain); the nil arm (0x1019d2240) calls
+        // super.finish(nil) then tail-calls playNextURL through the vtable (`br x0` at 0x1019d2278).
+        super.finish(player: player, error: error)
+        if error == nil {
             playNextURL()
         }
     }
@@ -1964,7 +1976,10 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     public final func pictureInPictureController(_: AVPictureInPictureController,
                                            failedToStartPictureInPictureWithError error: Error)
     {
+        // Forward handler 0x1019d6430: `mov w6,#0x398` at 0x1019d653c — the #line default is 920.
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 920)
         KSLog(error)
+#sourceLocation()
     }
 }
 

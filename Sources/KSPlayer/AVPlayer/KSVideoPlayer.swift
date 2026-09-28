@@ -366,7 +366,9 @@ extension KSVideoPlayer.Coordinator: KSPlayerLayerDelegate {
             if total < 1 {
                 total = current
             } else {
-                current = min(total, current)
+                // Forward 0x1019dbac4: `cmp x10(total),x8(current); csel x11,x10,x8,lt` = stdlib
+                // `min(x, y)` → `y < x ? y : x` with y = total.
+                current = min(current, total)
             }
             if timemodel.currentTime != current {
                 timemodel.currentTime = current

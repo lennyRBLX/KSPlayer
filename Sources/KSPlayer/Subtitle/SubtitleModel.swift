@@ -218,8 +218,8 @@ open class SubtitleModel: ObservableObject {
     public var selectedSubtitleInfo: (any SubtitleInfo)? {
         willSet {
             guard newValue !== selectedSubtitleInfo else { return }
-            subtitleSearchGeneration += 1
-            subtitleSearchSequence += 1
+            subtitleSearchGeneration &+= 1
+            subtitleSearchSequence &+= 1
             latestPrimarySubtitleQueryTime = nil
             latestSecondarySubtitleQueryTime = nil
             parts = []                                  // clear @Published parts (keypath d1e8/d210 ≠ subtitleInfos d140/168)
@@ -257,8 +257,8 @@ open class SubtitleModel: ObservableObject {
     public var secondarySubtitleInfo: (any SubtitleInfo)? {
         willSet {
             guard newValue !== secondarySubtitleInfo else { return }
-            subtitleSearchGeneration += 1
-            subtitleSearchSequence += 1
+            subtitleSearchGeneration &+= 1
+            subtitleSearchSequence &+= 1
             latestPrimarySubtitleQueryTime = nil
             latestSecondarySubtitleQueryTime = nil
             parts = []
@@ -656,9 +656,10 @@ open class SubtitleModel: ObservableObject {
         subtitleInfo.isEnabled = true
         addSubtitle(info: subtitleInfo, rebindSelection: false)
         if let info = subtitleInfo as? URLSubtitleInfo {
-            if info.downloadURL.isFileURL,
-               (try? info.downloadURL.resourceValues(forKeys: [.isUbiquitousItemKey]).isUbiquitousItem) != true {
-                return
+            if info.downloadURL.isFileURL {
+                // Forward 0x101ab8250 error arm: errorRelease → Set release → info release (`?? false` + guard idiom).
+                let isUbiquitous = (try? info.downloadURL.resourceValues(forKeys: [.isUbiquitousItemKey]).isUbiquitousItem) ?? false
+                guard isUbiquitous else { return }
             }
             if let cache = subtitleDataSources.first(where: { $0 is CacheSubtitleDataSource }) as? CacheSubtitleDataSource {
                 cache.addCache(fileURL: url, downloadURL: info.downloadURL)
