@@ -280,10 +280,10 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
                 displayLink!.isPaused = isPaused
             }
             if !backgroundTimer.isCancelled {
-                if isPaused {
-                    backgroundTimer.suspend()
-                } else {
+                if !isPaused {
                     backgroundTimer.resume()
+                } else {
+                    backgroundTimer.suspend()
                 }
             }
         }
@@ -297,10 +297,10 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
                 displayLink!.isPaused = isPaused
             }
             if !backgroundTimer.isCancelled {
-                if isPaused {
-                    backgroundTimer.suspend()
-                } else {
+                if !isPaused {
                     backgroundTimer.resume()
+                } else {
+                    backgroundTimer.suspend()
                 }
             }
         }
@@ -952,21 +952,21 @@ extension AudioStreamBasicDescription {
         guard mFormatID == kAudioFormatLinearPCM else {
             return .otherFormat
         }
-        if mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+        if mFormatFlags & kAudioFormatFlagIsFloat == 0 {
             switch mBitsPerChannel {
-            case 32:
-                return .pcmFormatFloat32
-            case 64:
-                return .pcmFormatFloat64
+            case 24, 32:
+                return .pcmFormatInt32
+            case 16:
+                return .pcmFormatInt16
             default:
                 return .otherFormat
             }
         } else {
             switch mBitsPerChannel {
-            case 16:
-                return .pcmFormatInt16
-            case 24, 32:
-                return .pcmFormatInt32
+            case 32:
+                return .pcmFormatFloat32
+            case 64:
+                return .pcmFormatFloat64
             default:
                 return .otherFormat
             }

@@ -48,6 +48,7 @@ extension CGSize {
         let heightScale = toSize.height / height
         let scale = playRatio > 2.32 && playRatio < 2.34 ? widthScale : min(widthScale, heightScale)
         var result = CGRect(x: rect.origin.x * scale, y: rect.origin.y * scale, width: rect.size.width * scale, height: rect.size.height * scale)
+        let size = CGSize(width: width * scale, height: height * scale)
         let imageScale = KSOptions.subtitleImageScale
         if imageScale != 1.0 {
             let midX = result.midX
@@ -57,8 +58,8 @@ extension CGSize {
             result.origin.x = midX - result.width * 0.5
             result.origin.y = midY - result.height * 0.5
         }
-        result.origin.x += (toSize.width - width * scale) * 0.5
-        let offsetY = (toSize.height - height * scale) * 0.5
+        result.origin.x += (toSize.width - size.width) * 0.5
+        let offsetY = (toSize.height - size.height) * 0.5
         result.origin.y += offsetY
         if result.maxY > toSize.height {
             result.origin.y += offsetY
@@ -97,7 +98,8 @@ public extension UIFont {
 
     func with(angle: CGFloat) -> UIFont {
         let matrix = CGAffineTransform(rotationAngle: angle)
-        let descriptor = fontDescriptor.withMatrix(matrix)
+        var descriptor = fontDescriptor
+        descriptor = descriptor.withMatrix(matrix)
         return UIFont(descriptor: descriptor, size: pointSize) as UIFont? ?? self
     }
 }

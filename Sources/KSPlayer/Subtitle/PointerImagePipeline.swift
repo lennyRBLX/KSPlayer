@@ -149,15 +149,17 @@ final class PointerImagePipeline {
         buffer.initialize(repeating: 0, count: count)
         var y = 0
         var rowBase = 0
-        while y < height {
-            var x = 0
-            while x < width {
-                let i = rowBase + x
-                buffer[i] = palette[Int(bitmap[i])]
-                x += 1
-            }
-            rowBase += stride
-            y += 1
+        if height > 0 {
+            repeat {
+                var x = 0
+                while x < width {
+                    let i = rowBase + x
+                    buffer[i] = palette[Int(bitmap[i])]
+                    x += 1
+                }
+                rowBase += stride
+                y += 1
+            } while y < height
         }
         rgbData = UnsafeMutableRawPointer(buffer).assumingMemoryBound(to: UInt8.self)
         alphaInfo = .first

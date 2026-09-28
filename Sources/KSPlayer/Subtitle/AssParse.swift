@@ -193,7 +193,7 @@ public struct ASSStyle {
 extension Dictionary where Key == String {
     public func match(key: String) -> Value? {
         if key.hasPrefix("*") {
-            let suffix = String(key[key.index(key.startIndex, offsetBy: 1)...])
+            let suffix = String(key.suffix(from: key.index(key.startIndex, offsetBy: 1)))
             return first { $0.key.hasSuffix(suffix) }?.value
         } else if key.hasSuffix("*") {
             let prefix = String(key[..<key.index(key.endIndex, offsetBy: -1)])
