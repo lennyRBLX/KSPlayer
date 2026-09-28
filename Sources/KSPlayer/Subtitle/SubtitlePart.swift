@@ -109,15 +109,13 @@ public struct TextPosition {
         var edgeInsets = EdgeInsets()
         if verticalAlign == .bottom {
             edgeInsets.bottom = verticalMargin
+            edgeInsets.top = 3
         } else if verticalAlign == .top {
             edgeInsets.top = verticalMargin
+            edgeInsets.bottom = 3
         }
-        if horizontalAlign == .leading {
-            edgeInsets.leading = leftMargin
-        }
-        if horizontalAlign == .trailing {
-            edgeInsets.trailing = rightMargin
-        }
+        edgeInsets.leading = leftMargin
+        edgeInsets.trailing = rightMargin
         return edgeInsets
     }
 }
@@ -339,7 +337,10 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
     public var isEmpty: Bool {
         text?.string.isEmpty ?? false
     }
-    public init(_ p0: Double, _ p1: Double, _ p2: String) { fatalError("L7: SubtitlePart.init — Forward body unread") }
+    public init(_ p0: Double, _ p1: Double, _ p2: String) {
+        let string = p2.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "")
+        self.init(p0, p1, attributedString: NSAttributedString(string: string))
+    }
 
     // ⚑[tool=export_trie_oracle ref=$s8KSPlayer12SubtitlePartV__6renderACSd_SdAA6EitherOyAA0B9ImageInfoVAA0b4TextG0VGtcfC result=start/end are UNLABELLED (`__6render`), RECOVERED]
     public init(_ start: Double, _ end: Double, render: Either<SubtitleImageInfo, SubtitleTextInfo>) {
@@ -347,9 +348,15 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
         self.end = end
         self.render = render
     }
-    public init(_ p0: Double, _ p1: Double, attributedString: NSAttributedString) { fatalError("L7: SubtitlePart.init — Forward body unread") }
-    public init(_ p0: Double, _ p1: Double, image: SubtitleImageInfo) { fatalError("L7: SubtitlePart.init — Forward body unread") }
-    public init(_ p0: Double, _ p1: Double, text: SubtitleTextInfo) { fatalError("L7: SubtitlePart.init — Forward body unread") }
+    public init(_ p0: Double, _ p1: Double, attributedString: NSAttributedString) {
+        self.init(p0, p1, text: SubtitleTextInfo(text: attributedString, position: nil, displaySize: nil, styleRole: .primary, usesForcedPosition: false))
+    }
+    public init(_ p0: Double, _ p1: Double, image: SubtitleImageInfo) {
+        self.init(p0, p1, render: .left(image))
+    }
+    public init(_ p0: Double, _ p1: Double, text: SubtitleTextInfo) {
+        self.init(p0, p1, render: .right(text))
+    }
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.SubtitlePart.text.getter:0x101abaf20 result=18-instr]
     /// Both this and `isEmpty` open with the SAME two reads, and neither is a guess:
@@ -514,11 +521,7 @@ extension TextPosition: Hashable {
 
 extension SubtitlePart: Comparable {
     public static func == (left: SubtitlePart, right: SubtitlePart) -> Bool {
-        if left.start == right.start, left.end == right.end {
-            return true
-        } else {
-            return false
-        }
+        left.start == right.start && left.end == right.end
     }
 
     public static func < (left: SubtitlePart, right: SubtitlePart) -> Bool {
@@ -533,7 +536,7 @@ extension SubtitlePart: Comparable {
 extension SubtitlePart: NumericComparable {
     public typealias Compare = TimeInterval
     public static func == (left: SubtitlePart, right: TimeInterval) -> Bool {
-        left.start <= right && left.end >= right
+        left.start <= right && left.end > right
     }
 
     public static func < (left: SubtitlePart, right: TimeInterval) -> Bool {
@@ -607,7 +610,9 @@ public struct SubtitleImageInfo: Equatable, Identifiable {
         }
     }
 
-    public static func == (lhs: SubtitleImageInfo, rhs: SubtitleImageInfo) -> Bool { fatalError("L7: Equatable.==") }
+    public static func == (lhs: SubtitleImageInfo, rhs: SubtitleImageInfo) -> Bool {
+        lhs.rect == rhs.rect && lhs.displaySize == rhs.displaySize
+    }
 }
 
 // SubtitleTextInfo @0x1039f21cc
@@ -646,7 +651,19 @@ public struct SubtitleTextStyle {
     public var textShadowOffset: CGSize?
     public var textShadowBlurRadius: Double?
     public var textShadowColor: UIColor?
-    public init(textColor: UIColor?, textFontName: String?, subtitleFontSize: Double?, subtitleFontSizeScale: Double?, textBold: Bool?, textItalic: Bool?, textStrokeColor: UIColor?, textStrokeWidth: CGFloat?, textShadowOffset: CGSize?, textShadowBlurRadius: Double?, textShadowColor: UIColor?) { fatalError("L7: SubtitleTextStyle.init — Forward body unread") }
+    public init(textColor: UIColor?, textFontName: String?, subtitleFontSize: Double?, subtitleFontSizeScale: Double?, textBold: Bool?, textItalic: Bool?, textStrokeColor: UIColor?, textStrokeWidth: CGFloat?, textShadowOffset: CGSize?, textShadowBlurRadius: Double?, textShadowColor: UIColor?) {
+        self.textColor = textColor
+        self.textFontName = textFontName
+        self.subtitleFontSize = subtitleFontSize
+        self.subtitleFontSizeScale = subtitleFontSizeScale
+        self.textBold = textBold
+        self.textItalic = textItalic
+        self.textStrokeColor = textStrokeColor
+        self.textStrokeWidth = textStrokeWidth
+        self.textShadowOffset = textShadowOffset
+        self.textShadowBlurRadius = textShadowBlurRadius
+        self.textShadowColor = textShadowColor
+    }
 }
 
 // Forward 0x101abe074 `(extension in KSPlayer):Either< where A == SubtitleImageInfo, B == (NSAttributedString,

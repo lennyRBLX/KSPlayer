@@ -216,7 +216,7 @@ extension Timebase {
         num = rational.num
         den = rational.den
     }
-    public var cmtime: CMTime { fatalError("L7: Timebase.cmtime — Forward body unread") }
+    public var cmtime: CMTime { CMTime(value: Int64(num), timescale: den) }
 }
 
 final class Packet: ObjectQueueItem {
@@ -417,12 +417,8 @@ public final class AudioFrame: MEFrame {
         guard let outBlockListBuffer else {
             return nil
         }
-        let sampleSize = Int(audioFormat.sampleSize)
         let sampleCount = CMItemCount(numberOfSamples)
-        let dataByteSize = sampleCount * sampleSize
-        if dataByteSize > dataSize {
-            assertionFailure("dataByteSize: \(dataByteSize),render.dataSize: \(dataSize)")
-        }
+        let dataByteSize = min(sampleCount * Int(audioFormat.sampleSize), Int(dataSize))
         for i in 0 ..< data.count {
             var outBlockBuffer: CMBlockBuffer?
             CMBlockBufferCreateWithMemoryBlock(
@@ -447,21 +443,27 @@ public final class AudioFrame: MEFrame {
                     outBlockListBuffer,
                     targetBBuf: outBlockBuffer,
                     offsetToData: 0,
-                    dataLength: CMBlockBufferGetDataLength(outBlockBuffer),
+                    dataLength: outBlockBuffer.dataLength,
                     flags: 0
                 )
             }
         }
         var sampleBuffer: CMSampleBuffer?
-        // 因为sampleRate跟timescale没有对齐，所以导致杂音。所以要让duration为invalid
-//        let duration = CMTime(value: CMTimeValue(sampleCount), timescale: CMTimeScale(audioFormat.sampleRate))
-        let duration = CMTime.invalid
+        let duration: CMTime
+        if audioFormat.commonFormat == .otherFormat {
+            duration = timebase.cmtime(for: self.duration)
+        } else {
+            duration = CMTime(value: 1, timescale: Int32(audioFormat.sampleRate))
+        }
         let timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: cmtime, decodeTimeStamp: .invalid)
         let sampleSizeEntryCount: CMItemCount
         let sampleSizeArray: [Int]?
-        if audioFormat.isInterleaved {
+        if audioFormat.commonFormat == .otherFormat {
             sampleSizeEntryCount = 1
-            sampleSizeArray = [sampleSize]
+            sampleSizeArray = [Int(dataSize)]
+        } else if audioFormat.isInterleaved {
+            sampleSizeEntryCount = 1
+            sampleSizeArray = [Int(audioFormat.sampleSize)]
         } else {
             sampleSizeEntryCount = 0
             sampleSizeArray = nil
@@ -666,8 +668,16 @@ public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:
         // Ensure the per-stream context exists and RUN it (OSI.s13). The completion is the write-output
         // callback: ctx.transcode produces the filtered/copied packet, then calls completion(outputPacket)
         // to emit it. Binary: callback FUN_101a660d0 + a closure box capturing self+idx (DAT_1041d9368).
-        outputStreamInfo.buildTranscodeContext(packet) { [self] outputPacket in   // FUN_101a1ab5c (File-1 slot13)  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
-            writeOutputPacket(outputPacket, streamIndex: idx)
+        _ = outputStreamInfo.transcode(packet: packet) { [self] packet in   // FUN_101a1ab5c (File-1 slot13)  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
+            // closure body FUN_101a65f68 (via partial-apply 0x101a660d0): rebase pts/dts by startTime[idx].
+            let pts = packet.pointee.pts
+            if pts != Int64.min {
+                packet.pointee.pts = pts - (startTime[idx] ?? 0)
+            }
+            let dts = packet.pointee.dts
+            if dts != Int64.min {
+                packet.pointee.dts = dts - (startTime[idx] ?? 0)
+            }
         }
     }
 

@@ -497,7 +497,64 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         _ = transcodeCodecIDs // ⚑ p9: the transcode codec allowlist — consumed by the deferred transcode arms
     }
 
-    public func transcode(packet: UnsafeMutablePointer<AVPacket>, block: ((UnsafeMutablePointer<AVPacket>) -> Void)?) -> Int32 { fatalError("L7: OutputStreamInfo.transcode — Forward body unread") }
+    public func transcode(packet: UnsafeMutablePointer<AVPacket>, block: ((UnsafeMutablePointer<AVPacket>) -> Void)?) -> Int32 {
+        let index = packet.pointee.stream_index
+        if let assetTrack = assetTrackMap[index] {
+            assetTrack.transcode(packet: packet)
+            return 0
+        }
+        guard let outPacket, let mapped = streamMapping[index], let timebase = timeBaseMap[index],
+              let stream = formatCtx.pointee.streams[Int(mapped)]
+        else {
+            return 0
+        }
+        let context: any TranscodeProtocol
+        if let existing = transcodeMap[index] {
+            context = existing
+        } else if removeADTS, stream.pointee.codecpar.pointee.codec_id == AV_CODEC_ID_AAC, packet.pointee.size > 2,
+                  packet.pointee.data[0] == 0xFF, packet.pointee.data[1] & 0xF0 == 0xF0,
+                  let bsfContext = makeADTSBitstreamFilter("aac_adtstoasc", stream.pointee.codecpar)
+        {
+            context = BSFTranscodeContext(bsfContext: bsfContext)
+            transcodeMap[index] = context
+        } else {
+            context = CopyTranscodeContext()
+        }
+        return context.transcode(packet, output: outPacket) { packet in
+            block?(packet)
+            packet.pointee.stream_index = mapped
+            av_packet_rescale_ts(packet, timebase, stream.pointee.time_base)
+            let duration = packet.pointee.duration
+            let dts = packet.pointee.dts
+            var diff: Int64?
+            if dts > 0, let lastDTS = self.lastDTSMap[mapped], lastDTS > 0 {
+                let value = lastDTS - dts
+                diff = value
+                if value >= 0, value <= duration {
+                    if dts == packet.pointee.pts {
+                        packet.pointee.pts = lastDTS + 1
+                    }
+                    packet.pointee.dts = lastDTS + 1
+                } else if self.formatName == "hls", abs(value) > duration * 100 {
+                    KSLog("non monotonically increasing dts index=\(mapped),diff=\(value), dts=\(packet.pointee.dts),duration=\(packet.pointee.duration)")
+                    av_packet_unref(packet)
+                    return -1_919_247_215 // 0x8D9A9C91, read from the Forward closure 0x101a1af90
+                }
+            }
+            if duration == 0 {
+                packet.pointee.duration = 1
+            } else if duration < 0 || duration > Int64(stream.pointee.time_base.den) {
+                KSLog("outputIndex=\(mapped),dts=\(dts),duration=\(duration)")
+            }
+            self.lastDTSMap[mapped] = packet.pointee.dts
+            let ret = av_interleaved_write_frame(self.formatCtx, packet)
+            if ret < 0, let diff {
+                KSLog("av_interleaved_write_frame result=\(ret),index=\(mapped),diff=\(diff), dts=\(dts),duration=\(duration)")
+            }
+            av_packet_unref(packet)
+            return ret
+        }
+    }
 
     // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────
     // 🚨 THE CLAIM "not in binary" IS FALSE, AND THE WHOLE SIGNATURE IS WRONG. The export trie names
@@ -671,17 +728,20 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     public func writeTrailer() {                            // public (was internal): RemuxerIOAction (ProAVPlayer) calls it cross-module via the OSI vtable +0x120 — binary-arbitrated cross-module access (P34/§1; `open`/override NOT proven → `public` under-included)
         guard !hasWriteTrailer else { return }              // self+0x50 (& 1) — run-once guard [0x101a1b904]
         hasWriteTrailer = true                              // self+0x50 = 1
-        for (_, ctx) in transcodeMap {                      // self+0x18 iteration (Swift Dictionary bucket-walk)
-            // ⚑ the drain is GATED per-entry on stream-mapping state (outPacket present + assetTrackMap[idx] +
-            //   streamMapping[idx], @0x101a1b9f8-a2c) — the exact gate + the completion body (FUN_101a1f1dc,
-            //   per-packet write-out) are DEFERRED to P3 (behaviorally testable with the remux driver). The
-            //   drain CALL (witness +0x10) is faithful; its guard is modeled as unconditional here — ⚑ flagged.
-            // ⚑ req2 is (outPacket, completion) -> Int32 (call @0x101a1bad0: x0 = outPacket); gate/closure still UNRESOLVED.
-            if let outPacket {
-                _ = ctx.drain(outPacket) { _ in
-                    // ⚑ UNRESOLVED — completion body FUN_101a1f1dc; reconstruct with the P3 remux driver.
-                    0
-                }
+        for (index, ctx) in transcodeMap {                  // self+0x18 iteration (Swift Dictionary bucket-walk)
+            // Gate @0x101a1ba08-0x101a1ba5c: outPacket, streamMapping[index], timeBaseMap[index], then
+            // formatCtx.streams[mapped]; the closure (0x101a1f1dc) captures mapped, timebase, the output
+            // stream's time_base VALUE (loaded @0x101a1ba70 before the call) and self.
+            guard let outPacket, let mapped = streamMapping[index], let timebase = timeBaseMap[index],
+                  let stream = formatCtx.pointee.streams[Int(mapped)]
+            else {
+                continue
+            }
+            let outTimebase = stream.pointee.time_base
+            _ = ctx.drain(outPacket) { packet in
+                packet.pointee.stream_index = mapped
+                av_packet_rescale_ts(packet, timebase, outTimebase)
+                return av_interleaved_write_frame(self.formatCtx, packet)
             }
         }
         av_write_trailer(formatCtx)                         // FUN_103194e1c — ffmpeg_name_oracle CONFIRMED (117/468 exact) [0x101a1b9f0]
@@ -701,18 +761,15 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         for (_, ctx) in transcodeMap {                      // self+0x18
             ctx.close()                                     // TranscodeProtocol.close (witness +0x18) [0x101a1bce8]
         }
-        for (_, track) in assetTrackMap {                   // self+0x10 (stride 0x200)
-            // ⚑ UNRESOLVED — per-track teardown: the track value's `obj@+0x100 . vtable+0x1c0()`
-            //   (FFmpegAssetTrack-internal codec/context close) — DEFERRED to P3 (FFmpegAssetTrack layout).
-            _ = track
+        for (_, track) in assetTrackMap {                   // self+0x10
+            // Inlined FFmpegAssetTrack.stop(): track+0x100 (`subtitle`) → vtable +0x1c0 (shutdown()).
+            track.stop()
         }
         var outPacket = outPacket                           // Forward stop() @0x101a1bb5c frees a stack copy, no writeback
         av_packet_free(&outPacket)                          // FUN_102d618b8 — ffmpeg_name_oracle CONFIRMED (46/184 exact) [0x101a1be1c]
-        // ⚑ formatCtx cleanup — FUN_101a39028: a KSPlayer Swift wrapper (0x101a3 range, NOT FFmpeg —
-        //   ffmpeg_name_oracle REFUTED avformat_free_context: fwd 101/404 ≠ lib 131/524) around FFmpeg
-        //   FUN_1030e632c = av_formatCloseInput (ffmpeg_name_oracle CONFIRMED avformat_close_input, 38/152 exact).
-        //   The Swift wrapper's own NAME is devirt-unrecoverable (recover = None) → NOT emitted as a fabricated
-        //   call; DEFERRED to P3 (the wrapper likely does `avformat_close_input(&formatCtx)`). [0x101a1be28]
+        // FUN_101a39028 = static FFmpegUtility.close(formatCtx:) (#function "close(formatCtx:)", trie
+        // $s8KSPlayer13FFmpegUtilityO5close9formatCtxySpySo15AVFormatContextVGSg_tFZ).
+        FFmpegUtility.close(formatCtx: formatCtx)
     }
 
     // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots

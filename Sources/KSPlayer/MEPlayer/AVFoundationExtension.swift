@@ -107,7 +107,7 @@ extension UnsafeMutablePointer<AudioChannelLayout> {
 
 extension AudioChannelLayout: CustomStringConvertible {
     public var description: String {
-        "AudioChannelLayoutTag: \(mChannelLayoutTag), mNumberChannelDescriptions: \(mNumberChannelDescriptions)"
+        "AudioChannelLayoutTag=\(mChannelLayoutTag), mNumberChannelDescriptions=\(mNumberChannelDescriptions)"
     }
 }
 
@@ -144,7 +144,7 @@ extension AVAudioChannelLayout {
     }
 
     public var channelDescriptions: String {
-        "tag: \(layoutTag), channelDescriptions: \(layout.channelDescriptions)"
+        "tag=\(layoutTag), channelDescriptions=\(layout.channelDescriptions)"
     }
 }
 
@@ -166,7 +166,7 @@ extension AVAudioFormat {
         }
     }
 
-    var layout: UnsafePointer<AudioChannelLayout>? { fatalError("L7: AVAudioFormat.layout — Forward body unread") }
+    var layout: UnsafePointer<AudioChannelLayout>? { channelLayout?.layout }
     var sampleSize: UInt32 {
         switch commonFormat {
         case .pcmFormatFloat32:
@@ -354,7 +354,22 @@ struct PacketNalData {
         case av1(AV1OBUType)
         case sei(UInt16)
         case unknown(UInt8)
-        var description: String { fatalError("L7: CustomStringConvertible.description") }
+        var description: String {
+            switch self {
+            case let .h264(type):
+                return type.description
+            case let .h265(type):
+                return type.description
+            case let .vp9(type):
+                return type.description
+            case let .av1(type):
+                return type.description
+            case let .sei(type):
+                return "sei \(type)"
+            case let .unknown(type):
+                return "Unknown NAL type \(type)"
+            }
+        }
     }
 }
 
@@ -364,7 +379,7 @@ struct PacketNalData {
 enum H264NALUnitType: UInt8 {
     // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
     case unspecified0, slice, dpa, dpb, dpc, idrSlice, sei, sps, pps, aud, endSequence, endStream, fillerData, spsExt, prefix, subSPS, dps, reserved17, reserved18, auxSlice, extSlice, depthExtSlice, reserved22, reserved23, unspecified24, unspecified25, unspecified26, unspecified27, unspecified28, unspecified29, unspecified30, unspecified31
-    var description: String { fatalError("L7: H264NALUnitType.description — Forward body unread") }
+    var description: String { "h264 \(self) (\(rawValue))" }
 }
 
 // HEVCNALUnitType @0x1039ee714 — declaration shape read from the Forward context descriptor (kind, parent,
@@ -373,7 +388,7 @@ enum H264NALUnitType: UInt8 {
 enum HEVCNALUnitType: UInt8 {
     // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
     case trailN, trailR, tsaN, tsaR, stsaN, stsaR, radlN, radlR, raslN, raslR, vclN10, vclR11, vclN12, vclR13, vclN14, vclR15, blaWLp, blaWRadl, blaNLp, idrWRadl, idrNLp, craNut, rsvIrapVcl22, rsvIrapVcl23, rsvVcl24, rsvVcl25, rsvVcl26, rsvVcl27, rsvVcl28, rsvVcl29, rsvVcl30, rsvVcl31, vps, sps, pps, aud, eosNut, eobNut, fdNut, seiPrefix, seiSuffix, rsvNvcl41, rsvNvcl42, rsvNvcl43, rsvNvcl44, rsvNvcl45, rsvNvcl46, rsvNvcl47, unspec48, unspec49, unspec50, unspec51, unspec52, unspec53, unspec54, unspec55, unspec56, unspec57, unspec58, unspec59, unspec60, unspec61, unspec62, unspec63
-    var description: String { fatalError("L7: HEVCNALUnitType.description — Forward body unread") }
+    var description: String { "hevc \(self) (\(rawValue))" }
 }
 
 // VP9FrameType @0x1039ee730 — declaration shape read from the Forward context descriptor (kind, parent,
@@ -382,7 +397,7 @@ enum HEVCNALUnitType: UInt8 {
 enum VP9FrameType: UInt8 {
     // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
     case keyFrame, interFrame
-    var description: String { fatalError("L7: VP9FrameType.description — Forward body unread") }
+    var description: String { "vp9 \(self) (\(rawValue))" }
 }
 
 // AV1OBUType @0x1039ee74c — declaration shape read from the Forward context descriptor (kind, parent,
@@ -391,10 +406,20 @@ enum VP9FrameType: UInt8 {
 enum AV1OBUType: UInt8 {
     // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
     case reserved0, sequenceHeader, temporalDelimiter, frameHeader, tileGroup, metadata, frame, redundantFrameHeader, tileList, padding
-    var description: String { fatalError("L7: AV1OBUType.description — Forward body unread") }
+    var description: String { "av1 \(self) (\(rawValue))" }
 }
 
 extension AVPacket {
-    var timestamp: Int64 { @used get { fatalError("L7: AVPacket.timestamp — Forward body unread") } }
-    var isKeyFrame: Bool { @used get { fatalError("L7: AVPacket.isKeyFrame — Forward body unread") } }
+    var timestamp: Int64 { @used get {
+        if pts != Int64.min {
+            return pts
+        }
+        if dts != Int64.min {
+            return dts
+        }
+        return 0
+    } }
+    var isKeyFrame: Bool { @used get {
+        flags & AV_PKT_FLAG_KEY != 0
+    } }
 }

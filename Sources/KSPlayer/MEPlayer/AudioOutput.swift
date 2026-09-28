@@ -109,16 +109,19 @@ public class AudioDataBuffer {
             case let .left(frame):
                 currentRender = frame // didSet resets currentRenderReadOffset
             case let .right(isEndOfFile):
+                // Forward returns straight away here (no currentRender reload).
                 eof = isEndOfFile
+                return nil
             }
         }
         guard let render = currentRender else {
             return nil
         }
+        // frameCapacity ≈ 50 ms of audio: ceil(sampleRate / 20) (frintp). The Double→UInt32
+        // conversion carries the binary's three overflow/range traps. Forward reads
+        // render.audioFormat twice (unretained for sampleRate, then the retained local).
+        let frameCapacity = AVAudioFrameCount((render.audioFormat.sampleRate / 20).rounded(.up))
         let audioFormat = render.audioFormat
-        // frameCapacity ≈ 50 ms of audio: Int(sampleRate / 20). The Double→UInt32
-        // conversion carries the binary's three overflow/range traps.
-        let frameCapacity = AVAudioFrameCount(audioFormat.sampleRate / 20)
         guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: frameCapacity) else {
             return nil
         }
@@ -135,12 +138,11 @@ public class AudioDataBuffer {
         let timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: presentationTimeStamp, decodeTimeStamp: .invalid)
         // Interleaved audio needs one sample-size entry; planar needs none (matches
         // AudioFrame.toCMSampleBuffer, Model.swift).
-        let sampleSize = Int(audioFormat.sampleSize)
         let sampleSizeEntryCount: CMItemCount
         let sampleSizeArray: [Int]?
         if audioFormat.isInterleaved {
             sampleSizeEntryCount = 1
-            sampleSizeArray = [sampleSize]
+            sampleSizeArray = [Int(audioFormat.sampleSize)]
         } else {
             sampleSizeEntryCount = 0
             sampleSizeArray = nil
@@ -162,7 +164,7 @@ public class AudioDataBuffer {
         }
         // Trim the buffer list down to the bytes actually written before attaching it.
         if leftByteSize != 0 {
-            ioData[0].mDataByteSize -= leftByteSize
+            ioData.unsafeMutablePointer.pointee.mBuffers.mDataByteSize -= leftByteSize
         }
         try? sampleBuffer.setDataBuffer(fromAudioBufferList: ioData.unsafePointer)
         return sampleBuffer
@@ -203,12 +205,14 @@ public class AudioDataBuffer {
                 }
                 return residueBytes
             }
-            guard currentRenderReadOffset < render.numberOfSamples else {
+            // Forward reads dataSize (+0x10, no access check) and subtracts with the overflow
+            // trap first (`subs; b.cc brk`), then drops a drained frame on zero (`cbz`).
+            let residueLinesize = render.dataSize - currentRenderReadOffset
+            guard residueLinesize > 0 else {
                 // Frame drained: drop it (didSet resets the offset) and pull the next one.
                 currentRender = nil
                 continue
             }
-            let residueLinesize = render.numberOfSamples - currentRenderReadOffset
             let bytesToCopy = min(residueBytes, residueLinesize)
             for i in 0 ..< min(ioData.count, render.data.count) {
                 if let source = render.data[i], let destination = ioData[i].mData {
@@ -377,7 +381,8 @@ public class AudioBaseOutput {
             return previous
         }
         #if !os(macOS)
-        let latency = audioSessionOutputLatencyForFlush()
+        // Forward inlines the session read (sharedInstance → outputLatency → release) here.
+        let latency = AVAudioSession.sharedInstance().outputLatency
         releaseDisplacedFrame(previousRender)
         // The stored Double is at self+0x30 in the checked class layout.
         Unmanaged.passUnretained(self).toOpaque().advanced(by: 0x30)
@@ -414,7 +419,6 @@ public class AudioBaseOutput {
             }
             renderSource.setAudio(time: time, position: currentRender.position)
         }
-        withExtendedLifetime(renderSource) {}
     }
 
     // audioPlayerShouldInputData (@0x101a12b28) — the sample-copy engine, reached

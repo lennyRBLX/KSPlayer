@@ -51,7 +51,7 @@ public class DoviDisplayModel: PlaneDisplayModel {
     // (newLibraryWithSource:options:nil @0x101a82b0c, try! line 44) and builds via MTLLibrary.makePipelineState
     // @0x101a83020 with "mapTexture"; stored back into pipelineMap @0x101a82bac.
     func pipeline(source: String, fragmentFunction: String, bitDepth: Int32) -> MTLRenderPipelineState {
-        let key = source + fragmentFunction + bitDepth.description
+        let key = source + fragmentFunction + String(describing: bitDepth)
         if let pipeline = pipelineMap[key] {
             return pipeline
         }
@@ -60,5 +60,32 @@ public class DoviDisplayModel: PlaneDisplayModel {
         pipelineMap[key] = pipeline
         return pipeline
     }
-    override public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) { fatalError("L7: DoviDisplayModel.set — Forward body unread") }
+    override public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) {
+        // L7 lane 4: Forward body @0x101a825b4 READ; not landed — it needs two decls outside this body:
+        //   (1) the KSDOVIMetadata shader-source builder @0x101a82044 (self in x20, returns String?; emits
+        //       "reshape_poly"/"appledm" Metal source) — undeclared in Sources;
+        //   (2) MetalRender.leftShiftMatrixBuffer / leftShiftSixMatrixBuffer (statics 0x104c63710 / 0x104c63718)
+        //       read directly here — `private` in MetalRender.swift.
+        // Forward shape, for when both land:
+        //   guard let doviData = frame.doviData else { super.set(frame: frame, encoder: encoder); return }
+        //   var metadata = doviData
+        //   let pixelBuffer = frame.pixelBuffer
+        //   let planeCount = pixelBuffer.planeCount
+        //   let state: MTLRenderPipelineState
+        //   if metadata.disable_residual_flag != 0, let source = doviData.<builder@0x101a82044> {
+        //       state = pipeline(source: source, fragmentFunction: planeCount == 3 ? "displayICtCpTexture" : "displayICtCpBiPlanarTexture", bitDepth: 10)
+        //   } else {
+        //       state = planeCount == 3 ? iCtCp10LE : iCtCpBiPlanar10LE
+        //   }
+        //   encoder.setRenderPipelineState(state)
+        //   let leftShift = pixelBuffer.leftShift == 0 ? MetalRender.leftShiftMatrixBuffer : MetalRender.leftShiftSixMatrixBuffer
+        //   metadata.linear = KSOptions.doviMatrix * metadata.linear
+        //   let buffer = MetalRender.device.makeBuffer(bytes: &metadata, length: MemoryLayout<KSDOVIMetadata>.size)
+        //   buffer?.label = "dovi"
+        //   encoder.setFragmentBuffer(buffer, offset: 0, index: 0)
+        //   encoder.setFragmentBuffer(leftShift, offset: 0, index: 1)
+        //   encoder.setFrontFacing(.clockwise)
+        //   encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        fatalError("L7: DoviDisplayModel.set — Forward body unread")
+    }
 }
