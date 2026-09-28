@@ -207,24 +207,18 @@ open class KSPlayerLayer: NSObject {
         self.url = url
         self.options = options
         self.delegate = delegate
-        let firstPlayerType: MediaPlayerProtocol.Type
-        if options.display.isSphere {
-            // AR模式只能用KSMEPlayer
-            // swiftlint:disable force_cast
-            firstPlayerType = NSClassFromString("KSPlayer.KSMEPlayer") as! MediaPlayerProtocol.Type
-            // swiftlint:enable force_cast
-        } else {
-            firstPlayerType = KSOptions.firstPlayerType
-        }
+        // L7: Forward has no isSphere / NSClassFromString arm and no static KSOptions.firstPlayerType read;
+        // it loads options.playerTypes (+0x58), takes element 0 or KSAVPlayer (0x1019b20bc), then
+        // calls witness +0x110 init(url:options:).
+        let firstPlayerType = options.playerTypes.first ?? KSAVPlayer.self
         player = firstPlayerType.init(url: url, options: options)
+        self.isAutoPlay = options.isAutoPlay
         // Forward init 0x1019ca41c calls SubtitleModel.init(url:options:) at 0x1019ca7ec; no default_init row for subtitleModel.
         subtitleModel = SubtitleModel(url: url, options: options)
-        self.isAutoPlay = options.isAutoPlay
         subtitleView = MetalSubtitleView(subtitleModel: subtitleModel)
         subtitleView.backgroundColor = .clear
         subtitleView.translatesAutoresizingMaskIntoConstraints = false
         super.init()
-        player.playbackRate = options.startPlayRate
         // ⚑ The `if options.registerRemoteControll { registerRemoteControllEvent() }` statement that
         //   upstream puts HERE is not in this class in Forward. `registerRemoteControllEvent()` is
         //   declared on KSComplexPlayerLayer (below), and an image-wide BL/B scan finds its address
@@ -239,6 +233,7 @@ open class KSPlayerLayer: NSObject {
         //   ⚑[tool=recover_field_offsets ref=KSOptions.registerRemoteControll:0x44 result=registerRemoteControll]
         player.delegate = self
         player.contentMode = .scaleAspectFit
+        player.playbackRate = options.startPlayRate
         if isAutoPlay {
             prepareToPlay()
         }
@@ -265,8 +260,10 @@ open class KSPlayerLayer: NSObject {
         self.delegate = delegate
         let player = KSMEPlayer(item: item)
         self.player = player
-        isAutoPlay = options.isAutoPlay
-        subtitleModel = SubtitleModel(url: url, options: options)
+        // L7: Forward never re-reads self.options here; every read uses the item.options value
+        // (let field, loaded once at 0x1019cadc0): isAutoPlay +0x45, SubtitleModel, startPlayRate +0x40.
+        isAutoPlay = item.options.isAutoPlay
+        subtitleModel = SubtitleModel(url: url, options: item.options)
         subtitleView = MetalSubtitleView(subtitleModel: subtitleModel)
         subtitleView.backgroundColor = .clear
         subtitleView.translatesAutoresizingMaskIntoConstraints = false
@@ -274,7 +271,7 @@ open class KSPlayerLayer: NSObject {
         player.delegate = self
         player.contentMode = .scaleAspectFit
         subtitleView.contentMode = .scaleAspectFit
-        player.playbackRate = options.startPlayRate
+        player.playbackRate = item.options.startPlayRate
         if item.isPreload {
             let action = item.resumeFromPreload()
             state = .preparing
@@ -298,24 +295,10 @@ open class KSPlayerLayer: NSObject {
     }
 
     isolated deinit {
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            (player.pipController as? KSPictureInPictureController)?.contentSource = nil
-        }
-        NotificationCenter.default.removeObserver(self)
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        MPRemoteCommandCenter.shared().playCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().pauseCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().togglePlayPauseCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().stopCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().nextTrackCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().previousTrackCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().changeRepeatModeCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().changePlaybackRateCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipForwardCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().skipBackwardCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.removeTarget(nil)
-        MPRemoteCommandCenter.shared().enableLanguageOptionCommand.removeTarget(nil)
-        options.playerLayerDeinit()
+        // L7: Forward __deallocating_deinit 0x1019cfe94 is `adrp/add` of the KSPlayerLayer metadata accessor
+        // + `b 0x1019d2960` ([super dealloc] only): no statement runs, and there is no
+        // swift_task_deinitOnExecutor hop. The upstream cleanup (pip contentSource, observers, now-playing,
+        // remote commands, options.playerLayerDeinit()) is not in Forward's deinit. `isolated` is a GAP.
     }
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
@@ -404,17 +387,25 @@ open class KSPlayerLayer: NSObject {
             self.options = options
             isAutoPlay = options.isAutoPlay
         }
-        let playerType = self.options.playerTypes.first ?? KSAVPlayer.self
+        // L7 lane 2: self.url is copied and self.options loaded ONCE, before the type test, and
+        // both live to the end of every arm (the copy is destroyed last, replace(url:options:) and
+        // init(url:options:) get the early options load). A new player type assigns player then
+        // url and stops; the same type compares `url == old` (param first) and, on a new URL,
+        // runs url, `state = .initialized` (0x1019c9cd4 with 0), replace, prepareToPlay.
+        let currentURL = self.url
+        let currentOptions = self.options
+        let playerType = currentOptions.playerTypes.first ?? KSAVPlayer.self
         if type(of: player) != playerType {
-            player = playerType.init(url: url, options: self.options)
-        }
-        if self.url == url {
+            player = playerType.init(url: url, options: currentOptions)
+            self.url = url
+        } else if url == currentURL {
             if isAutoPlay {
                 play()
             }
         } else {
             self.url = url
-            player.replace(url: url, options: self.options)
+            state = .initialized
+            player.replace(url: url, options: currentOptions)
             if isAutoPlay {
                 prepareToPlay()
             }
@@ -453,7 +444,9 @@ open class KSPlayerLayer: NSObject {
             return
         }
         options = playerItem.options
-        if case let .left(url) = playerItem.io {
+        // L7: Forward moves the URL payload three times (initializeWithTake x3 at 0x1019cbfb4..fd0)
+        // before the url store: the inlined Either.left getter's Optional return plus the binding.
+        if let url = playerItem.io.left {
             self.url = url
         }
         state = .initialized
@@ -679,7 +672,11 @@ open class KSPlayerLayer: NSObject {
         addSubtitle(to: player.view)
         bufferedCount = 0
         player.playbackRate = options.startPlayRate
+        // L7: the MainActor closure's executor check (swift_task_reportUnexpectedExecutor @0x1019cdc58)
+        // carries "KSPlayer/KSPlayerLayer.swift" line 465 (`mov w3,#0x1d1`).
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 465)
         options.audioRecognizes = subtitleModel.subtitleInfos.compactMap { $0 as? AudioRecognize }
+#sourceLocation()
         // The guard order is the binary's and is the REVERSE of what the verdict described:
         // `player.subtitleDataSource` is fetched FIRST through witness byte 0xe8 and branches away
         // when nil (0x1019cdd68 / cbz 0x1019cdd78), and only then is `selectedSubtitleInfo` read
@@ -862,15 +859,15 @@ open class KSPlayerLayer: NSObject {
         }
         if player.playbackState == .paused {
             state = .paused
-        }
-        guard player.playbackState == .playing else { return }
-        if player.loadState == .playable {
-            state = .bufferFinished
-        } else {
-            if state == .bufferFinished {
-                bufferingStartTime = CACurrentMediaTime()
+        } else if player.playbackState == .playing {
+            if player.loadState == .playable {
+                state = .bufferFinished
+            } else {
+                if state == .bufferFinished {
+                    bufferingStartTime = CACurrentMediaTime()
+                }
+                state = .buffering
             }
-            state = .buffering
         }
     }
 
@@ -1150,7 +1147,7 @@ open class KSPlayerLayer: NSObject {
     fileprivate func addSubtitle(to view: UIView) {
         delegate?.playerDidAddSubtitle(view)
         subtitleView.backingLayer?.zPosition = 1
-        if let superview = subtitleView.superview, superview == view {
+        if subtitleView.superview == view {
             #if canImport(UIKit)
             view.bringSubviewToFront(subtitleView)
             #else
@@ -1240,9 +1237,11 @@ extension KSPlayerLayer {
         MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyCurrentLanguageOptions] = current
     }
 
+    // L7: no Forward body of its own (inlined). Both inlined sites, KSVideoPlayer.Coordinator.seek
+    // 0x1019dae14 and skip 0x1019dacb0, load options.isSeekedAutoPlay (+0x72) and call vtable +0x2e0
+    // with `mov x1,#0; mov x2,#0` (a nil completion), not a `{ _ in }` closure.
     func seek(time: TimeInterval) {
-        seek(time: time, autoPlay: options.isSeekedAutoPlay) { _ in
-        }
+        seek(time: time, autoPlay: options.isSeekedAutoPlay, completion: nil)
     }
 
     /// @0x1019d007c, 47 instructions. Trie: `KSPlayerLayer.isPictureInPictureActive.getter
@@ -1500,7 +1499,11 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         }
     }
 
-    required public init?(coder: NSCoder) { fatalError("L7: KSComplexPlayerLayer.init — Forward body unread") }
+    required public init?(coder: NSCoder) {
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 729)
+        fatalError("init(coder:) has not been implemented")
+#sourceLocation()
+    }
     /// Forward 0x1019d1068 (alloc 0x1019d1010): same shape as init(url:options:delegate:) over
     /// KSPlayerLayer.init(item:url:delegate:); the registerRemoteControll call is 0x1019d11c0.
     override public init(item: MEPlayerItem, url: URL, delegate: KSPlayerLayerDelegate?) {
@@ -1530,12 +1533,18 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     /// also why this member sits on the SUBCLASS: the requirement's parameter type is the subclass.
     /// ⚑[tool=export_trie_oracle ref=KSPictureInPictureProtocol.req6:0x1019c75cc result=start(layer:)]
     ///
-    /// ⚑ THE `else` BRANCH IS NOT WRITTEN. 0x1019d1508-0x1019d1608 is the nil-pipController path:
-    ///   it reloads `player`, calls the unnamed 0x1019d1d70 with the player's metadata and witness
-    ///   table, then a metadata accessor and a value-witness call with two `#1` immediates — i.e.
-    ///   it CONSTRUCTS a controller. Both helpers are real trie negatives, so writing that arm needs
-    ///   0x1019d1d70 as its own unit. Leaving it out is deliberate; guessing a constructor here
-    ///   would be invention.
+    /// L7 lane 2: the `else` arm (0x1019d1508-0x1019d1608) is now read. It calls the unnamed
+    ///   0x1019d1d70 on `player` — the same helper `readyToPlay(player:)` calls: configPIP() when
+    ///   pipController is nil, then canStartPictureInPictureAutomaticallyFromInline and the KVC
+    ///   "delegate" store — and then starts a `[weak self]` Task (TaskPriority value-witness
+    ///   storeEnumTagSinglePayload(1,1) = nil priority) whose body is
+    ///   `Task.sleep(nanoseconds: 300_000_000)` (0x11e1a300) followed by
+    ///   `player.pipController?.start(layer: self)` (witness +0x38 = req6). NOT written: the else arm's
+    ///   Task makes KSPlayerLayer.o the winning copy of the shared `Task<(), Never>.init(name:priority:operation:)`
+    ///   specialization (Forward U:0x1019c80fc), whose outlined `TaskPriority?` copy Forward takes from
+    ///   the app-wide merged helper 0x10002e588; this module has no merge partner, so that unit
+    ///   regressed match_anon -> differs (pass 20260928T131431462973Z). Also needs the undeclared
+    ///   helper 0x1019d1d70 (GAP recorded).
     /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pipStart.elseArm:0x1019d1d70 result=NOT_IN_TRIE]
     public func pipStart() {
         if let pipController = player.pipController {
@@ -1711,10 +1720,61 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
             (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
         }
     }
-    override public func readyToPlay<A>(player: A) where A: MediaPlayerProtocol { fatalError("L7: KSComplexPlayerLayer.readyToPlay — Forward body unread") }
-    public final func reCheckSubtitle() { fatalError("L7: KSComplexPlayerLayer.reCheckSubtitle — Forward body unread") }
-    override public func finish<A>(player: A, error: Error?) where A: MediaPlayerProtocol { fatalError("L7: KSComplexPlayerLayer.finish — Forward body unread") }
-    override public func stop() { fatalError("L7: KSComplexPlayerLayer.stop — Forward body unread") }
+    override public func readyToPlay<A>(player: A) where A: MediaPlayerProtocol {
+        super.readyToPlay(player: player)
+        if options.canStartPictureInPictureAutomaticallyFromInline {
+            if player.pipController == nil {
+                player.configPIP()
+            }
+            if let pipController = player.pipController {
+                #if os(iOS)
+                if let pip = pipController as? AVPictureInPictureController {
+                    pip.canStartPictureInPictureAutomaticallyFromInline = options.canStartPictureInPictureAutomaticallyFromInline
+                }
+                #endif
+                (pipController as? KSPictureInPictureController)?.setValue(self, forKey: "delegate")
+            }
+        }
+        reCheckSubtitle()
+    }
+    public final func reCheckSubtitle() {
+        guard player.pipController?.isPictureInPictureActive == true else {
+            return
+        }
+        if let viewController = (player.pipController as? KSPictureInPictureController)?.value(forKey: "pictureInPictureViewController") as? UIViewController {
+            addSubtitle(to: viewController.view)
+        } else {
+            addSubtitle(to: player.view)
+        }
+        (player.pipController as? KSPictureInPictureController)?.setValue(self, forKey: "delegate")
+    }
+    override public func finish<A>(player: A, error: Error?) where A: MediaPlayerProtocol {
+        if let error {
+#sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 804)
+            if let index = options.playerTypes.firstIndex(where: { $0 === type(of: player) }), index + 1 < options.playerTypes.count {
+                KSLog(error)
+#sourceLocation()
+                self.player = options.playerTypes[index + 1].init(url: url, options: options)
+                return
+            }
+            super.finish(player: player, error: error)
+        } else {
+            super.finish(player: player, error: nil)
+            playNextURL()
+        }
+    }
+    override public func stop() {
+        enterBackgroundTask?.cancel()
+        enterBackgroundTask = nil
+        super.stop()
+        (player.pipController as? KSPictureInPictureController)?.setValue(nil, forKey: "delegate")
+        if player.pipController?.isPictureInPictureActive != true {
+            player.pipController = nil
+        }
+        NotificationCenter.default.removeObserver(self)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        removeRemoteControllEvent()
+    }
 
     /// The trie address 0x1019d27a4 is a ONE-instruction thunk (`b 0x1019d5d38`); the body is the
     /// 181 instructions there. ⚑[tool=function_extents ref=KSComplexPlayerLayer.removeRemoteControllEvent:0x1019d5d38 result=181-instr]
@@ -1844,7 +1904,14 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         isPictureInPictureStoped = false
         player.contentMode = .scaleAspectFit
     }
-    public final func pictureInPictureControllerDidStartPictureInPicture(_ p0: AVPictureInPictureController) { fatalError("L7: KSComplexPlayerLayer.pictureInPictureControllerDidStartPictureInPicture — Forward body unread") }
+    public final func pictureInPictureControllerDidStartPictureInPicture(_ p0: AVPictureInPictureController) {
+        if let viewController = (player.pipController as? KSPictureInPictureController)?.value(forKey: "pictureInPictureViewController") as? UIViewController {
+            let view: UIView = viewController.view
+            player.view.didStartPIP(to: view)
+            addSubtitle(to: view)
+        }
+        player.pipController?.didStart(layer: self)
+    }
 
     /// ⚑[tool=export_trie_oracle ref=KSComplexPlayerLayer.pictureInPictureControllerWillStopPictureInPicture:0x1019d2b98 result=1-instr-thunk]
     /// ⚑ The trie address is a THUNK (`b 0x1019d61b8`); the real body is the 77 instructions there.

@@ -190,7 +190,7 @@ open class SubtitleModel: ObservableObject {
         }
     }
     #endif
-    private var subtitleDataSources: [any SubtitleDataSource] = KSOptions.subtitleDataSources
+    private var subtitleDataSources: [any SubtitleDataSource] = []
     @Published public private(set) var subtitleInfos: [any SubtitleInfo] = []
     @Published public private(set) var searchedSubtitleInfos: [URLSubtitleInfo] = []
     // slots 30/31/32 (keypaths d1e8/d210) + the `$parts` projection 33/34/35 — all Combine machinery.
@@ -294,8 +294,11 @@ open class SubtitleModel: ObservableObject {
     // Forward: init(url:options:) @0x101ab34a0 (allocating 0x101aaf2c8) — no init(options:).
     // ⚑[tool=export_trie_oracle ref=SubtitleModel.init(url:options:):0x101ab34a0 result=OWNER_MATCH]
     public init(url: URL, options: KSOptions) {
-        self.url = url
         self.options = options
+        self.url = url
+        for dataSource in KSOptions.subtitleDataSources {
+            addSubtitle(dataSource: dataSource)
+        }
     }
 
     public func addSubtitle(info: any SubtitleInfo) {
@@ -405,7 +408,7 @@ open class SubtitleModel: ObservableObject {
                 newParts += await secondaryActor.search(with: query, generation: sequence)
             }
 
-            guard generation == strongSelf.subtitleSearchGeneration else { return }
+            guard strongSelf.subtitleSearchGeneration == generation else { return }
             if sequence != strongSelf.subtitleSearchSequence {
                 guard !newParts.isEmpty else { return }
                 for part in newParts {
@@ -503,15 +506,15 @@ open class SubtitleModel: ObservableObject {
     // 0x10198eb18; `stillCurrent`/`publishIfCurrent` have no Forward symbol (inlined), so they take no slot.
     // Order inside 100-104 is an inference: dead slots carry no name.
     // ⚑[tool=vtable_surface ref=KSPlayer.SubtitleModel#100-104 result=dead slots ↔ Forward-dead methods]
-    private func nextSubtitleSearchSequence(primaryQueryTime: Double?, secondaryQueryTime: Double?) -> UInt64 { fatalError("L7: SubtitleModel.nextSubtitleSearchSequence — Forward body unread") }
+    private func nextSubtitleSearchSequence(primaryQueryTime: Double?, secondaryQueryTime: Double?) -> UInt64 { 0 }
 
-    private func invalidateRenderedPartsForSelectionChange() { fatalError("L7: SubtitleModel.invalidateRenderedPartsForSelectionChange — Forward body unread") }
+    private func invalidateRenderedPartsForSelectionChange() {}
 
-    private func invalidateSubtitleSearches() { fatalError("L7: SubtitleModel.invalidateSubtitleSearches — Forward body unread") }
+    private func invalidateSubtitleSearches() {}
 
-    private func shouldApplySubtitleResult(searchGeneration: UInt64, searchSequence: UInt64, newParts: [SubtitlePart]) -> Bool { fatalError("L7: SubtitleModel.shouldApplySubtitleResult — Forward body unread") }
+    private func shouldApplySubtitleResult(searchGeneration: UInt64, searchSequence: UInt64, newParts: [SubtitlePart]) -> Bool { false }
 
-    private func areSubtitlePartsStillCurrent(_ p0: [SubtitlePart]) -> Bool { fatalError("L7: SubtitleModel.areSubtitlePartsStillCurrent — Forward body unread") }
+    private func areSubtitlePartsStillCurrent(_ p0: [SubtitlePart]) -> Bool { false }
 
     // Slot 105 @0x101ab68d8 — NOT the base network datasource search (later·115 mis-ID, corrected session 22): a  ⚑[tool=resolve_fun_pins ref=FUN_101ab68d8:0x101ab68d8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(invalidateParts in _912797C474A4D482F764324552AD86D2)() -> ()
     // generation-invalidation + actor-reset trigger. Bumps the model generation/sequence, resets both
@@ -522,8 +525,8 @@ open class SubtitleModel: ObservableObject {
     // NOT private: KSPlayerLayer.seek calls this immediately before the player seek, so the
     // binary reaches it across a class boundary.
     func invalidateParts() {
-        subtitleSearchGeneration += 1
-        subtitleSearchSequence += 1
+        subtitleSearchGeneration &+= 1
+        subtitleSearchSequence &+= 1
         latestPrimarySubtitleQueryTime = nil
         latestSecondarySubtitleQueryTime = nil
         parts = []
@@ -589,7 +592,7 @@ open class SubtitleModel: ObservableObject {
             nonisolated(unsafe) let source = dataSource
             Task { @MainActor in
                 do {
-                    let infos = try await Self.delegateSearch(source, query: query, languages: languages)
+                    let infos = try await SubtitleModel.delegateSearch(source, query: query, languages: languages)
                     strongSelf.subtitleInfos.append(contentsOf: infos)
                     strongSelf.searchInfos.append(contentsOf: infos)
                     strongSelf.searchedSubtitleInfos.append(contentsOf: infos)
@@ -654,7 +657,7 @@ open class SubtitleModel: ObservableObject {
         addSubtitle(info: subtitleInfo, rebindSelection: false)
         if let info = subtitleInfo as? URLSubtitleInfo {
             if info.downloadURL.isFileURL,
-               (try? info.downloadURL.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem != true {
+               (try? info.downloadURL.resourceValues(forKeys: [.isUbiquitousItemKey]).isUbiquitousItem) != true {
                 return
             }
             if let cache = subtitleDataSources.first(where: { $0 is CacheSubtitleDataSource }) as? CacheSubtitleDataSource {
@@ -695,7 +698,7 @@ public actor SubtitleActor: KSSubtitleProtocol {
     // (`await firstSubtitleActor?.reset(); await secondarySubtitleActor?.reset()`). Invalidates this
     // actor's in-flight search state. ⚑ method name unrecoverable (P28), recon-chosen.
     func reset() {
-        searchGeneration += 1
+        searchGeneration &+= 1
         latestQueryTime = nil
         parts = []
     }

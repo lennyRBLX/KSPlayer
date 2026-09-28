@@ -198,19 +198,22 @@ extension KSVideoPlayer: UIViewRepresentable {
 
         public init() {}
 
+        // L7: Forward 0x1019d7254. Existing layer: delegate = self (weak assign, witness 0x1041d4d18) first,
+        // then `!=` (inlined Equatable.!= → dispatch thunk $sSQ2eeoiySbx_xtFZTj), set(url:options:) 0x1019cb674
+        // only when different. New layer: static KSOptions.playerLayerType (once 0x1044e51f0) metatype
+        // slot +0x270 init(url:options:delegate:), then the playerLayer setter 0x1019da600. Both arms
+        // return through KSPlayerLayer vtable +0x280 = makeUIView().
         public func makeView(url: URL, options: KSOptions) -> UIView {
             if let playerLayer {
-                if playerLayer.url == url {
-                    return playerLayer.player.view ?? UIView()
-                }
-                playerLayer.delegate = nil
-                playerLayer.set(url: url, options: options)
                 playerLayer.delegate = self
-                return playerLayer.player.view ?? UIView()
+                if playerLayer.url != url {
+                    playerLayer.set(url: url, options: options)
+                }
+                return playerLayer.makeUIView()
             } else {
-                let playerLayer = KSPlayerLayer(url: url, options: options, delegate: self)
+                let playerLayer = KSOptions.playerLayerType.init(url: url, options: options, delegate: self)
                 self.playerLayer = playerLayer
-                return playerLayer.player.view ?? UIView()
+                return playerLayer.makeUIView()
             }
         }
 
@@ -219,9 +222,10 @@ extension KSVideoPlayer: UIViewRepresentable {
             onPlay = nil
             onFinish = nil
             onBufferChanged = nil
-            playerLayer = nil
             delayHide?.cancel()
             delayHide = nil
+            // L7: Forward 0x1019d7988 stores playerLayer = nil last (setter 0x1019da600 after the delayHide clear).
+            playerLayer = nil
         }
 
         public func skip(interval: Int) {
