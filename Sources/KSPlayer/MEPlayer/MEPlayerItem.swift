@@ -344,10 +344,13 @@ public final class MEPlayerItem: @unchecked Sendable {
     // is Forward helper 0x1019e1b6c (PlayerDefines.swift, not in source) — written inline here.
     func send(_ event: MEPlayerItem.Event) {
         switch (state, event) {
-        case (_, let .failed(error)):
+        // Forward 0x101a4902c `cmp w22, #0x8`: the closed test reuses the state byte loaded for the switch
+        // (w22), with no reload after the sourceDidFailed witness call — the switch-bound value. Local
+        // binding names below are INFERRED.
+        case let (current, .failed(error)):
             KSLog(level: .error, "[MEPlayerItem] failed error=\(error)", line: 520)
             delegate?.sourceDidFailed(error: error)
-            if state != .closed {
+            if current != .closed {
                 timer?.invalidate()
                 timer = nil
                 state = .failed
@@ -565,7 +568,9 @@ public final class MEPlayerItem: @unchecked Sendable {
                 KSLog("star codecDidChangeCapacity timer", line: 344)
             }
             delegate?.sourceDidOpened()
-        case (.endOfStream, let .trackFinished(track)), (.reading, let .trackFinished(track)), (.paused, let .trackFinished(track)):
+        // Forward tests the switch-loaded state against the static array 0x1044ea2d0 = [6, 3, 5]
+        // (.endOfStream, .reading, .paused), one byte at a time — an array-literal `contains` in a where clause.
+        case let (current, .trackFinished(track)) where [State.endOfStream, .reading, .paused].contains(current):
             if track.mediaType == .audio {
                 isAudioStalled = true
             }
@@ -589,9 +594,10 @@ public final class MEPlayerItem: @unchecked Sendable {
             }
         case (.finished, .trackFinished):
             break
-        case (.ready, let .seek(time, useCache, completion)), (.reading, let .seek(time, useCache, completion)),
-             (.paused, let .seek(time, useCache, completion)), (.seeking, let .seek(time, useCache, completion)):
-            let oldState = state
+        // Forward 0x101a48c90..0x101a48cb0: the switch-loaded state vs the static array 0x1044ea318 =
+        // [2, 3, 5, 4] (.ready, .reading, .paused, .seeking), `uxtl`/`cmeq`/`umaxv` — array-literal `contains`
+        // in a where clause. The later `== .seeking` / `== .paused` tests reuse that same byte (no reload).
+        case let (oldState, .seek(time, useCache, completion)) where [State.ready, .reading, .paused, .seeking].contains(oldState):
             seekTime = time
             if oldState == .seeking {
                 seekingCompletionHandler?(false)
@@ -1193,15 +1199,18 @@ extension MEPlayerItem {
         }
         isPreload = false
         KSLog("[MEPlayerItem] resumeFromPreload: state=\(state), action=\(action)", file: "KSPlayer/MEPlayerItem.swift", function: "resumeFromPreload()", line: 595)
+        // Forward tests `cbz w21` (.waitForOpened → nothing) at 0x101a4794c, then `cmp w21, #1`
+        // (.resumeFromPaused) at 0x101a47954; every other action falls to the plain decode arm. One
+        // epilogue returns w21 (0x101a4760c).
         switch action {
+        case .waitForOpened:
+            break
         case .resumeFromPaused:
             allPlayerItemTracks.forEach { $0.decode() }
             // Forward builds Event payload word 4 / tag 3 (`.resume`) and calls send(_:) @0x101a48b04.
             send(.resume)
-        case .readyImmediate:
-            allPlayerItemTracks.forEach { $0.decode() }
         default:
-            break
+            allPlayerItemTracks.forEach { $0.decode() }
         }
         return action
     }
@@ -1412,7 +1421,9 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
     //   closure 0x101a59020 (`!frame.isKeyFrame`, VideoVTBFrame +0x7a); `.seek` inlines
     //   FormatContext.seekable and currentPlaybackTime, then calls send 0x101a48b04.
     public func getVideoOutputRender(force: Bool) -> VideoVTBFrame? {
-        guard let videoTrack, state != .closed else {
+        // Forward 0x101a584cc..0x101a584d4: the state byte is compared against a one-element static array
+        // 0x1044ea420 = [8] (`ldrb w9,[x9,#0x420]; cmp w9,w8`) — an array-literal `contains`, not `!= .closed`.
+        guard let videoTrack, ![State.closed].contains(state) else {
             return nil
         }
         var type: ClockProcessType = .empty
@@ -1513,9 +1524,8 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
                 return .right(false)
             }
             // Forward 0x101a59218..0x101a5923c: lock [+0x58]+0x18, load head/tail, unlock, `cmp; cset eq`, with
-            // NO negative-value trap. The build of `frameCount == 0` keeps `Int(UInt)`'s `tbnz #63 → brk`, so the
-            // forms do not fold. The UInt `CircularBuffer.count` compare is what Forward inlines.
-            return .right(audioTrack.outputRenderQueue.count == 0)
+            // NO negative-value trap — the inlined `frameCount` getter, now `Int(bitPattern:)` (MEPlayerItemTrack).
+            return .right(audioTrack.frameCount == 0)
         }
     }
 }

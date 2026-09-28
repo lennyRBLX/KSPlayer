@@ -45,16 +45,19 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     let mediaType: AVFoundation.AVMediaType
     let outputRenderQueue: CircularBuffer<Frame>
     var isLoopModel = false
-    var frameCount: Int { Int(outputRenderQueue.count) }
+    // Forward frameCount / frameMaxCount getters (vtable #19/#20): plain load of the UInt, no `tbnz #63 → brk` overflow trap,
+    // so the conversion is `Int(bitPattern:)`, not the trapping `Int(_:)`.
+    var frameCount: Int { Int(bitPattern: outputRenderQueue.count) }
     var frameMaxCount: Int {
-        Int(outputRenderQueue.maxCount)
+        Int(bitPattern: outputRenderQueue.maxCount)
     }
 
-    /// Vtable F21 (G, Forward 0x101a5b970): `Double(frameCount) / Double(fps)`, overridden by
+    /// Vtable F21 (G, Forward 0x101a5b970): `Double(outputRenderQueue.count) / Double(fps)` — the UInt count is
+    /// converted with `ucvtf` (unsigned), so it is not routed through the signed `frameCount`. Overridden by
     /// AsyncPlayerItemTrack (0x101a5d0bc, override-table entry 1) with the packet counts added — the
     /// CapacityProtocol extension formula. Name INFERRED (internal class, no trie symbol).
     var loadedTime: TimeInterval {
-        TimeInterval(frameCount) / TimeInterval(fps)
+        TimeInterval(outputRenderQueue.count) / TimeInterval(fps)
     }
 
     var fps: Float {
@@ -88,12 +91,12 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         }
     }
 
-    // Forward 0x101a5ba20: `strb #1,[x20,#0x78]` (isNeedKeyFrame) + `strh #1,[x20,#0x28]` (state .decoding,
-    // isEndOfFile false).
+    // Forward 0x101a5ba20: `strb #1,[x20,#0x78]` (isNeedKeyFrame) first, then the merged
+    // `strh #1,[x20,#0x28]` (isEndOfFile false + state .decoding) — source order follows the store order.
     func decode() {
+        isNeedKeyFrame = true
         isEndOfFile = false
         state = .decoding
-        isNeedKeyFrame = true
     }
 
     // Forward 0x101a5ba30: seekTime, isEndOfFile, isLoopModel setter (vtable +0x158), state .flush,
@@ -111,14 +114,16 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         outputRenderQueue.flush()
     }
 
+    // Forward 0x101a5bab4: on `.flush` the decoders are flushed (DecodeProtocol existential stride 0x10),
+    // then outputRenderQueue.flush() (CircularBuffer.flush 0x101a17ac4), then state = .decoding; doDecode is
+    // called unconditionally afterwards (no second state test).
     func putPacket(packet: Packet) {
         if state == .flush {
             decoderMap.values.forEach { $0.doFlushCodec() }
+            outputRenderQueue.flush()
             state = .decoding
         }
-        if state == .decoding {
-            doDecode(packet: packet)
-        }
+        doDecode(packet: packet)
     }
 
     func getOutputRender(where predicate: ((Frame, UInt) -> Bool)?) -> Frame? {
@@ -377,7 +382,10 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     }
 }
 
-protocol DecodeProtocol {
+// Class-bound: Forward putPacket 0x101a5bab4 / shutdown 0x101a5bc34 walk decoderMap values with a 0x10
+// stride and use swift_getObjectType + swift_unknownObjectRetain/Release (16-byte class existential), not the
+// 40-byte opaque-existential box helpers.
+protocol DecodeProtocol: AnyObject {
     func decode()
     // THE REQUIREMENT TAKES A RAW AVPacket POINTER, NOT `Packet`. All three conformers agree, and
     // each exports its own method descriptor (`…Tq`):
