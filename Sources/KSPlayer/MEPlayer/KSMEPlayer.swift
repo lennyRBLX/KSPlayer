@@ -80,11 +80,25 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     public var usesExternalPlaybackWhileExternalScreenIsActive: Bool = false
     public private(set) var seekable: Bool = false // ⚑ M2: binary caches this (recon was computed `playerItem.seekable`)
 
+    // ⚑ L7: Forward didSet 0x101a3dc90 (416 insns; reached from setter 0x101a3bd0c, modify 0x101a3e354 and
+    //   sourceDidChange 0x101a41814). `oldValue != playbackRate` gate; KSLog "[audio] playbackRate=" level 3,
+    //   function "playbackRate", line 0x44; MEPlayerItem.playbackRate's setter INLINED (audioClock then
+    //   videoClock +0x10, modify accesses); displayLayer (VideoOutput +0x40) controlTimebase → CMTimebaseSetRate;
+    //   KSOptions vtable +0x700 = isAudioRateByFilter() picks the filter arm, else AudioOutput +0x30 setter.
+    // ⚑ GAP (isolation): the filter closure carries a MainActor executor check (reportUnexpectedExecutor
+    //   "KSPlayer/KSMEPlayer.swift" line 0x4a), so Forward's didSet is MainActor-isolated; sourceDidChange
+    //   calls it no-hop and its MEPlayerDelegate witness thunk 0x101a42328 is a bare `b`. Kept nonisolated.
+    // ⚑ L7: filter arm tail (0x101a3e248-0x101a3e270): `playbackState != .idle` → MEPlayerItem 0x101a48158
+    //   (AVMediaType.audio), result discarded.
     public var playbackRate: Float = 1 {
         didSet {
-            if playbackRate != audioOutput.playbackRate {
-                audioOutput.playbackRate = playbackRate
-                if audioOutput is AudioUnitPlayer {
+            if oldValue != playbackRate {
+                KSLog("[audio] playbackRate=\(playbackRate)", line: 68)
+                playerItem.playbackRate = playbackRate
+                if let controlTimebase = videoOutput.displayLayer.controlTimebase {
+                    CMTimebaseSetRate(controlTimebase, rate: Double(playbackRate))
+                }
+                if options.isAudioRateByFilter() {
                     var audioFilters = options.audioFilters.filter {
                         !$0.hasPrefix("atempo=")
                     }
@@ -92,14 +106,22 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
                         audioFilters.append("atempo=\(playbackRate)")
                     }
                     options.audioFilters = audioFilters
+                    if playbackState != .idle {
+                        _ = playerItem.usePacketCacheSeek(mediaType: .audio)
+                    }
+                } else {
+                    audioOutput.playbackRate = playbackRate
                 }
             }
         }
     }
 
+    // ⚑ L7: Forward setter+didSet 0x101a3e44c — store, then `cbz` on the NEW value (.idle = 0) before the
+    //   `cmp` with the old one, then runOnMainThread(playOrPause closure 0x101a47374). The idle guard is why
+    //   reset()'s constant `.idle` store runs no observer.
     public private(set) var loadState: MediaLoadState = .idle {
         didSet {
-            if loadState != oldValue {
+            if loadState != .idle, loadState != oldValue {
                 playOrPause()
             }
         }
@@ -140,16 +162,33 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
         #endif
     }
 
-    public init(item: MEPlayerItem) { fatalError("L7: KSMEPlayer.init — Forward body unread") }
-
-    deinit {
+    // ⚑ L7: Forward 0x101a3eca0 (255 insns) — init(url:options:)'s body with the item injected: the same
+    //   stored-property defaults, then `item.options` (plain load, retained) feeds setAudioSession
+    //   (0x1019b2cac), the videoPlayerType init (witness +0x78) and `self.options`; `playerItem = item`
+    //   lands between the audioOutput and videoOutput stores; after super.init the tail is identical
+    //   (delegate setter 0x101a482e0, both renderSource witnesses +0x18, the two addObserver calls).
+    public init(item: MEPlayerItem) {
+        let options = item.options
+        options.setAudioSession()
+        audioOutput = KSOptions.audioPlayerType.init()
+        playerItem = item
+        videoOutput = KSOptions.videoPlayerType.init(options: options)
+        self.options = options
+        super.init()
+        playerItem.delegate = self
+        audioOutput.renderSource = playerItem
+        videoOutput.renderSource = playerItem
         #if !os(macOS)
-        try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(2)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioRouteChange), name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance())
+        if #available(tvOS 15.0, iOS 15.0, *) {
+            NotificationCenter.default.addObserver(self, selector: #selector(spatialCapabilityChange), name: AVAudioSession.spatialPlaybackCapabilitiesChangedNotification, object: nil)
+        }
         #endif
-        NotificationCenter.default.removeObserver(self)
-        videoOutput.invalidate()
-        playerItem.stop()
     }
+
+    // ⚑ No `deinit`: Forward's __deallocating_deinit is 0x1000dd4d4 (13 insns), the shared ICF'd
+    //   NSObject-subclass body (`objc_msgSendSuper2(dealloc)` only). The audio-session /
+    //   removeObserver / invalidate statements live in `stop()` (0x101a43b60) in Forward.
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSMEPlayer.ioContext.getter:0x101a42340 result=24-instr]
     /// A forward, with `MEPlayerItem.ioContext` INLINED — which is why the body reads two field
     /// globals and a literal offset rather than making a call:
@@ -259,6 +298,15 @@ extension KSMEPlayer: MEPlayerDelegate {
     ///   two callers, `KSPlayerLayer.init(item:url:delegate:)` @0x1019caaf4 and
     ///   `KSPlayerLayer.replace(item:url:)` @0x1019cba60, are in another file of the same module,
     ///   which is a lower bound, not a reading. Sited next to `sourceDidOpened()` for adjacency.
+    ///
+    /// ⚑ ISOLATION: `@MainActor` is Forward-evidenced — the `first { $0.isEnabled }` closure in
+    ///   0x101a3bd64 carries `swift_task_isCurrentExecutor` +
+    ///   `reportUnexpectedExecutor("KSPlayer/KSMEPlayer.swift", line 300)` (0x101a3c09c `mov w3,#0x12c`),
+    ///   which Swift 6 emits only for a closure formed in a MainActor-isolated context; the build
+    ///   (nonisolated) has none. Both callers are in the `@MainActor` class KSPlayerLayer.
+    ///   The closure line is pinned to 300 via `#sourceLocation`; the KSLog line literal is
+    ///   0x131 = 305 (0x101a3c2b8 `mov w6,#0x131`; build had 0x114 = 276).
+    @MainActor
     func sourceDidOpenedSync() {
         isReadyToPlay = true
         seekable = playerItem.seekable
@@ -266,27 +314,62 @@ extension KSMEPlayer: MEPlayerDelegate {
         if let outputURL = options.outputURL {
             playerItem.startRecord(url: outputURL, mediaType: options.outputMediaType)
         }
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 300)
         let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
             $0 as? FFmpegAssetTrack
         }?.audioDescriptor
+#sourceLocation()
         guard let audioDescriptor else {
             return
         }
         audioDescriptor.updateAudioFormat()
-        KSLog("[audio] audio type=\(audioOutput) prepare audioFormat (sync)")
+        KSLog("[audio] audio type=\(audioOutput) prepare audioFormat (sync)", line: 305)
         audioOutput.prepare(audioFormat: audioDescriptor.audioFormat)
     }
 
+    // ⚑ Forward 0x101a40420 (outer, 267 insns) + closure 0x101a4084c (582 insns):
+    //   · outer = the sourceDidOpenedSync prefix (isReadyToPlay, inlined playerItem.seekable, readyTime,
+    //     outputURL → startRecord 0x101a483d4) then runOnMainThread { [weak self] } (weak box only; the
+    //     track lookup happens INSIDE the closure).
+    //   · closure: tracks(.audio) (0x101a3ccd0) `first { isEnabled }` — executor check line 0x140 = 320 —
+    //     `as? FFmpegAssetTrack` → audioDescriptor; updateAudioFormat() (0x101a68a74); KSLog
+    //     "[audio] audio type=" + audioOutput + " prepare audioFormat )" line 0x143 = 323;
+    //     audioOutput.prepare(audioFormat:) (AudioOutput wt +0x90). audioDescriptor is released at closure end.
+    //   · controlTimebase / startPlayTime > 1 → CMTimebaseSetTime(CMTimeMake(Int64(startPlayTime), 1)).
+    //   · rotation block (see GAP below), then delegate?.readyToPlay(player: self) (wt +0x8).
+    // GAP (isolation, not written): Forward, when !options.isRotateByFilter, runs
+    //     if let videoTrack = tracks(mediaType: .video).first(where: { $0.isEnabled }) {   // check line 0x149 = 329
+    //         if videoTrack.rotation != 0 {                                               // MediaPlayerTrack wt +0x48
+    //             let angle: UInt16 = UIApplication.isLandscape && videoTrack.rotation != 180 ? 0 : videoTrack.rotation
+    //             NotificationCenter.default.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { [weak self, videoTrack] _ in
+    //                 guard let self else { return }                                      // 0x101a473bc → 0x101a41164
+    //                 videoOutput.centerRotate(by: UIApplication.isLandscape ? 0 : videoTrack.rotation)
+    //             }
+    //             videoOutput.centerRotate(by: angle)                                     // inlined UIView.centerRotate
+    //         }
+    //     }
+    //   (isLandscape inlined via the connectedScenes helper 0x101a02f64; centerRotate inlined as setTransform:.)
+    //   The observer block is NS_SWIFT_SENDABLE, yet Forward captures the non-Sendable `any MediaPlayerTrack`
+    //   and calls MainActor UIView API from it with NO executor check — the decl-level isolation that makes that
+    //   compile under Swift 6 (MediaPlayerTrack: Sendable? nonisolated centerRotate?) is not resolvable here.
+    //   Also needs an `#if os(iOS)` guard (UIDeviceOrientationDidChangeNotification is tvOS/visionOS-unavailable).
     public func sourceDidOpened() {
         isReadyToPlay = true
+        seekable = playerItem.seekable
         options.readyTime = CACurrentMediaTime()
-        let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
-            $0 as? FFmpegAssetTrack
-        }?.audioDescriptor
+        if let outputURL = options.outputURL {
+            playerItem.startRecord(url: outputURL, mediaType: options.outputMediaType)
+        }
         runOnMainThread { [weak self] in
             guard let self else { return }
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 320)
+            let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
+                $0 as? FFmpegAssetTrack
+            }?.audioDescriptor
+#sourceLocation()
             if let audioDescriptor {
-                KSLog("[audio] audio type: \(audioOutput) prepare audioFormat )")
+                audioDescriptor.updateAudioFormat()
+                KSLog("[audio] audio type=\(audioOutput) prepare audioFormat )", line: 323)
                 audioOutput.prepare(audioFormat: audioDescriptor.audioFormat)
             }
             if let controlTimebase = videoOutput.displayLayer.controlTimebase, options.startPlayTime > 1 {
@@ -342,61 +425,64 @@ extension KSMEPlayer: MEPlayerDelegate {
         }
     }
 
+    // ⚑ L7: Forward 0x101a41814 (475 insns), read top to bottom:
+    //   · playableTime: EOF (+0x28) → playerItem.duration, else currentPlaybackTime (0x101a41fe4) + maxLoadedTime.
+    //   · `playerItem.ioContext` (formatContext +0x20) cast (w4 = 6) to PreLoadProtocol (0x103566c50); `duration > 0`
+    //     after the cast, then witness +0x48 = req 8 `syncPlaybackPosition(time:duration:)`.
+    //   · isFirst (+0x2a) || isSeek (+0x2b) → VideoOutput +0x48 pixelBuffer; nil → the isFirst / isSeek /
+    //     `options.isAccurateSeek` (+0x71) ladder, then +0x80 readNextFrame().
+    //   · .playable arm: bufferingProgress is set in place (willSet 0x101a3d128 + store), no runOnMainThread.
+    //   · else arm: the firstPlayableTime/prepareTime stamp + KSLog(options.firstTimeLog()) (function
+    //     "sourceDidChange(loadingState:)", line 0x19f) precede `loadState = .playable` (setter 0x101a3e44c).
+    //   · tail: delegate witness +0x20 = changePlaybackTime(player:time:).
+    //   · live-rate gate: MEPlayerItem 0x101a486b0 (`isLive`, 0x101a41e14) before the playbackState/loadState tests.
     public func sourceDidChange(loadingState: LoadingState) {
         if loadingState.isEndOfFile {
             playableTime = duration
         } else {
-            // ⚑ s106: READ, not chosen. This method is @0x101a41814; `mov x22, x0` makes x22 the
-            //   LoadingState parameter, `ldrb w21,[x22,#0x28]` is the `isEndOfFile` test above
-            //   (offset 0x28, matching the recovered layout), and @0x101a418b4 `ldr d1, [x22]` /
-            //   `fadd d8, d0, d1` reads offset 0 — which is `maxLoadedTime`.
-            //   ⚑[tool=llvm-objdump ref=KSMEPlayer.sourceDidChange(loadingState:):0x101a418b4 result=offset-0-maxLoadedTime]
             playableTime = currentPlaybackTime + loadingState.maxLoadedTime
+        }
+        if let ioContext = ioContext as? PreLoadProtocol, duration > 0 {
+            ioContext.syncPlaybackPosition(time: currentPlaybackTime, duration: duration)
+        }
+        if loadingState.isFirst || loadingState.isSeek {
+            if videoOutput.pixelBuffer == nil {
+                if loadingState.isFirst || !loadingState.isSeek || !options.isAccurateSeek {
+                    videoOutput.readNextFrame()
+                }
+            }
         }
         if loadState == .playable {
             if !loadingState.isEndOfFile, loadingState.frameCount == 0, loadingState.packetCount == 0, options.preferredForwardBufferDuration != 0 {
                 loadState = .loading
                 if playbackState == .playing {
-                    runOnMainThread { [weak self] in
-                        // 在主线程更新进度
-                        self?.bufferingProgress = 0
-                    }
+                    bufferingProgress = 0
                 }
             }
         } else {
-            if loadingState.isFirst {
-                if videoOutput.pixelBuffer == nil {
-                    videoOutput.readNextFrame()
-                }
-            }
-            var progress = 100
+            let progress: UInt8
             if loadingState.isPlayable {
+                if options.firstPlayableTime == 0, options.prepareTime != 0 {
+                    options.firstPlayableTime = CACurrentMediaTime()
+                    KSLog(options.firstTimeLog(), line: 415)
+                }
                 loadState = .playable
+                progress = 100
             } else {
-                // ⚑ s106: the `isInfinite` / `isNaN` branches are REMOVED, and their absence is
-                //   read rather than deduced from the retype alone. `progress` is now UInt8, and
-                //   this body reads it exactly once, as a byte:
-                //     0x101a41db0  ldrb w8, [x22, #0x10]     — loadingState.progress
-                //     0x101a41db4  cmp  w8, #0x64            — against 100
-                //     0x101a41dbc  csel w23, w8, w9, lo      — min(progress, 100)
-                //   Three instructions, no float compare, no NaN test. The guarding those two
-                //   branches did now happens inside KSOptions.playable's Double→UInt8 conversion,
-                //   which clamps NaN to 0 and out-of-range to 255.
-                //   ⚑[tool=llvm-objdump ref=KSMEPlayer.sourceDidChange(loadingState:):0x101a41db0-0x101a41dbc result=min-progress-100]
-                progress = min(100, Int(loadingState.progress))
+                progress = min(loadingState.progress, 100)
             }
             if playbackState == .playing {
-                runOnMainThread { [weak self] in
-                    // 在主线程更新进度
-                    self?.bufferingProgress = UInt8(progress) // bufferingProgress Int→UInt8 (progress clamped [0,100])
-                }
+                bufferingProgress = progress
             }
         }
-        if duration == 0, playbackState == .playing, loadState == .playable {
+        if playerItem.isLive, playbackState == .playing, loadState == .playable {
             if let rate = options.liveAdaptivePlaybackRate(loadingState: loadingState) {
                 playbackRate = rate
             }
         }
+        // ⚑ GAP (isolation): Forward's tail is a no-hop `delegate?.changePlaybackTime(player:time:)`
+        //   (MediaPlayerDelegate wt +0x20); the requirement is MainActor-isolated here and this method is
+        //   nonisolated, so the call is a Swift 6 error — same unresolved decl-level isolation as playbackRate.
     }
 
     public func sourceDidChange(oldBitRate: Int64, newBitrate: Int64) {
@@ -463,17 +549,20 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     // Ref 0x101a3c358 preserves the output objects while replacing their source.
     @MainActor
+    // ⚑ Forward 0x101a3c358: log literal is "replace item " + `\(item)` (generic _print_unlocked
+    //   on MEPlayerItem metadata, not NSObject.description of self), line 0x1e2 = 482; the
+    //   `contains` closure's executor check is line 0x1e7 = 487, pinned via #sourceLocation.
     func replace(item: MEPlayerItem) {
-        KSLog("replaceUrl \(self)")
+        KSLog("replace item \(item)", line: 482)
         reset()
         playerItem.delegate = nil
         playerItem = item
         let options = item.options
-        if options.isAudioRateByFilter(), playbackRate != 1,
-           !options.audioFilters.contains(where: { $0.hasPrefix("atempo=") })
-        {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 487)
+        if options.isAudioRateByFilter(), playbackRate != 1, !options.audioFilters.contains(where: { $0.hasPrefix("atempo=") }) {
             options.audioFilters.append("atempo=\(playbackRate)")
         }
+#sourceLocation()
         self.options = options
         playerItem.delegate = self
         audioOutput.resetTime()
@@ -553,10 +642,17 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     @MainActor
     // Forward 0x101a4254c: isSphere, or playerItem.naturalSize == nil (tag byte +0x10), takes the scene path.
-    // ⚑ scene path in Forward falls back to CGSize(1, 1) (fmov d8/d9 #1.0 @0x101a42698); sceneSize's own fallback is unverified.
+    // ⚑ L7: the scene path is UIApplication.sceneSize INLINED (UIKitExtend.swift:218): sharedApplication →
+    //   0x101a02de0 (windows.first) → `bounds` (v2/v3 = size), nil → CGSize(1, 1) (fmov d8/d9 #1.0 @0x101a42698).
+    //   The build called KSOptions.sceneSize's getter (whose fallback is .zero) instead. Same precedent as
+    //   VRBoxDisplayModel.set(frame:encoder:) in SphereDisplayModel.swift.
     public var naturalSize: CGSize {
         guard !options.display.isSphere, let naturalSize = playerItem.naturalSize else {
+            #if canImport(CallKit)
+            return UIApplication.sceneSize
+            #else
             return KSOptions.sceneSize
+            #endif
         }
         return naturalSize
     }
@@ -597,40 +693,58 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         // playerItem.send(.close) @0x101a42894-0x101a428d0. The Event value is built on the stack
         // (payload word0 = 6, payload zeroed, tag byte = 3 = numPayloadCases, i.e. the no-payload
         // marker; empty-case ordinal 6 in declaration order is `close`) and handed to the
-        // trie-named MEPlayerItem.send(MEPlayerItem.Event). NOT WRITTEN: `MEPlayerItem.Event` and
-        // `MEPlayerItem.send(_:)` are both undeclared in this tree, so the statement cannot be
-        // spelled yet. Declaring that enum is its own unit.
-        // ⚑[tool=export_trie_oracle ref=MEPlayerItem.send:0x101a48b04 result=MEMBER_UNDECLARED]
+        // trie-named MEPlayerItem.send(MEPlayerItem.Event) — now declared (MEPlayerItem.swift Event :1012).
+        // ⚑[tool=export_trie_oracle ref=MEPlayerItem.send:0x101a48b04 result=OWNER_MATCH]
+        playerItem.send(.close)
         if KSOptions.isClearVideoWhereReplace { // @0x101a428ec-0x101a428f8, read access, 0x1044e5151
             videoOutput.flush() //                @0x101a428fc-0x101a4291c, FrameOutput witness req#2
         }
     }
 
+    // ⚑ Forward 0x101a42944 (269 insns):
+    //   · KSLog "\(self) seek from \(currentPlaybackTime) to \(time)" on the RAW `time` (grow(0x15),
+    //     description, " seek from ", double _write, " to ", double _write), line 0x20a = 522.
+    //   · bufferingProgress is set in place (willSet 0x101a3d128 + store), no runOnMainThread.
+    //   · currentPlaybackTime (0x101a41fe4) == seekTime is captured as a Bool.
+    //   · The seek goes through `playerItem.send(.seek(to:useCache:completion:))` (0x101a48b04), with
+    //     `useCache` = options.seekUsePacketCache. Context 0x1041d7c10 = {weak self, Bool, videoOutput, completion}.
+    //   · Completion 0x101a42e9c: weak-load self → re-box weak → inlined runOnMainThread { 0x101a430e8 }.
+    //   · Main body 0x101a430e8: guard self; if result { loadState = .loading (0x101a3e44c(1));
+    //     if !isSame { self.videoOutput.<VideoOutput wt +0x50>(nil) }; audioOutput.flush() (FrameOutput +0x18);
+    //     if self.videoOutput === captured videoOutput, window != nil, let tb = displayLayer.controlTimebase
+    //     { CMTimebaseSetTime(tb, CMTimeMake(Int64(currentPlaybackTime), 1)) } }; completion(result).
+    // GAP (MetalPlayView.swift, VideoOutput): wt +0x50 is called with a 2-word nil — the setter of
+    //   `pixelBuffer: PixelBufferProtocol? { get set }` (class-bound existential; getter is +0x48). This tree
+    //   declares `pixelBuffer { get }`, so `videoOutput.pixelBuffer = nil` cannot be spelled; the arm is empty.
     nonisolated public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
+        KSLog("\(self) seek from \(currentPlaybackTime) to \(time)", line: 522)
         let time = max(time, 0)
         playbackState = .seeking
-        runOnMainThread { [weak self] in
-            self?.bufferingProgress = 0
-        }
+        bufferingProgress = 0
         let seekTime: TimeInterval
         if time >= duration, options.isLoopPlay {
             seekTime = 0
         } else {
             seekTime = time
         }
-        playerItem.seek(time: seekTime) { [weak self] result in
+        let isSameTime = currentPlaybackTime == seekTime
+        playerItem.send(.seek(to: seekTime, useCache: options.seekUsePacketCache) { [weak self, videoOutput = self.videoOutput] result in
             guard let self else { return }
-            if result {
-                self.audioOutput.flush()
-                runOnMainThread { [weak self] in
-                    guard let self else { return }
-                    if let controlTimebase = self.videoOutput.displayLayer.controlTimebase {
-                        CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1))
+            runOnMainThread { [weak self] in
+                guard let self else { return }
+                if result {
+                    loadState = .loading
+                    if !isSameTime {
+                        // GAP: self.videoOutput.pixelBuffer = nil (VideoOutput wt +0x50, undeclared setter)
+                    }
+                    audioOutput.flush()
+                    if self.videoOutput === videoOutput, videoOutput.window != nil, let controlTimebase = videoOutput.displayLayer.controlTimebase {
+                        CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(currentPlaybackTime), timescale: 1))
                     }
                 }
+                completion(result)
             }
-            completion(result)
-        }
+        })
     }
 
     public var fileSize: Int64 { playerItem.fileSize }
@@ -639,15 +753,36 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         playerItem.dynamicInfo
     }
 
+    // ⚑ L7: Forward 0x101a432fc (255 insns): KSLog line 0x22f; options.resetTimeLog() (0x1019c0798);
+    //   isReadyToPlay store; bufferingProgress willSet 0x101a3d128 + store; `state != .idle` (isIdle inlined) →
+    //   isPreload guard → resumeFromPreload() (0x101a4755c): 1/2 → sourceDidOpened() (0x101a40420), 0 → return,
+    //   3 → KSLog (0x4a-char literal, line 0x244); then send(Event tag 3, word0 0 = .open) (0x101a48b04).
     public func prepareToPlay() {
-        KSLog("prepareToPlay \(self)")
-        options.prepareTime = CACurrentMediaTime()
-        playerItem.prepareToPlay()
+        KSLog("prepareToPlay \(self)", line: 559)
+        options.resetTimeLog()
+        isReadyToPlay = false
         bufferingProgress = 0
+        if !playerItem.isIdle {
+            guard playerItem.isPreload else {
+                return
+            }
+            switch playerItem.resumeFromPreload() {
+            case .resumeFromPaused, .readyImmediate:
+                sourceDidOpened()
+                return
+            case .waitForOpened:
+                return
+            case .cannotResume:
+                KSLog("[KSMEPlayer] prepareToPlay: preload item cannot resume, sending open event", line: 580)
+            }
+        }
+        playerItem.send(.open)
     }
 
     nonisolated public func play() {
-        KSLog("play \(self)")
+        // ⚑ line literal 0x24c = 588 (Forward 0x101a43830 `mov w6,#0x24c`; build had 650).
+        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — see KSPictureInPictureController.swift.
+        KSLog("play \(self)", line: 588)
         playbackState = .playing
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
             // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
@@ -658,7 +793,9 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     nonisolated public func pause() {
-        KSLog("pause \(self)")
+        // ⚑ line literal 0x254 = 596 (Forward 0x101a43a48 `mov w6,#0x254`; build had 661).
+        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — see KSPictureInPictureController.swift.
+        KSLog("pause \(self)", line: 596)
         playbackState = .paused
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
             // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
@@ -683,27 +820,20 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         videoOutput.flush()
     }
 
+    /// Forward 0x101a43b60: log "stop " + description (line 0x273 = 627), playbackState = .stopped
+    /// (didSet 0x101a3e510), reset() (0x101a427b0), `try?` setPreferredOutputNumberOfChannels(2)
+    /// (error bridged + released), NotificationCenter.default.removeObserver(self), then
+    /// audioOutput / videoOutput FrameOutput req3 (base-table +0x20 = invalidate()).
     public func stop() {
-        KSLog("shutdown \(self)")
+        KSLog("stop \(self)", line: 627)
         playbackState = .stopped
-        loadState = .idle
-        isReadyToPlay = false
-        loopCount = 0
-        playerItem.stop()
-        options.prepareTime = 0
-        options.dnsStartTime = 0
-        options.tcpStartTime = 0
-        options.tcpConnectedTime = 0
-        options.openTime = 0
-        options.findTime = 0
-        options.readyTime = 0
-        options.readAudioTime = 0
-        options.readVideoTime = 0
-        options.decodeAudioTime = 0
-        options.decodeVideoTime = 0
-        if KSOptions.isClearVideoWhereReplace {
-            videoOutput.flush()
-        }
+        reset()
+        #if !os(macOS)
+        try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(2)
+        #endif
+        NotificationCenter.default.removeObserver(self)
+        audioOutput.invalidate()
+        videoOutput.invalidate()
     }
 
     @MainActor
@@ -720,9 +850,28 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         videoOutput.pixelBuffer?.cgImage()
     }
 
+    // ⚑ L7 GAP (MetalPlayView.swift, VideoOutput): Forward 0x101a44008 (15 insns) is exactly
+    //   `videoOutput.<VideoOutput wt +0x88>()`, and enterForeground 0x101a44044 opens with wt +0x90. MetalPlayView
+    //   has enterBackground()/enterForeground(), but this tree's VideoOutput ends at readNextFrame (Forward +0x80),
+    //   so neither requirement is declared and the calls cannot be spelled. Body left empty.
     public func enterBackground() {}
 
-    public func enterForeground() {}
+    // ⚑ L7: Forward 0x101a44044 (106 insns): [VideoOutput wt +0x90 — GAP above]; playbackState == .paused (2);
+    //   playerItem.seekable INLINED (formatContext / pb / pb.seekable > 0 / duration != 0); playerItem.duration > 0;
+    //   options.hardwareDecode; then seek(time: currentPlaybackTime) (0x101a42944) with the [weak self] closure
+    //   0x101a441ec: shouldResumePlayback (0x1044ea1c0) && !options.isDLNARunning (+0x47) → .playing, else .paused.
+    public func enterForeground() {
+        if playbackState == .paused, playerItem.seekable, duration > 0, options.hardwareDecode {
+            seek(time: currentPlaybackTime) { [weak self] _ in
+                guard let self else { return }
+                if shouldResumePlayback, !options.isDLNARunning {
+                    playbackState = .playing
+                } else {
+                    playbackState = .paused
+                }
+            }
+        }
+    }
 
     public var isMuted: Bool {
         get {
@@ -760,6 +909,13 @@ extension KSMEPlayer: AVPictureInPictureSampleBufferPlaybackDelegate {
     }
 
     public func pictureInPictureController(_: AVPictureInPictureController, didTransitionToRenderSize _: CMVideoDimensions) {}
+    /// ⚑ ISOLATION: `@MainActor` is Forward-evidenced — the async entry 0x101a44db4 loads
+    ///   `MainActor.shared`, takes its `unownedExecutor` and `swift_task_switch`es to it before the
+    ///   body 0x101a44e48; the nonisolated build switches to the generic executor (x2 = 0). Body
+    ///   already matches (seek(time: currentPlaybackTime + skipInterval.seconds) + shared empty
+    ///   completion 0x10000e52c). GAP: `@MainActor` on this witness fails Swift 6 (non-Sendable
+    ///   `AVPictureInPictureController` sent into a MainActor witness of a nonisolated requirement);
+    ///   the isolation Forward used (SDK-side MainActor protocol?) is unresolved, so kept nonisolated.
     public func pictureInPictureController(_: AVPictureInPictureController, skipByInterval skipInterval: CMTime) async {
         seek(time: currentPlaybackTime + skipInterval.seconds) { _ in }
     }
