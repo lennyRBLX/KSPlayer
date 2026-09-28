@@ -331,6 +331,8 @@ public final class IOInterruptContext {
     /// then the ivar destroys (block @+0x18 via 0x1000b6684, token @+0x28).
     deinit {
         let reg = IOInterruptRegistry.shared
+        // Forward loads + retains `token` (+0x28) before the lock and releases it after unlock.
+        let token = token
         reg.lock.lock()
         reg.contexts.removeValue(forKey: token.id)
         reg.lock.unlock()
@@ -860,10 +862,10 @@ public final class FormatContext {
 
     /// @0x101a33e78 → FUN_101a3a0b8. IOInterruptContext(nil) (FUN_101a391bc(0,0)) + openFormatContext(.left(url))
     /// then the designated init with options?.fontsDir.
+    /// Body 0x101a3a0b8 builds `Either.left(url)` (URLVMa + storeEnumTagMultiPayload) BEFORE the
+    /// IOInterruptContext alloc + FUN_101a391bc(0,0): the delegating init(io:…interruptBlock: nil), inlined.
     public convenience init(url: URL, options: KSOptions?, inFormat: String?) throws {
-        let interrupt = IOInterruptContext(nil)
-        let (formatCtx, fileSize, ioContext) = try openFormatContext(io: .left(url), interrupt: interrupt, options: options, inFormat: inFormat)
-        self.init(formatCtx: formatCtx, fileSize: fileSize, interrupt: interrupt, ioContext: ioContext, fontsDir: options?.fontsDir)
+        try self.init(io: .left(url), options: options, inFormat: inFormat, interruptBlock: nil)
     }
     public let byteSeek: Bool                               // +0x59  DERIVED (from format flags + name compare)
     /// __allocating_init 0x101a34e54 (127 insns): IOInterruptContext(interruptBlock) (FUN_101a391bc(x4,x5)),

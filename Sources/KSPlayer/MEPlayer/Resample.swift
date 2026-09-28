@@ -507,10 +507,14 @@ class AudioSwresample: FrameChange {
         // allocated. `setup`'s Bool is never tested; the guard reads self.swrContext once and that
         // register feeds both swr_get_out_samples and swr_convert.
         if swrContext == nil || !(descriptor == avframe.pointee) || outChannel != descriptor.outChannel {
-            descriptor.sampleFormat = AVSampleFormat(rawValue: avframe.pointee.format)
-            descriptor.sampleRate = avframe.pointee.sample_rate > 0 ? avframe.pointee.sample_rate : 48000
-            descriptor.channel = avframe.pointee.ch_layout
-            descriptor.outChannel = avframe.pointee.ch_layout
+            // Forward loads format (+0x74), sample_rate (+0xb4) and ch_layout (+0x180..0x198) once,
+            // before the first descriptor store, and stores the same ch_layout registers into both
+            // channel (+0x20) and outChannel (+0x40): the frame is read as one value.
+            let frame = avframe.pointee
+            descriptor.sampleFormat = AVSampleFormat(rawValue: frame.format)
+            descriptor.sampleRate = frame.sample_rate > 0 ? frame.sample_rate : 48000
+            descriptor.channel = frame.ch_layout
+            descriptor.outChannel = frame.ch_layout
             descriptor.updateAudioFormat()
             _ = setup(descriptor: descriptor)
         }
