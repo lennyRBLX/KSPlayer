@@ -64,7 +64,7 @@ extension FFmpegUtility {
     }
     /// Forward 0x101a241f4. #function "generateThumbnail(for:options:thumbWidth:queue:progressBlock:)",
     /// #line 310. `queue.next()` and `FFThumbnail(cgImage:...)` are inlined; the codecpar unwrap for
-    /// `createContext` precedes the option copy (0x101a2456c), so the copy is the argument expression.
+    /// `createContext` precedes the option copy (0x101a2456c); the copy is inline, not a merged closure.
     /// A `transfer` throw leaves through the frame/close defers only (0x101a24f4c).
     public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws {
         let interrupt = IOInterruptContext(nil)
@@ -99,14 +99,17 @@ extension FFmpegUtility {
         let thumbHeight = codecpar.width > 0 ? codecpar.height * thumbWidth / codecpar.width : thumbWidth * 9 / 16
         let assetTrack = FFmpegAssetTrack(stream: videoStream)
         _ = assetTrack?.isDovi
-        let codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: options.map { options in
+        let codecParameters: UnsafeMutablePointer<AVCodecParameters> = videoStream.pointee.codecpar
+        var codecOptions: KSOptions?
+        if let options {
             let copied = KSOptions()
             copied.decoderOptions = options.decoderOptions
             copied.lowres = options.lowres
             copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
             copied.hardwareDecode = false
-            return copied
-        })
+            codecOptions = copied
+        }
+        let codecContext = try codecParameters.pointee.createContext(options: codecOptions)
         let reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: codecpar.format)), fps: 60, dovi: assetTrack?.dovi)
         let duration = av_rescale_q(formatCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
         let interval = duration / Int64(queue.count)
@@ -190,14 +193,17 @@ extension FFmpegUtility {
         guard let frame else {
             throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
         }
-        let codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: options.map { options in
+        let codecParameters: UnsafeMutablePointer<AVCodecParameters> = videoStream.pointee.codecpar
+        var codecOptions: KSOptions?
+        if let options {
             let copied = KSOptions()
             copied.decoderOptions = options.decoderOptions
             copied.lowres = options.lowres
             copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
             copied.hardwareDecode = false
-            return copied
-        })
+            codecOptions = copied
+        }
+        let codecContext = try codecParameters.pointee.createContext(options: codecOptions)
         defer {
             var codecContext: UnsafeMutablePointer<AVCodecContext>? = codecContext
             avcodec_free_context(&codecContext)
@@ -613,7 +619,7 @@ public class ThumbnailSession {
         guard let frame, let codecContext, let formatCtx, let reScale, let stream = formatCtx.pointee.streams[videoStreamIndex] else {
             return nil
         }
-        let time = max(time, 0)
+        let time = max(0, time)
         let seekTarget = av_rescale_q(Int64(time * 1_000_000), AVRational(num: 1, den: 1_000_000), stream.pointee.time_base)
         let seekStart = CACurrentMediaTime()
         let seekResult = av_seek_frame(formatCtx, Int32(videoStreamIndex), seekTarget, AVSEEK_FLAG_BACKWARD)
@@ -658,7 +664,16 @@ public class ThumbnailSession {
                                 if cgImage.width > Int(thumbWidth) {
                                     cgImage = cgImage.resized(width: thumbWidth) ?? cgImage
                                 }
-                                return ThumbnailSession.makeThumbnail(cgImage: cgImage, time: frameTime)
+                                if let data = cgImage.data(type: .jpg, quality: 0.72) {
+                                    return FFThumbnail(jpegData: data, time: frameTime)
+                                }
+                                if let context = CGContext(data: nil, width: cgImage.width, height: cgImage.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+                                    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+                                    if let image = context.makeImage(), let data = image.data(type: .jpg, quality: 0.72) {
+                                        return FFThumbnail(jpegData: data, time: frameTime)
+                                    }
+                                }
+                                return FFThumbnail(image: UIImage(cgImage: cgImage), time: frameTime)
                             } catch {
                                 KSLog(level: .verbose, "[Thumb] preview reScale.transfer failed: \(error)", line: 1037)
                                 return nil
