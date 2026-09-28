@@ -358,12 +358,9 @@ public class Anime4KPipeline: VideoPipeline {
                     continue
                 }
 
-                // Forward @0x101a79ed4 converts element 0 (+0x20) before element 1 (+0x40).
-                let url = String(parts[0])
-                let name = String(parts[1])
                 let anime4K = try Anime4K(
-                    name: name,
-                    url: url,
+                    name: String(parts[1]),
+                    url: String(parts[0]),
                     device: device,
                     usePrecompiled: true,
                     bufferCount: 1

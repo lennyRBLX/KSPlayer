@@ -218,7 +218,13 @@ public class VRBoxDisplayModel: SphereDisplayModel {
     // arity 2. Body unchanged.
     override public func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder) {
         super.set(frame: frame, encoder: encoder)
+        // Forward @0x101a8cbf0..0x101a8cc28 inlines UIApplication.sceneSize (sharedApplication →
+        // 0x101a02de0), not a KSOptions wrapper.
+        #if canImport(CallKit)
+        let layerSize = UIApplication.sceneSize
+        #else
         let layerSize = KSOptions.sceneSize
+        #endif
         let width = Double(layerSize.width / 2)
         // Forward @0x101a8cba8 heap-allocates the 2-element array (allocObject 0x100) and walks it with
         // no closure-entry executor check: a for-in, not `.forEach { }`.
