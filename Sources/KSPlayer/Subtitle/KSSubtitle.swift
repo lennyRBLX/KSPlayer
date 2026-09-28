@@ -169,21 +169,38 @@ public final class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     private var searchProtocol: (any KSSubtitleProtocol)? = nil // §8.6
     private var isDownloading: Bool = false
     public var languageCode: String? = nil
-    public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
-    // Plain stored var (no didSet). RE-VERIFIED session 63 against the ORPHANED export trie — the tool
-    //   the session-21 check used could not see it, so the negative was sound but unproven. It now holds
-    //   on the stronger evidence: URLSubtitleInfo carries 0 `parse` symbols, 0 `parts` symbols, and ZERO
-    //   didSet/willSet observers (no `vW`/`vw`) anywhere in the class.
-    // ⚑[tool=export_trie_oracle ref=URLSubtitleInfo:parse/parts/vW result=VERIFIED negative — 0/0/0]
-    // P43 existence-check RAN + FAILED (session 21): the base parse-trigger didSet
-    //   `didSet { if isEnabled, parts.isEmpty { Task { try? await parse(url:userAgent:) } } }` is GONE, not deferred —
-    //   `URLSubtitleInfo.parse` has 0 binary symbols (removed), the `parts` field is gone (KSSubtitle-flatten), the
-    //   init (0x101aa3310) never writes isEnabled (default-false zero-init, no observer), and no URLSubtitleInfo
-    //   accessor spawns a parse-Task. The PARSE pipeline moved to SubtitleModel (§7.3, Batch 3) — but the
-    //   DOWNLOAD pipeline did NOT: it is still in this class's designated init, which calls
-    //   URL.download(userAgent:completion:) @0x1019f457c from 0x101aa34c0. The earlier "no download
-    //   pipeline" reading was wrong and is retracted here.
-    public var isEnabled: Bool = false
+    // Both inits (0x101aa3310 / 0x101aa34f0) zero-init +0x50/+0x51 with one `strh wzr`: renderMode raw 0 = .image.
+    public var renderMode: SubtitleRenderMode = .image
+    // The export trie has no `vW`, but the observer is private and inlined, so that negative does not rule it
+    //   out. The setter 0x101aa2b54 (87 instr) and the modify resume 0x101aa2de8 both run this body after the
+    //   store: newValue/isEnabled true, searchProtocol copy has a nil metadata word, and isDownloading is not set;
+    //   then isDownloading = true and Task(priority: nil) with a weak box (0x18 + swift_weakInit) and a (0,0)
+    //   isolation context. The Task body (0x101aa279c → 0x101aa2828) runs weakLoadStrong, then
+    //   URL.parseSubtitle(userAgent:encoding: nil) @0x1019f52d8 on a downloadURL copy. On success it assigns
+    //   searchProtocol (modify access) and then renderMode. Both the success and throw arms clear isDownloading.
+    //   The init still never writes isEnabled.
+    public var isEnabled: Bool = false {
+        didSet {
+            if isEnabled, searchProtocol == nil, !isDownloading {
+                isDownloading = true
+                // Swift 6: Task's operation is `sending`, and URLSubtitleInfo is not Sendable. This is the
+                //   repo's established `nonisolated(unsafe) weak var` launder (see init). Like the binary, it
+                //   lowers to one 0x18 heap box holding the weak reference.
+                nonisolated(unsafe) weak var weakSelf = self
+                Task {
+                    guard let self = weakSelf else {
+                        return
+                    }
+                    do {
+                        let (searchProtocol, renderMode) = try await self.downloadURL.parseSubtitle(userAgent: self.userAgent, encoding: nil)
+                        self.searchProtocol = searchProtocol
+                        self.renderMode = renderMode
+                    } catch {}
+                    self.isDownloading = false
+                }
+            }
+        }
+    }
     public private(set) var downloadURL: URL
     public var delay: TimeInterval = 0
     public private(set) var name: String

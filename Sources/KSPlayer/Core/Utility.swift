@@ -72,11 +72,9 @@ public extension String {
         let min = scanner.scanDouble() ?? 0.0
         _ = scanner.scanString(":")
         let sec = scanner.scanDouble() ?? 0.0
-        if scanner.scanString(",") == nil {
-            _ = scanner.scanString(".")
-        }
-        let millisecond = scanner.scanDouble() ?? 0.0
-        return (hour * 3600.0) + (min * 60.0) + sec + (millisecond / 1000.0)
+        // Forward 0x1019f0b70: no ","/"." millisecond scan — the cue scanner already rewrote "," to ".",
+        // so `sec` carries the fraction. Sum is hour*3600 + min*60 + sec.
+        return (hour * 3600.0) + (min * 60.0) + sec
     }
 
     func md5() -> String {
@@ -100,11 +98,28 @@ public extension UIColor {
             return nil
         }
     }
-    convenience public init(bgr: Int, alpha: CGFloat) { fatalError("L7: UIColor.init — Forward body unread") }
-    public var abgr: Int { fatalError("L7: UIColor.abgr — Forward body unread") }
-    public var assColor: String { fatalError("L7: UIColor.assColor — Forward body unread") }
-    public var data: Data { fatalError("L7: UIColor.data — Forward body unread") }
-    convenience public init?(data: Data) { fatalError("L7: UIColor.init — Forward body unread") }
+    convenience public init(bgr: Int, alpha: CGFloat) {
+        let blue = CGFloat((bgr >> 16) & 0xFF)
+        let green = CGFloat((bgr >> 8) & 0xFF)
+        let red = CGFloat(bgr & 0xFF)
+        self.init(red: red / 255.0, green: green / 255.0, blue: blue / 255.0, alpha: alpha)
+    }
+    public var abgr: Int {
+        var red = CGFloat(0)
+        var green = CGFloat(0)
+        var blue = CGFloat(0)
+        var alpha = CGFloat(0)
+        getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Int(red * 255) | Int(green * 255) << 8 | Int(blue * 255) << 16 | (0xFF - Int(alpha * 255)) << 24
+    }
+    public var assColor: String { String(format: "&H%08X", abgr) }
+    public var data: Data { try! NSKeyedArchiver.archivedData(withRootObject: self, requiringSecureCoding: false) }
+    convenience public init?(data: Data) {
+        guard let color = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data) else {
+            return nil
+        }
+        self.init(cgColor: color.cgColor)
+    }
 
     convenience init(abgr hex: Int) {
         let alpha = 1 - (CGFloat(hex >> 24 & 0xFF) / 255)
@@ -276,14 +291,16 @@ extension AVPlayer.HDRMode {
 
 public extension FourCharCode {
     var string: String {
-        let cString: [CChar] = [
-            CChar(self >> 24 & 0xFF),
-            CChar(self >> 16 & 0xFF),
-            CChar(self >> 8 & 0xFF),
-            CChar(self & 0xFF),
-            0,
+        // Forward 0x101a03e58: `rev` of self stored at sp+0x28 = (sp+8)+0x20 — the element base of a
+        // header-less ("bare") stack array object — then String._fromUTF8Repairing(count: 4); no NUL
+        // byte, no Int8 range traps, no stack protector. A 4-byte [UInt8] literal decoded as UTF-8.
+        let bytes: [UInt8] = [
+            UInt8(self >> 24 & 0xFF),
+            UInt8(self >> 16 & 0xFF),
+            UInt8(self >> 8 & 0xFF),
+            UInt8(self & 0xFF),
         ]
-        return String(cString: cString)
+        return String(decoding: bytes, as: UTF8.self)
     }
 }
 
@@ -498,7 +515,8 @@ public actor DirectoryWatcher {
     /// `_swift_defaultActor_initialize()` the binary emits here is the
     /// compiler-synthesized actor executor setup — NOT written by hand.
     public init() {                              // public (was internal, P34): ConversionInfo (ProAVPlayer) constructs it cross-module
-        source = nil                              // *(self+0x70) = 0
+        // Forward 0x101a04e58 stores *(self+0x70) = 0 exactly once — the stored `var source: …?`
+        // implicit nil default; an explicit `source = nil` here emitted a second store.
     }
 
     // MARK: slot 5 @0x101a04e78 — watchModify(fileURL:completion:) (379 instr) · name RECOVERED (s109)
@@ -518,37 +536,34 @@ public actor DirectoryWatcher {
         source?.cancel()
         source = nil
 
-        // open(fileURL.path.utf8CString, O_EVTONLY)  — 0x8000 == O_EVTONLY.
-        let fd = fileURL.path.withCString { open($0, O_EVTONLY) }
+        // open(fileURL.path, O_EVTONLY) — implicit String→pointer argument (Forward calls
+        // String.utf8CString then open on its base, no withCString fast path). 0x8000 == O_EVTONLY.
+        let fd = open(fileURL.path, O_EVTONLY)
         guard fd >= 0, source == nil else { return }     // (-1 < fd) && *(self+0x70)==0
 
-        // queue = DispatchQueue.global(qos: .default)  (binary: global(QoSClass.default))
-        let queue = DispatchQueue.global(qos: .default)
-        // makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write,.delete], queue: queue)
-        // eventMask = [.write, .delete]  (binary: _get_delete + _get_write → SetAlgebra.init)
+        // Forward evaluates eventMask ([.delete, .write]: element 0 = _get_delete, 1 = _get_write) before
+        // DispatchQueue.global(qos: .default), which is an inline argument released right after the call.
         let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write, .delete], queue: queue
+            fileDescriptor: fd, eventMask: [.delete, .write], queue: DispatchQueue.global(qos: .default)
         )
 
-        // setEventHandler — the block @0x101a06254 is an 18-instruction partial-apply forwarder
-        // (it recomputes the URL's size/alignment off the value witness to locate the captures)
-        // onto the real body @0x101a05464. That body is READ: NSFileManager `defaultManager`,
-        // `URL.path.getter`, `String._bridgeToObjectiveC`, then `fileExistsAtPath:` — and its BOOL
-        // result is passed straight to the completion (`mov x0, <result>` then `blr` the callback).
-        // ⚑ UNRESOLVED: after the completion call the body builds a weak-self box and a 40-byte
-        //   context and creates a Task through the shared specialization 0x101a03fd4
-        //   (async function pointer 0x1035697f0). That trailing task is not reconstructed.
+        // setEventHandler — block @0x101a06254 forwards to the body @0x101a05464: weak-self load (return
+        // when nil), NSFileManager `fileExistsAtPath:` passed straight to the completion, then close(fd).
+        // ⚑ writer_gap: the body then starts `Task { [weak self] in await self?.<slot 8>() }` (Task spec
+        //   0x101a03fd4, async fp 0x1035697f0) whose inlined callee does `source = nil` only — Forward vtable
+        //   slot 8 (unnamed, dead Impl) has no decl here, so that trailing Task is not written.
         // ⚑[tool=bind_oracle ref=_OBJC_CLASS_$_NSFileManager:0x104410520 result=Foundation]
-        source.setEventHandler {
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
             completion(FileManager.default.fileExists(atPath: fileURL.path))
+            close(fd)
+            _ = self
         }
-        // setCancelHandler { ... }  — second closure (capturing handler/qos/fd),
-        // __Block_copy + _setCancelHandler. Cancel handlers for an fs source
-        // conventionally close(fd).
-        // UNRESOLVED slot 5 cancel-handler body @0x101a063ec —
-        // closure internals not faithfully recoverable.
+        // setCancelHandler — block @0x101a062b8 → 0x101a063ec: completion(false) then close(fd)
+        // (context = completion fn/ctx + fd).
         source.setCancelHandler {
-            close(fd)   // stub: balance the opened descriptor on cancel
+            completion(false)
+            close(fd)
         }
 
         source.activate()                          // OS_dispatch_source.activate()
@@ -577,34 +592,37 @@ public actor DirectoryWatcher {
         let lastPathComponent = fileURL.lastPathComponent
         let parent = fileURL.deletingLastPathComponent()   // URL.deletingLastPathComponent()
 
-        // open(parent.path.utf8CString, O_EVTONLY)
-        let fd = parent.path.withCString { open($0, O_EVTONLY) }
+        // open(parent.path, O_EVTONLY) — implicit String→pointer argument (Forward: utf8CString + open).
+        let fd = open(parent.path, O_EVTONLY)
         guard fd >= 0, source == nil else { return }       // fd<0 → cleanup+return; else needs *(self+0x70)==0
 
-        let queue = DispatchQueue.global(qos: .default)
-        // eventMask = [.write]  (binary slot 6: only _get_write — no _get_delete)
+        // eventMask = [.write]  (binary slot 6: only _get_write — no _get_delete), evaluated before the
+        // inline DispatchQueue.global(qos: .default) argument (Forward order).
         let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write], queue: queue
+            fileDescriptor: fd, eventMask: [.write], queue: DispatchQueue.global(qos: .default)
         )
 
-        // setEventHandler — block @0x101a06364 forwards to the real body @0x101a05e54, which IS
-        // read and differs from slot 5's in exactly one way that matters. It rebuilds the watched
-        // file's path with `URL.appendingPathComponent` from the captured `lastPathComponent`,
-        // runs the same NSFileManager `defaultManager` / `fileExistsAtPath:` check, and then
-        // `cbz w20` — on NOT-exists it skips the callback entirely; only the exists path reaches
-        // `mov w0, #1` and the `blr`. So this one fires ONLY when the file appears, and always
-        // with `true`, where slot 5 passes the check's result through.
+        // setEventHandler — block @0x101a06364 forwards to the body @0x101a05e54: weak-self load (return
+        // when nil), then `parent.appendingPathComponent(lastPathComponent)` + `fileExistsAtPath:`; only
+        // the exists path calls completion(true) and close(fd). Context order: weak self, parent,
+        // lastPathComponent, completion, fd.
+        // ⚑ writer_gap: the exists path then starts `Task { [weak self] in await self?.<slot 8>() }`
+        //   (Task spec 0x101a03fd4, async fp 0x1035697d8) whose inlined callee does `source = nil` only —
+        //   Forward vtable slot 8 (unnamed, dead Impl) has no decl here, so that Task is not written.
         // ⚑[tool=bind_oracle ref=Foundation.URL.appendingPathComponent:0x104109a70 result=appendingPathComponent]
-        source.setEventHandler {
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
             if FileManager.default.fileExists(atPath: parent.appendingPathComponent(lastPathComponent).path) {
                 completion(true)
+                close(fd)
+                _ = self
             }
         }
-        // setCancelHandler { ... } — second closure (handler/qos/fd).
-        // UNRESOLVED slot 6 cancel-handler body @0x101a063ec —
-        // closure internals not faithfully recoverable.
+        // setCancelHandler — block @0x101a07b58 is a thunk of 0x101a063ec (slot 5's cancel body):
+        // completion(false) then close(fd).
         source.setCancelHandler {
-            close(fd)   // stub: balance the opened descriptor on cancel
+            completion(false)
+            close(fd)
         }
 
         source.activate()                          // OS_dispatch_source.activate()
@@ -642,7 +660,8 @@ public extension URL {
         if let typeID = try? resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier as CFString? {
             return UTTypeConformsTo(typeID, kUTTypeMovie)
         }
-        return false
+        // Forward 0x1019f28f0 falls back to a 23-entry static [String] (object @0x1044e7128, raw Mach-O read).
+        return ["3gp", "aac", "aiff", "alac", "avi", "flac", "flv", "iso", "m3u8", "m4a", "m4v", "mkv", "mov", "mp3", "mp4", "mpg", "ogg", "opus", "ts", "wav", "webm", "wma", "wmv"].contains(pathExtension.lowercased())
     }
 
     var isAudio: Bool {
@@ -687,7 +706,22 @@ public extension URL {
             return data
         }
     }
-    public func string(userAgent: String?, encoding: String.Encoding?) async throws -> String? { fatalError("L7: URL.string — Forward body unread") }
+    public func string(userAgent: String?, encoding: String.Encoding?) async throws -> String? {
+        let data = try await data(userAgent: userAgent)
+        var string: String?
+        let encodes = [encoding ?? String.Encoding.utf8,
+                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.big5.rawValue))),
+                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))),
+                       String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsHebrew.rawValue))),
+                       String.Encoding.unicode]
+        for encode in encodes {
+            string = String(data: data, encoding: encode)
+            if string != nil {
+                break
+            }
+        }
+        return string
+    }
 
     // ⚑[tool=member_surface ref=URL.download:0x1019f457c result=completion Yb @Sendable; no swift_task_*/ScM call]
     func download(userAgent: String? = nil, completion: @escaping @Sendable (String, URL) -> Void) {
@@ -717,7 +751,29 @@ public extension URL {
         }
         return components[i...].joined(separator: "/")
     }
-    public func parseSubtitle(userAgent: String?, encoding: String.Encoding?) async throws -> (KSSubtitleProtocol, SubtitleRenderMode) { fatalError("L7: URL.parseSubtitle — Forward body unread") }
+    public func parseSubtitle(userAgent: String?, encoding: String.Encoding?) async throws -> (KSSubtitleProtocol, SubtitleRenderMode) {
+        if pathExtension == "sup" {
+            return (try FFmpegSubtitle(url: self), .image)
+        }
+        guard let string = try await string(userAgent: userAgent, encoding: encoding) else {
+            return (try FFmpegSubtitle(url: self), .image)
+        }
+        let scanner = Scanner(string: string)
+        _ = scanner.scanCharacters(from: .controlCharacters)
+        let parse = KSOptions.subtitleParses.first { $0.canParse(scanner: scanner) }
+        guard let parse else {
+            throw KSPlayerError(code: 0, description: "Current subtitle format is not supported")
+        }
+        let renderMode: SubtitleRenderMode
+        if parse is SrtParse {
+            renderMode = .srtView
+        } else if parse is AssParse {
+            renderMode = .assView
+        } else {
+            renderMode = .image
+        }
+        return (try parse.parse(url: self, scanner: scanner), renderMode)
+    }
 
     // The string Forward hands to FFmpeg for a URL. 232 B / 58 instr @0x1019f59c4.
     // ⚑[tool=export_trie_oracle ref=$s10Foundation3URLV8KSPlayerE12ffmpegStringSSvg:0x1019f59c4 result=public-get-only]
@@ -762,13 +818,18 @@ public extension Data {
         }
         let scanner = Scanner(string: string)
         var entrys = [(String, URL, [String: String])]()
-        guard let symbol = scanner.scanUpToCharacters(from: .newlines), symbol.contains("#EXTM3U") else {
+        guard let symbol = scanner.scanUpToCharacters(from: .newlines) else {
             return []
         }
-        while !scanner.isAtEnd {
-            if let entry = scanner.parseM3U() {
-                entrys.append(entry)
+        if symbol.contains("#EXTM3U") {
+            while !scanner.isAtEnd {
+                if let entry = scanner.parseM3U() {
+                    entrys.append(entry)
+                }
             }
+        } else if symbol.contains("[playlist]") {
+            // Forward 0x1019e8f2c: `return <scanner PLS parser @0x1019eefdc>()` — a 1045-insn Scanner method
+            // with no decl here (writer_gap); the entry list stays empty until that decl exists.
         }
         return entrys
     }
@@ -953,17 +1014,12 @@ extension VerticalAlignment: Identifiable {
 extension Color: RawRepresentable {
     public typealias RawValue = String
     public init?(rawValue: RawValue) {
-        guard let data = Data(base64Encoded: rawValue) else {
-            self = .black
-            return
+        guard let data = Data(base64Encoded: rawValue),
+              let color = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data)
+        else {
+            return nil
         }
-
-        do {
-            let color = try NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data) ?? .black
-            self = Color(color)
-        } catch {
-            self = .black
-        }
+        self = Color(color)
     }
 
     public var rawValue: RawValue {
@@ -1088,12 +1144,16 @@ extension URL: Identifiable {
 
 extension String: Identifiable {
     public var id: Self { self }
-    public var localeLanguageCode: String? { fatalError("L7: String.localeLanguageCode — Forward body unread") }
+    public var localeLanguageCode: String? {
+        Locale.current.localizedString(forLanguageCode: self)
+    }
 }
 
 extension Float: Identifiable {
     public var id: Self { self }
-    @used func toString(for p0: TimeType) -> String { fatalError("L7: Float.toString — Forward body unread") }
+    @used func toString(for p0: TimeType) -> String {
+        Int(ceil(self)).toString(for: p0)
+    }
 }
 
 public enum Either<Left, Right> {
@@ -1101,11 +1161,21 @@ public enum Either<Left, Right> {
 }
 
 public extension Either {
-    internal var left: Left? { get { fatalError("L7: Either.left — Forward body unread") } }
+    internal var left: Left? { get {
+        if case let .left(value) = self {
+            return value
+        }
+        return nil
+    } }
     init(_ left: Left, or _: Right.Type) { self = .left(left) }
     init(_ left: Left) { self = .left(left) }
     init(_ right: Right) { self = .right(right) }
-    internal var right: Right? { get { fatalError("L7: Either.right — Forward body unread") } }
+    internal var right: Right? { get {
+        if case let .right(value) = self {
+            return value
+        }
+        return nil
+    } }
 }
 
 // BitWriter @0x1039ee5b8 — declaration shape read from the Forward context descriptor (kind, parent,
@@ -1116,7 +1186,24 @@ public extension Either {
 struct BitWriter {
     var data: [UInt8]
     var bitPosition: Int
-    init(size: Int) { fatalError("L7: BitWriter.init — Forward body unread") }
-    func putBits(_ p0: UInt8, _ p1: Int) { fatalError("L7: BitWriter.putBits — Forward body unread") }
-    func toData() -> Data { fatalError("L7: BitWriter.toData — Forward body unread") }
+    init(size: Int) {
+        data = [UInt8](repeating: 0, count: size)
+        bitPosition = 0
+    }
+    func putBits(_ p0: UInt8, _ p1: Int) {
+        // Forward 0x101a06550 is `mutating` (inout self in x20); the decl is not, so the body runs on
+        // local copies until the decl gap (writer_gap: add `mutating`) is closed.
+        var data = data
+        var bitPosition = bitPosition
+        for i in (0 ..< p1).reversed() {
+            if (p0 >> i) & 1 == 1 {
+                data[bitPosition / 8] |= 0x80 >> (bitPosition % 8)
+            }
+            bitPosition += 1
+        }
+        _ = (data, bitPosition)
+    }
+    func toData() -> Data {
+        Data(data)
+    }
 }

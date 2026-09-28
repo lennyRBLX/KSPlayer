@@ -89,7 +89,9 @@ public class SrtParse: KSParseProtocol {
         }
         return [makeTextSubtitlePart(start: cue.start.parseDuration(), end: cue.end.parseDuration(), text: cue.text)]
     }
-    public static func parsePart(scanner: Scanner) -> (start: String, end: String, text: String)? { fatalError("L7: SrtParse.parsePart — Forward body unread") }
+    public static func parsePart(scanner: Scanner) -> (start: String, end: String, text: String)? {
+        scanSubtitleCue(scanner)
+    }
 }
 #if !canImport(UIKit)
 import AppKit

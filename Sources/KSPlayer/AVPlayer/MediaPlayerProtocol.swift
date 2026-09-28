@@ -958,10 +958,13 @@ public extension CMFormatDescription {
 
     /// @0x101a0ba94 — extensions as? [String: Any] → "SampleDescriptionExtensionAtoms" as? [String: Any] → "hvcC" as? Data.
     public var hevcExtradata: Data? {
+        // Forward @0x101a0bc58: the `as? Data` failure `tbz`s to the shared nil return (no csel),
+        // so the Data cast is the third binding of the chain, not a returned `as?`.
         if let extensions = CMFormatDescriptionGetExtensions(self) as? [String: Any],
-           let atoms = extensions["SampleDescriptionExtensionAtoms"] as? [String: Any]
+           let atoms = extensions["SampleDescriptionExtensionAtoms"] as? [String: Any],
+           let hvcC = atoms["hvcC"] as? Data
         {
-            return atoms["hvcC"] as? Data
+            return hvcC
         }
         return nil
     }
