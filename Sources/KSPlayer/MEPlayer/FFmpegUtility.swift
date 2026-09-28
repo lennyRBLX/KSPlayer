@@ -331,8 +331,6 @@ public final class IOInterruptContext {
     /// then the ivar destroys (block @+0x18 via 0x1000b6684, token @+0x28).
     deinit {
         let reg = IOInterruptRegistry.shared
-        // Forward loads + retains `token` (+0x28) before the lock and releases it after unlock.
-        let token = token
         reg.lock.lock()
         reg.contexts.removeValue(forKey: token.id)
         reg.lock.unlock()
