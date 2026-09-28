@@ -35,5 +35,9 @@ open class AudioPlayerView: PlayerView {
         ])
     }
 }
-@used func - (_ lhs: CMTime, _ rhs: Double) -> CMTime { fatalError("L7: KSPlayer.- infix — Forward body unread") }
-@used func + (_ lhs: CMTime, _ rhs: Double) -> CMTime { fatalError("L7: KSPlayer.+ infix — Forward body unread") }
+@used func - (_ lhs: CMTime, _ rhs: Double) -> CMTime {
+    lhs - CMTime(seconds: rhs, preferredTimescale: lhs.timescale)
+}
+@used func + (_ lhs: CMTime, _ rhs: Double) -> CMTime {
+    lhs + CMTime(seconds: rhs, preferredTimescale: lhs.timescale)
+}

@@ -147,13 +147,17 @@ final class PointerImagePipeline {
         let count = stride * height
         let buffer = UnsafeMutablePointer<UInt32>.allocate(capacity: count)
         buffer.initialize(repeating: 0, count: count)
+        var y = 0
         var rowBase = 0
-        for _ in 0 ..< height {
-            for x in 0 ..< width {
+        while y < height {
+            var x = 0
+            while x < width {
                 let i = rowBase + x
                 buffer[i] = palette[Int(bitmap[i])]
+                x += 1
             }
             rowBase += stride
+            y += 1
         }
         rgbData = UnsafeMutableRawPointer(buffer).assumingMemoryBound(to: UInt8.self)
         alphaInfo = .first

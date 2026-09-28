@@ -440,10 +440,7 @@ extension AVChannelLayout: CustomStringConvertible {
     }
 
     public var description: String {
-        var channelLayout = self
-        var str = [Int8](repeating: 0, count: 64)
-        _ = av_channel_layout_describe(&channelLayout, &str, str.count)
-        return String(cString: str)
+        "\(nb_channels)ch(order=\(order.rawValue),mask=\(u.mask))"
     }
 }
 
@@ -463,12 +460,12 @@ extension KSPlayerError {
     // ⚑[tool=export_trie_oracle ref=KSPlayerError.bug.unsafeMutableAddressor:0x101a0a348 result=static-global]
     // The FFERRTAG/-errno notes are decoded FROM the stored value, not the source of it.
     // Order: Forward __text order of their unsafeMutableAddressors (0x101a09ea8..0x101a0a668).
-    package static let tryAgain = KSPlayerError(code: -35)  // -errno 35
-    package static let invalidArgument = KSPlayerError(code: -22)  // -errno 22
-    package static let outOfMemory = KSPlayerError(code: -12)  // -errno 12
-    package static let outOfRange = KSPlayerError(code: -34)  // -errno 34
-    package static let invalidValue = KSPlayerError(code: -22)  // -errno 22
-    package static let noSystem = KSPlayerError(code: -78)  // -errno 78
+    package static let tryAgain = KSPlayerError(code: swift_AVERROR(EAGAIN))  // -errno 35
+    package static let invalidArgument = KSPlayerError(code: swift_AVERROR(EINVAL))  // -errno 22
+    package static let outOfMemory = KSPlayerError(code: swift_AVERROR(ENOMEM))  // -errno 12
+    package static let outOfRange = KSPlayerError(code: swift_AVERROR(ERANGE))  // -errno 34
+    package static let invalidValue = KSPlayerError(code: swift_AVERROR(EINVAL))  // -errno 22
+    package static let noSystem = KSPlayerError(code: swift_AVERROR(ENOSYS))  // -errno 78
     package static let bitstreamFilterNotFound = KSPlayerError(code: -1179861752)
     package static let bug = KSPlayerError(code: -558323010)  // FFERRTAG(BUG!)
     package static let bufferTooSmall = KSPlayerError(code: -1397118274)  // FFERRTAG(BUFS)
@@ -610,4 +607,32 @@ public extension AVError {
     static let httpOther4xx = AVError(code: swift_AVERROR_HTTP_OTHER_4XX)
     static let httpServerError = AVError(code: swift_AVERROR_HTTP_SERVER_ERROR)
 }
-func setLogCallback() { fatalError("L7: KSPlayer.setLogCallback — Forward body unread") }
+func setLogCallback() {
+    av_log_set_callback { ptr, level, format, args in
+        guard let format else {
+            return
+        }
+        guard level <= KSOptions.logLevel.rawValue else {
+            return
+        }
+        var log = String(cString: format)
+        let arguments: CVaListPointer? = args
+        if let arguments {
+            log = NSString(format: log, arguments: arguments) as String
+        }
+        if let ptr {
+            let avclass = ptr.assumingMemoryBound(to: UnsafePointer<AVClass>.self).pointee
+            if avclass == avfilter_get_class() {
+                let context = ptr.assumingMemoryBound(to: AVFilterContext.self).pointee
+                if let opaque = context.graph?.pointee.opaque {
+                    let options = Unmanaged<KSOptions>.fromOpaque(opaque).takeUnretainedValue()
+                    options.filter(log: log)
+                }
+            }
+        }
+        if log.hasPrefix("parser not found for codec") {
+            KSLog(level: .error, log, line: 770)
+        }
+        KSLog(level: LogLevel(rawValue: level) ?? .warning, log, line: 772)
+    }
+}
