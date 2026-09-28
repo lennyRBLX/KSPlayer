@@ -20,21 +20,31 @@ class FFmpegDecode: DecodeProtocol {
     private var hasDecodeSuccess: Bool = false
     private let isVideo: Bool
     private let assetTrack: FFmpegAssetTrack
+    // Forward 0x101a21d60. The do/catch runs BEFORE assetTrack/isVideo are stored (`str x23,[x19,#0x68]`
+    //   follows it). The only store into the new context is the inlined createContext pkt_timebase write
+    //   (+0x5c), so there is no separate time_base line. The catch logs through the Error overload
+    //   (level case 2 = .error, NSError message) at line 0x1c (28). MEFilter's isAudio is a dead argument
+    //   (the callee 0x101a3b8f0 takes timebase/nominalFrameRate/options only), and the frameChange branch
+    //   tests self.isVideo (`ldrb [x19,#0x61]`). Only the audio arm then flushes a non-nil codecContext
+    //   (avcodec_flush_buffers 0x10294d260). That matches an inlined decode()/doFlushCodec() whose
+    //   `bestEffortTimestamp = 0` store is redundant, but no call is named, so it is written inline.
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         self.options = options
-        self.assetTrack = assetTrack
-        isVideo = assetTrack.mediaType == .video
         do {
             codecContext = try assetTrack.createContext(options: options)
         } catch {
-            KSLog(error as CustomStringConvertible)
+            KSLog(error, line: 28)
         }
-        codecContext?.pointee.time_base = assetTrack.timebase.rational
+        self.assetTrack = assetTrack
+        isVideo = assetTrack.mediaType == .video
         filter = MEFilter(timebase: assetTrack.timebase, isAudio: assetTrack.mediaType == .audio, nominalFrameRate: assetTrack.nominalFrameRate, options: options)
-        if assetTrack.mediaType == .video {
+        if isVideo {
             frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, dovi: assetTrack.dovi)
         } else {
             frameChange = AudioSwresample(audioDescriptor: assetTrack.audioDescriptor!)
+            if codecContext != nil {
+                avcodec_flush_buffers(codecContext)
+            }
         }
     }
 
@@ -83,7 +93,7 @@ class FFmpegDecode: DecodeProtocol {
         if sendResult != 0 {
             guard isVideo,
                   options.hardwareDecode,
-                  codecContext.pointee.hw_device_ctx != nil,
+                  self.codecContext?.pointee.hw_device_ctx != nil,
                   options.recreateContext(
                       hasDecodeSuccess: hasDecodeSuccess,
                       isKeyFrame: packet.pointee.flags & AV_PKT_FLAG_KEY != 0
@@ -95,10 +105,10 @@ class FFmpegDecode: DecodeProtocol {
             if sendResult != AVError.unknown.code, sendResult != AVError.tryAgain.code {
                 options.hardwareDecode = false
             }
-            KSLog(level: .error, "[video] videoToolbox ffmpeg decode failedCode=\(sendResult), hasDecodeSuccess=\(hasDecodeSuccess), isKeyFrame=\(packet.pointee.flags & AV_PKT_FLAG_KEY != 0). change to hardwareDecode=\(options.hardwareDecode)")
+            KSLog(level: .error, "[video] videoToolbox ffmpeg decode failedCode=\(sendResult), hasDecodeSuccess=\(hasDecodeSuccess), isKeyFrame=\(packet.pointee.flags & AV_PKT_FLAG_KEY != 0). change to hardwareDecode=\(options.hardwareDecode)", line: 70)
             do {
+                // The only store into the new context is createContext's inlined pkt_timebase (+0x5c).
                 let replacement = try assetTrack.createContext(options: options)
-                replacement.pointee.time_base = assetTrack.stream?.pointee.time_base ?? assetTrack.timebase.rational
                 self.codecContext = replacement
                 _ = avcodec_send_packet(self.codecContext, packet)
             } catch {
@@ -120,22 +130,23 @@ class FFmpegDecode: DecodeProtocol {
         while true {
             let result = avcodec_receive_frame(self.codecContext, coreFrame)
             if result == 0, let inputFrame = coreFrame {
-                if isVideo,
-                   (inputFrame.pointee.repeat_pict == 1 || inputFrame.pointee.flags & AV_FRAME_FLAG_INTERLACED != 0),
-                   assetTrack.fieldOrder.rawValue <= FFmpegFieldOrder.progressive.rawValue {
-                    assetTrack.fieldOrder = inputFrame.pointee.flags & AV_FRAME_FLAG_TOP_FIELD_FIRST != 0 ? .tt : .bb
-                    if options.context != "ReadCacheIOContext" {
-                        options.deinterlace(assetTrack: assetTrack)
-                        if !options.hardwareDecode,
-                           self.codecContext?.pointee.hw_device_ctx != nil {
-                            self.codecContext = try? assetTrack.createContext(options: options)
-                            self.codecContext?.pointee.time_base = assetTrack.stream?.pointee.time_base ?? assetTrack.timebase.rational
-                            _ = avcodec_send_packet(self.codecContext, packet)
-                            continue
+                // Forward tests isVideo once (`cbz w28` @0x101a22748): the video arm, else the audio arm.
+                if isVideo {
+                    if inputFrame.pointee.repeat_pict == 1 || inputFrame.pointee.flags & AV_FRAME_FLAG_INTERLACED != 0,
+                       assetTrack.fieldOrder.rawValue <= FFmpegFieldOrder.progressive.rawValue {
+                        assetTrack.fieldOrder = inputFrame.pointee.flags & AV_FRAME_FLAG_TOP_FIELD_FIRST != 0 ? .tt : .bb
+                        if options.context != "ReadCacheIOContext" {
+                            options.deinterlace(assetTrack: assetTrack)
+                            if !options.hardwareDecode,
+                               self.codecContext?.pointee.hw_device_ctx != nil {
+                                // try? joins nil (error) and the pkt_timebase-stamped context at one store.
+                                self.codecContext = try? assetTrack.createContext(options: options)
+                                _ = avcodec_send_packet(self.codecContext, packet)
+                                continue
+                            }
                         }
                     }
-                }
-                if !isVideo {
+                } else {
                     if assetTrack.codecpar.pointee.frame_size == 0,
                        inputFrame.pointee.sample_rate != 0,
                        inputFrame.pointee.nb_samples != 0 {
@@ -214,12 +225,11 @@ class FFmpegDecode: DecodeProtocol {
                         return
                     }
                     let error = KSPlayerError(errorCode: isVideo ? .codecVideoReceiveFrame : .codecAudioReceiveFrame, avErrorCode: result)
-                    KSLog(error)
+                    KSLog(error, line: 153)
                     if isVideo, options.hardwareDecode {
                         avcodec_free_context(&self.codecContext)
                         options.hardwareDecode = false
                         self.codecContext = try? assetTrack.createContext(options: options)
-                        self.codecContext?.pointee.time_base = assetTrack.stream?.pointee.time_base ?? assetTrack.timebase.rational
                         return
                     }
                     completionHandler(.failure(error))

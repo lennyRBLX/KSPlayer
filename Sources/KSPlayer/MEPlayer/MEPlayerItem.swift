@@ -10,6 +10,9 @@ import FFmpegKit
 import Libavcodec
 import Libavfilter
 import Libavformat
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // ⚑ @unchecked Sendable — compiler-MANDATED, not binary-observable: the interrupt codegen is a `{ [weak self] }`
 //   @Sendable closure (openAndFindStream) which, under this target's Swift 6 + StrictConcurrency, compiles ONLY if
@@ -127,7 +130,12 @@ public final class MEPlayerItem: @unchecked Sendable {
             //            table of the global existential projected at 0x101a485e8
             //   file/fn  two 27-char literals tagged `orr …,#0x8000000000000000` @0x101a48634/0x101a48638
             //   line     `mov w6,#0x2bd` = 701
-            KSLog(error)
+            // ⚑ GAP (Model.swift): Forward allocates the Remuxer BEFORE the throwing call and fails through
+            //   `swift_deallocPartialClassInstance` @0x101a4851c. That is the codegen of a THROWING Remuxer
+            //   init that builds OutputStreamInfo itself: it stores formatContext+0x18 into +0x10 and
+            //   mediaType into +0x20, with [:] at +0x28 and 0 at +0x30, then calls the builder. Model.swift's
+            //   Remuxer init is non-throwing, so the two-step spelling above stays until that decl lands.
+            KSLog(error, line: 701)
         }
     }
 
@@ -287,20 +295,328 @@ public final class MEPlayerItem: @unchecked Sendable {
     //   formatContext.assetTracks directly — resolved when KSMEPlayer.tracks migrates).
     var assetTracks: [FFmpegAssetTrack] { formatContext?.assetTracks ?? [] }
 
-    public lazy var dynamicInfo = DynamicInfo {
-        toDictionary(nil) // ⚑ UNRESOLVED: base read self.formatCtx.pointee.metadata (removed field); FormatContext raw-ptr accessor pending
-    } bytesRead: {
-        0 // ⚑ UNRESOLVED: base read self.formatCtx.pointee.pb.pointee.bytes_read (removed field)
+    // Forward 0x101a48884: four weak-self boxes, with closures in DynamicInfo field order. metadata is
+    // 0x101a4b450 (formatContext+0x18 → AVFormatContext+0xc0 → toDictionary 0x101a07bd8). bytesRead is
+    // 0x101a4b4c0: a state != .opening test, then ioContext as? PreLoadProtocol → witness +0x20
+    // `bytesRead: UInt64` with a trapping Int64 conversion, otherwise pbArray PBClass.totalBytesRead
+    // mapped and summed. audioBitrate/videoBitrate share merged body 0x101a4b7e0, parameterised by the
+    // offset global 0x1044ea2e0 (audioTrack) or 0x1044ea2e8 (videoTrack). It returns track+0x80 (`bitrate`)
+    // with no ×8 scaling.
+    public lazy var dynamicInfo = DynamicInfo { [weak self] in
+        toDictionary(self?.formatContext?.formatCtx.pointee.metadata)
+    } bytesRead: { [weak self] in
+        guard let self else {
+            return 0
+        }
+        if self.state != .opening, let preload = self.formatContext?.ioContext as? PreLoadProtocol {
+            return Int64(preload.bytesRead)
+        }
+        return self.pbArray.map(\.totalBytesRead).reduce(0, +)
     } audioBitrate: { [weak self] in
-        Int(8 * (self?.audioTrack?.bitrate ?? 0))
+        self?.audioTrack?.bitrate ?? 0
     } videoBitrate: { [weak self] in
-        Int(8 * (self?.videoTrack?.bitrate ?? 0))
+        self?.videoTrack?.bitrate ?? 0
     }
-    func send(_ p0: MEPlayerItem.Event) { fatalError("L7: MEPlayerItem.send — Forward body unread") }
+
+    // Forward 0x101a48b04 (1901 insns). `switch (state, event)`; every arm below is read from the
+    // Forward body, including the three Task closures (open 0x101a4d168, read 0x101a4dba8 + its three
+    // await funclets 0x101a4ed3c/0x101a4f9e0/0x101a50680, close 0x101a4cd88 + 0x101a4cf9c) and the
+    // @MainActor timer closure 0x101a4bf20. All KSLog calls carry function "send(_:)" (#function inside
+    // the closures too). The CapacityProtocol test `isEndOfFile && packetCount == 0 && frameCount == 0`
+    // is Forward helper 0x1019e1b6c (PlayerDefines.swift, not in source) — written inline here.
+    func send(_ event: MEPlayerItem.Event) {
+        switch (state, event) {
+        case (_, let .failed(error)):
+            KSLog(level: .error, "[MEPlayerItem] failed error=\(error)", line: 520)
+            delegate?.sourceDidFailed(error: error)
+            if state != .closed {
+                timer?.invalidate()
+                timer = nil
+                state = .failed
+            }
+        case (.idle, .open), (.endOfStream, .open), (.finished, .open), (.closed, .open), (.failed, .open):
+            let symbols = Thread.callStackSymbols.prefix(8).joined(separator: "\n")
+            print("[🔴 OPEN_TRACE] send(.open) from state=\(state)\n\(symbols)")
+            state = .opening
+            ioTask?.cancel()
+            ioTask = Task(name: "KSPlayer-MEPlayerItem-open", priority: .userInitiated) { [weak self] in
+                guard let self else {
+                    return
+                }
+                if self.options.useSystemHTTPProxy {
+                    setHttpProxy()
+                }
+                do {
+                    try self.openAndFindStream()
+                    if self.videoTrack == nil, self.audioTrack == nil {
+                        self.send(.failed(KSPlayerError(errorCode: .noStream)))
+                    } else if self.state == .opening {
+                        self.send(.opened)
+                    }
+                } catch {
+                    if let error = error as? KSPlayerError, error.code == swift_AVERROR_EOF {
+                        if self.state == .opening {
+                            self.state = .finished
+                            self.delegate?.sourceDidFinished()
+                        }
+                        return
+                    }
+                    self.send(.failed(error))
+                }
+            }
+        case (.ready, .startReading), (.seeking, .startReading):
+            ioTask?.cancel()
+            ioTask = Task(name: "KSPlayer-MEPlayerItem-read", priority: .medium) { [weak self] in
+                guard let self else {
+                    return
+                }
+                KSLog("[MEPlayerItem] reading loop start", line: 351)
+                if self.state == .ready {
+                    if self.options.startPlayTime > 0, self.duration > self.options.startPlayTime {
+                        for track in self.formatContext?.assetTracks ?? [] where track.mediaType == .video && track.isEnabled {
+                            // 0xad = AV_CODEC_ID_HEVC; 244 = AV_PROFILE_H264_HIGH_444_PREDICTIVE (C #define,
+                            // not bridged — same literal KSOptions.process(assetTrack:) uses).
+                            if track.codecpar.pointee.codec_id == AV_CODEC_ID_HEVC || track.codecpar.pointee.profile == 244 {
+                                _ = self.reading()
+                            }
+                            break
+                        }
+                        self.needSeekItemTrack = false
+                        self.send(.seek(to: self.options.startPlayTime, useCache: false, completion: nil))
+                    } else if self.isPreload {
+                        self.state = .paused
+                    }
+                    if !self.isPreload, self.state == .ready {
+                        self.state = .reading
+                    }
+                }
+                if !self.isPreload {
+                    self.allPlayerItemTracks.forEach { $0.decode() }
+                }
+                var waitCount = 0
+                while self.state == .reading || self.state == .seeking || self.state == .paused, !Task.isCancelled {
+                    self.interrupt = false
+                    switch self.state {
+                    case .reading:
+                        _ = autoreleasepool {
+                            self.reading()
+                        }
+                    case .seeking:
+                        autoreleasepool {
+                            self.performSeek()
+                        }
+                        if self.isPreload {
+                            self.state = .paused
+                        }
+                    case .paused:
+                        if let preload = self.formatContext?.ioContext as? PreLoadProtocol {
+                            if (self.formatContext?.assetTracks ?? []).contains(where: { $0.mediaType == .video && !$0.isImage }), self.lastPacketMediaType != .video {
+                                _ = autoreleasepool {
+                                    self.reading()
+                                }
+                            } else {
+                                let more = autoreleasepool {
+                                    preload.more()
+                                }
+                                if more > 0 {
+                                    waitCount = 0
+                                } else if self.state == .paused {
+                                    self.formatContext?.pause()
+                                    if more != 0, waitCount < 30 {
+                                        try? await Task.sleep(for: .milliseconds(100))
+                                        self.formatContext?.play()
+                                        waitCount += 1
+                                    } else {
+                                        await withCheckedContinuation { continuation in
+                                            self.ioWaiterLock.lock()
+                                            if self.state == .paused {
+                                                self.ioWaiter = continuation
+                                                self.ioWaiterLock.unlock()
+                                            } else {
+                                                self.ioWaiterLock.unlock()
+                                                continuation.resume()
+                                            }
+                                        }
+                                        self.formatContext?.play()
+                                        waitCount = 0
+                                    }
+                                }
+                            }
+                        } else {
+                            self.formatContext?.pause()
+                            await withCheckedContinuation { continuation in
+                                self.ioWaiterLock.lock()
+                                if self.state == .paused {
+                                    self.ioWaiter = continuation
+                                    self.ioWaiterLock.unlock()
+                                } else {
+                                    self.ioWaiterLock.unlock()
+                                    continuation.resume()
+                                }
+                            }
+                            self.formatContext?.play()
+                        }
+                    default:
+                        break
+                    }
+                }
+                KSLog("[MEPlayerItem] reading loop stop state=\(self.state), isCancelled=\(Task.isCancelled)", line: 433)
+            }
+        case (.reading, .pause):
+            state = .paused
+        case (.paused, .pause), (.endOfStream, .pause):
+            break
+        case (.paused, .resume):
+            state = .reading
+            ioWaiterLock.lock()
+            let waiter = ioWaiter
+            ioWaiter = nil
+            ioWaiterLock.unlock()
+            waiter?.resume()
+        case (.ready, .resume), (.reading, .resume), (.seeking, .resume), (.endOfStream, .resume), (.closed, .resume), (.failed, .resume):
+            break
+        case (.reading, .endOfStream), (.paused, .endOfStream):
+            allPlayerItemTracks.forEach { $0.isEndOfFile = true }
+            if isPreload {
+                KSLog("[MEPlayerItem] preload mode received EOF, pausing instead of finishing", line: 464)
+                state = .paused
+                return
+            }
+            if !options.isLoopPlay {
+                state = .endOfStream
+                delegate?.sourceDidEOF()
+                if let track = videoAudioTracks.first, track.isEndOfFile, track.packetCount == 0, track.frameCount == 0 {
+                    send(.trackFinished(track))
+                }
+            } else if allPlayerItemTracks.contains(where: { $0.isLoopModel }) {
+                send(.pause)
+            } else {
+                allPlayerItemTracks.forEach { $0.isLoopModel = true }
+                _ = formatContext?.performSeek(time: 0.0, flags: 1)
+            }
+        case (.closed, .endOfStream):
+            break
+        case (.closed, .close):
+            break
+        case (_, .close):
+            timer?.invalidate()
+            timer = nil
+            state = .closed
+            #if canImport(UIKit)
+            NotificationCenter.default.removeObserver(self, name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+            #endif
+            ioWaiterLock.lock()
+            let waiter = ioWaiter
+            ioWaiter = nil
+            ioWaiterLock.unlock()
+            waiter?.resume()
+            Task(name: "KSPlayer-MEPlayerItem-close", priority: .userInitiated) {
+                if self.options.syncDecodeVideo || self.options.syncDecodeAudio {
+                    self.allPlayerItemTracks.forEach { $0.shutdown() }
+                }
+                if let ioTask = self.ioTask {
+                    ioTask.cancel()
+                    await ioTask.value
+                }
+                self.ioTask = nil
+                self.closeResources()
+            }
+        case (.opening, .opened):
+            state = .ready
+            send(.startReading)
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+                self.timer?.invalidate()
+                // The tick body is Forward 0x101a4c4a4 (unnamed, 563 insns); it is reached here through
+                // `codecDidChangeCapacity()` — INFERRED from this closure's own log literal, since
+                // Forward's CodecCapacityDelegate witness for that name is a deleted-method stub.
+                let timer = Timer.scheduledTimer(withTimeInterval: self.options.playbackTimeInterval, repeats: true) { [weak self] _ in
+                    guard let self, !self.isPreload else {
+                        return
+                    }
+                    runOnMainThread { [weak self] in
+                        self?.codecDidChangeCapacity()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                timer.tolerance = 0.01
+                timer.fireDate = Date.distantPast
+                self.timer = timer
+                KSLog("star codecDidChangeCapacity timer", line: 344)
+            }
+            delegate?.sourceDidOpened()
+        case (.endOfStream, let .trackFinished(track)), (.reading, let .trackFinished(track)), (.paused, let .trackFinished(track)):
+            if track.mediaType == .audio {
+                isAudioStalled = true
+            }
+            if videoAudioTracks.allSatisfy({ $0.isEndOfFile && $0.packetCount == 0 && $0.frameCount == 0 }) {
+                if options.isLoopPlay {
+                    isAudioStalled = audioTrack == nil
+                    allPlayerItemTracks.forEach { $0.isLoopModel = false }
+                    var message = "[MEPlayerItem] loop play trackFinished"
+                    if let audioTrack {
+                        message += ",audioTrackPacketCount=\(audioTrack.packetCount)"
+                    }
+                    if let videoTrack {
+                        message += ",videoTrackPacketCount=\(videoTrack.packetCount)"
+                    }
+                    KSLog(message, line: 510)
+                } else {
+                    state = .finished
+                    timer?.fireDate = Date.distantFuture
+                }
+                delegate?.sourceDidFinished()
+            }
+        case (.finished, .trackFinished):
+            break
+        case (.ready, let .seek(time, useCache, completion)), (.reading, let .seek(time, useCache, completion)),
+             (.paused, let .seek(time, useCache, completion)), (.seeking, let .seek(time, useCache, completion)):
+            let oldState = state
+            seekTime = time
+            if oldState == .seeking {
+                seekingCompletionHandler?(false)
+            }
+            seekUsePacketCache = useCache
+            seekingCompletionHandler = completion
+            state = .seeking
+            if oldState == .paused {
+                ioWaiterLock.lock()
+                let waiter = ioWaiter
+                ioWaiter = nil
+                ioWaiterLock.unlock()
+                waiter?.resume()
+            }
+        case (.endOfStream, let .seek(time, useCache, completion)), (.finished, let .seek(time, useCache, completion)):
+            seekTime = time
+            state = .seeking
+            seekUsePacketCache = useCache
+            seekingCompletionHandler = completion
+            timer?.fireDate = Date.distantPast
+            send(.startReading)
+            isAudioStalled = audioTrack == nil
+        case (.failed, let .seek(time, _, completion)):
+            options.startPlayTime = time
+            seekingCompletionHandler = completion
+            send(.open)
+        default:
+            KSLog(level: .error, "unhandled event=\(event) in state=\(state). Please send me the assertion information so that I can see if there is a problem with the state machine.", line: 557)
+        }
+    }
 
     // field 42 — after `$__lazy_storage_$_dynamicInfo` (41) in the field record.
     // ⚑[tool=field_surface ref=MEPlayerItem.delegate result=forward index 42]
-    public weak var delegate: MEPlayerDelegate?
+    // Forward setter 0x101a482e0 carries a didSet: after the weak assign it reloads the delegate and,
+    //   when state is in the static set 0x1044ea258 = [2, 3, 4, 5] (.ready, .reading, .seeking, .paused)
+    //   and !isPreload, calls witness slot +0x10 = req1 sourceDidOpened().
+    public weak var delegate: MEPlayerDelegate? {
+        didSet {
+            if let delegate, [State.ready, .reading, .seeking, .paused].contains(state), !isPreload {
+                delegate.sourceDidOpened()
+            }
+        }
+    }
 
     /// ⚑[tool=disassemble ref=MEPlayerItem.isReusable.getter:0x101a4b404 result=19-instr]
     /// Same `state` load, then a five-way set-membership test in the shape the compiler uses for a
@@ -308,15 +624,12 @@ public final class MEPlayerItem: @unchecked Sendable {
     /// 0x1044ea360, plus the fifth as a scalar at +0x4. Those five bytes read `01 02 03 04 05`.
     /// Against `MEPlayerItem.State` that is opening/ready/reading/seeking/paused — every state
     /// between `.idle` and the terminal group, which is what makes the name coherent.
-    /// ⚑ The five happen to be contiguous, so a range test would compile to the same answer; the
-    /// binary emits an explicit five-way membership, so the switch form is written.
+    /// ⚑ The five are contiguous, and a multi-case `switch` compiles to the range test
+    /// (`sub #1; cmp #5; cset lo`) the build shows. Forward's lane compare against five bytes
+    /// held in data is the specialized `Array.contains` over a constant literal, so that form is
+    /// written here.
     public var isReusable: Bool {
-        switch state {
-        case .opening, .ready, .reading, .seeking, .paused:
-            return true
-        default:
-            return false
-        }
+        [State.opening, .ready, .reading, .seeking, .paused].contains(state)
     }
 }
 
@@ -534,6 +847,31 @@ extension MEPlayerItem {
         //   Forward resumes the read loop via `ioWaiter: CheckedContinuation` + `ioWaiterLock`. Deferred to the
         //   read-loop migration commit.
     }
+
+    /// Forward 0x101a4cfe4 (91 insns), called only from the `.close` Task closure (0x101a4cf9c) in
+    /// `send(_:)`. The body is read from Forward: shutdown witness +0x80 per track, `closeFormatContext()`
+    /// (0x101a531fc), then the remuxer writeTrailer/stop/nil triple (0x101a1b8d4/0x101a1bb5c), then
+    /// `MEPlayerDelegate.sourceDidClear()` (witness +0x38).
+    /// ⚑ INFERRED name: no symbol and no #function literal. `private final` follows the brief's
+    ///   new-helper rule; there is no private discriminator to confirm the access level.
+    private final func closeResources() {
+        allPlayerItemTracks.forEach { $0.shutdown() }
+        closeFormatContext()
+        if let remuxer {
+            remuxer.outputStreamInfo.writeTrailer()
+            remuxer.outputStreamInfo.stop()
+        }
+        remuxer = nil
+        delegate?.sourceDidClear()
+    }
+
+    /// Forward 0x101a51e98. The name is Forward-evidenced by its own #function literal "performSeek()".
+    /// It is called from the read-loop `.seeking` arm in `send(_:)`, inside an autoreleasepool.
+    /// ⚑ GAP: the body is not written. It calls the unnamed MEPlayerItem unit 0x101a55de4
+    ///   (seekCache/updateCache), which is recorded as a gap, so this cannot be reconstructed yet.
+    private final func performSeek() {
+        fatalError("L7: MEPlayerItem.performSeek — Forward body 0x101a51e98 blocked on gap 0x101a55de4")
+    }
 }
 
 // MARK: MediaPlayback
@@ -608,8 +946,8 @@ extension MEPlayerItem {
         switch action {
         case .resumeFromPaused:
             allPlayerItemTracks.forEach { $0.decode() }
-            // ⚑ Forward sends event tag 3 through MEPlayerItem.send(_:) @0x101a48b04 (not declared); resume() stands in.
-            resume()
+            // Forward builds Event payload word 4 / tag 3 (`.resume`) and calls send(_:) @0x101a48b04.
+            send(.resume)
         case .readyImmediate:
             allPlayerItemTracks.forEach { $0.decode() }
         default:
@@ -738,12 +1076,48 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
         isAudioStalled ? videoClock : audioClock
     }
 
+    /// INFERRED name and labels: Forward local body 0x101a57dac is unnamed (no symbol). Called by
+    /// setVideo 0x101a5804c and setAudio 0x101a581f8 with (time x0-x2, position x3,
+    /// force = needRecordTimeIndex w4); both clear needRecordTimeIndex when it returns true.
+    /// The float guard (`fmov`/`ccmp` chain) accepts ±0, positive normals and subnormals and
+    /// rejects negatives, inf and NaN, i.e. `seconds.isFinite && seconds >= 0`. The casts go to
+    /// PreLoadProtocol (descriptor 0x1039ede48, wt +0x38 = addTimeIndex(position:time:)) and
+    /// PreLoadPlaybackPositionSyncProtocol (0x1039edea8, wt +0x8 = syncPlaybackPosition(time:position:),
+    /// position passed as `.some` with w1 = 0). The intervals are the folded `let` constants 0.5 and 1.0.
+    private final func recordTimeIndex(time: CMTime, position: Int64, force: Bool) -> Bool {
+        let seconds = time.seconds
+        guard position >= 0, seconds.isFinite, seconds >= 0 else {
+            return false
+        }
+        guard let ioContext = formatContext?.ioContext, let preload = ioContext as? PreLoadProtocol else {
+            return false
+        }
+        if force || lastPlaybackSnapshotRecordTime == nil || abs(seconds - lastPlaybackSnapshotRecordTime!) >= playbackSnapshotRecordInterval {
+            if let sync = preload as? PreLoadPlaybackPositionSyncProtocol {
+                sync.syncPlaybackPosition(time: seconds, position: UInt64(position))
+            }
+            lastPlaybackSnapshotRecordTime = seconds
+        }
+        if force || lastTimeIndexRecordTime == nil || abs(seconds - lastTimeIndexRecordTime!) >= timeIndexRecordInterval {
+            preload.addTimeIndex(position: UInt64(position), time: seconds)
+            lastTimeIndexRecordTime = seconds
+            return true
+        }
+        return false
+    }
+
+    // Forward 0x101a5804c: one modify access sets videoClock, then audioVideoSyncDiff, then an
+    //   unchecked byte add on DynamicInfo +0x78 (videoDisplayCount: UInt8, no overflow trap ⇒ `&+=`),
+    //   then the time-index record 0x101a57dac.
     public func setVideo(time: CMTime, position: Int64) {
 //        print("[video] video interval \(CACurrentMediaTime() - videoClock.lastMediaTime) video diff \(time.seconds - videoClock.time.seconds)")
         videoClock.time = time
         videoClock.position = position
-        // ⚑ UNRESOLVED (commit-1): base updated dynamicInfo.displayFPS via the removed videoDisplayCount/
-        //   lastVideoDisplayTime fields. Forward's displayFPS accounting is deferred to that migration.
+        dynamicInfo.audioVideoSyncDiff = Float(time.seconds - audioClock.getTime() + options.videoDelay)
+        dynamicInfo.videoDisplayCount &+= 1
+        if recordTimeIndex(time: time, position: position, force: needRecordTimeIndex) {
+            needRecordTimeIndex = false
+        }
     }
 
     public func setAudio(time: CMTime, position: Int64) {
@@ -753,49 +1127,79 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             self.audioClock.time = time
             self.audioClock.position = position
         }
+        // Forward 0x101a581f8 tail: only without a video track does audio drive the time-index record.
+        if videoTrack == nil, recordTimeIndex(time: time, position: position, force: needRecordTimeIndex) {
+            needRecordTimeIndex = false
+        }
     }
 
+    // Forward 0x101a58484. Guard compares state against the static byte 0x1044ea420 = 8 (.closed).
+    //   The type box starts as `.empty` (payload 0, tag 1) whatever `force` is. The predicate (closure
+    //   0x101a58d7c) picks its clock through KSOptions.audioVideoClockSync (addressor 0x1019bcae0 →
+    //   0x1044e5171). The `.empty` log compares against 0x1035647b8 = -0.04 at line 0x52c (1324), level
+    //   case 3 (.warning), with literal 0x103d34620 "[video] video delay=". `.dropFrame` pops through
+    //   closure 0x101a59020 (`!frame.isKeyFrame`, VideoVTBFrame +0x7a); `.seek` inlines
+    //   FormatContext.seekable and currentPlaybackTime, then calls send 0x101a48b04.
     public func getVideoOutputRender(force: Bool) -> VideoVTBFrame? {
-        guard let videoTrack else {
+        guard let videoTrack, state != .closed else {
             return nil
         }
-        var type: ClockProcessType = force ? .next : .remain
+        var type: ClockProcessType = .empty
         let predicate: ((VideoVTBFrame, UInt) -> Bool)? = force ? nil : { [weak self] frame, count -> Bool in
             guard let self else { return true }
-            type = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
+            let main: KSClock
+            if KSOptions.audioVideoClockSync {
+                main = self.mainClock()
+            } else if self.isAudioStalled || abs(self.audioClock.getTime() - self.videoClock.getTime()) >= 1.0 {
+                main = self.videoClock
+            } else {
+                main = self.audioClock
+            }
+            type = self.options.videoClockSync(main: main, nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
             if case .remain = type { return false } // was `type != .remain`; payload case drops synthesized ==
             return true
         }
         let frame = videoTrack.getOutputRender(where: predicate)
+        if frame == nil, case .empty = type {
+            let desire = mainClock().getTime() - options.videoDelay
+            let diff = videoClock.getTime() - desire
+            if diff < -0.04 {
+                KSLog("[video] video delay=\(diff), clock=\(desire), frameCount=0", line: 1324)
+            }
+        }
         switch type {
         case .remain:
             break
         case .next:
             break
-        case .empty: // L7: Forward's .empty handling unread; no source producer yet
+        case .empty:
             break
-        case .dropFrame: // L7: Forward drops `count` frames; body still drops one
-            if videoTrack.getOutputRender(where: nil) != nil {
+        case var .dropFrame(count: count):
+            repeat {
+                let dropped = videoTrack.outputRenderQueue.pop { item, _ -> Bool in
+                    !item.isKeyFrame
+                }
+                count -= 1
+                guard dropped != nil else {
+                    break
+                }
                 dynamicInfo.droppedVideoFrameCount += 1
-            }
+            } while count > 0
         case .flush:
             let count = videoTrack.outputRenderQueue.count
             videoTrack.outputRenderQueue.flush()
             dynamicInfo.droppedVideoFrameCount += UInt32(count)
         case .seek:
-            videoTrack.outputRenderQueue.flush()
-            videoTrack.seekTime = mainClock().time.seconds
+            if let formatContext, formatContext.seekable {
+                send(.seek(to: currentPlaybackTime, useCache: options.seekUsePacketCache, completion: nil))
+            }
         case .dropGOPPacket:
             if let videoTrack = videoTrack as? AsyncPlayerItemTrack {
-                var packet: Packet? = nil
-                repeat {
-                    packet = videoTrack.packetQueue.pop { item, _ -> Bool in
-                        !item.isKeyFrame
-                    }
-                    if packet != nil {
-                        dynamicInfo.droppedVideoPacketCount += 1
-                    }
-                } while packet != nil
+                while videoTrack.packetQueue.pop(where: { item, _ -> Bool in
+                    !item.isKeyFrame
+                }) != nil {
+                    dynamicInfo.droppedVideoPacketCount += 1
+                }
             }
         }
         return frame
@@ -816,9 +1220,8 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
     //   base impl 0x10002d9d4 = `return 0`) precisely because AsyncPlayerItemTrack OVERRIDES it, whereas
     //   frameCount is not overridden and was devirtualised + inlined — the two dispatch shapes corroborate
     //   the member identification.
-    // ⚑ FORM (not behaviour): `frameCount == 0`, `outputRenderQueue.count == 0` and an `isEmpty` spelling
-    //   all fold to the same `h == t` compare, so the binary cannot discriminate them. The file's existing
-    //   idiom decides it here.
+    // ⚑ FORM: this earlier claim that `frameCount == 0` folds to the same compare is REFUTED by the build.
+    //   `Int(outputRenderQueue.count)` keeps a sign trap that Forward does not have; see the return below.
     // ⚑[tool=disassemble ref=getAudioOutputRender:0x101a59088 result=Either_left_frame|right_eof]
     // ⚑[tool=vtable_walk ref=SyncPlayerItemTrack.packetCount:slot12@0x10002d9d4 result=getter_returns_0]
     public func getAudioOutputRender() -> Either<AudioFrame, Bool> {
@@ -838,7 +1241,10 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             guard let audioTrack, audioTrack.isEndOfFile, audioTrack.packetCount == 0 else {
                 return .right(false)
             }
-            return .right(audioTrack.frameCount == 0)
+            // Forward 0x101a59218..0x101a5923c: lock [+0x58]+0x18, load head/tail, unlock, `cmp; cset eq`, with
+            // NO negative-value trap. The build of `frameCount == 0` keeps `Int(UInt)`'s `tbnz #63 → brk`, so the
+            // forms do not fold. The UInt `CircularBuffer.count` compare is what Forward inlines.
+            return .right(audioTrack.outputRenderQueue.count == 0)
         }
     }
 }
