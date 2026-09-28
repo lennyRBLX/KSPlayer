@@ -10,6 +10,7 @@ import Foundation
 import Metal
 import QuartzCore
 import simd
+import UIKit
 
 class MetalRender {
 
@@ -283,8 +284,180 @@ public extension MTLRenderCommandEncoder {
 // types (TextureResource and TextureResource.DrawableQueue) whose conformances the binary records
 // but whose descriptors are out of image, so they are not declared here.
 extension CAMetalLayer: Drawable {
-    func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: CAMetalLayer.updateInfo — Forward body unread") }
-    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: CAMetalLayer.draw — Forward body unread") }
+    func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        // Forward 0x101a84b18. Four callees have no declaration in this source and are written as
+        // local funcs: the MasteringDisplayMetadata byte packer 0x101a654f4 (Model.swift; the
+        // ContentLight/AmbientViewing packers are inlined in Forward), the pixelBuffer EDR-metadata
+        // helper 0x101a88500 and the layer EDR-headroom check 0x1019f26e4. Byte appends are spelled
+        // out because Array<UInt8>.append(UInt16/UInt32) (0x1019e7290/0x1019e7374) is not mutating here.
+        func append(_ value: UInt16, to bytes: inout [UInt8]) {
+            bytes.append(UInt8(truncatingIfNeeded: value))
+            bytes.append(UInt8(truncatingIfNeeded: value >> 8))
+        }
+        func append(_ value: UInt32, to bytes: inout [UInt8]) {
+            bytes.append(UInt8(truncatingIfNeeded: value))
+            bytes.append(UInt8(truncatingIfNeeded: value >> 8))
+            bytes.append(UInt8(truncatingIfNeeded: value >> 16))
+            bytes.append(UInt8(truncatingIfNeeded: value >> 24))
+        }
+        func data(_ displayData: MasteringDisplayMetadata) -> Data {
+            var bytes = [UInt8]()
+            append(displayData.display_primaries_r_x, to: &bytes)
+            append(displayData.display_primaries_r_y, to: &bytes)
+            append(displayData.display_primaries_g_x, to: &bytes)
+            append(displayData.display_primaries_g_y, to: &bytes)
+            append(displayData.display_primaries_b_x, to: &bytes)
+            append(displayData.display_primaries_b_y, to: &bytes)
+            append(displayData.white_point_x, to: &bytes)
+            append(displayData.white_point_y, to: &bytes)
+            append(displayData.minLuminance, to: &bytes)
+            append(displayData.maxLuminance, to: &bytes)
+            bytes.reverse()
+            return Data(bytes)
+        }
+        #if !os(tvOS)
+        func pixelBufferEDRMetadata(_ pixelBuffer: PixelBufferProtocol) -> CAEDRMetadata? {
+            if let displayInfo = pixelBuffer.displayInfo, let contentInfo = pixelBuffer.contentInfo {
+                return CAEDRMetadata.hdr10(displayInfo: displayInfo, contentInfo: contentInfo, opticalOutputScale: 10000)
+            }
+            if let ambientViewingEnvironment = pixelBuffer.ambientViewingEnvironment {
+                if #available(macOS 14.0, iOS 17.0, *) {
+                    return CAEDRMetadata.hlg(ambientViewingEnvironment: ambientViewingEnvironment)
+                }
+                return CAEDRMetadata.hlg
+            }
+            if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+                return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
+            }
+            if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+                if KSPlayer.DynamicRange.availableHDRModes.contains(.hlg) {
+                    return CAEDRMetadata.hlg
+                }
+                return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
+            }
+            return nil
+        }
+        func isEDRScreen() -> Bool {
+            guard let view = delegate as? UIView else {
+                return true
+            }
+            return (view.window?.windowScene?.screen.currentEDRHeadroom ?? 0) > 1.0
+        }
+        #endif
+        if let edrMetaData = frame.edrMetaData {
+            let pixelBuffer = frame.pixelBuffer
+            pixelBuffer.displayInfo = edrMetaData.displayData.map { data($0) }
+            pixelBuffer.contentInfo = edrMetaData.contentData.map { contentData in
+                var bytes = [UInt8]()
+                append(contentData.MaxCLL, to: &bytes)
+                append(contentData.MaxFALL, to: &bytes)
+                bytes.reverse()
+                return Data(bytes)
+            }
+            pixelBuffer.ambientViewingEnvironment = edrMetaData.ambientViewingEnvironment.map { ambientViewingEnvironment in
+                var bytes = [UInt8]()
+                append(ambientViewingEnvironment.ambient_illuminance, to: &bytes)
+                append(ambientViewingEnvironment.ambient_light_x, to: &bytes)
+                append(ambientViewingEnvironment.ambient_light_y, to: &bytes)
+                bytes.reverse()
+                return Data(bytes)
+            }
+        }
+        let pixelBuffer = frame.pixelBuffer
+        #if !os(tvOS)
+        var edrMetadata = pixelBufferEDRMetadata(pixelBuffer)
+        if edrMetadata == nil {
+            if let doviData = frame.doviData {
+                let minLuminance = doviData.minLuminance
+                let maxLuminance = doviData.maxLuminance
+                var scale: Float = 1.0
+                if maxLuminance > 500, !isEDRScreen() {
+                    scale = maxLuminance / 500
+                }
+                edrMetadata = CAEDRMetadata.hdr10(minLuminance: minLuminance / scale, maxLuminance: maxLuminance / scale, opticalOutputScale: 10000)
+            }
+        } else if !isEDRScreen() {
+            edrMetadata = CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 400, opticalOutputScale: 10000)
+        }
+        self.edrMetadata = edrMetadata
+        framebufferOnly = self.edrMetadata == nil
+        #endif
+        pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
+        if let colorspace = pixelBuffer.colorspace, self.colorspace != colorspace {
+            self.colorspace = colorspace
+            KSLog("[video] CAMetalLayer colorspace \(String(describing: colorspace))")
+            #if !os(tvOS)
+            let name = colorspace.name
+            wantsExtendedDynamicRangeContent = colorspace != CGColorSpaceCreateDeviceRGB() && name != CGColorSpace.sRGB && name != CGColorSpace.itur_709 && isEDRScreen()
+            KSLog("[video] CAMetalLayer wantsExtendedDynamicRangeContent \(wantsExtendedDynamicRangeContent)")
+            #endif
+        }
+        var size: CGSize
+        if display.isSphere {
+            size = UIApplication.shared.windows.first?.bounds.size ?? CGSize(width: 1, height: 1)
+        } else {
+            let pixelSize = pixelBuffer.size
+            let aspectRatio = pixelBuffer.aspectRatio
+            size = CGSize(width: pixelSize.width, height: pixelSize.height * aspectRatio.height / aspectRatio.width)
+        }
+        if let pipelineSize = pipeline?.configure(pixelBuffer: pixelBuffer) {
+            size = pipelineSize
+            framebufferOnly = false
+        }
+        drawableSize = size
+    }
+    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        // Forward: 1-insn thunk 0x101a854ac → Bool body 0x101a854b0, which calls the CAMetalDrawable
+        // render helper 0x101a873b4 `draw(frame:display:drawable:pipeline:)` (inlined here; no decl).
+        // The Anime4KFrameDump gate/dump calls (0x101a784d4, 0x101a778a8, 0x101a77d20) have no decl
+        // in this source and are not written.
+        guard bounds.width > 0, bounds.height > 0 else {
+            return
+        }
+        updateInfo(frame: frame, display: display, pipeline: pipeline)
+        guard let drawable = nextDrawable() else {
+            KSLog("[video] CAMetalLayer not readyForMoreMediaData")
+            return
+        }
+        if let inputTexture = pipeline?.inputTexture {
+            let size = frame.pixelBuffer.size
+            if inputTexture.width != Int(size.width) || inputTexture.height != Int(size.height) {
+                KSLog("[MetalRender] \u{26A0}\u{FE0F} inputTexture size mismatch: texture=\(inputTexture.width)x\(inputTexture.height), video=\(Int(size.width))x\(Int(size.height))")
+            }
+            MetalRender.renderPassDescriptor.colorAttachments[0].texture = inputTexture
+            MetalRender.renderPassDescriptor.colorAttachments[0].storeAction = .store
+        } else {
+            MetalRender.renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
+        }
+        let pixelBuffer = frame.pixelBuffer
+        let inputTextures = pixelBuffer.textures()
+        guard !inputTextures.isEmpty,
+              let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor)
+        else {
+            return
+        }
+        encoder.pushDebugGroup("RenderFrame")
+        encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
+        for (index, texture) in inputTextures.enumerated() {
+            texture.label = "texture\(index)"
+            encoder.setFragmentTexture(texture, index: index)
+        }
+        nonisolated(unsafe) let unsafeDisplay = display
+        nonisolated(unsafe) let unsafeFrame = frame
+        nonisolated(unsafe) let unsafeEncoder = encoder
+        MainActor.assumeIsolated {
+            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
+        }
+        encoder.popDebugGroup()
+        encoder.endEncoding()
+        pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+        if pipeline == nil {
+            commandBuffer.waitUntilCompleted()
+        }
+    }
     @used func clear() {
         #if !os(tvOS)
         edrMetadata = nil
@@ -316,7 +489,28 @@ extension RealityKit.TextureResource.Drawable {
 }
 
 extension RealityKit.TextureResource {
-    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: TextureResource.draw — Forward body unread") }
+    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        // Forward: 1-insn thunk 0x101a85774 → Bool body 0x101a85778; both queue paths call the
+        // DrawableQueue body 0x101a85cac (DrawableQueue.draw below).
+        let pixelBuffer = frame.pixelBuffer
+        var width = pixelBuffer.width
+        var height = pixelBuffer.height
+        if let size = pipeline?.configure(pixelBuffer: pixelBuffer) {
+            width = Int(size.width)
+            height = Int(size.height)
+            KSLog("[MetalRender] \u{1F4D0} TextureResource using pipeline size: \(width)x\(height)")
+        }
+        if let drawableQueue, drawableQueue.width == width, drawableQueue.height == height {
+            drawableQueue.draw(frame: frame, display: display, pipeline: pipeline)
+            return
+        }
+        let descriptor = TextureResource.DrawableQueue.Descriptor(pixelFormat: KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth), width: width, height: height, usage: [.renderTarget, .shaderRead, .shaderWrite], mipmapsMode: .none)
+        guard let queue = try? TextureResource.DrawableQueue(descriptor) else {
+            return
+        }
+        replace(withDrawables: queue)
+        queue.draw(frame: frame, display: display, pipeline: pipeline)
+    }
     @used func clear() {
         drawableQueue?.clear()
     }
@@ -325,6 +519,49 @@ extension RealityKit.TextureResource {
 extension RealityKit.TextureResource.DrawableQueue {
     // ⚑[tool=member_add ref=DrawableQueue.clear():0x10000e52c result=ICF-folded into the shared 1-instr `ret`] empty body.
     @used func clear() {}
-    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) { fatalError("L7: DrawableQueue.draw — Forward body unread") }
+    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        // Forward: 1-insn thunk 0x101a85ec4 → Bool body 0x101a85cac, which calls the
+        // TextureResource.Drawable render helper 0x101a86090 `draw(frame:display:drawable:pipeline:)`
+        // (inlined here; no decl). Anime4KFrameDump gate/dump calls not written (no decl).
+        guard let drawable = try? nextDrawable() else {
+            KSLog("[video] TextureResource not readyForMoreMediaData")
+            return
+        }
+        if let inputTexture = pipeline?.inputTexture {
+            let size = frame.pixelBuffer.size
+            if inputTexture.width != Int(size.width) || inputTexture.height != Int(size.height) {
+                KSLog("[MetalRender] \u{26A0}\u{FE0F} inputTexture size mismatch: texture=\(inputTexture.width)x\(inputTexture.height), video=\(Int(size.width))x\(Int(size.height))")
+            }
+            MetalRender.renderPassDescriptor.colorAttachments[0].texture = inputTexture
+            MetalRender.renderPassDescriptor.colorAttachments[0].storeAction = .store
+        } else {
+            MetalRender.renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
+        }
+        let pixelBuffer = frame.pixelBuffer
+        let inputTextures = pixelBuffer.textures()
+        guard !inputTextures.isEmpty,
+              let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor)
+        else {
+            return
+        }
+        encoder.pushDebugGroup("RenderFrame")
+        encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
+        for (index, texture) in inputTextures.enumerated() {
+            texture.label = "texture\(index)"
+            encoder.setFragmentTexture(texture, index: index)
+        }
+        nonisolated(unsafe) let unsafeDisplay = display
+        nonisolated(unsafe) let unsafeFrame = frame
+        nonisolated(unsafe) let unsafeEncoder = encoder
+        MainActor.assumeIsolated {
+            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
+        }
+        encoder.popDebugGroup()
+        encoder.endEncoding()
+        pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
 }
 #endif

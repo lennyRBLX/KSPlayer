@@ -62,8 +62,213 @@ extension FFmpegUtility {
         KSLog(level: .verbose, "[Thumb] formatCtx OK, streams=\(formatCtx.pointee.nb_streams)")
         return formatCtx
     }
-    public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws { fatalError("L7: FFmpegUtility.generateThumbnail — Forward body unread") }
-    public static func generateThumbnailFromCache(ioContext: AbstractAVIOContext, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws -> Set<Int> { fatalError("L7: FFmpegUtility.generateThumbnailFromCache — Forward body unread") }
+    /// Forward 0x101a241f4. #function "generateThumbnail(for:options:thumbWidth:queue:progressBlock:)",
+    /// #line 310. `queue.next()` and `FFThumbnail(cgImage:...)` are inlined; the codecpar unwrap for
+    /// `createContext` precedes the option copy (0x101a2456c), so the copy is the argument expression.
+    /// A `transfer` throw leaves through the frame/close defers only (0x101a24f4c).
+    public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws {
+        let interrupt = IOInterruptContext(nil)
+        let (formatCtx, _, _) = try openFormatContext(io: .left(p0), interrupt: interrupt, options: options, inFormat: nil)
+        defer {
+            FFmpegUtility.close(formatCtx: formatCtx)
+        }
+        var videoStream: UnsafeMutablePointer<AVStream>?
+        var videoStreamIndex = 0
+        for i in 0 ..< Int(formatCtx.pointee.nb_streams) {
+            if let stream = formatCtx.pointee.streams[i], stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO {
+                videoStreamIndex = i
+                videoStream = stream
+                break
+            }
+        }
+        guard let videoStream else {
+            throw KSPlayerError(code: 0, description: "No video stream")
+        }
+        let videoAvgFrameRate = videoStream.pointee.avg_frame_rate
+        if videoAvgFrameRate.den == 0 || av_q2d(videoAvgFrameRate) == 0 {
+            throw KSPlayerError(code: 0, description: "Avg frame rate = 0, ignore")
+        }
+        var frame = av_frame_alloc()
+        defer {
+            av_frame_free(&frame)
+        }
+        guard let frame else {
+            throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
+        }
+        let codecpar = videoStream.pointee.codecpar.pointee
+        let thumbHeight = codecpar.width > 0 ? codecpar.height * thumbWidth / codecpar.width : thumbWidth * 9 / 16
+        let assetTrack = FFmpegAssetTrack(stream: videoStream)
+        _ = assetTrack?.isDovi
+        let codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: options.map { options in
+            let copied = KSOptions()
+            copied.decoderOptions = options.decoderOptions
+            copied.lowres = options.lowres
+            copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
+            copied.hardwareDecode = false
+            return copied
+        })
+        let reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: codecpar.format)), fps: 60, dovi: assetTrack?.dovi)
+        let duration = av_rescale_q(formatCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
+        let interval = duration / Int64(queue.count)
+        var packet = AVPacket()
+        let timeBase = Timebase(videoStream.pointee.time_base)
+        while let index = queue.next() {
+            let seekPosition = interval * Int64(index) + videoStream.pointee.start_time
+            let seekStart = CACurrentMediaTime()
+            let result = av_seek_frame(formatCtx, Int32(videoStreamIndex), seekPosition, AVSEEK_FLAG_BACKWARD)
+            KSLog("generateThumbnail seek to \(seekPosition) index=\(index) spendTime=\(CACurrentMediaTime() - seekStart)", line: 310)
+            guard result == 0 else {
+                continue
+            }
+            avcodec_flush_buffers(codecContext)
+            while av_read_frame(formatCtx, &packet) >= 0 {
+                guard packet.stream_index == Int32(videoStreamIndex), packet.flags & AV_PKT_FLAG_KEY != 0 else {
+                    continue
+                }
+                if avcodec_send_packet(codecContext, &packet) < 0 {
+                    break
+                }
+                let ret = avcodec_receive_frame(codecContext, frame)
+                if ret < 0 {
+                    if ret == KSPlayerError.tryAgain.code {
+                        continue
+                    }
+                    break
+                }
+                let currentTimeStamp = frame.pointee.best_effort_timestamp
+                let thumbnail: FFThumbnail? = try autoreleasepool {
+                    let pixelBuffer = try reScale.transfer(frame: frame.pointee)
+                    guard var cgImage = thumbnailImage(frame: frame.pointee, pixelBuffer: pixelBuffer, dovi: assetTrack?.dovi) else {
+                        return nil
+                    }
+                    if cgImage.width > Int(thumbWidth) {
+                        cgImage = cgImage.resized(width: thumbWidth) ?? cgImage
+                    }
+                    return FFThumbnail(cgImage: cgImage, time: timeBase.cmtime(for: currentTimeStamp).seconds, preferCompressedStorage: true, compressionQuality: 0.72)
+                }
+                if let thumbnail {
+                    progressBlock(thumbnail, index)
+                }
+                av_frame_unref(frame)
+                break
+            }
+        }
+        av_packet_unref(&packet)
+        reScale.shutdown()
+        var codecContextOption: UnsafeMutablePointer<AVCodecContext>? = codecContext
+        avcodec_free_context(&codecContextOption)
+    }
+    /// Forward 0x101a250fc. #function "generateThumbnailFromCache(ioContext:options:thumbWidth:queue:progressBlock:)",
+    /// `.verbose` logs at #line 436/475/499/503/514. Queue methods and `FFThumbnail(cgImage:...)` are
+    /// inlined. A `transfer` throw unrefs the packet twice (loop-body defer, then function defer) and
+    /// runs the shutdown/codec/frame/close defers (0x101a26a94).
+    public static func generateThumbnailFromCache(ioContext: AbstractAVIOContext, options: KSOptions?, thumbWidth: Int32, queue: ThumbnailQueue, progressBlock: (FFThumbnail, Int) -> Void) throws -> Set<Int> {
+        let formatCtx = try FFmpegUtility.formatCtx(ioContext: ioContext, options: options)
+        defer {
+            FFmpegUtility.close(formatCtx: formatCtx)
+        }
+        var videoStream: UnsafeMutablePointer<AVStream>?
+        var videoStreamIndex = 0
+        for i in 0 ..< Int(formatCtx.pointee.nb_streams) {
+            if let stream = formatCtx.pointee.streams[i], stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO {
+                videoStreamIndex = i
+                videoStream = stream
+                break
+            }
+        }
+        guard let videoStream else {
+            throw KSPlayerError(code: 0, description: "No video stream")
+        }
+        let videoAvgFrameRate = videoStream.pointee.avg_frame_rate
+        if videoAvgFrameRate.den == 0 || av_q2d(videoAvgFrameRate) == 0 {
+            throw KSPlayerError(code: 0, description: "Avg frame rate = 0, ignore")
+        }
+        var frame = av_frame_alloc()
+        defer {
+            av_frame_free(&frame)
+        }
+        guard let frame else {
+            throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
+        }
+        let codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: options.map { options in
+            let copied = KSOptions()
+            copied.decoderOptions = options.decoderOptions
+            copied.lowres = options.lowres
+            copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
+            copied.hardwareDecode = false
+            return copied
+        })
+        defer {
+            var codecContext: UnsafeMutablePointer<AVCodecContext>? = codecContext
+            avcodec_free_context(&codecContext)
+        }
+        let codecpar = videoStream.pointee.codecpar.pointee
+        let thumbHeight = codecpar.width > 0 ? codecpar.height * thumbWidth / codecpar.width : thumbWidth * 9 / 16
+        let assetTrack = FFmpegAssetTrack(stream: videoStream)
+        _ = assetTrack?.isDovi
+        let reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: codecpar.format)), fps: 60, dovi: assetTrack?.dovi)
+        defer {
+            reScale.shutdown()
+        }
+        let duration = av_rescale_q(formatCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
+        let interval = duration / Int64(queue.count)
+        var packet = AVPacket()
+        defer {
+            av_packet_unref(&packet)
+        }
+        var cached = Set<Int>()
+        let timeBase = Timebase(videoStream.pointee.time_base)
+        queueLoop: while let index = queue.next() {
+            let seekPosition = interval * Int64(index) + videoStream.pointee.start_time
+            let ret = av_seek_frame(formatCtx, Int32(videoStreamIndex), seekPosition, AVSEEK_FLAG_BACKWARD)
+            guard ret >= 0 else {
+                KSLog(level: .verbose, "[Thumb] seek failed: index=\(index), error=\(ret)", line: 436)
+                queue.putBack(index)
+                continue
+            }
+            avcodec_flush_buffers(codecContext)
+            var packetCount = 0
+            while av_read_frame(formatCtx, &packet) >= 0, packetCount < 100 {
+                defer {
+                    av_packet_unref(&packet)
+                }
+                guard packet.stream_index == Int32(videoStreamIndex), packet.flags & AV_PKT_FLAG_KEY != 0 else {
+                    continue
+                }
+                packetCount += 1
+                guard avcodec_send_packet(codecContext, &packet) >= 0 else {
+                    continue
+                }
+                while avcodec_receive_frame(codecContext, frame) >= 0 {
+                    let pts = frame.pointee.best_effort_timestamp
+                    let time = timeBase.cmtime(for: pts).seconds
+                    KSLog(level: .verbose, "[Thumb] decoded frame: index=\(index), pts=\(pts), time=\(String(format: "%.2f", time))s, format=\(frame.pointee.format), size=\(frame.pointee.width)x\(frame.pointee.height)", line: 475)
+                    let thumbnail: FFThumbnail? = try autoreleasepool {
+                        let pixelBuffer = try reScale.transfer(frame: frame.pointee)
+                        guard var cgImage = thumbnailImage(frame: frame.pointee, pixelBuffer: pixelBuffer, dovi: assetTrack?.dovi) else {
+                            return nil
+                        }
+                        if cgImage.width > Int(thumbWidth) {
+                            cgImage = cgImage.resized(width: thumbWidth) ?? cgImage
+                        }
+                        return FFThumbnail(cgImage: cgImage, time: time, preferCompressedStorage: true, compressionQuality: 0.72)
+                    }
+                    av_frame_unref(frame)
+                    if let thumbnail {
+                        progressBlock(thumbnail, index)
+                        queue.markGenerated(index)
+                        cached.insert(index)
+                        KSLog(level: .verbose, "[Thumb] generated: index=\(index), time=\(String(format: "%.2f", time))s, packets=\(packetCount)", line: 499)
+                        continue queueLoop
+                    }
+                    KSLog(level: .verbose, "[Thumb] cgImage failed: index=\(index)", line: 503)
+                }
+            }
+            KSLog(level: .verbose, "[Thumb] no frame: index=\(index), packets=\(packetCount)", line: 514)
+            queue.putBack(index)
+        }
+        return cached
+    }
     public static func generateThumbnailAtTime(ioContext: AbstractAVIOContext, time: Double, options: KSOptions?, thumbWidth: Int32) -> FFThumbnail? {
         do {
             let formatCtx = try FFmpegUtility.formatCtx(ioContext: ioContext, options: options)
@@ -71,11 +276,92 @@ extension FFmpegUtility {
             FFmpegUtility.close(formatCtx: formatCtx)
             return thumbnail
         } catch {
-            KSLog("generateThumbnailAtTime: failed to create formatCtx: \(error)")
+            KSLog("generateThumbnailAtTime: failed to create formatCtx: \(error)", line: 541)
             return nil
         }
     }
-    public static func generateThumbnailAtTime(formatCtx: UnsafeMutablePointer<AVFormatContext>, time: Double, thumbWidth: Int32) -> FFThumbnail? { fatalError("L7: FFmpegUtility.generateThumbnailAtTime — Forward body unread") }
+    /// Forward 0x101a26d94 is a 1-insn thunk to 0x101a3132c (#function
+    /// "generateThumbnailAtTime(formatCtx:time:thumbWidth:)", #line 594). First video stream only;
+    /// VideoSwresample init is inlined. `isDovi` is evaluated and discarded (0x101a23760).
+    public static func generateThumbnailAtTime(formatCtx: UnsafeMutablePointer<AVFormatContext>, time: Double, thumbWidth: Int32) -> FFThumbnail? {
+        for i in 0 ..< Int(formatCtx.pointee.nb_streams) {
+            guard let stream = formatCtx.pointee.streams[i], stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO else {
+                continue
+            }
+            guard let codecContext = try? stream.pointee.codecpar.pointee.createContext(options: nil) else {
+                return nil
+            }
+            defer {
+                var codecContext: UnsafeMutablePointer<AVCodecContext>? = codecContext
+                avcodec_free_context(&codecContext)
+            }
+            let codecpar = stream.pointee.codecpar.pointee
+            var frame = av_frame_alloc()
+            defer {
+                av_frame_free(&frame)
+            }
+            guard let frame else {
+                return nil
+            }
+            let thumbHeight = codecpar.width > 0 ? thumbWidth * codecpar.height / codecpar.width : thumbWidth * 9 / 16
+            let assetTrack = FFmpegAssetTrack(stream: stream)
+            _ = assetTrack?.isDovi
+            let reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: codecpar.format)), fps: 60, dovi: assetTrack?.dovi)
+            defer {
+                reScale.shutdown()
+            }
+            let timestamp = av_rescale_q(Int64(time * 1_000_000), AVRational(num: 1, den: 1_000_000), stream.pointee.time_base)
+            let timeBase = Timebase(stream.pointee.time_base)
+            let ret = av_seek_frame(formatCtx, Int32(i), timestamp, AVSEEK_FLAG_BACKWARD)
+            guard ret >= 0 else {
+                KSLog("generateThumbnailAtTime: seek failed at time \(time), error: \(ret)", line: 594)
+                return nil
+            }
+            avcodec_flush_buffers(codecContext)
+            var packet = AVPacket()
+            defer {
+                av_packet_unref(&packet)
+            }
+            while av_read_frame(formatCtx, &packet) >= 0 {
+                guard packet.stream_index == Int32(i) else {
+                    av_packet_unref(&packet)
+                    continue
+                }
+                guard avcodec_send_packet(codecContext, &packet) >= 0 else {
+                    av_packet_unref(&packet)
+                    break
+                }
+                let result = avcodec_receive_frame(codecContext, frame)
+                if result < 0 {
+                    if result == KSPlayerError.tryAgain.code {
+                        av_packet_unref(&packet)
+                        continue
+                    }
+                    av_packet_unref(&packet)
+                    break
+                }
+                av_packet_unref(&packet)
+                let frameTime = timeBase.cmtime(for: frame.pointee.best_effort_timestamp).seconds
+                let thumbnail: FFThumbnail? = autoreleasepool {
+                    guard let pixelBuffer = try? reScale.transfer(frame: frame.pointee),
+                          let cgImage = thumbnailImage(frame: frame.pointee, pixelBuffer: pixelBuffer, dovi: assetTrack?.dovi)
+                    else {
+                        return nil
+                    }
+                    let image = cgImage.width > Int(thumbWidth) ? cgImage.resized(width: thumbWidth) ?? cgImage : cgImage
+                    return FFThumbnail(image: UIImage(cgImage: image), time: frameTime)
+                }
+                guard let thumbnail else {
+                    av_frame_unref(frame)
+                    break
+                }
+                av_frame_unref(frame)
+                return thumbnail
+            }
+            return nil
+        }
+        return nil
+    }
 }
 
 /// Forward-added type (descriptor + 6 vtable methods in the trie). Field order is the memory order
@@ -133,19 +419,18 @@ public class ThumbnailSession {
             FFmpegUtility.close(formatCtx: formatCtx)
             throw KSPlayerError(code: 0, description: "Avg frame rate = 0, ignore")
         }
-        // A fresh KSOptions carrying only the decoder knobs, with hardware decode forced off.
-        var codecOptions: KSOptions?
-        if let options {
-            let copied = KSOptions()
-            copied.decoderOptions = options.decoderOptions
-            copied.lowres = options.lowres
-            copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
-            copied.hardwareDecode = false
-            codecOptions = copied
-        }
+        // A fresh KSOptions carrying only the decoder knobs, with hardware decode forced off. Forward
+        // unwraps codecpar (0x101a27038) before the option copy, so the copy is the argument expression.
         let codecContext: UnsafeMutablePointer<AVCodecContext>
         do {
-            codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: codecOptions)
+            codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: options.map { options in
+                let copied = KSOptions()
+                copied.decoderOptions = options.decoderOptions
+                copied.lowres = options.lowres
+                copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
+                copied.hardwareDecode = false
+                return copied
+            })
         } catch {
             FFmpegUtility.close(formatCtx: formatCtx)
             throw error
@@ -168,7 +453,7 @@ public class ThumbnailSession {
         self.hasDovi = hasDovi
         dovi = assetTrack?.dovi
         isHDR = hasDovi || colorTrc == AVCOL_TRC_SMPTE2084 || colorTrc == AVCOL_TRC_ARIB_STD_B67
-        KSLog("[Thumb] HDR检测: isHDR=\(isHDR), color_trc=\(colorTrc), hasDovi=\(hasDovi)")
+        KSLog("[Thumb] HDR检测: isHDR=\(isHDR), color_trc=\(colorTrc), hasDovi=\(hasDovi)", line: 739)
         let thumbHeight = width > 0 ? codecpar.height * thumbWidth / width : thumbWidth * 9 / 16
         reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: format)), fps: 60, dovi: assetTrack?.dovi)
         let duration = av_rescale_q(formatCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
@@ -177,7 +462,7 @@ public class ThumbnailSession {
         timeBase = Timebase(videoStream.pointee.time_base)
         intervalSeconds = Double(formatCtx.pointee.duration) / 1_000_000 / Double(count)
         indexedSeekPositions = ThumbnailSession.buildIndexedSeekPositions(videoStream: videoStream, count: count)
-        KSLog(level: .verbose, "[Thumb] init done, duration=\(duration), interval=\(interval), intervalSeconds=\(intervalSeconds), count=\(count), isHDR=\(isHDR), indexedSeek=\(indexedSeekPositions != nil)")
+        KSLog(level: .verbose, "[Thumb] init done, duration=\(duration), interval=\(interval), intervalSeconds=\(intervalSeconds), count=\(count), isHDR=\(isHDR), indexedSeek=\(indexedSeekPositions != nil)", line: 760)
     }
 
     /// FUN_101a31bd0. #function "buildIndexedSeekPositions(videoStream:count:)", #line 783/795.
@@ -227,7 +512,7 @@ public class ThumbnailSession {
             FFmpegUtility.close(formatCtx: formatCtx)
             formatCtx = nil
         }
-        KSLog(level: .verbose, "[Thumb] closed")
+        KSLog(level: .verbose, "[Thumb] closed", line: 821)
     }
 
     /// FUN_101a27d00, vtable. #function "generateThumbnail(at:)", #line 847-947.
@@ -248,11 +533,11 @@ public class ThumbnailSession {
         let seekResult = av_seek_frame(formatCtx, Int32(videoStreamIndex), seekPosition, AVSEEK_FLAG_BACKWARD)
         let seekEnd = CACurrentMediaTime()
         guard seekResult >= 0 else {
-            KSLog(level: .verbose, "[Thumb] seek failed: index=\(index), error=\(seekResult)")
+            KSLog(level: .verbose, "[Thumb] seek failed: index=\(index), error=\(seekResult)", line: 847)
             return nil
         }
         if let isCachedAtCurrentPosition, !isCachedAtCurrentPosition() {
-            KSLog(level: .verbose, "[Thumb] no cache at current position: index=\(index), skipping")
+            KSLog(level: .verbose, "[Thumb] no cache at current position: index=\(index), skipping", line: 853)
             return nil
         }
         avcodec_flush_buffers(codecContext)
@@ -278,7 +563,7 @@ public class ThumbnailSession {
                         let frameTime = timeBase.cmtime(for: frame.pointee.best_effort_timestamp).seconds
                         let diff = abs(frameTime - targetTime)
                         guard diff <= maxDiff else {
-                            KSLog(level: .verbose, "[Thumb] frame time too far from target: index=\(index), target=\(String(format: "%.2f", targetTime))s, actual=\(String(format: "%.2f", frameTime))s, diff=\(String(format: "%.2f", abs(frameTime - targetTime)))s, skipping")
+                            KSLog(level: .verbose, "[Thumb] frame time too far from target: index=\(index), target=\(String(format: "%.2f", targetTime))s, actual=\(String(format: "%.2f", frameTime))s, diff=\(String(format: "%.2f", abs(frameTime - targetTime)))s, skipping", line: 906)
                             av_frame_unref(frame)
                             continue
                         }
@@ -290,12 +575,12 @@ public class ThumbnailSession {
                                     return nil
                                 }
                                 if cgImage.width > Int(thumbWidth) {
-                                    KSLog("[Thumb] resize needed: cgImage.width=\(cgImage.width), thumbWidth=\(thumbWidth)")
+                                    KSLog("[Thumb] resize needed: cgImage.width=\(cgImage.width), thumbWidth=\(thumbWidth)", line: 921)
                                     cgImage = cgImage.resized(width: thumbWidth) ?? cgImage
                                 }
                                 return ThumbnailSession.makeThumbnail(cgImage: cgImage, time: frameTime)
                             } catch {
-                                KSLog(level: .verbose, "[Thumb] reScale.transfer failed: \(error)")
+                                KSLog(level: .verbose, "[Thumb] reScale.transfer failed: \(error)", line: 929)
                                 return nil
                             }
                         }
@@ -307,7 +592,7 @@ public class ThumbnailSession {
                         av_frame_unref(frame)
                         let decodeTime = (decodeEnd - decodeStart) * 1000
                         let convertTime = (convertEnd - convertStart) * 1000
-                        KSLog("[Thumb] #\(index) seek=\(String(format: "%.1f", seekTime))ms, read=\(String(format: "%.1f", readTime))ms, 解码=\(String(format: "%.1f", decodeTime))ms, 转换=\(String(format: "%.1f", convertTime))ms, 总计=\(String(format: "%.1f", seekTime + readTime + decodeTime + convertTime))ms, packets=\(packetCount)")
+                        KSLog("[Thumb] #\(index) seek=\(String(format: "%.1f", seekTime))ms, read=\(String(format: "%.1f", readTime))ms, 解码=\(String(format: "%.1f", decodeTime))ms, 转换=\(String(format: "%.1f", convertTime))ms, 总计=\(String(format: "%.1f", seekTime + readTime + decodeTime + convertTime))ms, packets=\(packetCount)", line: 939)
                         av_packet_unref(&packet)
                         return thumbnail
                     }
@@ -317,7 +602,7 @@ public class ThumbnailSession {
             av_packet_unref(&packet)
             ret = av_read_frame(formatCtx, &packet)
         }
-        KSLog(level: .verbose, "[Thumb] no frame: index=\(index), packets=\(packetCount)")
+        KSLog(level: .verbose, "[Thumb] no frame: index=\(index), packets=\(packetCount)", line: 947)
         return nil
     }
 
@@ -334,11 +619,11 @@ public class ThumbnailSession {
         let seekResult = av_seek_frame(formatCtx, Int32(videoStreamIndex), seekTarget, AVSEEK_FLAG_BACKWARD)
         let seekEnd = CACurrentMediaTime()
         guard seekResult >= 0 else {
-            KSLog(level: .verbose, "[Thumb] preview seek failed: time=\(String(format: "%.2f", time))s, error=\(seekResult)")
+            KSLog(level: .verbose, "[Thumb] preview seek failed: time=\(String(format: "%.2f", time))s, error=\(seekResult)", line: 969)
             return nil
         }
         if let isCachedAtCurrentPosition, !isCachedAtCurrentPosition() {
-            KSLog(level: .verbose, "[Thumb] preview no cache at current position: time=\(String(format: "%.2f", time))s")
+            KSLog(level: .verbose, "[Thumb] preview no cache at current position: time=\(String(format: "%.2f", time))s", line: 974)
             return nil
         }
         avcodec_flush_buffers(codecContext)
@@ -375,7 +660,7 @@ public class ThumbnailSession {
                                 }
                                 return ThumbnailSession.makeThumbnail(cgImage: cgImage, time: frameTime)
                             } catch {
-                                KSLog(level: .verbose, "[Thumb] preview reScale.transfer failed: \(error)")
+                                KSLog(level: .verbose, "[Thumb] preview reScale.transfer failed: \(error)", line: 1037)
                                 return nil
                             }
                         }
@@ -390,7 +675,7 @@ public class ThumbnailSession {
                             if best != nil {
                                 let decodeTime = (decodeEnd - decodeStart) * 1000
                                 let convertTime = (convertEnd - convertStart) * 1000
-                                KSLog("[Thumb] preview target=\(String(format: "%.2f", time))s, actual=\(String(format: "%.2f", bestTime))s, seek=\(String(format: "%.1f", seekTime))ms, read=\(String(format: "%.1f", readTime))ms, 解码=\(String(format: "%.1f", decodeTime))ms, 转换=\(String(format: "%.1f", convertTime))ms, 总计=\(String(format: "%.1f", seekTime + readTime + decodeTime + convertTime))ms, keyframes=\(packetCount)")
+                                KSLog("[Thumb] preview target=\(String(format: "%.2f", time))s, actual=\(String(format: "%.2f", bestTime))s, seek=\(String(format: "%.1f", seekTime))ms, read=\(String(format: "%.1f", readTime))ms, 解码=\(String(format: "%.1f", decodeTime))ms, 转换=\(String(format: "%.1f", convertTime))ms, 总计=\(String(format: "%.1f", seekTime + readTime + decodeTime + convertTime))ms, keyframes=\(packetCount)", line: 1053)
                             }
                             av_packet_unref(&packet)
                             return best
@@ -403,10 +688,10 @@ public class ThumbnailSession {
             ret = av_read_frame(formatCtx, &packet)
         }
         if let best {
-            KSLog(level: .verbose, "[Thumb] preview fallback target=\(String(format: "%.2f", time))s, actual=\(String(format: "%.2f", bestTime))s, keyframes=\(packetCount)")
+            KSLog(level: .verbose, "[Thumb] preview fallback target=\(String(format: "%.2f", time))s, actual=\(String(format: "%.2f", bestTime))s, keyframes=\(packetCount)", line: 1063)
             return best
         }
-        KSLog(level: .verbose, "[Thumb] preview no frame: target=\(String(format: "%.2f", time))s, packets=\(packetCount)")
+        KSLog(level: .verbose, "[Thumb] preview no frame: target=\(String(format: "%.2f", time))s, packets=\(packetCount)", line: 1065)
         return nil
     }
 
@@ -423,12 +708,12 @@ public class ThumbnailSession {
         guard let frame, let codecContext, let formatCtx, let reScale else {
             return startIndex
         }
-        KSLog(level: .verbose, "[Thumb] generateSequentially: start=\(startIndex), max=\(maxIndex), needSeek=\(needSeek)")
+        KSLog(level: .verbose, "[Thumb] generateSequentially: start=\(startIndex), max=\(maxIndex), needSeek=\(needSeek)", line: 1096)
         if needSeek {
             let seekPosition = interval * Int64(startIndex) + startTime
             let ret = av_seek_frame(formatCtx, Int32(videoStreamIndex), seekPosition, AVSEEK_FLAG_BACKWARD)
             if ret < 0 {
-                KSLog(level: .verbose, "[Thumb] initial seek failed: index=\(startIndex), error=\(ret)")
+                KSLog(level: .verbose, "[Thumb] initial seek failed: index=\(startIndex), error=\(ret)", line: 1105)
                 return startIndex
             }
             avcodec_flush_buffers(codecContext)
@@ -460,7 +745,7 @@ public class ThumbnailSession {
                         av_strerror(ret, &buffer, 256)
                         endReason = "error(\(ret)): \(String(cString: buffer))"
                     }
-                    KSLog(level: .verbose, "[Thumb] av_read_frame failed: \(endReason), idx=\(index), packets=\(packets)")
+                    KSLog(level: .verbose, "[Thumb] av_read_frame failed: \(endReason), idx=\(index), packets=\(packets)", line: 1143)
                     readFailed = true
                     return nil
                 }
@@ -491,7 +776,7 @@ public class ThumbnailSession {
                 let frameTime = timeBase.cmtime(for: frame.pointee.best_effort_timestamp).seconds
                 let frameIndex = Int(frameTime / intervalSeconds)
                 if frameIndex > maxIndex {
-                    KSLog(level: .verbose, "[Thumb] reached maxIndex: frameIndex=\(frameIndex), maxIndex=\(maxIndex)")
+                    KSLog(level: .verbose, "[Thumb] reached maxIndex: frameIndex=\(frameIndex), maxIndex=\(maxIndex)", line: 1200)
                     av_packet_unref(&packet)
                     return frameIndex
                 }
@@ -500,7 +785,7 @@ public class ThumbnailSession {
                     do {
                         let pixelBuffer = try reScale.transfer(frame: frame.pointee)
                         guard var cgImage = thumbnailImage(frame: frame.pointee, pixelBuffer: pixelBuffer, dovi: dovi) else {
-                            KSLog(level: .verbose, "[Thumb] cgImage() failed at index=\(frameIndex)")
+                            KSLog(level: .verbose, "[Thumb] cgImage() failed at index=\(frameIndex)", line: 1216)
                             return nil
                         }
                         if cgImage.width > Int(thumbWidth) {
@@ -508,7 +793,7 @@ public class ThumbnailSession {
                         }
                         return ThumbnailSession.makeThumbnail(cgImage: cgImage, time: frameTime)
                     } catch {
-                        KSLog(level: .verbose, "[Thumb] reScale.transfer failed: \(error)")
+                        KSLog(level: .verbose, "[Thumb] reScale.transfer failed: \(error)", line: 1219)
                         return nil
                     }
                 }
@@ -521,10 +806,10 @@ public class ThumbnailSession {
                 av_frame_unref(frame)
                 let decodeTime = (decodeEnd - decodeStart) * 1000
                 let convertTime = (convertEnd - convertStart) * 1000
-                KSLog("[Thumb] #\(frameIndex) 解码=\(String(format: "%.1f", decodeTime))ms, 转换=\(String(format: "%.1f", convertTime))ms, 总计=\(String(format: "%.1f", decodeTime + convertTime))ms")
+                KSLog("[Thumb] #\(frameIndex) 解码=\(String(format: "%.1f", decodeTime))ms, 转换=\(String(format: "%.1f", convertTime))ms, 总计=\(String(format: "%.1f", decodeTime + convertTime))ms", line: 1233)
                 saved += 1
                 guard onThumbnail(thumbnail, frameIndex) else {
-                    KSLog(level: .verbose, "[Thumb] stopped by callback at index=\(frameIndex)")
+                    KSLog(level: .verbose, "[Thumb] stopped by callback at index=\(frameIndex)", line: 1242)
                     av_packet_unref(&packet)
                     return frameIndex
                 }
@@ -540,7 +825,7 @@ public class ThumbnailSession {
                 break
             }
         }
-        KSLog(level: .debug, "[Thumb] generateSequentially done: lastIndex=\(index), saved=\(saved), packets=\(packets), videoPackets=\(videoPackets), keyframes=\(keyframes), decoded=\(decoded), iFrames=\(iFrames), endReason=\(endReason)")
+        KSLog(level: .debug, "[Thumb] generateSequentially done: lastIndex=\(index), saved=\(saved), packets=\(packets), videoPackets=\(videoPackets), keyframes=\(keyframes), decoded=\(decoded), iFrames=\(iFrames), endReason=\(endReason)", line: 1257)
         return index
     }
 

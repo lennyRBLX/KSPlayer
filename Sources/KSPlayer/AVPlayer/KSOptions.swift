@@ -38,33 +38,41 @@ open class KSOptions {
     //    autoDeInterlace/autoRotate/videoInterlacingType/idetTypeMap) migrated to their callers.
     public var context: String = ""
 
+    // Forward 0x1019b2f7c: every constant-default stored property is stored first (declaration order);
+    // the properties seeded from the KSOptions statics are assigned here, in this order (the static
+    // reads follow the constant stores), then the option dictionaries. Forward also initialises
+    // _preferredForwardBufferDuration in place here, between maxBufferDuration and isAccurateSeek;
+    // that needs the decl without its initializer (explicit `: Double`), so it stays on the decl.
     public init() {
+        useSystemHTTPProxy = KSOptions.useSystemHTTPProxy
+        yadifMode = KSOptions.yadifMode
+        deInterlaceAddIdet = KSOptions.deInterlaceAddIdet
+        hardwareDecode = KSOptions.hardwareDecode
+        asynchronousDecompression = KSOptions.asynchronousDecompression
+        videoSoftDecodeThreadCount = KSOptions.videoSoftDecodeThreadCount
+        isLoopPlay = KSOptions.isLoopPlay
+        display = KSOptions.defaultDisplayEnumPlane
+        isSecondOpen = KSOptions.isSecondOpen
+        maxBufferDuration = KSOptions.maxBufferDuration
+        isAccurateSeek = KSOptions.isAccurateSeek
+        isSeekedAutoPlay = KSOptions.isSeekedAutoPlay
+        canStartPictureInPictureAutomaticallyFromInline = KSOptions.canStartPictureInPictureAutomaticallyFromInline
+        playerTypes = KSOptions.playerTypes
+        isAutoPlay = KSOptions.isAutoPlay
         formatContextOptions["user_agent"] = userAgent
-        // 参数的配置可以参考protocols.texi 和 http.c
-        // 这个一定要，不然有的流就会判断不准FieldOrder
-        formatContextOptions["scan_all_pmts"] = 1
-        // ts直播流需要加这个才能一直直播下去，不然播放一小段就会结束了。
         formatContextOptions["reconnect"] = 1
-        formatContextOptions["reconnect_streamed"] = 1
-        // 这个是用来开启http的链接复用（keep-alive）。vlc默认是打开的，所以这边也默认打开。
-        // 开启这个，百度网盘的视频链接无法播放
-        // formatContextOptions["multiple_requests"] = 1
-        // 下面是用来处理秒开的参数，有需要的自己打开。默认不开，不然在播放某些特殊的ts直播流会频繁卡顿。
-//        formatContextOptions["auto_convert"] = 0
-//        formatContextOptions["fps_probe_size"] = 3
-//        formatContextOptions["rw_timeout"] = 10_000_000
-//        formatContextOptions["max_analyze_duration"] = 300 * 1000
-        // 默认情况下允许所有协议，只有嵌套协议才需要指定这个协议子集，例如m3u8里面有http。
-//        formatContextOptions["protocol_whitelist"] = "file,http,https,tcp,tls,crypto,async,cache,data,httpproxy"
-        // 开启这个，纯ipv6地址会无法播放。并且有些视频结束了，但还会一直尝试重连。所以这个值默认不设置
-//        formatContextOptions["reconnect_at_eof"] = 1
-        // 开启这个，会导致tcp Failed to resolve hostname 还会一直重试
-//        formatContextOptions["reconnect_on_network_error"] = 1
-        // There is total different meaning for 'listen_timeout' option in rtmp
-        // set 'listen_timeout' = -1 for rtmp、rtsp
-//        formatContextOptions["listen_timeout"] = 3
+        formatContextOptions["rw_timeout"] = 9_000_000
+        formatContextOptions["reconnect_delay_max"] = 0
+        formatContextOptions["reconnect_on_network_error"] = 1
+        formatContextOptions["allowed_extensions"] = "ALL"
+        formatContextOptions["extension_picky"] = 0
+        formatContextOptions["scan_all_pmts"] = 1
         decoderOptions["threads"] = "auto"
-        decoderOptions["refcounted_frames"] = "1"
+        decoderOptions["real_time"] = 1
+        decoderOptions["flags2"] = "fast"
+        if KSOptions.logLevel == .debug {
+            decoderOptions["debug"] = "pict"
+        }
     }
 
     // ⚑ INFERRED name `resetTime`: #function unrecoverable (direct call @0x1019c0798, no vtable slot).
@@ -92,7 +100,16 @@ open class KSOptions {
         #endif
     }
 
-    private func udpateAdjustBuffer() { fatalError("L7: KSOptions.udpateAdjustBuffer — Forward body unread") }
+    // Forward slot dead (0x10198eb18 swift_deletedMethodError). Body mirrors the buffer build inlined in
+    // the brightness/contrast/saturation setters (0x1019bdc78 …); the setters keep makeAdjustBuffer —
+    // calling this from them regressed their modify rows (pass 20260928T134712052460Z).
+    private func udpateAdjustBuffer() {
+        let enable: Float = brightness == 1 && contrast == 1 && saturation == 1 ? 0 : 1
+        var adjust = SIMD4<Float>(brightness, contrast, saturation, enable)
+        let buffer = MetalRender.device.makeBuffer(bytes: &adjust, length: MemoryLayout<SIMD4<Float>>.size)
+        buffer?.label = "adjust"
+        adjustBuffer = buffer
+    }
     public var avOptions: [String: Any] = [String: Any]()
     public var isLive: Bool?
     public var startPlayTime: TimeInterval = 0
@@ -120,14 +137,14 @@ open class KSOptions {
     public nonisolated(unsafe) static var isLoopPlay = false
     /// 是否自动播放，默认true
     public nonisolated(unsafe) static var isAutoPlay = true
-    public var isAutoPlay: Bool = KSOptions.isAutoPlay
+    public var isAutoPlay: Bool
     public var enterForgeResumePlay: Bool = false
     public var isDLNARunning: Bool = false
     public var disableVideoFrameRateMatching: Bool = false
     /// seek完是否自动播放
     public nonisolated(unsafe) static var isSeekedAutoPlay = true
     /// 是否开启秒开
-    public var isSecondOpen: Bool = KSOptions.isSecondOpen
+    public var isSecondOpen: Bool
     public var playbackTimeInterval: Double = 0.04
     // Forward vtable slot 43 is a get-only getter between playbackTimeInterval and playerTypes; the
     // trie names it at the shared dead stub 0x10198eb18 (fold 376) as the INSTANCE getter (no `Z`),
@@ -135,15 +152,16 @@ open class KSOptions {
     // its body is unrecoverable. Distinct from the static twin above.
     // ⚑[tool=vtable_surface ref=KSOptions#43 result=G-dead-unnamed]
     // ⚑[tool=export_trie_oracle ref=$s8KSPlayer9KSOptionsC15firstPlayerTypeAA05MediaD8Protocol_pXpvg:0x10198eb18 result=instance-getter]
-    var firstPlayerType: MediaPlayerProtocol.Type { fatalError("L7: KSOptions.firstPlayerType — Forward slot dead, body unreadable") }
+    // Forward slot dead (0x10198eb18 swift_deletedMethodError); body unrecoverable.
+    var firstPlayerType: MediaPlayerProtocol.Type { KSOptions.firstPlayerType }
     // playerTypes default reads the static KSOptions.playerTypes (not an inline literal).
     // ⚑[tool=decompile_function ref=FUN_1019b4334:0x1019b4334 result=static [KSAVPlayer.self,KSMEPlayer.self] — element class-descriptor names confirmed @0x1039ec148/@0x1039ef750]
-    public var playerTypes: [MediaPlayerProtocol.Type] = KSOptions.playerTypes
+    public var playerTypes: [MediaPlayerProtocol.Type]
     public var mixAudio: Bool = false
     public var canBackgroundPlay: Bool = true
     public var contentMode = UIViewContentMode.scaleAspectFit  // macOS: KSPlayer.ContentMode (== binary); iOS/tvOS: UIView.ContentMode
     /// Applies to short videos only
-    public var isLoopPlay: Bool = KSOptions.isLoopPlay
+    public var isLoopPlay: Bool
 
     open func adaptable(state: VideoAdaptationState) -> (Int64, Int64)? {
         guard let last = state.bitRateStates.last, CACurrentMediaTime() - last.time > maxBufferDuration / 2, let index = state.bitRates.firstIndex(of: last.bitRate) else {
@@ -213,9 +231,9 @@ open class KSOptions {
     // shape slot 59's own body shows one word lower. Writing a name here would be invention.
     // ⚑[tool=vtable_walk+recover_swift_function_name ref=FUN_10047da30:0x10047da30 result=LOCATED pinned=member-identity-undetermined]
     /// 开启精确seek
-    public var isAccurateSeek: Bool = KSOptions.isAccurateSeek
+    public var isAccurateSeek: Bool
     /// seek完是否自动播放
-    public var isSeekedAutoPlay: Bool = KSOptions.isSeekedAutoPlay
+    public var isSeekedAutoPlay: Bool
     /*
      AVSEEK_FLAG_BACKWARD: 1
      AVSEEK_FLAG_BYTE: 2
@@ -316,8 +334,51 @@ open class KSOptions {
         }
     }
 
-    func makeDecode(packet: Packet) -> DecodeProtocol { fatalError("L7: KSOptions.makeDecode — Forward body unread") }
-    public let useSystemHTTPProxy: Bool = KSOptions.useSystemHTTPProxy
+    // Forward 0x1019b604c + autoreleasepool body 0x1019b611c. The HEVC parameter-set helper 0x101a0be50
+    // (VPS/SPS/PPS kind-1 NAL entries → CMVideoFormatDescriptionCreateFromHEVCParameterSets) has no
+    // declaration in this source and is written as a local func.
+    func makeDecode(packet: Packet) -> DecodeProtocol {
+        func formatDescription(data: UnsafePointer<UInt8>, nalUnitHeaderLength: Int, nalUnits: [NALEntry]) -> CMFormatDescription? {
+            guard let vps = nalUnits.first(where: { $0.kind == 1 && $0.type == 32 }),
+                  let sps = nalUnits.first(where: { $0.kind == 1 && $0.type == 33 }),
+                  let pps = nalUnits.first(where: { $0.kind == 1 && $0.type == 34 })
+            else {
+                return nil
+            }
+            let parameterSetPointers = [data + Int(vps.offset), data + Int(sps.offset), data + Int(pps.offset)]
+            let parameterSetSizes = [Int(truncatingIfNeeded: vps.length), Int(truncatingIfNeeded: sps.length), Int(truncatingIfNeeded: pps.length)]
+            var formatDescription: CMFormatDescription?
+            _ = CMVideoFormatDescriptionCreateFromHEVCParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: 3, parameterSetPointers: parameterSetPointers, parameterSetSizes: parameterSetSizes, nalUnitHeaderLength: Int32(nalUnitHeaderLength), extensions: nil, formatDescriptionOut: &formatDescription)
+            return formatDescription
+        }
+        let assetTrack = packet.assetTrack!
+        process(assetTrack: assetTrack)
+        return autoreleasepool { () -> DecodeProtocol in
+            if assetTrack.mediaType == .subtitle {
+                return SubtitleDecode(assetTrack: assetTrack, options: self)
+            }
+            if assetTrack.mediaType == .video {
+                if hardwareDecode, asynchronousDecompression {
+                    if let decode = VideoToolboxDecode(assetTrack: assetTrack, options: self, asynchronous: true) {
+                        return decode
+                    }
+                    if assetTrack.codecpar.pointee.codec_id == AV_CODEC_ID_HEVC, let corePacket = packet.corePacket {
+                        let nalUnits = parseNALUnits(data: corePacket.pointee.data!, size: Int(corePacket.pointee.size), codecID: AV_CODEC_ID_HEVC)
+                        assetTrack.formatDescription = formatDescription(data: corePacket.pointee.data!, nalUnitHeaderLength: 4, nalUnits: nalUnits)
+                        process(assetTrack: assetTrack)
+                        if let decode = VideoToolboxDecode(assetTrack: assetTrack, options: self, asynchronous: true) {
+                            return decode
+                        }
+                    }
+                }
+                if context != "ReadCacheIOContext", [FFmpegFieldOrder.bb, .bt, .tt, .tb].contains(assetTrack.fieldOrder) {
+                    deinterlace(assetTrack: assetTrack)
+                }
+            }
+            return FFmpegDecode(assetTrack: assetTrack, options: self)
+        }
+    }
+    public let useSystemHTTPProxy: Bool
 
     /**
             在创建解码器之前可以对KSOptions和assetTrack做一些处理。例如判断fieldOrder为tt或bb的话，那就自动加videofilters
@@ -403,7 +464,9 @@ open class KSOptions {
         let str = formatContextOptions["headers"] as? String ?? ""
         var array = str.components(separatedBy: "\r\n")
         array.removeAll { $0.hasPrefix(key) }
-        formatContextOptions["headers"] = array.joined(separator: "\r\n")
+        // Forward 0x1019b7664 retains the joined string before the store and releases it at scope end (named binding).
+        let headers = array.joined(separator: "\r\n")
+        formatContextOptions["headers"] = headers
     }
 
     public func setCookie(_ cookies: [HTTPCookie]) {
@@ -420,52 +483,52 @@ open class KSOptions {
     @Published
     public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
     /// 最大缓存视频时间
-    public var maxBufferDuration: Double = KSOptions.maxBufferDuration
+    public var maxBufferDuration: Double
 
     // 缓冲算法函数
     open func playable(capacitys: [CapacityProtocol], isFirst: Bool, isSeek: Bool) -> LoadingState {
-        let packetCount = capacitys.map(\.packetCount).min() ?? 0
-        let frameCount = capacitys.map(\.frameCount).min() ?? 0
+        // Forward 0x1019ec77c (PlayerDefines.swift, no decl here): Double -> UInt8 that returns 0 for
+        // negative/NaN, 255 for >= 255, else the truncating conversion.
+        func progressValue(_ value: Double) -> UInt8 {
+            if value < 0 || value.isNaN {
+                return 0
+            }
+            if value >= 255 {
+                return 255
+            }
+            return UInt8(value)
+        }
+        // Forward 0x1019b8524: one min(by:) over frameCount + packetCount, then both counts read off it.
+        let capacity = capacitys.min { $0.frameCount + $0.packetCount < $1.frameCount + $1.packetCount }
+        let packetCount = capacity?.packetCount ?? 0
+        let frameCount = capacity?.frameCount ?? 0
         let isEndOfFile = capacitys.allSatisfy(\.isEndOfFile)
-        // ⚑ s106: TWO reductions, not one. This body runs both over the same array — the max loop
-        //   @0x1019b8650 and the min loop @0x1019b8674 — because LoadingState carries both.
-        let maxLoadedTime = capacitys.map(\.loadedTime).max() ?? 0
-        let minLoadedTime = capacitys.map(\.loadedTime).min() ?? 0
-        // ⚑ s106: progress derives from the MAX and is a UInt8. Read at 0x1019b86dc-0x1019b874c:
-        //   `fcmp d0, #0.0` on preferredForwardBufferDuration, and on the zero path `mov w20, #0x64`
-        //   = 100; otherwise `fmul d10, d9, 100.0` — d9 being the MAX — then `fdiv` by the duration.
-        //   The source previously derived it from its single `.min()`, so Forward changed both the
-        //   field and which one feeds this.
-        // ⚑ The Double→UInt8 conversion @0x1019ec77c CLAMPS rather than traps: negative → 0,
-        //   NaN → 0, >= 255 → 255, else `fcvtzs`. Plain `UInt8(_:)` traps instead, so the exact
-        //   source spelling of that clamp is NOT established; `UInt8(clamping:)` on the truncated
-        //   value is the closest expressible form and is what is written.
-        //   ⚑[tool=llvm-objdump ref=Double-to-UInt8:0x1019ec77c result=clamping-0-255-NaN-0]
+        // Forward 0x1019b8628: one map, then the max loop and the min loop over the same array.
+        let loadedTimes = capacitys.map(\.loadedTime)
+        let maxLoadedTime = loadedTimes.max() ?? 0
+        let minLoadedTime = loadedTimes.min() ?? 0
         let progress: UInt8 = preferredForwardBufferDuration == 0
             ? 100
-            : UInt8(clamping: Int(maxLoadedTime * 100.0 / preferredForwardBufferDuration))
+            : progressValue(maxLoadedTime * 100.0 / preferredForwardBufferDuration)
+        // Forward closure 0x1019b88cc.
         let isPlayable = capacitys.allSatisfy { capacity in
-            if capacity.isEndOfFile && capacity.packetCount == 0 {
-                return true
-            }
-            guard capacity.frameCount >= 2 else {
-                return false
-            }
             if capacity.isEndOfFile {
                 return true
             }
             if (syncDecodeVideo && capacity.mediaType == .video) || (syncDecodeAudio && capacity.mediaType == .audio) {
-                return true
-            }
-            if isFirst || isSeek {
-                // 让纯音频能更快的打开
-                if capacity.mediaType == .audio || isSecondOpen {
-                    if isFirst {
-                        return true
-                    } else {
-                        return capacity.loadedTime >= self.preferredForwardBufferDuration / 2
-                    }
+                if capacity.frameCount >= 2 {
+                    return true
                 }
+            }
+            if isFirst || isSeek, isSecondOpen {
+                if capacity.mediaType == .video {
+                    if capacity.frameCount == 0 {
+                        KSLog("[playable] video frameCount=0, packetCount=\(capacity.packetCount), waiting for video frame", line: 531)
+                        return false
+                    }
+                    return true
+                }
+                return capacity.loadedTime >= self.preferredForwardBufferDuration / 2
             }
             return capacity.loadedTime >= self.preferredForwardBufferDuration
         }
@@ -772,8 +835,8 @@ open class KSOptions {
     public nonisolated(unsafe) static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
     public nonisolated(unsafe) static var yadifMode = 1
     public nonisolated(unsafe) static var deInterlaceAddIdet = false
-    public let yadifMode: Int = KSOptions.yadifMode
-    public let deInterlaceAddIdet: Bool = KSOptions.deInterlaceAddIdet
+    public let yadifMode: Int
+    public let deInterlaceAddIdet: Bool
 
     /// @0x1019bb974, 175 instructions. The signature is the trie's, not inferred:
     /// ⚑[tool=export_trie_oracle ref=KSOptions.wantedSubtitle(tracks:):0x1019bb974 result=OWNER_MATCH]
@@ -935,7 +998,7 @@ open class KSOptions {
     // Field 47. The reflection record's type mangle ends `_p`, i.e. an EXISTENTIAL, not an enum
     // tag — which is what settles that DisplayEnum is a protocol. The property carries getter,
     // setter AND modify in the trie, so it is a `var`.
-    public var display: any DisplayEnum = KSOptions.defaultDisplayEnumPlane
+    public var display: any DisplayEnum
     public var videoPipeline: VideoPipeline?
     public var videoDelay: Double = 0.0 // s
     public var isRotateByFilter: Bool = false
@@ -944,12 +1007,12 @@ open class KSOptions {
     public var videoFilters: [String] = [String]()
     public var syncDecodeVideo: Bool = false
     public var decodeType: DecodeType = DecodeType.avplayer
-    public var hardwareDecode: Bool = KSOptions.hardwareDecode
-    public var asynchronousDecompression: Bool = KSOptions.asynchronousDecompression
+    public var hardwareDecode: Bool
+    public var asynchronousDecompression: Bool
     public var videoDisable: Bool = false
-    public var canStartPictureInPictureAutomaticallyFromInline: Bool = KSOptions.canStartPictureInPictureAutomaticallyFromInline
+    public var canStartPictureInPictureAutomaticallyFromInline: Bool
     public var automaticWindowResize: Bool = true
-    public var videoSoftDecodeThreadCount: Int = KSOptions.videoSoftDecodeThreadCount
+    public var videoSoftDecodeThreadCount: Int
     public var isDoubleRefreshRate: Bool = false
     public var renderUseDispatchSourceTimer: Bool = false
     public var brightness: Float = 1.0 {
@@ -968,7 +1031,16 @@ open class KSOptions {
         }
     }
 
-    private func shouldLogVideoClockDrop() -> Bool { fatalError("L7: KSOptions.shouldLogVideoClockDrop — Forward body unread") }
+    // Forward: private slot dead; body visibly inlined in videoClockSync 0x1019bf108 (CACurrentMediaTime,
+    // `1.0 <= now - lastVideoClockDropLogTime`, store now, then the gated drop log).
+    private func shouldLogVideoClockDrop() -> Bool {
+        let now = CACurrentMediaTime()
+        if now - lastVideoClockDropLogTime >= 1 {
+            lastVideoClockDropLogTime = now
+            return true
+        }
+        return false
+    }
     // adjustBuffer holds a 16-byte MTLBuffer of SIMD4<Float>(brightness, contrast, saturation, enable),
     // rebuilt by each colour property's didSet; the default is folded from the (1,1,1) defaults → [1,1,1,0].
     // ⚑ INFERRED name `makeAdjustBuffer`: the builder is inlined at all four call sites (KSOptions.init +
@@ -1013,7 +1085,8 @@ open class KSOptions {
     open func decodeSize(width: Int32, height: Int32) -> CGSize {
         #if canImport(UIKit)
         if UITraitCollection.current.userInterfaceIdiom == .phone, width >= 7680 {
-            return CGSize(width: CGFloat(width / 2), height: CGFloat(height / 2))
+            // Forward 0x1019be9e4: both Int32 halvings precede both conversions (Int-argument CGSize init).
+            return CGSize(width: Int(width / 2), height: Int(height / 2))
         }
         #endif
         return CGSize(width: CGFloat(width), height: CGFloat(height))
@@ -1209,7 +1282,8 @@ open class KSOptions {
     private var videoClockDelayCount: Int = 0
     public internal(set) var lastVideoClockDropLogTime: Double = 0.0
 
-    private func resetPreferredDisplayCriteria() { fatalError("L7: KSOptions.resetPreferredDisplayCriteria — Forward body unread") }
+    // Forward slot dead (0x10198eb18 swift_deletedMethodError); body unrecoverable.
+    private func resetPreferredDisplayCriteria() {}
 
     // ⚑ INFERRED name (unrecoverable — inlined at every call site). Builds the colour-adjustment
     //   uniform buffer: SIMD4<Float>(brightness, contrast, saturation, enable), where `enable` is 0
@@ -1239,11 +1313,7 @@ open class KSOptions {
             }
         } else if diff > 1 / (fps * 2) {
             return .remain
-        } else if diff >= -2 / fps {
-            videoClockDelayCount = 0
-            lastVideoClockDropLogTime = 0
-            return .next
-        } else {
+        } else if diff < -2 / fps {
             videoClockDelayCount += 1
             let log = "[video] video delay=\(diff), nextVideoTime=\(nextVideoTime), frameCount=\(frameCount), fps=\(fps) delay count=\(videoClockDelayCount)"
             if diff < -8, videoClockDelayCount % 80 == 0 {
@@ -1260,12 +1330,15 @@ open class KSOptions {
                 }
             }
             let count = videoClockDelayCount == 1 ? 1 : Int(fps * diff * -0.5)
-            let now = CACurrentMediaTime()
-            if now - lastVideoClockDropLogTime >= 1 {
-                lastVideoClockDropLogTime = now
+            if shouldLogVideoClockDrop() {
                 KSLog("\(log) drop \(count) frame", line: 1030)
             }
             return .dropFrame(count: count)
+        } else {
+            // Forward 0x1019bf390 `b.pl` into this path: taken when !(diff < -2 / fps), NaN included.
+            videoClockDelayCount = 0
+            lastVideoClockDropLogTime = 0
+            return .next
         }
     }
     public nonisolated(unsafe) static var lockAspectRatio = true
@@ -1810,7 +1883,7 @@ public extension Array {
     public func removeDuplicate(predicate: (Element, Element) -> Bool) -> [Element] {
         enumerated().filter { index, element in
             firstIndex { predicate(element, $0) } == index
-        }.map { $0.element }
+        }.map { _, element in element }
     }
     public func asyncMap<T>(_ p0: (Element) async throws -> T) async throws -> [T] {
         var values = [T]()
@@ -1826,7 +1899,21 @@ public extension Array {
         }
         return dict
     }
-    public func removeAllAndReturn(where p0: (Element) throws -> Bool) throws -> [Element] { fatalError("L7: Array.removeAllAndReturn — Forward body unread") }
+    // Forward 0x1019e711c is `mutating`: `var result = []; try removeAll { if try p0($0) { result.append($0); return true }; return false }; return result`
+    // (closure 0x1019e71d4). This decl is not mutating (gap filed), so the same removal runs on a copy
+    // and only the returned elements match.
+    public func removeAllAndReturn(where p0: (Element) throws -> Bool) throws -> [Element] {
+        var result = [Element]()
+        var array = self
+        try array.removeAll { element in
+            if try p0(element) {
+                result.append(element)
+                return true
+            }
+            return false
+        }
+        return result
+    }
 }
 
 
