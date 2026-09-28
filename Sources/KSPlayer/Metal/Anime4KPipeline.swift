@@ -144,6 +144,14 @@ public class Anime4KPipeline: VideoPipeline {
         frameStateLock.unlock()
     }
 
+    /// Vtable F67: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot67() {}
+
+    /// Vtable F68: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot68() {}
+
     // READ IN FULL. All 156 instructions of 0x101a78b10-0x101a78d80 are accounted for; the earlier
     // "NOT read" pin is discharged. vtable idx69. Exactly one exported symbol at the address
     // (unfolded), and the body's own KSLog literals independently confirm the member: `#file` =
@@ -307,6 +315,64 @@ public class Anime4KPipeline: VideoPipeline {
         }
     }
 
+    /// Vtable F71: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot71() {}
+
+    // DECLARED HERE (F72: after configure, before updateUpscalePolicy — Forward slot order; L7 pilot c moved it up
+    // from after isUpscaleSupported, where it had been position-aligned to dead F76), BODY PINNED — and the pin
+    // belongs to THIS member, not to `loadPreset` above.
+    // vtable idx72, body @0x101a79b84, extent 0x101a79b84-0x101a7a34c, 1992 B / 498 instructions,
+    // none of them read. It is a vtable slot, so it is not `private` (a private method on a
+    // non-final class is statically dispatched and takes no slot); internal vs public is NOT
+    // separable on this image, because the export trie carries ZERO `Tj` dispatch thunks of any
+    // kind, so `Tj` absence discriminates nothing. The weaker spelling is written.
+    //
+    // The NAME is read, not invented: the body materializes its own `#function` literal
+    // 'loadShaderFiles(_:)' (19 chars) alongside its `#file` companion 'KSPlayer/Anime4KPipeline.swift'
+    // (30), and `recover_swift_function_name` returns it at high confidence with both anchors ok.
+    // That is why this is a named declaration rather than a FUN_-address pin.
+    // ⚑[tool=recover_swift_function_name ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=high-confidence-#function]
+    // ⚑[tool=export_trie_oracle ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=NOT_IN_TRIE]
+    // ⚑[tool=function_extents ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=498-instr-unread]
+    //
+    // CONSEQUENCE, stated plainly: until these 498 instructions are read, `anime4Ks` stays empty and
+    // `supported` stays false, so the KSLog above reports 0 shaders. `loadPreset` itself is now
+    // faithful; this is where the remaining gap lives, and it is its own unit.
+    func loadShaderFiles(_ files: [String]) {
+        anime4Ks = []
+        configured = false
+        supported = false
+        cachedUpscaleSupport = nil
+        inputTexture = nil
+
+        guard preset != .disabled, !files.isEmpty else {
+            return
+        }
+
+        do {
+            for path in files {
+                let parts = path.split(separator: "/")
+                guard parts.count == 2 else {
+                    KSLog("[Anime4K] Invalid shader file path: \(path)", line: 239) // w6=#0xef @0x101a7a108
+                    continue
+                }
+
+                let anime4K = try Anime4K(
+                    name: String(parts[1]),
+                    url: String(parts[0]),
+                    device: device,
+                    usePrecompiled: true,
+                    bufferCount: 1
+                )
+                anime4Ks.append(anime4K)
+            }
+        } catch {
+            KSLog("[Anime4K] Failed to load shaders: \(error)", line: 249) // w6=#0xf9 @0x101a7a2d0
+            anime4Ks = []
+        }
+    }
+
     // Body @0x101a7a34c, 6 instr, read in full — the same invalidation pair as above, against
     // maxUpscaleInputHeight (+0x28 value, +0x30 tag).
     public func updateUpscalePolicy(maxInputHeight: Int?) {
@@ -364,57 +430,9 @@ public class Anime4KPipeline: VideoPipeline {
         return pixelBuffer.height < targetHeight
     }
 
-    // DECLARED HERE, BODY PINNED — and the pin belongs to THIS member, not to `loadPreset` above.
-    // vtable idx72, body @0x101a79b84, extent 0x101a79b84-0x101a7a34c, 1992 B / 498 instructions,
-    // none of them read. It is a vtable slot, so it is not `private` (a private method on a
-    // non-final class is statically dispatched and takes no slot); internal vs public is NOT
-    // separable on this image, because the export trie carries ZERO `Tj` dispatch thunks of any
-    // kind, so `Tj` absence discriminates nothing. The weaker spelling is written.
-    //
-    // The NAME is read, not invented: the body materializes its own `#function` literal
-    // 'loadShaderFiles(_:)' (19 chars) alongside its `#file` companion 'KSPlayer/Anime4KPipeline.swift'
-    // (30), and `recover_swift_function_name` returns it at high confidence with both anchors ok.
-    // That is why this is a named declaration rather than a FUN_-address pin.
-    // ⚑[tool=recover_swift_function_name ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=high-confidence-#function]
-    // ⚑[tool=export_trie_oracle ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=NOT_IN_TRIE]
-    // ⚑[tool=function_extents ref=Anime4KPipeline.loadShaderFiles:0x101a79b84 result=498-instr-unread]
-    //
-    // CONSEQUENCE, stated plainly: until these 498 instructions are read, `anime4Ks` stays empty and
-    // `supported` stays false, so the KSLog above reports 0 shaders. `loadPreset` itself is now
-    // faithful; this is where the remaining gap lives, and it is its own unit.
-    func loadShaderFiles(_ files: [String]) {
-        anime4Ks = []
-        configured = false
-        supported = false
-        cachedUpscaleSupport = nil
-        inputTexture = nil
-
-        guard preset != .disabled, !files.isEmpty else {
-            return
-        }
-
-        do {
-            for path in files {
-                let parts = path.split(separator: "/")
-                guard parts.count == 2 else {
-                    KSLog("[Anime4K] Invalid shader file path: \(path)", line: 239) // w6=#0xef @0x101a7a108
-                    continue
-                }
-
-                let anime4K = try Anime4K(
-                    name: String(parts[1]),
-                    url: String(parts[0]),
-                    device: device,
-                    usePrecompiled: true,
-                    bufferCount: 1
-                )
-                anime4Ks.append(anime4K)
-            }
-        } catch {
-            KSLog("[Anime4K] Failed to load shaders: \(error)", line: 249) // w6=#0xf9 @0x101a7a2d0
-            anime4Ks = []
-        }
-    }
+    /// Vtable F76: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot76() {}
 
     public func encode(commandBuffer: MTLCommandBuffer, outputTexture: MTLTexture) {
         frameStateLock.lock()
@@ -507,6 +525,10 @@ public class Anime4KPipeline: VideoPipeline {
         guard frameTimeHistory.count >= 30 else { return false }
         return frameTimeHistory.filter { $0 > 0.05 }.count > 20
     }
+
+    /// Vtable F80: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot80() {}
 
     /// ⚑[tool=export_trie_oracle ref=Anime4KPipeline.getPerformanceStats():0x101a7b2a8 result=59-instr]
     /// Every one of the four fields it touches is resolved BY NAME out of this class's own field

@@ -499,30 +499,6 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
 
     public func transcode(packet: UnsafeMutablePointer<AVPacket>, block: ((UnsafeMutablePointer<AVPacket>) -> Void)?) -> Int32 { fatalError("L7: OutputStreamInfo.transcode — Forward body unread") }
 
-    // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots
-    //    13/14/15 in isolation without the full factory. The binary's SOLE construction is the designated
-    //    init above (FUN_101a1d014). Not used in any reconstructed path. ──────────────────────────────
-    //    ⚑ It must assign EVERY `let` field, which is why it takes the three the test varies
-    //    as parameters instead of letting the test mutate them afterwards. Six of this
-    //    class's fields have FieldRecord flags 0x00000000 (= `let`) in the binary; a
-    //    designated init that left any of them to a default would not compile, which is
-    //    itself independent confirmation that no such second init exists in the original —
-    //    this one is ours. The literals below are scaffold values, NOT binary-grounded.
-    init(formatCtx: UnsafeMutablePointer<AVFormatContext>,   // ⚑ test scaffold, not in binary
-         outPacket: UnsafeMutablePointer<AVPacket>,
-         streamMapping: [Int32: Int32] = [:],
-         timeBaseMap: [Int32: AVRational] = [:],
-         removeADTS: Bool = false) {
-        self.formatCtx = formatCtx
-        self.streamMapping = streamMapping
-        self.timeBaseMap = timeBaseMap
-        self.removeADTS = removeADTS
-        self.url = ""            // ⚑ scaffold-only value
-        self.frameRate = 0       // ⚑ scaffold-only value
-        self.formatName = ""     // ⚑ scaffold-only value
-        self.outPacket = outPacket
-    }
-
     // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────
     // 🚨 THE CLAIM "not in binary" IS FALSE, AND THE WHOLE SIGNATURE IS WRONG. The export trie names
     // 0x101a1ab5c outright:
@@ -737,5 +713,31 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         //   FUN_1030e632c = av_formatCloseInput (ffmpeg_name_oracle CONFIRMED avformat_close_input, 38/152 exact).
         //   The Swift wrapper's own NAME is devirt-unrecoverable (recover = None) → NOT emitted as a fabricated
         //   call; DEFERRED to P3 (the wrapper likely does `avformat_close_input(&formatCtx)`). [0x101a1be28]
+    }
+
+    // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots
+    //    (L7 pilot c: declared LAST so its build-only vtable slot 16 follows Forward's F14 writeTrailer /
+    //    F15 stop instead of displacing them; Forward has no such slot — ledgered as a test scaffold.)
+    //    13/14/15 in isolation without the full factory. The binary's SOLE construction is the designated
+    //    init above (FUN_101a1d014). Not used in any reconstructed path. ──────────────────────────────
+    //    ⚑ It must assign EVERY `let` field, which is why it takes the three the test varies
+    //    as parameters instead of letting the test mutate them afterwards. Six of this
+    //    class's fields have FieldRecord flags 0x00000000 (= `let`) in the binary; a
+    //    designated init that left any of them to a default would not compile, which is
+    //    itself independent confirmation that no such second init exists in the original —
+    //    this one is ours. The literals below are scaffold values, NOT binary-grounded.
+    init(formatCtx: UnsafeMutablePointer<AVFormatContext>,   // ⚑ test scaffold, not in binary
+         outPacket: UnsafeMutablePointer<AVPacket>,
+         streamMapping: [Int32: Int32] = [:],
+         timeBaseMap: [Int32: AVRational] = [:],
+         removeADTS: Bool = false) {
+        self.formatCtx = formatCtx
+        self.streamMapping = streamMapping
+        self.timeBaseMap = timeBaseMap
+        self.removeADTS = removeADTS
+        self.url = ""            // ⚑ scaffold-only value
+        self.frameRate = 0       // ⚑ scaffold-only value
+        self.formatName = ""     // ⚑ scaffold-only value
+        self.outPacket = outPacket
     }
 }

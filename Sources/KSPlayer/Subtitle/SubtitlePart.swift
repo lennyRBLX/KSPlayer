@@ -648,3 +648,16 @@ public struct SubtitleTextStyle {
     public var textShadowColor: UIColor?
     public init(textColor: UIColor?, textFontName: String?, subtitleFontSize: Double?, subtitleFontSizeScale: Double?, textBold: Bool?, textItalic: Bool?, textStrokeColor: UIColor?, textStrokeWidth: CGFloat?, textShadowOffset: CGSize?, textShadowBlurRadius: Double?, textShadowColor: UIColor?) { fatalError("L7: SubtitleTextStyle.init — Forward body unread") }
 }
+
+// Forward 0x101abe074 `(extension in KSPlayer):Either< where A == SubtitleImageInfo, B == (NSAttributedString,
+// TextPosition?)>.id.getter`, in the SubtitlePart address range. When the tag byte at +0x71 is 1 (.right), it returns
+// NSObject.hashValue of the text. Otherwise it tail-calls 0x101abba00, the CGRect hash body shared with
+// SubtitleImageInfo.id.
+extension Either where Left == SubtitleImageInfo, Right == (NSAttributedString, TextPosition?) {
+    public var id: Int {
+        switch self {
+        case let .left(info): info.id
+        case let .right((text, _)): text.hashValue
+        }
+    }
+}

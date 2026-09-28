@@ -78,15 +78,12 @@ final actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubt
     private var subtitles: [(subtitle: String, start: Int64, duration: Int64)] = [] // §8.6
     // ⚑[tool=field_surface ref=AssIncrementImageRenderer.fontsDir:idx3 result=let String?] The record
     //   flags word is 0 (`let`). Forward sets it from `init(fontsDir:header:)` (0x101a92d2c); that
-    //   init is not reconstructed, so the init below assigns it under an L7 marker.
+    //   init is not reconstructed yet (L7 stub).
     private let fontsDir: String?
     private var renderer: AssImageRenderer
     private var basicFontSize: Int = 0
-    // ⚑ init shape inferred → M2 witness-verify
-    init(renderer: AssImageRenderer) {
-        self.renderer = renderer
-        fontsDir = nil // L7: Forward takes this from init(fontsDir:header:) @0x101a92d2c, not read
-    }
+    // L7 pilot c: the invented `init(renderer:)` (no callers) is removed — Forward's vtable holds two
+    // init slots, init(content:) and init(fontsDir:header:), and the extra build slot displaced both.
     // ⚑ UNRESOLVED → P4 M2: the incremental libass-render async methods
     func flush() { fatalError("L7: AssIncrementImageRenderer.flush — Forward body unread") }
     func add(subtitle: String, start: Int64, duration: Int64) { fatalError("L7: AssIncrementImageRenderer.add — Forward body unread") }

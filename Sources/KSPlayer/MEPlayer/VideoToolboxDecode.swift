@@ -44,6 +44,10 @@ class VideoToolboxDecode: DecodeProtocol {
         }
     }
 
+    /// Vtable F24: a get-only unit with a dead slot, so Forward keeps no body, callers or strings.
+    /// Name and type are INFERRED. The declaration only holds the slot so that init (F25) lines up.
+    var unreadSlot24: Bool { false }
+
     // Forward 0x101a6cc94 is the exported allocating entry of init?(assetTrack:options:asynchronous:).
     // It is a CONVENIENCE init: the object is allocated only after DecompressionSession succeeds and
     // the nil path has no swift_deallocPartialClassInstance (a designated failable init allocates first).

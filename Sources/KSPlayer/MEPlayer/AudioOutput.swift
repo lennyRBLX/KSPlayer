@@ -339,6 +339,28 @@ public class AudioBaseOutput {
     // ⚑[tool=override_table ref=AudioEnginePlayer:0x1039ee768 result=base-method-desc-0x1039eebc0=slot28]
     func prepare(audioFormat _: AVAudioFormat) {}
 
+    // ⚑ name INFERRED — #function is unrecoverable (stripped, no literal), and
+    // the method is absent from the source and from the FrameOutput/AudioOutput
+    // requirement sets, so no tool maps this address to a symbol. Named for its
+    // behaviour. slot 29 @0x101a116c0; AudioEnginePlayer.play() calls it before
+    // engine.start() to prime the render state.
+    public func prepareRender() {
+        os_unfair_lock_lock(&renderLock)
+        if currentRender == nil {
+            // .left only — this class has no `eof` field, so .right's Bool is dropped.
+            // Binary @0x101a12c70: `csel x8,xzr,x23,eq` (tag==1 ? nil : payload) then an
+            // unconditional store. See Model.swift's note on the Either return.
+            if case let .left(frame)? = renderSource?.getAudioOutputRender() {
+                currentRender = frame
+            } else {
+                currentRender = nil
+            }
+            currentRenderReadOffset = 0
+        }
+        os_unfair_lock_unlock(&renderLock)
+        audioPlayerDidRenderSample()
+    }
+
     // flush (slot 30 @0x101a117b0): clear the frame and read offset under
     // renderLock, then release the displaced frame after reading system latency.
     public func flush() {
@@ -365,27 +387,13 @@ public class AudioBaseOutput {
         #endif
     }
 
-    // ⚑ name INFERRED — #function is unrecoverable (stripped, no literal), and
-    // the method is absent from the source and from the FrameOutput/AudioOutput
-    // requirement sets, so no tool maps this address to a symbol. Named for its
-    // behaviour. slot 29 @0x101a116c0; AudioEnginePlayer.play() calls it before
-    // engine.start() to prime the render state.
-    public func prepareRender() {
-        os_unfair_lock_lock(&renderLock)
-        if currentRender == nil {
-            // .left only — this class has no `eof` field, so .right's Bool is dropped.
-            // Binary @0x101a12c70: `csel x8,xzr,x23,eq` (tag==1 ? nil : payload) then an
-            // unconditional store. See Model.swift's note on the Either return.
-            if case let .left(frame)? = renderSource?.getAudioOutputRender() {
-                currentRender = frame
-            } else {
-                currentRender = nil
-            }
-            currentRenderReadOffset = 0
-        }
-        os_unfair_lock_unlock(&renderLock)
-        audioPlayerDidRenderSample()
-    }
+    /// Vtable F31: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot31() {}
+
+    /// Vtable F32: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot32() {}
 
     // audioPlayerDidRenderSample (slot 33 @0x101a1184c): report the audio clock
     // to renderSource. Forward drops upstream's unused sampleTimestamp parameter,

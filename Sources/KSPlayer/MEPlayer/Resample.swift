@@ -566,6 +566,10 @@ public class AudioDescriptor: Equatable {
         audioFormat = AudioDescriptor.audioFormat(sampleFormat: sampleFormat, sampleRate: self.sampleRate, outChannel: &outChannel, channelCount: channelCount)
     }
 
+    /// Vtable F16: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot16() {}
+
     public static func == (lhs: AudioDescriptor, rhs: AudioDescriptor) -> Bool {
         lhs.sampleFormat == rhs.sampleFormat && lhs.sampleRate == rhs.sampleRate && lhs.channel == rhs.channel
     }

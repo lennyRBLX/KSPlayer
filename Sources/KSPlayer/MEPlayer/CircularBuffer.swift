@@ -149,6 +149,10 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     }
     public func seek(seconds: Double, needKeyFrame: Bool) -> (UInt, Double)? { fatalError("L7: CircularBuffer.seek — Forward body unread") }
 
+    /// Vtable F28: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot28() {}
+
     public func flush() {
         condition.lock()
         defer { condition.unlock() }
