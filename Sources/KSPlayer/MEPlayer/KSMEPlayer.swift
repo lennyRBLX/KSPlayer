@@ -315,9 +315,9 @@ extension KSMEPlayer: MEPlayerDelegate {
             playerItem.startRecord(url: outputURL, mediaType: options.outputMediaType)
         }
 #sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 300)
-        let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
-            $0 as? FFmpegAssetTrack
-        }?.audioDescriptor
+        let audioDescriptor = (tracks(mediaType: .audio).first { $0.isEnabled }
+            as? FFmpegAssetTrack)?
+            .audioDescriptor
 #sourceLocation()
         guard let audioDescriptor else {
             return
@@ -363,9 +363,9 @@ extension KSMEPlayer: MEPlayerDelegate {
         runOnMainThread { [weak self] in
             guard let self else { return }
 #sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 320)
-            let audioDescriptor = tracks(mediaType: .audio).first { $0.isEnabled }.flatMap {
-                $0 as? FFmpegAssetTrack
-            }?.audioDescriptor
+            let audioDescriptor = (tracks(mediaType: .audio).first { $0.isEnabled }
+                as? FFmpegAssetTrack)?
+                .audioDescriptor
 #sourceLocation()
             if let audioDescriptor {
                 audioDescriptor.updateAudioFormat()
@@ -556,8 +556,8 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         KSLog("replace item \(item)", line: 482)
         reset()
         playerItem.delegate = nil
+        let options = item.options // ⚑ Forward 0x101a3c518: options load/retain precedes the playerItem store.
         playerItem = item
-        let options = item.options
 #sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 487)
         if options.isAudioRateByFilter(), playbackRate != 1, !options.audioFilters.contains(where: { $0.hasPrefix("atempo=") }) {
             options.audioFilters.append("atempo=\(playbackRate)")

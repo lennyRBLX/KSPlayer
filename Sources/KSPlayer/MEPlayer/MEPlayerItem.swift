@@ -62,10 +62,34 @@ public final class MEPlayerItem: @unchecked Sendable {
         usePacketCacheSeek(to: currentPlaybackTime, mediaType: mediaType)
     }
 
+    /// Forward 0x101a4a8d0. Filter closure 0x101a57160 (mediaType wt+0x10); FFmpegAssetTrack exact-class
+    /// cast; .video → findBestAudio 0x101a57210; .subtitle continues only for image subtitles with
+    /// options.isSeekImageSubtitle; seek(time:) wt+0x60 per track (currentPlaybackTime re-read each
+    /// iteration), then send(.seek(useCache: false, completion: nil)) and return true.
     func select(track: some MediaPlayerTrack) -> Bool {
-        // ⚑ UNRESOLVED (commit-1 stub): base body used the removed `assetTracks` field + findBestAudio/seek.
-        //   Forward body deferred to its own commit (allPlayerItemTracks-based track selection).
-        false
+        if track.isEnabled {
+            return false
+        }
+        (formatContext?.assetTracks ?? []).filter { $0.mediaType == track.mediaType }.forEach {
+            $0.isEnabled = track === $0
+        }
+        guard let assetTrack = track as? FFmpegAssetTrack else {
+            return false
+        }
+        if assetTrack.mediaType == .video {
+            findBestAudio(videoTrack: assetTrack)
+        } else if assetTrack.mediaType == .subtitle {
+            if assetTrack.isImageSubtitle {
+                if !options.isSeekImageSubtitle {
+                    return false
+                }
+            } else {
+                return false
+            }
+        }
+        allPlayerItemTracks.forEach { $0.seek(time: currentPlaybackTime) }
+        send(.seek(to: currentPlaybackTime, useCache: false, completion: nil))
+        return true
     }
 
     // ioOpen / ioClose (the custom-AVIO open/close2 callbacks) are declared at FILE SCOPE (below PBClass):
