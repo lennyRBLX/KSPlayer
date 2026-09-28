@@ -119,13 +119,14 @@ public class Anime4K {
 
         textureInW = Float(mainWidth)
         textureInH = Float(mainHeight)
-        outputW = textureInW
-        outputH = textureInH
 
         let scale = min(Float(displayLimitWidth) / Float(nativeWidth),
                         Float(displayLimitHeight) / Float(nativeHeight))
         displayActualW = (scale * Float(nativeWidth)).rounded()
         displayActualH = (scale * Float(nativeHeight)).rounded()
+        // Forward stores 0x88/0x8c after 0x98/0x9c (stp @0x101a71d98).
+        outputW = textureInW
+        outputH = textureInH
 
         sizeMap["MAIN"] = (Float(mainWidth), Float(mainHeight))
         sizeMap["NATIVE"] = (Float(nativeWidth), Float(nativeHeight))
@@ -134,7 +135,8 @@ public class Anime4K {
 
         for (index, shader) in shaders.enumerated() {
             if let when = shader.when {
-                print("[Anime4K] Evaluating WHEN for \(when)")
+                // Forward: 30-char literal then append(name), append(": "), append(when), no grow.
+                print("[Anime4K] Evaluating WHEN for " + shader.name + ": " + when)
                 print("[Anime4K] Current sizeMap: MAIN=\(sizeMap["MAIN"]?.0 ?? 0)x\(sizeMap["MAIN"]?.1 ?? 0), OUTPUT=\(sizeMap["OUTPUT"]?.0 ?? 0)x\(sizeMap["OUTPUT"]?.1 ?? 0)")
 
                 let tokens = when.split(separator: " ").map(String.init).filter { $0 != "WHEN" }
@@ -186,7 +188,8 @@ public class Anime4K {
                     throw Anime4KError.encoderFail("Failed to evaluate WHEN condition: \(when), stack count: \(stack.count)")
                 }
                 let result = stack.removeLast()
-                print("[Anime4K] WHEN condition result for \(when): \(result)")
+                // Forward interpolates shader.name here (retain of the name bridge @grow(0x2a)).
+                print("[Anime4K] WHEN condition result for \(shader.name): \(result)")
                 if result == 0 {
                     print("[Anime4K] ❌ Skip shader \(shader.name) - WHEN condition failed")
                     continue
@@ -200,7 +203,8 @@ public class Anime4K {
             outputH = textureInH
 
             if let hook = shader.hook {
-                sizeMap["HOOKED"] = sizeMap[hook]!
+                // Forward's missing-key path removes "HOOKED" (0x1019c18a4 @0x101a73888), no trap.
+                sizeMap["HOOKED"] = sizeMap[hook]
             }
             if let width = shader.width {
                 outputW = width.1 * sizeMap[width.0]!.0
@@ -212,22 +216,24 @@ public class Anime4K {
                 sizeMap[save] = (outputW, outputH)
             }
 
-            var function = library.makeFunction(name: shader.name)
-            var functionName = shader.name
+            // Forward: every name use goes through the ".-()" filter (0x101a7688c), recomputed at
+            // each site; error texts are `+` chains (literal seed, no grow); UTF-8 bytes via
+            // data(using:)! (_data(using:allowLossyConversion:) + nil trap).
+            var function = library.makeFunction(name: shader.name.filter { !".-()".contains($0) })
             if function == nil {
                 if shaders.count < 2 {
-                    throw Anime4KError.encoderFail("Function '\(shader.name)' not found in library")
+                    throw Anime4KError.encoderFail("Function '" + shader.name.filter { !".-()".contains($0) } + "' not found in library")
                 }
 
                 let nameWithoutGLSLSuffix = shader.name.replacingOccurrences(of: ".glsl", with: "")
-                let hashInput = Data("\(nameWithoutGLSLSuffix)_\(index)".utf8)
+                let hashInput = "\(nameWithoutGLSLSuffix)_\(index)".data(using: .utf8)!
                 let digest = Insecure.MD5.hash(data: hashInput)
                     .map { String(format: "%02X", $0) }
                     .joined()
-                functionName = shader.name + "_" + digest
+                let functionName = shader.name.filter { !".-()".contains($0) } + "_" + digest
                 function = library.makeFunction(name: functionName)
                 if function == nil {
-                    throw Anime4KError.encoderFail("Function '\(shader.name)' or '\(functionName)' not found in library")
+                    throw Anime4KError.encoderFail("Function '" + shader.name.filter { !".-()".contains($0) } + "' or '" + functionName + "' not found in library")
                 }
             }
 
@@ -266,16 +272,16 @@ public class Anime4K {
         textureMap[bufferIndex]["MAIN"] = inputTexture
         textureMap[bufferIndex]["NATIVE"] = inputTexture
 
-        let outputWidth = Int(outputW)
-        let outputHeight = Int(outputH)
+        // Forward converts outputW/outputH at each use (after `output.width` @0x101a74864 and after
+        // the descriptor alloc @0x101a74a60), not hoisted before the lookup.
         if let output = textureMap[bufferIndex]["output"],
-           output.width == outputWidth,
-           output.height == outputHeight,
+           output.width == Int(outputW),
+           output.height == Int(outputH),
            output.pixelFormat == intermediatePixelFormat {
         } else {
             let descriptor = MTLTextureDescriptor()
-            descriptor.width = outputWidth
-            descriptor.height = outputHeight
+            descriptor.width = Int(outputW)
+            descriptor.height = Int(outputH)
             descriptor.pixelFormat = intermediatePixelFormat
             descriptor.usage = [.shaderRead, .shaderWrite]
             descriptor.storageMode = .private
@@ -286,7 +292,8 @@ public class Anime4K {
             var stageWidth = textureInW
             var stageHeight = textureInH
             if let hook = shader.hook {
-                sizeMap["HOOKED"] = sizeMap[hook]!
+                // Forward's nil path @0x101a74d48 removes "HOOKED" (0x1019c18a4), no trap.
+                sizeMap["HOOKED"] = sizeMap[hook]
             }
             if let width = shader.width {
                 stageWidth = width.1 * sizeMap[width.0]!.0
@@ -309,11 +316,17 @@ public class Anime4K {
             if shader.hook == "MAIN", !binds.contains("MAIN") {
                 binds.append("MAIN")
             }
+            // Forward: missing key -> (save check | throw) -> create; then ONE setTexture of the
+            // dictionary lookup (0x101a75124..0x101a754ac); "HOOKED" with nil hook keeps "HOOKED".
             for (bindIndex, bind) in binds.enumerated() {
-                let effectiveKey = bind == "HOOKED" ? shader.hook! : bind
-                if let texture = textureMap[bufferIndex][effectiveKey] {
-                    encoder.setTexture(texture, index: bindIndex)
-                } else if effectiveKey == shader.save {
+                var effectiveKey = bind
+                if bind == "HOOKED", let hook = shader.hook {
+                    effectiveKey = hook
+                }
+                if textureMap[bufferIndex][effectiveKey] == nil {
+                    guard effectiveKey == shader.save else {
+                        throw Anime4KError.encoderFail("texture \(effectiveKey) is missing")
+                    }
                     let descriptor = MTLTextureDescriptor()
                     descriptor.width = Int(stageWidth)
                     descriptor.height = Int(stageHeight)
@@ -321,10 +334,8 @@ public class Anime4K {
                     descriptor.usage = [.shaderRead, .shaderWrite]
                     descriptor.storageMode = .private
                     textureMap[bufferIndex][effectiveKey] = device.makeTexture(descriptor: descriptor)
-                    encoder.setTexture(textureMap[bufferIndex][effectiveKey], index: bindIndex)
-                } else {
-                    throw Anime4KError.encoderFail("texture \(effectiveKey) is missing")
                 }
+                encoder.setTexture(textureMap[bufferIndex][effectiveKey], index: bindIndex)
             }
 
             let outputKey: String
@@ -333,7 +344,9 @@ public class Anime4K {
             } else {
                 outputKey = "output"
             }
-            if binds.contains(outputKey) {
+            // Forward: contains() on the raw shader.binds (0x10001e034 with the pre-append array),
+            // nil lookup as the `||` fallback, one shared create site (0x101a757d4).
+            if shader.binds.contains(outputKey) || textureMap[bufferIndex][outputKey] == nil {
                 if let output = textureMap[bufferIndex][outputKey],
                    output.width == Int(stageWidth),
                    output.height == Int(stageHeight),
@@ -347,14 +360,6 @@ public class Anime4K {
                     descriptor.storageMode = .private
                     textureMap[bufferIndex][outputKey] = device.makeTexture(descriptor: descriptor)
                 }
-            } else if textureMap[bufferIndex][outputKey] == nil {
-                let descriptor = MTLTextureDescriptor()
-                descriptor.width = Int(stageWidth)
-                descriptor.height = Int(stageHeight)
-                descriptor.pixelFormat = intermediatePixelFormat
-                descriptor.usage = [.shaderRead, .shaderWrite]
-                descriptor.storageMode = .private
-                textureMap[bufferIndex][outputKey] = device.makeTexture(descriptor: descriptor)
             }
 
             let outputTexture = textureMap[bufferIndex][outputKey]!
@@ -396,7 +401,10 @@ public class Anime4K {
             )
         }
 
-        var sizes = SIMD4<Float>(
+        // Forward @0x101a76298..0x101a762c4: four scalar Floats held in s8/s9/s10/s0 across the
+        // width/height sends, then `stp s8,s9` / `stp s10,s0` into one 16-byte stack slot — a plain
+        // 4-Float tuple, not a SIMD4 lane-insert chain.
+        var sizes = (
             Float(resizedTexture.width),
             Float(resizedTexture.height),
             Float(outputTexture.width),

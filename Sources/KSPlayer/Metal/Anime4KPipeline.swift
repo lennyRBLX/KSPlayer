@@ -358,9 +358,12 @@ public class Anime4KPipeline: VideoPipeline {
                     continue
                 }
 
+                // Forward @0x101a79ed4 converts element 0 (+0x20) before element 1 (+0x40).
+                let url = String(parts[0])
+                let name = String(parts[1])
                 let anime4K = try Anime4K(
-                    name: String(parts[1]),
-                    url: String(parts[0]),
+                    name: name,
+                    url: url,
                     device: device,
                     usePrecompiled: true,
                     bufferCount: 1
@@ -513,9 +516,10 @@ public class Anime4KPipeline: VideoPipeline {
         lastPerformanceWarningTime = now
 
         let recentCount = frameTimeHistory.filter { $0 > slowFrameThreshold }.count
+        // Forward @0x101a7acc0 builds ONE interpolation: a single grow(0x38) = 50 literal bytes
+        // ("[Anime4K] Frame time: " 22 + "ms (dropped frame, recent=" 26 + "/" + ")") + 3x2.
         KSLog(
-            "[Anime4K] Frame time: \(Int(frameTime * 1000))ms "
-                + "(dropped frame, recent=\(recentCount)/\(frameTimeHistory.count))",
+            "[Anime4K] Frame time: \(Int(frameTime * 1000))ms (dropped frame, recent=\(recentCount)/\(frameTimeHistory.count))",
             line: 375 // 0x177 @0x101a7acc0
         )
     }
@@ -769,7 +773,11 @@ public struct Anime4KPerformanceStats {
     public let isDropping: Bool
     public let supported: Bool
     public let preset: Anime4KPreset
-    public var description: String { fatalError("L7: Anime4KPerformanceStats.description — Forward body unread") }
+    // Body @0x101a7b608 (215 insns): grow(0x6d) = 97 literal bytes + 6 interpolations x 2. Literals
+    // decoded from the binary (large "Anime4K Performance:\n- Preset: " @0x103d376d0, the rest small).
+    public var description: String {
+        "Anime4K Performance:\n- Preset: \(preset.displayName)\n- Supported: \(supported)\n- Last frame: \(Int(lastFrameTime * 1000))ms\n- Average: \(Int(averageFrameTime * 1000))ms\n- FPS: \(Int(estimatedFPS))\n- Dropping: \(isDropping)"
+    }
 }
 
 //  Forward 1.3.17 reconstruction. `Anime4KPreset` selects the Anime4K real-time-upscaling mode
@@ -852,7 +860,25 @@ public enum Anime4KPreset: String, CaseIterable {
         case .modeCAHQ: "模式 C+A (高画质)"
         }
     }
-    public var description: String { fatalError("L7: Anime4KPreset.description — Forward body unread") }
+    // Body @0x101a7b964 (108 insns): 13-arm jump table (bytes @0x10356befa); literals decoded from
+    // the binary (0x103cf9bc0…0x103cf9cf0 large, .disabled/.modeBHQ/.modeCHQ small immediates).
+    public var description: String {
+        switch self {
+        case .disabled: "不使用超分"
+        case .modeAFast: "适合大多数1080p动漫"
+        case .modeBFast: "适合720p动漫"
+        case .modeCFast: "适合高质量源"
+        case .modeAHQ: "最高画质（需要高端GPU）"
+        case .modeBHQ: "高画质720p"
+        case .modeCHQ: "高质量源HQ"
+        case .modeAAFast: "双重增强（快速）"
+        case .modeBBFast: "双重增强B（快速）"
+        case .modeCAFast: "C+A组合（快速）"
+        case .modeAAHQ: "极致画质（顶级GPU）"
+        case .modeBBHQ: "极致画质B（顶级GPU）"
+        case .modeCAHQ: "极致画质C+A（顶级GPU）"
+        }
+    }
 
     /// autoSelect @0x101a7bb14, extent 0x101a7bb14-0x101a7bf98, 289 instr. Symbol
     /// `$s8KSPlayer13Anime4KPresetO10autoSelect3forACSo9MTLDevice_pSg_tFZ` — the trailing `Z` is
@@ -891,23 +917,24 @@ public enum Anime4KPreset: String, CaseIterable {
     /// ⚑[tool=bind_oracle ref=_uname:0x10410c698 result=libSystem]
     /// ⚑[tool=export_trie_oracle ref=MetalRender.device:0x104c636e0 result=device]
     public static func autoSelect(for device: MTLDevice?) -> Anime4KPreset {
-        _ = device ?? MetalRender.device
+        // L7: Forward holds the coalesced device, the Mirror (vwt destroy after the ladder) and the
+        // children collection (released after the loop) to scope end, and the accumulator goes
+        // through retain + append + release — an inlined `reduce` with `identifier + String(...)`.
+        let device = device ?? MetalRender.device
         var systemInfo = utsname()
         uname(&systemInfo)
-        var machine = ""
-        for child in Mirror(reflecting: systemInfo.machine).children {
-            guard let value = child.value as? Int8, value != 0 else {
-                continue
-            }
-            machine.append(String(UnicodeScalar(UInt8(value))))
+        let machineMirror = Mirror(reflecting: systemInfo.machine)
+        let identifier = machineMirror.children.reduce("") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return identifier }
+            return identifier + String(UnicodeScalar(UInt8(value)))
         }
-        if machine.contains("iPhone16") || machine.contains("iPhone17") {
+        if identifier.contains("iPhone16") || identifier.contains("iPhone17") {
             return .modeAHQ
         }
-        if machine.contains("iPhone14") {
+        if identifier.contains("iPhone14") {
             return .modeAFast
         }
-        if machine.contains("iPhone15") {
+        if identifier.contains("iPhone15") {
             return .modeAFast
         }
         return .modeCFast
@@ -926,6 +953,8 @@ class Average {
     var numbers: [Double]
 
     init() {
-        fatalError("L7: Average.init — Forward's vtable slot 6 Impl is null (dead-stripped); values unread")
+        count = 0
+        pointer = 0
+        numbers = []
     }
 }

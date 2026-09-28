@@ -71,9 +71,11 @@ public class MetalShaderExporter {
             }
         }
         print("\n" + String(repeating: "=", count: 50))
-        print("✅ Success: " + successCount.description)
+        // Forward @0x101a80b20/0x101a80bc4: small literal first, then Int via the
+        // CustomStringConvertible.description witness (interpolation), not BinaryInteger.description.
+        print("✅ Success: \(successCount)")
         if failCount > 0 {
-            print("❌ Failed: " + failCount.description)
+            print("❌ Failed: \(failCount)")
         }
         print("\n📦 下一步：")
         print("1. 将 \(outputDirectory.lastPathComponent) 文件夹复制到项目的 Metal/Anime4K/ 目录")
@@ -92,13 +94,18 @@ public class MetalShaderExporter {
             let metalSource = shader.transformSource()
             var fileName = baseName
             if anime4k.shaders.count != 1 {
-                fileName += "_" + index.description
+                // Forward @0x101a81324: append("_") straight into fileName, then the index through the
+                // CustomStringConvertible.description witness (interpolation) — two appends, no temp.
+                fileName += "_"
+                fileName += "\(index)"
             }
             fileName += ".metal"
             let fileURL = outputDirectory.appendingPathComponent(fileName)
             let content = "//\n// \(fileName)\n// Auto-generated from \(name)\n// Anime4K Shader - Precompiled Metal Version\n//\n// Original function name: \(shader.name.filter { !".-()".contains($0) })\n// DO NOT EDIT - This file is auto-generated\n//\n" + metalSource
             try content.write(to: fileURL, atomically: true, encoding: .utf8)
-            print("   ✅ " + fileName + " (" + shader.name.filter { !".-()".contains($0) } + ")")
+            // Forward: "   ✅ " seeds one buffer; fileName, " (", filtered name, ")" appended with no
+            // retain/release pairs — an interpolation (10 literal bytes + 2x2 <= 15, so no grow).
+            print("   ✅ \(fileName) (\(shader.name.filter { !".-()".contains($0) }))")
         }
     }
 }
