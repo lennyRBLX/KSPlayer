@@ -34,9 +34,9 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     //   predicate arity (0x101a167b4). Both bodies: no swift_task_*/ScM call (lock-guarded, nonisolated).
     @inline(__always)
     public var count: UInt {
-//        condition.lock()
-//        defer { condition.unlock() }
-        tailIndex &- headIndex
+        condition.lock()
+        defer { condition.unlock() }
+        return tailIndex &- headIndex
     }
     // ⚑[tool=export_trie_oracle ref=CircularBuffer.__allocating_init:$s8KSPlayer14CircularBufferC15initialCapacity6sorted9expanding11isClearItemACyxGSu_S3btcfC result=initialCapacity:UInt,sorted:Bool,expanding:Bool,isClearItem:Bool]
     //   All four labels and their order are read from the export trie, not inferred. The four DEFAULTS below are
@@ -59,22 +59,22 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         if destroyed {
             return
         }
-        if _buffer[Int(tailIndex & mask)] != nil {
-            assertionFailure("value is not nil of headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count), mask: \(mask)")
-        }
+        assert(_buffer[Int(tailIndex & mask)] == nil, "value is not nil of headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count), mask: \(mask)")
         _buffer[Int(tailIndex & mask)] = value
         if sorted {
             // 不用sort进行排序，这个比较高效
             var index = tailIndex
             while index > headIndex {
-                guard let item = _buffer[Int((index - 1) & mask)] else {
+                let preIndex = Int((index - 1) & mask)
+                let currentIndex = Int(index & mask)
+                guard let item = _buffer[preIndex], let current = _buffer[currentIndex] else {
                     assertionFailure("value is nil of index: \((index - 1) & mask) headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count),  mask: \(mask)")
                     break
                 }
-                if item.timestamp <= _buffer[Int(index & mask)]!.timestamp {
+                if item.timestamp <= current.timestamp {
                     break
                 }
-                _buffer.swapAt(Int((index - 1) & mask), Int(index & mask))
+                _buffer.swapAt(preIndex, currentIndex)
                 index -= 1
             }
         }
@@ -119,8 +119,10 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             return nil
         } else {
             headIndex &+= 1
-            _buffer[index] = nil
-            if _count == maxCount >> 1 {
+            if isClearItem {
+                _buffer[index] = nil
+            }
+            if maxCount <= 16 && _count == maxCount - 2 || _count == maxCount >> 1 {
                 condition.signal()
             }
             return item
@@ -136,7 +138,9 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             if let item = _buffer[Int(i & mask)] {
                 if predicate(item) {
                     result.append(item)
-                    _buffer[Int(i & mask)] = nil
+                    if isClearItem {
+                        _buffer[Int(i & mask)] = nil
+                    }
                     headIndex = i + 1
                 }
             } else {
@@ -145,9 +149,73 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             }
             i += 1
         }
+        if _count <= maxCount >> 1 {
+            condition.signal()
+        }
         return result
     }
-    public func seek(seconds: Double, needKeyFrame: Bool) -> (UInt, Double)? { fatalError("L7: CircularBuffer.seek — Forward body unread") }
+
+    public func seek(seconds: Double, needKeyFrame: Bool) -> (UInt, Double)? {
+        condition.lock()
+        defer { condition.unlock() }
+        var index = headIndex
+        if index > 0, index == tailIndex {
+            index -= 1
+        }
+        guard let item = _buffer[Int(index & mask)] else {
+            return nil
+        }
+        if item.seconds < seconds {
+            index += 1
+            while index <= tailIndex {
+                guard let item = _buffer[Int(index & mask)] else {
+                    return nil
+                }
+                if seconds <= item.seconds {
+                    if !needKeyFrame {
+                        return (index, item.seconds)
+                    }
+                    if let packet = item as? Packet, packet.isKeyFrame {
+                        return (index, packet.seconds)
+                    }
+                    index -= 1
+                    while index > headIndex {
+                        if let item = _buffer[Int(index & mask)], let packet = item as? Packet, packet.isKeyFrame {
+                            if abs(packet.seconds - seconds) <= 10 {
+                                return (index, packet.seconds)
+                            }
+                            return nil
+                        }
+                        index -= 1
+                    }
+                    return nil
+                }
+                index &+= 1
+            }
+        } else {
+            while true {
+                guard let item = _buffer[Int(index & mask)] else {
+                    return nil
+                }
+                if item.seconds <= seconds {
+                    if seconds - item.seconds > 6 {
+                        return nil
+                    }
+                    if !needKeyFrame {
+                        return (index, item.seconds)
+                    }
+                    if let packet = item as? Packet, packet.isKeyFrame {
+                        return (index, packet.seconds)
+                    }
+                }
+                if index == 0 {
+                    break
+                }
+                index -= 1
+            }
+        }
+        return nil
+    }
 
     /// Vtable F28: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
     /// the declaration only holds the slot.
@@ -156,16 +224,26 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     public func flush() {
         condition.lock()
         defer { condition.unlock() }
-        headIndex = 0
-        tailIndex = 0
-        _buffer.removeAll(keepingCapacity: !destroyed)
-        _buffer.append(contentsOf: ContiguousArray<Item?>(repeating: nil, count: destroyed ? 1 : Int(maxCount)))
+        if expanding {
+            headIndex = 0
+            tailIndex = 0
+        } else {
+            headIndex = tailIndex
+        }
+        if isClearItem {
+            stride(from: 0, to: _buffer.count, by: 1).forEach { _buffer[$0] = nil }
+        }
         condition.broadcast()
     }
 
     public func shutdown() {
+        condition.lock()
+        defer { condition.unlock() }
         destroyed = true
-        flush()
+        _buffer.removeAll()
+        headIndex = 0
+        tailIndex = 0
+        condition.broadcast()
     }
 
     private func _doubleCapacity() {

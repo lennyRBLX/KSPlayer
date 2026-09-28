@@ -197,7 +197,8 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
         guard !isPaused else {
             return
         }
-        let nanoseconds = max(synchronizer.currentTime().convertScale(1_000_000_000, method: .default).value, timestamp)
+        let currentNanoseconds = synchronizer.currentTime().convertScale(1_000_000_000, method: .default).value
+        let nanoseconds = max(timestamp, currentNanoseconds)
         timestamp = nanoseconds
         guard let sampleBuffer = sampleBuffer(nanoseconds: nanoseconds) else {
             if eof {
@@ -207,8 +208,8 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
             return
         }
         if let formatDescription = sampleBuffer.formatDescription {
-            let channelCount = formatDescription.audioStreamBasicDescription?.mChannelsPerFrame ?? 0
-            let sampleRate = formatDescription.audioStreamBasicDescription?.mSampleRate ?? 0
+            let channelCount = formatDescription.channelCount
+            let sampleRate = formatDescription.sampleRate
             timestamp += CMTime(value: Int64(sampleBuffer.numSamples), timescale: Int32(sampleRate)).convertScale(1_000_000_000, method: .default).value
             renderer.audioTimePitchAlgorithm = channelCount > 2 ? .spectral : .timeDomain
             #if !os(macOS)
@@ -222,7 +223,8 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
         }
         renderer.enqueue(sampleBuffer)
         if renderer.isReadyForMoreMediaData {
-            let ahead = (sampleBuffer.presentationTimeStamp - synchronizer.currentTime()).seconds
+            let currentTime = synchronizer.currentTime()
+            let ahead = (sampleBuffer.presentationTimeStamp - currentTime).seconds
             if Double(playbackRate) * 2.2 <= ahead {
                 Thread.sleep(forTimeInterval: min(ahead / 10, 0.4))
             }
