@@ -169,9 +169,9 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     }
     override func nominalFrameRate(track: MediaPlayerTrack) -> Float {
         let nominalFrameRate = track.nominalFrameRate
-        if nominalFrameRate == 0, let assetTracks = m3u8Info?.remuxerIOAction.formatContext.assetTracks {
+        if nominalFrameRate == 0, let m3u8Info {
             // Forward iterates ConversionInfo.assetTracks (private, +0x10) = formatContext.assetTracks.
-            for assetTrack in assetTracks where assetTrack.mediaType == .video && assetTrack.isEnabled {
+            for assetTrack in m3u8Info.remuxerIOAction.formatContext.assetTracks where assetTrack.mediaType == .video && assetTrack.isEnabled {
                 return assetTrack.nominalFrameRate
             }
         }

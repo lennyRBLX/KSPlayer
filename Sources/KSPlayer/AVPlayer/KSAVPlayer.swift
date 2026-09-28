@@ -961,7 +961,11 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
-        mediaPlayerTracks.filter { $0.mediaType == mediaType }
+        var tracks = [MediaPlayerTrack]()
+        for track in mediaPlayerTracks where track.mediaType == mediaType {
+            tracks.append(track)
+        }
+        return tracks
     }
 
     public func select(track: some MediaPlayerTrack) {
