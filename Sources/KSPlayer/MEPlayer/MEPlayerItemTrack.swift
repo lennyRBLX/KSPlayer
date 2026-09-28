@@ -45,6 +45,13 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         Int(outputRenderQueue.maxCount)
     }
 
+    /// Vtable F21 (G, Forward 0x101a5b970): `Double(frameCount) / Double(fps)`, overridden by
+    /// AsyncPlayerItemTrack (0x101a5d0bc, override-table entry 1) with the packet counts added — the
+    /// CapacityProtocol extension formula. Name INFERRED (internal class, no trie symbol).
+    var loadedTime: TimeInterval {
+        TimeInterval(frameCount) / TimeInterval(fps)
+    }
+
     var fps: Float {
         outputRenderQueue.fps
     }
@@ -76,11 +83,16 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         }
     }
 
+    // Forward 0x101a5ba20: `strb #1,[x20,#0x78]` (isNeedKeyFrame) + `strh #1,[x20,#0x28]` (state .decoding,
+    // isEndOfFile false).
     func decode() {
         isEndOfFile = false
         state = .decoding
+        isNeedKeyFrame = true
     }
 
+    // Forward 0x101a5ba30: seekTime, isEndOfFile, isLoopModel setter (vtable +0x158), state .flush,
+    // isNeedKeyFrame, then outputRenderQueue.flush().
     func seek(time: TimeInterval) {
         if options.isAccurateSeek {
             seekTime = time
@@ -88,9 +100,10 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
             seekTime = 0
         }
         isEndOfFile = false
-        state = .flush
-        outputRenderQueue.flush()
         isLoopModel = false
+        state = .flush
+        isNeedKeyFrame = true
+        outputRenderQueue.flush()
     }
 
     func putPacket(packet: Packet) {
@@ -113,12 +126,26 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
         return outputFecthRender
     }
 
+    /// Vtable F28 (M, Forward 0x100232cd4, ICF-shared `nil` of a two-word payload: x0=0, x1=0, w2=1).
+    /// AsyncPlayerItemTrack overrides it (0x101a5db0c) with `packetQueue.seek(seconds:needKeyFrame:)`,
+    /// whose `(UInt, Double)?` it returns (d0 = time, w0 = flag). Name and labels INFERRED.
+    func seekCache(time _: TimeInterval, needKeyFrame _: Bool) -> (UInt, TimeInterval)? {
+        nil
+    }
+
+    /// Vtable F29 (M, Forward 0x10000e52c, the app-wide `ret`). AsyncPlayerItemTrack overrides it
+    /// (0x101a5db74; x0 = index, d0 = time). Name and labels INFERRED.
+    func updateCache(headIndex _: UInt, time _: TimeInterval) {}
+
+    // Forward 0x101a5bc34 (F30; FFmpegAssetTrack.stop dispatches it at +0x1c0).
     func shutdown() {
         if state == .idle {
             return
         }
         state = .closed
         outputRenderQueue.shutdown()
+        decoderMap.values.forEach { $0.shutdown() }
+        decoderMap.removeAll()
     }
 
     // ⚑[tool=field_surface ref=SyncPlayerItemTrack.lastPacketBytes:idx10 result=Int64]
@@ -225,6 +252,12 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     private var loopPacketQueue: CircularBuffer<Packet>?
     var packetQueue = CircularBuffer<Packet>()
     override var packetCount: Int { Int(packetQueue.count) }
+    // Forward 0x101a5d0bc: UInt adds (overflow-checked) of packetQueue, loopPacketQueue and outputRenderQueue
+    // counts, converted once, over fps read directly.
+    override var loadedTime: TimeInterval {
+        TimeInterval(packetQueue.count + (loopPacketQueue?.count ?? 0) + outputRenderQueue.count) / TimeInterval(fps)
+    }
+
     override var isLoopModel: Bool {
         didSet {
             if isLoopModel {
@@ -310,6 +343,16 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
             }
         }
     }
+
+    // Forward 0x101a5db0c: retain packetQueue, call its seek(seconds:needKeyFrame:) (0x101a5a9d4), release.
+    override func seekCache(time: TimeInterval, needKeyFrame: Bool) -> (UInt, TimeInterval)? {
+        packetQueue.seek(seconds: time, needKeyFrame: needKeyFrame)
+    }
+
+    // ⚑ L7 gap: Forward also overrides updateCache(headIndex:time:) here (0x101a5db74, override-table entry 9):
+    //   seekTime (isAccurateSeek-gated), isLoopModel = false, state = .flush, outputRenderQueue.flush(), then
+    //   CircularBuffer's dead slot F28 inlined (lock; if headIndex <= tailIndex { headIndex = …; signal }; unlock).
+    //   That CircularBuffer method is lane 11's decl; the override waits for it.
 
     override func seek(time: TimeInterval) {
         if decodeTask.isFinished {
