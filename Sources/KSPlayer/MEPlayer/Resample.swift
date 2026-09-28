@@ -90,8 +90,14 @@ class VideoSwresample: FrameChange {
     // ⚑[tool=export_trie_oracle ref=VideoSwresample.doviData:vpfi result=NO_SUBTREE] The DEFAULT is
     //   NOT verifiable: VideoSwresample is internal and has no trie subtree ("no orphan subtree
     //   found"); exactly 1 of 57138 trie names mentions the type, and that is ThumbnailSession.reScale's
-    //   field type, not a member of this class. Initializer left exactly as it stood.
-    private var doviData: KSDOVIMetadata? = KSDOVIMetadata()
+    //   field type, not a member of this class.
+    // ⚑[initializer check, L7 lane 8] The default is `nil`, read at every inlined VideoSwresample.init
+    //   in FFmpegUtility (getMetadata `bl 0x10199b78c` @0x101a33ba0, streamThumbnail likewise) and then
+    //   `memcpy(self+0x60, tmp, 0xbc0)`. Forward 0x10199b78c = bzero(0x450); str 0x0200000000000000
+    //   @+0x450 (the +0x457 Bool extra inhabitant = .none); bzero(+0x458, 0x768) — byte-identical to
+    //   this build's `$sSo14KSDOVIMetadataVSgWOi0_` (KSDOVIMetadata? store-tag .none). The old
+    //   `= KSDOVIMetadata()` compiled to bzero + `WOi_` (.some) instead.
+    private var doviData: KSDOVIMetadata?
     private var edrMetaData: EDRMetaData?
     private var hdr10PlusData: Data? // ⚑ §7-walled → type inferred
     private var rpuBuffer: Data? // ⚑ §7-walled → the ~104-byte +0xc20 inline buffer; layout NOT guessed
@@ -512,7 +518,14 @@ class AudioSwresample: FrameChange {
             // channel (+0x20) and outChannel (+0x40): the frame is read as one value.
             let frame = avframe.pointee
             descriptor.sampleFormat = AVSampleFormat(rawValue: frame.format)
-            descriptor.sampleRate = frame.sample_rate > 0 ? frame.sample_rate : 48000
+            // Two assignment sites, not a ternary: Forward's single sampleRate beginAccess
+            // (0x101a68314) takes its scratch buffer from `csel x1,x8,x11,gt` @0x101a68300 over two
+            // distinct (stack-colored) buffers — two tail-merged access sites.
+            if frame.sample_rate <= 0 {
+                descriptor.sampleRate = 48000
+            } else {
+                descriptor.sampleRate = frame.sample_rate
+            }
             descriptor.channel = frame.ch_layout
             descriptor.outChannel = frame.ch_layout
             descriptor.updateAudioFormat()

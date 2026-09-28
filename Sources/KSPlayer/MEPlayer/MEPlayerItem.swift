@@ -1225,18 +1225,21 @@ extension MEPlayerItem {
         KSLog("[MEPlayerItem] resumeFromPreload: state=\(state), action=\(action)", file: "KSPlayer/MEPlayerItem.swift", function: "resumeFromPreload()", line: 595)
         // Forward tests `cbz w21` (.waitForOpened → nothing) at 0x101a4794c, then `cmp w21, #1`
         // (.resumeFromPaused) at 0x101a47954; every other action falls to the plain decode arm. One
-        // epilogue returns w21 (0x101a4760c).
+        // epilogue returns w21 (0x101a4760c). Each decode arm returns a CONSTANT: `mov w21,#0x1`
+        // @0x101a47a10 after send, `mov w21,#0x2` @0x101a47aa0 after the plain decode loop (whose
+        // loop reuses x21 @0x101a47a5c, so `action` is not live across it).
         switch action {
         case .waitForOpened:
-            break
+            return .waitForOpened
         case .resumeFromPaused:
             allPlayerItemTracks.forEach { $0.decode() }
             // Forward builds Event payload word 4 / tag 3 (`.resume`) and calls send(_:) @0x101a48b04.
             send(.resume)
+            return .resumeFromPaused
         default:
             allPlayerItemTracks.forEach { $0.decode() }
+            return .readyImmediate
         }
-        return action
     }
 
     public func prepareToPlay() {

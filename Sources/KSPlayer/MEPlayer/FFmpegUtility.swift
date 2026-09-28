@@ -87,7 +87,10 @@ public enum FFmpegUtility {
         defer {
             formatContext.close()
         }
-        let videoInfo = VideoInfo(duration: formatContext.duration, fileSize: formatContext.fileSize, metadata: toDictionary(formatContext.formatCtx.pointee.metadata), assetTracks: formatContext.assetTracks)
+        // toDictionary is evaluated BEFORE duration/fileSize are read: Forward `bl 0x101a07bd8`
+        // @0x101a338f0, then `ldr d8,[x27,#0x28]` / `ldr x23,[x27,#0x30]` @0x101a338f8. Local name INFERRED.
+        let metadata = toDictionary(formatContext.formatCtx.pointee.metadata)
+        let videoInfo = VideoInfo(duration: formatContext.duration, fileSize: formatContext.fileSize, metadata: metadata, assetTracks: formatContext.assetTracks)
         if let videoTrack = formatContext.assetTracks.first(where: { $0.mediaType == .video }) {
             var avframe = av_frame_alloc()
             defer {
