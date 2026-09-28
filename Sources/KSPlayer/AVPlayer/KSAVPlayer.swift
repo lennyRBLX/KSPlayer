@@ -665,7 +665,7 @@ extension KSAVPlayer {
         bufferingProgress = 0
         player.currentItem?.cancelPendingSeeks()
         if options.isLoopPlay {
-            observerLoopCancellables = []
+            observerLoopCancellables = Set()
             playerLooper?.disableLooping()
             guard let playerItem else {
                 playerLooper = nil
@@ -937,7 +937,11 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
 
     public func enterForeground() {
         playerView.playerLayer.player = playerView.player
-        playbackState = shouldResumePlayback ? .playing : .paused
+        if shouldResumePlayback {
+            playbackState = .playing
+        } else {
+            playbackState = .paused
+        }
     }
 
     public var seekable: Bool {
@@ -957,11 +961,7 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
-        var tracks = [MediaPlayerTrack]()
-        for track in mediaPlayerTracks where track.mediaType == mediaType {
-            tracks.append(track)
-        }
-        return tracks
+        mediaPlayerTracks.filter { $0.mediaType == mediaType }
     }
 
     public func select(track: some MediaPlayerTrack) {

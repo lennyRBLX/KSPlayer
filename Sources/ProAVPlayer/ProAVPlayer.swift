@@ -162,16 +162,16 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
         if let currentItem = player.currentItem {
             currentItem.preferredForwardBufferDuration = 1
             currentItem.canUseNetworkResourcesForLiveStreamingWhilePaused = false
-            if let m3u8Info, m3u8Info.maxBufferDuration < currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) {
+            if let m3u8Info, currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) > m3u8Info.maxBufferDuration {
                 currentItem.automaticallyPreservesTimeOffsetFromLive = true
             }
         }
     }
     override func nominalFrameRate(track: MediaPlayerTrack) -> Float {
         let nominalFrameRate = track.nominalFrameRate
-        if nominalFrameRate == 0, let m3u8Info {
+        if nominalFrameRate == 0, let assetTracks = m3u8Info?.remuxerIOAction.formatContext.assetTracks {
             // Forward iterates ConversionInfo.assetTracks (private, +0x10) = formatContext.assetTracks.
-            for assetTrack in m3u8Info.remuxerIOAction.formatContext.assetTracks where assetTrack.mediaType == .video && assetTrack.isEnabled {
+            for assetTrack in assetTracks where assetTrack.mediaType == .video && assetTrack.isEnabled {
                 return assetTrack.nominalFrameRate
             }
         }
@@ -264,7 +264,34 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     }
     override func seek(time: Double, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
         let startPlayTime = m3u8Info?.remuxerIOAction.startPlayTime ?? 0
-        if time >= startPlayTime {
+        if time < startPlayTime {
+            // Forward sets `playbackState = .seeking` here; the setter is private(set) in KSAVPlayer (writer GAP).
+            Task { [weak self] in
+                guard let self, let m3u8Info = self.m3u8Info else {
+                    return
+                }
+                // Forward: `time` is referenced before `completion` (inlined ConversionInfo.seek(time:completion:)).
+                let seekTime = time
+                let seekCompletion: @Sendable (Bool) -> Void = { finished in
+                    Task { @MainActor [weak self] in
+                        guard let self else {
+                            return
+                        }
+                        if finished {
+                            self.replaceCurrentItem(needSeek: false)
+                        }
+                        completion(finished)
+                    }
+                }
+                await m3u8Info.demuxerIO.send(.seek(to: seekTime, completion: { [weak m3u8Info] finished in
+                    guard m3u8Info != nil else {
+                        return
+                    }
+                    // Forward: on success it first runs remuxerIOAction.reconstruct (private: writer GAP).
+                    seekCompletion(finished)
+                }))
+            }
+        } else {
             super.seek(time: time - startPlayTime) { [weak self] finished in
                 if finished {
                     completion(true)
@@ -277,6 +304,8 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                         guard let self, let m3u8Info = self.m3u8Info else {
                             return
                         }
+                        // Forward: `time` is referenced before `completion` (inlined ConversionInfo.seek(time:completion:)).
+                        let seekTime = time
                         let seekCompletion: @Sendable (Bool) -> Void = { finished in
                             Task { @MainActor [weak self] in
                                 guard let self else {
@@ -288,7 +317,7 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                                 completion(finished)
                             }
                         }
-                        await m3u8Info.demuxerIO.send(.seek(to: time, completion: { [weak m3u8Info] finished in
+                        await m3u8Info.demuxerIO.send(.seek(to: seekTime, completion: { [weak m3u8Info] finished in
                             guard m3u8Info != nil else {
                                 return
                             }
@@ -297,31 +326,6 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                         }))
                     }
                 }
-            }
-        } else {
-            // Forward sets `playbackState = .seeking` here; the setter is private(set) in KSAVPlayer (writer GAP).
-            Task { [weak self] in
-                guard let self, let m3u8Info = self.m3u8Info else {
-                    return
-                }
-                let seekCompletion: @Sendable (Bool) -> Void = { finished in
-                    Task { @MainActor [weak self] in
-                        guard let self else {
-                            return
-                        }
-                        if finished {
-                            self.replaceCurrentItem(needSeek: false)
-                        }
-                        completion(finished)
-                    }
-                }
-                await m3u8Info.demuxerIO.send(.seek(to: time, completion: { [weak m3u8Info] finished in
-                    guard m3u8Info != nil else {
-                        return
-                    }
-                    // Forward: on success it first runs remuxerIOAction.reconstruct (private: writer GAP).
-                    seekCompletion(finished)
-                }))
             }
         }
         shouldSeekTo = time
