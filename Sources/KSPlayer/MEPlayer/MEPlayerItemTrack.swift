@@ -16,6 +16,11 @@ protocol PlayerItemTrackProtocol: CapacityProtocol, AnyObject {
     var delegate: CodecCapacityDelegate? { get set }
     func decode()
     func seek(time: TimeInterval)
+    /// Forward witness table 0x1041d89b0: +0x68 / +0x70 sit between seek (+0x60 → vtable 0x198) and
+    /// putPacket; +0x70 dispatches to vtable 0x1b8 = F29 updateCache, and MEPlayerItem 0x101a55de4 calls
+    /// +0x70 on each cache hit. Requirement names follow the F28/F29 methods (INFERRED, no symbol).
+    func seekCache(time: TimeInterval, needKeyFrame: Bool) -> (UInt, TimeInterval)?
+    func updateCache(headIndex: UInt, time: TimeInterval)
     func putPacket(packet: Packet)
 //    func getOutputRender<Frame: ObjectQueueItem>(where predicate: ((Frame) -> Bool)?) -> Frame?
     func shutdown()
