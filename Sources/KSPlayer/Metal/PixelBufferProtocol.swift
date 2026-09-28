@@ -67,6 +67,37 @@ public protocol PixelBufferProtocol: AnyObject {
 
 extension PixelBufferProtocol {
     var size: CGSize { CGSize(width: width, height: height) }
+
+    #if !os(tvOS)
+    /// INFERRED name: Forward has no trie symbol for this getter. Forward 0x101a88500 (223 insns),
+    /// laid out directly after `size` (0x101a884b4). Body read from the disasm: witness reads of
+    /// displayInfo (wt+0xd8) and contentInfo (wt+0xf0) → hdr10(displayInfo:contentInfo:opticalOutputScale:)
+    /// with 10000 (0x461c4000); else ambientViewingEnvironment (wt+0x108) → iOS 17 availability test →
+    /// hlg(ambientViewingEnvironment:) or `.hlg`; else transferFunction (wt+0x80) PQ →
+    /// hdr10(minLuminance: 0.1 (0x3dcccccd), maxLuminance: 1000 (0x447a0000), opticalOutputScale: 10000);
+    /// HLG → `.hlg` when DynamicRange.availableHDRModes contains tag 2 (.hlg), else the same hdr10.
+    var edrMetadata: CAEDRMetadata? {
+        if let displayInfo, let contentInfo {
+            return CAEDRMetadata.hdr10(displayInfo: displayInfo, contentInfo: contentInfo, opticalOutputScale: 10000)
+        }
+        if let ambientViewingEnvironment {
+            if #available(macOS 14.0, iOS 17.0, *) {
+                return CAEDRMetadata.hlg(ambientViewingEnvironment: ambientViewingEnvironment)
+            }
+            return CAEDRMetadata.hlg
+        }
+        if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
+            return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
+        }
+        if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+            if DynamicRange.availableHDRModes.contains(.hlg) {
+                return CAEDRMetadata.hlg
+            }
+            return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
+        }
+        return nil
+    }
+    #endif
 }
 
 extension CVPixelBuffer: PixelBufferProtocol {
@@ -97,7 +128,12 @@ extension CVPixelBuffer: PixelBufferProtocol {
     }
 
     public var hdr10PlusData: Data? {
-        get { hdrAttachment(kCMSampleAttachmentKey_HDR10PlusPerFrameData) }
+        // Forward 0x101a89788: the attachment is fetched and cast to Data, the result is released
+        // on success, and the getter returns nil on every path.
+        get {
+            _ = CVBufferGetAttachment(self, kCMSampleAttachmentKey_HDR10PlusPerFrameData, nil)?.takeUnretainedValue() as? Data
+            return nil
+        }
         set { setHDRAttachment(kCMSampleAttachmentKey_HDR10PlusPerFrameData, newValue) }
     }
 
@@ -112,8 +148,17 @@ extension CVPixelBuffer: PixelBufferProtocol {
     }
 
     public var ambientViewingEnvironment: Data? {
-        get { hdrAttachment("AmbientViewingEnvironment" as CFString) }
-        set { setHDRAttachment("AmbientViewingEnvironment" as CFString, newValue) }
+        // Forward releases the bridged key right after CVBufferGetAttachment, before the nil test.
+        get {
+            let value = CVBufferGetAttachment(self, "AmbientViewingEnvironment" as CFString, nil)
+            return value?.takeUnretainedValue() as? Data
+        }
+        // Forward tests newValue for nil before bridging the key.
+        set {
+            if let newValue {
+                CVBufferSetAttachment(self, "AmbientViewingEnvironment" as CFString, newValue as NSData, .shouldPropagate)
+            }
+        }
     }
 
     public var leftShift: UInt8 { 0 }
@@ -146,7 +191,7 @@ extension CVPixelBuffer: PixelBufferProtocol {
         var formatDescription: CMVideoFormatDescription?
         let err = CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: self, formatDescriptionOut: &formatDescription)
         if err != noErr {
-            KSLog("Error at CMVideoFormatDescriptionCreateForImageBuffer \(err)")
+            KSLog("Error at CMVideoFormatDescriptionCreateForImageBuffer \(err)", line: 144)
         }
         return formatDescription
     }
@@ -193,12 +238,10 @@ extension CVPixelBuffer: PixelBufferProtocol {
     }
 
     public var colorspace: CGColorSpace? {
+        // Forward 0x101a896bc: CVBufferGetAttachment(kCVImageBufferCGColorSpaceKey) → nil test →
+        // retain → unconditional cast to CGColorSpace; no platform split.
         get {
-            #if os(macOS)
-            return CVImageBufferGetColorSpace(self)?.takeUnretainedValue() ?? attachmentsDic.flatMap { CVImageBufferCreateColorSpaceFromAttachments($0)?.takeUnretainedValue() }
-            #else
-            return attachmentsDic.flatMap { CVImageBufferCreateColorSpaceFromAttachments($0)?.takeUnretainedValue() }
-            #endif
+            CVBufferGetAttachment(self, kCVImageBufferCGColorSpaceKey, nil).map { $0.takeUnretainedValue() as! CGColorSpace }
         }
         set {
             if let newValue {
@@ -369,5 +412,5 @@ extension CGSize {
 }
 
 extension CVBuffer {
-    @used func bytesPerRowOfPlane(at: Int) -> Int { fatalError("L7: CVBuffer.bytesPerRowOfPlane — Forward body unread") }
+    @used func bytesPerRowOfPlane(at: Int) -> Int { CVPixelBufferGetBytesPerRowOfPlane(self, at) }
 }

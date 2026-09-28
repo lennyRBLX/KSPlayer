@@ -35,15 +35,36 @@ import AVFoundation
 import CoreMedia
 import FFmpegKit
 import Foundation
+import Libavcodec
 import Libavformat
 import Libavutil
 import QuartzCore
+import UIKit
 
 public enum FFmpegUtility {
-    public static func write(formatContext: FormatContext, to: String, isMergeStream: Bool, formatContextOptions: [String : Any]?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, allowAudioCodecs: [AVCodecID]?) throws -> OutputStreamInfo { fatalError("L7: FFmpegUtility.write — Forward body unread") }
-    public static func conversion(url: URL, options: KSOptions?, outputURL: URL, outFormat: String?, mediaType: AVFoundation.AVMediaType?, loadSecond: Int, progress: (@Sendable (Double, Double) -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> { fatalError("L7: FFmpegUtility.conversion — Forward body unread") }
-    public static func conversion(url: String, options: KSOptions?, outputURL: String, inFormat: String?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, loadSecond: Int, progress: (@Sendable (Double, Double) -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> { fatalError("L7: FFmpegUtility.conversion — Forward body unread") }
-    public static func conversion(formatContext: FormatContext, outputStreamInfo: OutputStreamInfo, loadSecond: Int, startPlayTime: inout Double, progress: (@Sendable (Double, Double) async -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> { fatalError("L7: FFmpegUtility.conversion — Forward body unread") }
+    public static func write(formatContext: FormatContext, to: String, isMergeStream: Bool, formatContextOptions: [String : Any]?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, allowAudioCodecs: [AVCodecID]?) throws -> OutputStreamInfo {
+        // 0x101a19724 (9 insns): forwards every argument into OutputStreamInfo's designated init
+        // body 0x101a1d014 (FFmpeg+Conversion.swift); isMergeStream → forceTranscode,
+        // outFormat → formatName, allowAudioCodecs → transcodeCodecIDs.
+        try OutputStreamInfo(formatContext: formatContext, filename: to, forceTranscode: isMergeStream, formatContextOptions: formatContextOptions, formatName: outFormat, mediaType: mediaType, transcodeCodecIDs: allowAudioCodecs)
+    }
+    public static func conversion(url: URL, options: KSOptions?, outputURL: URL, outFormat: String?, mediaType: AVFoundation.AVMediaType?, loadSecond: Int, progress: (@Sendable (Double, Double) -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> {
+        // 0x101a19748 (302 insns): URL.ffmpegString (0x1019f59c4) on both URLs, then the String
+        // overload inlined with inFormat nil.
+        try conversion(url: url.ffmpegString, options: options, outputURL: outputURL.ffmpegString, inFormat: nil, outFormat: outFormat, mediaType: mediaType, loadSecond: loadSecond, progress: progress, completion: completion)
+    }
+    public static func conversion(url: String, options: KSOptions?, outputURL: String, inFormat: String?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, loadSecond: Int, progress: (@Sendable (Double, Double) -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> {
+        // 0x101a19c00 (255 insns): FormatContext(string:) (0x101a3a2e8), write → OutputStreamInfo init
+        // 0x101a1d014 (isMergeStream false, options?.outputFormatContextOptions, allowAudioCodecs nil),
+        // then conversion(formatContext:) inlined with a zero start time (no performSeek emitted); the sync
+        // progress is reabstracted to async (0x20 box, thunk 0x10356a440).
+        let formatContext = try FormatContext(string: url, options: options, inFormat: inFormat)
+        let outputStreamInfo = try write(formatContext: formatContext, to: outputURL, isMergeStream: false, formatContextOptions: options?.outputFormatContextOptions, outFormat: outFormat, mediaType: mediaType, allowAudioCodecs: nil)
+        /// INFERRED local name (constant 0 folds the `startPlayTime > 0` seek away).
+        var startPlayTime = 0.0
+        return try conversion(formatContext: formatContext, outputStreamInfo: outputStreamInfo, loadSecond: loadSecond, startPlayTime: &startPlayTime, progress: progress, completion: completion)
+    }
+    public static func conversion(formatContext: FormatContext, outputStreamInfo: OutputStreamInfo, loadSecond: Int, startPlayTime: inout Double, progress: (@Sendable (Double, Double) async -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> { fatalError("L7: FFmpegUtility.conversion(formatContext:) — Swift 6 sending closure needs OutputStreamInfo: Sendable (lane 11 gap)") }
     /// FUN_101a39028 (101 instr), #function "close(formatCtx:)", #line 93, default level.
     /// Clears the interrupt callback before closing so a pending read cannot call back into a
     /// released owner.
@@ -53,10 +74,138 @@ public enum FFmpegUtility {
         avformat_close_input(&formatCtx)
         KSLog("clear formatCtx")
     }
-    public static func free(packet: UnsafeMutablePointer<AVPacket>?) { fatalError("L7: FFmpegUtility.free — Forward body unread") }
-    public static func getMetadata(for p0: URL, options: KSOptions?) throws -> VideoInfo { fatalError("L7: FFmpegUtility.getMetadata — Forward body unread") }
-    public static func streamThumbnail(for p0: URL, options: KSOptions?, thumbnailCount: Int, progressBlock: (CGImage, Double, Int) -> Void) throws { fatalError("L7: FFmpegUtility.streamThumbnail — Forward body unread") }
-    public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbnailCount: Int, thumbWidth: Int32, progressBlock: ([FFThumbnail], Int) -> Void) throws -> [FFThumbnail] { fatalError("L7: FFmpegUtility.generateThumbnail — Forward body unread") }
+    /// 0x101a32fdc (20 insns): av_packet_free(0x102d618b8) on a stack copy of the argument.
+    public static func free(packet: UnsafeMutablePointer<AVPacket>?) {
+        var packet = packet
+        av_packet_free(&packet)
+    }
+    public static func getMetadata(for p0: URL, options: KSOptions?) throws -> VideoInfo {
+        // 0x101a336b4 (497 insns). FormatContext(url:options:inFormat: nil) inlined; metadata via
+        // toDictionary(formatCtx+0xc0); VideoInfo alloc 0x38. The first .video track (no isImage test)
+        // decodes one frame into coverImage; a failed av_frame_alloc returns videoInfo without a cover.
+        let formatContext = try FormatContext(url: p0, options: options, inFormat: nil)
+        defer {
+            formatContext.close()
+        }
+        let videoInfo = VideoInfo(duration: formatContext.duration, fileSize: formatContext.fileSize, metadata: toDictionary(formatContext.formatCtx.pointee.metadata), assetTracks: formatContext.assetTracks)
+        if let videoTrack = formatContext.assetTracks.first(where: { $0.mediaType == .video }) {
+            var avframe = av_frame_alloc()
+            defer {
+                av_frame_free(&avframe)
+            }
+            guard let frame = avframe else {
+                return videoInfo
+            }
+            var codecContext: UnsafeMutablePointer<AVCodecContext>? = try videoTrack.createContext(options: options)
+            // dstFormat = FUN_101a09124(codecpar.format) — AVPixelFormat.bestPixelFormat.
+            let reScale = VideoSwresample(dstFormat: AVPixelFormat(rawValue: videoTrack.codecpar.pointee.format).bestPixelFormat, dovi: videoTrack.dovi)
+            var packet = av_packet_alloc()
+            var image: CGImage?
+            while av_read_frame(formatContext.formatCtx, packet) >= 0 {
+                if packet?.pointee.stream_index == videoTrack.trackID {
+                    // send result is tested BEFORE the unref here (streamThumbnail unrefs first).
+                    if avcodec_send_packet(codecContext, packet) < 0 {
+                        break
+                    }
+                    av_packet_unref(packet)
+                    let ret = avcodec_receive_frame(codecContext, frame)
+                    if ret >= 0 {
+                        image = try reScale.transfer(frame: frame.pointee).cgImage()
+                        break
+                    }
+                    if ret != KSPlayerError.tryAgain.code {
+                        break
+                    }
+                } else {
+                    av_packet_unref(packet)
+                }
+            }
+            av_packet_free(&packet)
+            reScale.shutdown()
+            avcodec_free_context(&codecContext)
+            videoInfo.coverImage = image
+        }
+        return videoInfo
+    }
+    public static func streamThumbnail(for p0: URL, options: KSOptions?, thumbnailCount: Int, progressBlock: (CGImage, Double, Int) -> Void) throws {
+        // 0x101a33f0c (686 insns). FormatContext(url:options:inFormat: nil) is inlined (0x101a3a0b8 shape).
+        let formatContext = try FormatContext(url: p0, options: options, inFormat: nil)
+        defer {
+            formatContext.close()
+        }
+        var videoTrack: FFmpegAssetTrack?
+        for track in formatContext.assetTracks {
+            if track.mediaType == .video, !track.isImage {
+                videoTrack = track
+            } else {
+                // AVStream+0x44 = discard, 0x30 = AVDISCARD_ALL
+                track.stream?.pointee.discard = AVDISCARD_ALL
+            }
+        }
+        guard let videoTrack else {
+            throw KSPlayerError(code: 0, description: "No video stream")
+        }
+        var avframe = av_frame_alloc()
+        defer {
+            av_frame_free(&avframe)
+        }
+        guard let frame = avframe else {
+            throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
+        }
+        var codecContext: UnsafeMutablePointer<AVCodecContext>? = try videoTrack.createContext(options: options)
+        // VideoSwresample alloc 0xc70: dstFormat +0x40 = 0x19 (AV_PIX_FMT_ARGB), fps 60, dovi +0x4c.
+        let reScale = VideoSwresample(dstFormat: AV_PIX_FMT_ARGB, dovi: videoTrack.dovi)
+        let interval = Int(formatContext.duration) / thumbnailCount
+        guard interval != 0 else {
+            throw KSPlayerError(code: 0, description: "video duration to small")
+        }
+        var packet = av_packet_alloc()
+        for i in 0 ..< thumbnailCount {
+            if Task.isCancelled {
+                break
+            }
+            guard formatContext.performSeek(time: Double(interval * i), flags: AVSEEK_FLAG_BACKWARD) == 0 else {
+                continue
+            }
+            avcodec_flush_buffers(codecContext)
+            while av_read_frame(formatContext.formatCtx, packet) >= 0 {
+                if packet?.pointee.stream_index == videoTrack.trackID {
+                    let result = avcodec_send_packet(codecContext, packet)
+                    av_packet_unref(packet)
+                    if result < 0 {
+                        break
+                    }
+                    let ret = avcodec_receive_frame(codecContext, frame)
+                    if ret >= 0 {
+                        if let time = formatContext.time(index: videoTrack.trackID, timestamp: frame.pointee.best_effort_timestamp) {
+                            if let image = try reScale.transfer(frame: frame.pointee).cgImage() {
+                                progressBlock(image, time, i)
+                            }
+                        }
+                        break
+                    }
+                    if ret != KSPlayerError.tryAgain.code {
+                        break
+                    }
+                } else {
+                    av_packet_unref(packet)
+                }
+            }
+        }
+        av_packet_free(&packet)
+        reScale.shutdown()
+        avcodec_free_context(&codecContext)
+    }
+    public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbnailCount: Int, thumbWidth: Int32, progressBlock: ([FFThumbnail], Int) -> Void) throws -> [FFThumbnail] {
+        // 16-insn body: streamThumbnail specialised with this closure (0x101a3a89c); thumbWidth is
+        // not forwarded (never read in Forward).
+        var thumbnails = [FFThumbnail]()
+        try streamThumbnail(for: p0, options: options, thumbnailCount: thumbnailCount) { image, time, index in
+            thumbnails.append(FFThumbnail(image: UIImage(cgImage: image), time: time))
+            progressBlock(thumbnails, index)
+        }
+        return thumbnails
+    }
 }
 
 extension FormatContext {
@@ -107,7 +256,7 @@ extension FormatContext {
     //   `KSAVPlayer_play_slot95_s84` is FAITHFUL carrying exactly it, recorded as "the file name
     //   matches; the line does not ... no semantic effect".]
     package func performSeek(time: TimeInterval, flags: Int32) -> Int32 {
-        KSLog("will seek to \(time)")
+        KSLog("will seek to \(time)", line: 473)   // Forward #line 473 (w6=0x1d9)
         // local name is not recoverable — no debug info; only the value's provenance is read
         let seekBegin = CACurrentMediaTime()
         if String(cString: formatCtx.pointee.url!).hasPrefix("/") {
@@ -115,10 +264,17 @@ extension FormatContext {
         }
         let timestamp = Int64(time * Double(AV_TIME_BASE)) + startTime.value
         let result = av_seek_frame(formatCtx, -1, timestamp, time == 0 ? 0 : flags)
-        KSLog("seek to \(time) result=\(result),spendTime=\(CACurrentMediaTime() - seekBegin)")
+        KSLog("seek to \(time) result=\(result),spendTime=\(CACurrentMediaTime() - seekBegin)", line: 487)   // Forward #line 487 (w6=0x1e7)
         return result
     }
-    convenience public init(string: String, options: KSOptions?, inFormat: String?) throws { fatalError("L7: FormatContext.init — Forward body unread") }
+    /// __allocating_init 0x101a32e14 → 0x101a3a2e8: URL(string:) nil-check, then the inlined
+    /// init(url:options:inFormat:) path. Error: code 0 (`str wzr`), "can not get url " (0x103d363f0) + string.
+    convenience public init(string: String, options: KSOptions?, inFormat: String?) throws {
+        guard let url = URL(string: string) else {
+            throw KSPlayerError(code: 0, description: "can not get url \(string)")
+        }
+        try self.init(url: url, options: options, inFormat: inFormat)
+    }
 }
 
 //  Binary-faithful reconstruction (Forward 1.3.17). Leaf IO-cancellation
@@ -166,6 +322,18 @@ public final class IOInterruptContext {
         self.block = block                             // *(self+0x18)=fn, *(self+0x20)=ctx
         self.token = token                             // *(self+0x28) = tok
         reg.register(self, token: token)               // FUN_101a34a20 → contexts[id] = weak(self)
+    }
+
+    /// deinit `0x101a34cd4` (51 insns; trie `…IOInterruptContextCfd`, deallocating thunk `…CfD`
+    /// 0x101a34da0): swift_once(0x1044e9ab8) → registry 0x1044e9ac0; retain self.token (+0x28);
+    /// objc lock(reg+0x10); beginAccess(reg+0x20, modify); `ldr x0,[token,#0x10]` →
+    /// 0x1019c1764 (Dictionary removeValue(forKey:) specialization, result released); objc unlock;
+    /// then the ivar destroys (block @+0x18 via 0x1000b6684, token @+0x28).
+    deinit {
+        let reg = IOInterruptRegistry.shared
+        reg.lock.lock()
+        reg.contexts.removeValue(forKey: token.id)
+        reg.lock.unlock()
     }
 
     /// ⚑[tool=disassemble ref=IOInterruptContext.interrupt.getter:0x101a34c08 result=24-instr]
@@ -585,21 +753,18 @@ private final class WeakIOInterruptContext {
 //  container-alignment, `bitrate` (+0x38, fileSize*8/duration with a track-bitRate-sum fallback), and the
 //  dominant-path `duration` = durationSeconds. Symbolic FFmpeg field access = faithful by construction
 //  under the non-stock ABI.
-//  ⚠️ CORRECTED — THE `ioContext as? PlayList` ARMS ARE NOT IN THIS FUNCTION. This block used to
-//  record them as "STILL UNRESOLVED" here, and the s84 verdict carried the same attribution. Both
-//  are wrong about the location. Measured over the whole extent of the inner init
-//  (0x101a350bc-0x101a362c0, 1153 instructions):
-//    · zero `swift_dynamicCast` and zero `swift_conformsToProtocol` calls;
-//    · zero `adrp` to page 0x1039ed — so the `PlayList` protocol descriptor at 0x1039edc98 is
-//      never referenced.
-//  A conditional protocol cast cannot happen without one of those. The arms — the
-//  `seekByBytes`=true branch, the `formatCtx->duration = duration*AV_TIME_BASE` side-effect and the
-//  per-track `languageCode`/`name` override from the playlist metadata — live somewhere else; the
-//  original note's own aside points at MEPlayerItem's FUN_101a512b4, which is the place to look.
-//  ⚑[tool=export_trie_oracle ref=$s8KSPlayer8PlayListMp:0x1039edc98 result=unreferenced-in-this-extent]
-//  Two further things that block quoting the old note: `PlayList` IS reconstructed in-tree now
-//  (`public protocol PlayList` with all four requirements, PlayerDefines.swift:642), so "NOT yet
-//  reconstructed" is stale as well.
+//  ⚠️ RE-CORRECTED (L7 lane 8) — THE `ioContext as? PlayList` ARMS ARE IN THIS FUNCTION. The earlier
+//  "zero swift_dynamicCast / zero adrp 0x1039ed" note was wrong: the cast is `bl 0x10345cc7c`
+//  (swift_dynamicCast, flags 6) @0x101a352c0 and again @0x101a35a68 / 0x101a35c7c, and the protocol is
+//  reached through a symbolic mangled-name reference (cache 0x1044e9ad0 → 0x10356f330 → `\x02`→GOT
+//  0x104107bf0 → PlayList descriptor 0x1039edc98), not an adrp. Arm 1 (@0x101a3527c-0x101a3540c):
+//  `if let ioContext, let pl = ioContext as? PlayList, let s = pl.currentStream` (PlayList wt +0x20),
+//  `s.<MovieStream req #2: Double> > Double(durationSeconds + 3600)` → duration = that value,
+//  `seekByBytes = s.<MovieStream req #3: array>.count >= 2` and, when true,
+//  `formatCtx.pointee.duration = Int64(duration * 1_000_000)` (strb w8,[x24,#0x58] @0x101a3623c).
+//  Arm 2 (@LAB_101a358b8, per track): startTime snap, then PlayList audio/subtitleLanguageCodeMap
+//  (wt +0x08/+0x10) overrides. MovieStream's requirements are unnamed in PlayerDefines.swift, so this
+//  init row is DEFERRED (gap) and the body below still lacks both arms.
 //  FFmpeg provenance (P32) — every av* symbol named in this file is ffmpeg_name_oracle result=CONFIRMED:
 //    ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]     (FUN_103253ed0, avutil/mem.o — free+null idiom)
 //    ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]  (FUN_10323a9d8, avutil/dict.o — inside toDictionary)
@@ -619,6 +784,9 @@ public final class FormatContext {
     public let bitrate: Int64                                 // +0x38  DERIVED — external/unmapped; NOT Int
     public let assetTracks: [FFmpegAssetTrack]                // +0x40  default [] (binary builds from a stream loop)
     public let formatName: String                            // +0x48  DERIVED (from formatCtx->iformat->name)
+    // Forward getter 0x10070cad8 is `ldrb w0,[x20,#0x58]` with no swift_beginAccess, so the field is a `let`. Forward
+    // does not fold it to a constant because the init's PlayList arm stores `count >= 2` here (`strb w8,[x24,#0x58]`
+    // @0x101a3623c). That arm is the MovieStream gap (lane-8 report), so the build folds the getter until it lands.
     public let seekByBytes: Bool                             // +0x58  DERIVED (conditionally 0/1 across branches; default false)
 
     // time(index:timestamp:) `0x101a32e28` (109 instr, extent exact from LC_FUNCTION_STARTS
@@ -644,7 +812,8 @@ public final class FormatContext {
     package func time(index: Int32, timestamp: Int64) -> Double? {
         guard timestamp != Int64.min else { return nil }
         for track in assetTracks where track.trackID == index {
-            return max(0, (track.timebase.cmtime(for: timestamp) - track.startTime).seconds)
+            // `fcmp d8,#0; fcsel d0,d0(=0),d8,ls` ⇒ max(x, 0) (`0 >= x ? 0 : x`), not max(0, x) (`ge`).
+            return max((track.timebase.cmtime(for: timestamp) - track.startTime).seconds, 0)
         }
         return nil
     }
@@ -679,12 +848,14 @@ public final class FormatContext {
                 if pb.pointee.buffer != nil {
                     av_freep(&pb.pointee.buffer)
                 }
-                var pbLocal: UnsafeMutablePointer<AVIOContext>? = pb
+                // Forward re-reads formatCtx->pb after av_freep (`ldr x8,[x19,#0x20]` @0x101a333b0) into a stack
+                // slot (`stur x8,[x29,#-0x78]`) — a fresh read, not the bound `pb`. Local name INFERRED.
+                var pbLocal = formatCtx.pointee.pb
                 avio_context_free(&pbLocal)
             }
         }
-        var mutableCtx: UnsafeMutablePointer<AVFormatContext>? = formatCtx
-        avformat_close_input(&mutableCtx)   // ⚑ core of wrapper FUN_101a39028 (=avformat_close_input, see header)
+        // Forward calls the wrapper itself: `ldr x0,[x27,#0x18]; bl 0x101a39028` (= close(formatCtx:)) @0x101a333c8.
+        FFmpegUtility.close(formatCtx: formatCtx)
     }
 
     /// @0x101a33e78 → FUN_101a3a0b8. IOInterruptContext(nil) (FUN_101a391bc(0,0)) + openFormatContext(.left(url))
@@ -695,7 +866,13 @@ public final class FormatContext {
         self.init(formatCtx: formatCtx, fileSize: fileSize, interrupt: interrupt, ioContext: ioContext, fontsDir: options?.fontsDir)
     }
     public let byteSeek: Bool                               // +0x59  DERIVED (from format flags + name compare)
-    convenience public init(io: Either<URL, AbstractAVIOContext>, options: KSOptions?, inFormat: String?, interruptBlock: (@Sendable () -> Bool)?) throws { fatalError("L7: FormatContext.init — Forward body unread") }
+    /// __allocating_init 0x101a34e54 (127 insns): IOInterruptContext(interruptBlock) (FUN_101a391bc(x4,x5)),
+    /// openFormatContext(io) (0x101a392a0), then the designated init with options?.fontsDir.
+    convenience public init(io: Either<URL, AbstractAVIOContext>, options: KSOptions?, inFormat: String?, interruptBlock: (@Sendable () -> Bool)?) throws {
+        let interrupt = IOInterruptContext(interruptBlock)
+        let (formatCtx, fileSize, ioContext) = try openFormatContext(io: io, interrupt: interrupt, options: options, inFormat: inFormat)
+        self.init(formatCtx: formatCtx, fileSize: fileSize, interrupt: interrupt, ioContext: ioContext, fontsDir: options?.fontsDir)
+    }
     public let startTime: CMTime                            // +0x5c  DERIVED (from formatCtx->start_time / kCMTimeZero)
     public let maxFrameDuration: Int                        // +0x78  DERIVED (3600 or 10 from format flags); field-record sugar `Si` — NOT Double
     public let fontsDir: URL?                               // (sym)  (init param 6) → triggers font registration side-effect

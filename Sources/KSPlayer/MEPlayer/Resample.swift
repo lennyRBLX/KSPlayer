@@ -181,7 +181,11 @@ class VideoSwresample: FrameChange {
         } else if dstWidth == nil, dstHeight == nil,
                   format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_YUV420P10LE
                   || format == AV_PIX_FMT_YUV422P10LE || format == AV_PIX_FMT_YUV444P10LE {
-            pbuf = PixelBuffer(frame: frame)
+            let pixelBuffer = PixelBuffer(frame: frame)
+            // Forward 0x101a666f8: a direct class-field store (beginAccess on PixelBuffer+0x30) in this
+            // branch, ahead of the common-tail witness set below.
+            pixelBuffer.aspectRatio = frame.sample_aspect_ratio.size
+            pbuf = pixelBuffer
         } else {
             let width = frame.width
             let height = frame.height
@@ -208,7 +212,11 @@ class VideoSwresample: FrameChange {
     // RECONSTRUCT FAITHFUL (T2) — slot31 @0x101a66c6c, PURE-sws (field-offset-verified DV-free):
     // sws_scale path + manual plane pixel-copy (CVPixelBuffer plane ops + memmove).
     func transfer(format: AVPixelFormat, width: Int32, height: Int32, data: [UnsafeMutablePointer<UInt8>?], linesize: [Int32]) -> CVPixelBuffer? {
-        setup(format: format, width: width, height: height, linesize: linesize[1] == 0 ? linesize[0] : linesize[1])
+        // Forward 0x101a66c6c: empty `linesize` returns nil before setup; a 1-element array takes linesize[0].
+        guard !linesize.isEmpty else {
+            return nil
+        }
+        setup(format: format, width: width, height: height, linesize: linesize.count == 1 || linesize[1] == 0 ? linesize[0] : linesize[1])
         guard let pool else {
             return nil
         }
@@ -493,34 +501,36 @@ class AudioSwresample: FrameChange {
     }
 
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
-        if !(descriptor == avframe.pointee) || outChannel != descriptor.outChannel {
-            let newDescriptor = AudioDescriptor(frame: avframe.pointee)
-            // ⚑ THE GUARD IS NOT `setup`'s RETURN VALUE. In 0x101a681f4-0x101a688a0 the Bool `setup`
-            //   returns is never tested; the binary calls it and then tests `self.swrContext`
-            //   (self+0x10) for nil. The old `if setup(...) { } else { }` shape tested the wrong
-            //   thing.
-            // ⚑ `.auidoSwrInit` IS NOT A CASE IN THE IMAGE — and neither is the `userInfo`
-            //   dictionary this site used to build: there is no Dictionary metadata, no Dictionary
-            //   init and no error-domain string anywhere in the body. The whole payload is one
-            //   interpolated String at [x1,#0x8]. The strings `auidoSwrInit` and `inChannel` occur
-            //   NOWHERE in the image; the message is built from the 30-byte literal at 0x103d36db0,
-            //   the small string " inChannel=", and two AVChannelLayout.description calls on
-            //   descriptor+0x40 and descriptor+0x20.
-            _ = setup(descriptor: newDescriptor)
-            guard swrContext != nil else {
-                throw KSPlayerError(code: 0, description: "swrContext is nil. outChannel=\(newDescriptor.outChannel) inChannel=\(newDescriptor.channel)")
-            }
-            descriptor = newDescriptor
+        // Forward 0x101a681f4: the nil-context test comes first, and a change updates the EXISTING
+        // descriptor in place (sampleFormat +0x38, sampleRate +0x10, channel +0x20, outChannel +0x40,
+        // then updateAudioFormat 0x101a68a74 and setup 0x101a67c34) — no new AudioDescriptor is
+        // allocated. `setup`'s Bool is never tested; the guard reads self.swrContext once and that
+        // register feeds both swr_get_out_samples and swr_convert.
+        if swrContext == nil || !(descriptor == avframe.pointee) || outChannel != descriptor.outChannel {
+            descriptor.sampleFormat = AVSampleFormat(rawValue: avframe.pointee.format)
+            descriptor.sampleRate = avframe.pointee.sample_rate > 0 ? avframe.pointee.sample_rate : 48000
+            descriptor.channel = avframe.pointee.ch_layout
+            descriptor.outChannel = avframe.pointee.ch_layout
+            descriptor.updateAudioFormat()
+            _ = setup(descriptor: descriptor)
+        }
+        // ⚑ `.auidoSwrInit` IS NOT A CASE IN THE IMAGE — and neither is a `userInfo` dictionary: the
+        //   whole payload is one interpolated String built from the 30-byte literal at 0x103d36db0,
+        //   " inChannel=", and two AVChannelLayout.description calls on descriptor+0x40 / +0x20.
+        guard let swrContext else {
+            throw KSPlayerError(code: 0, description: "swrContext is nil. outChannel=\(descriptor.outChannel) inChannel=\(descriptor.channel)")
         }
         let numberOfSamples = avframe.pointee.nb_samples
         let outSamples = swr_get_out_samples(swrContext, numberOfSamples)
-        var frameBuffer = Array(tuple: avframe.pointee.data).map { UnsafePointer<UInt8>($0) }
         let channels = descriptor.outChannel.nb_channels
         var bufferSize = [Int32(0)]
         // 返回值是有乘以声道，所以不用返回值
         _ = av_samples_get_buffer_size(&bufferSize, channels, outSamples, descriptor.audioFormat.sampleFormat, 1)
         let frame = AudioFrame(dataSize: UInt32(bufferSize[0]), audioFormat: descriptor.audioFormat)
-        frame.numberOfSamples = UInt32(swr_convert(swrContext, &frame.data, outSamples, &frameBuffer, numberOfSamples))
+        // Forward builds the input pointer array AFTER AudioFrame.init (0x101a68454).
+        var frameBuffer = Array(tuple: avframe.pointee.data).map { UnsafePointer<UInt8>($0) }
+        // Forward clamps a negative result to 0 (`bic w19,w19,w19,asr #31`) instead of trapping.
+        frame.numberOfSamples = UInt32(max(0, swr_convert(swrContext, &frame.data, outSamples, &frameBuffer, numberOfSamples)))
         return frame
     }
 
