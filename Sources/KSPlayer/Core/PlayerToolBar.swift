@@ -282,5 +282,20 @@ extension KSOptions {
 }
 
 extension URLComponents {
-    var queryDictionary: [String : String]? { @used get { fatalError("L7: URLComponents.queryDictionary — Forward body unread") } }
+    // L7: Forward 0x1019f5aac (216 insns) is an index loop, not `for item in queryItems`: a single
+    // ___chkstk_darwin element buffer, count saved once (cbz count → empty-dict return), a live
+    // `i < count` bounds check (b.cs brk) per element. The for-in spelling compiles to 230 insns with
+    // a second chkstk buffer (IndexingIterator's Optional<Element>) on this toolchain; this spelling
+    // compiles to 216 (scratch mock, Xcode 26.4 swiftc -O -wmo).
+    var queryDictionary: [String : String]? { @used get {
+        guard let queryItems else {
+            return nil
+        }
+        var dict = [String: String]()
+        for i in 0 ..< queryItems.count {
+            let item = queryItems[i]
+            dict[item.name] = item.value
+        }
+        return dict
+    } }
 }
