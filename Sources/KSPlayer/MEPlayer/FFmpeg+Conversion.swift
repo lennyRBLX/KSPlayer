@@ -745,7 +745,7 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             }
         }
         av_write_trailer(formatCtx)                         // FUN_103194e1c — ffmpeg_name_oracle CONFIRMED (117/468 exact) [0x101a1b9f0]
-        lastDTSMap = [:]                                    // self+0x48 cleared [0x101a1ba0c]
+        lastDTSMap.removeAll()                              // self+0x48 cleared INSIDE the modify access: beginAccess(+0x48) → store empty singleton → release old [0x101a1bb08]
     }
 
     // ── slot15 @0x101a1bb5c (181 instr) — close-all: close every transcode ctx + asset track, free the
@@ -761,10 +761,10 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
         for (_, ctx) in transcodeMap {                      // self+0x18
             ctx.close()                                     // TranscodeProtocol.close (witness +0x18) [0x101a1bce8]
         }
-        for (_, track) in assetTrackMap {                   // self+0x10
-            // Inlined FFmpegAssetTrack.stop(): track+0x100 (`subtitle`) → vtable +0x1c0 (shutdown()).
-            track.stop()
-        }
+        // self+0x10 — Forward: bridgeObjectRetain_n(dict, 2) (guaranteed collection + iterator copy), then
+        // bridgeObjectRelease + outlined consume of the iterator (0x10002239c) = Sequence.forEach shape.
+        // Inlined FFmpegAssetTrack.stop(): track+0x100 (`subtitle`) → vtable +0x1c0 (shutdown()).
+        assetTrackMap.values.forEach { $0.stop() }
         var outPacket = outPacket                           // Forward stop() @0x101a1bb5c frees a stack copy, no writeback
         av_packet_free(&outPacket)                          // FUN_102d618b8 — ffmpeg_name_oracle CONFIRMED (46/184 exact) [0x101a1be1c]
         // FUN_101a39028 = static FFmpegUtility.close(formatCtx:) (#function "close(formatCtx:)", trie

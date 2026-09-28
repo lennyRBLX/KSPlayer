@@ -180,7 +180,7 @@ public class CircularBuffer<Item: ObjectQueueItem> {
                     }
                     index -= 1
                     while index > headIndex {
-                        if let item = _buffer[Int(index & mask)], let packet = item as? Packet, packet.isKeyFrame {
+                        if let packet = _buffer[Int(index & mask)] as? Packet, packet.isKeyFrame {
                             if abs(packet.seconds - seconds) <= 10 {
                                 return (index, packet.seconds)
                             }
