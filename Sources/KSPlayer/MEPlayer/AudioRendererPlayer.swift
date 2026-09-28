@@ -185,7 +185,11 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
         }
     }
 
-    // request() @0x101a1468c — the requestMediaDataWhenReady callback. Rewired onto the inherited
+    /// Vtable F30: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot so that request() (F31) lines up.
+    func unreadSlot30() {}
+
+    // request() @0x101a1468c (vtable F31) — the requestMediaDataWhenReady callback. Rewired onto the inherited
     // AudioDataBuffer.sampleBuffer(nanoseconds:) (@0x101a11cd4) instead of the old flat
     // toCMSampleBuffer() loop. One enqueue per call (AVFoundation re-invokes the block); it throttles
     // with a bounded sleep when the enqueued buffer runs far enough ahead of the synchronizer.

@@ -174,8 +174,8 @@ public class AudioDataBuffer {
     // has no renderLock, no memsetZero, and no sourceNodeAudioFormat re-prepare. Differences it
     // DOES carry: it consumes `.right`'s Bool into `eof`, logs the underrun, and RETURNS the
     // leftover byte count (UInt32 — the caller slot 13 divides it by sampleSize with a 32-bit
-    // udiv). It is `final` (a slot without a subclass override) yet not private: slot 13 calls it.
-    final func audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer) -> UInt32 {
+    // udiv). Not `final`: Forward gives it vtable slot 14 (before init F15); not private: slot 13 calls it.
+    func audioPlayerShouldInputData(ioData: UnsafeMutableAudioBufferListPointer) -> UInt32 {
         guard ioData.count > 0 else {
             return 0
         }

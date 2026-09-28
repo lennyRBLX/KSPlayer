@@ -889,7 +889,7 @@ private func ioClose(_ s: UnsafeMutablePointer<AVFormatContext>?,
     if let index = item.pbArray.firstIndex(where: { $0.pb == pb }) {
         let removed = item.pbArray.remove(at: index)
         if let first = item.pbArray.first {
-            first.add += removed.totalBytesRead()
+            first.add += removed.totalBytesRead
         }
     }
     guard let defaultIOClose = item.defaultIOClose else { return -1 }
@@ -910,17 +910,14 @@ private class PBClass {
     var _bytesRead: Int64 = 0                    // +0x18 ⚑ UNRESOLVED type: fieldmd-unmapped; 0-init byte counter (incremented in the deferred custom-AVIO read cb); Int64 defensible, precise type pending that arm
     var add: Int64 = 0                           // +0x20 ⚑ UNRESOLVED type: fieldmd-unmapped; 0-init single word (name "add"); used only in the deferred custom-AVIO path — placeholder pending that arm
 
-    // memberwise — construction inlined at the pbArray-append site (vtable slot devirtualized; no standalone init)
-    init(pb: UnsafeMutablePointer<AVIOContext>?) {
-        self.pb = pb
-    }
-
     // FUN_101a59258 — total bytes read through this AVIO context: the accumulated `add` plus the
     //   current pb.bytes_read. Syncs _bytesRead to pb.bytes_read each call; when the live counter has
     //   gone backwards (the sub-context was replaced/reset) it first banks the prior _bytesRead into
     //   `add` so the running total never regresses. ⚑ name INFERRED (#function unrecoverable).
     // ⚑[tool=recover_swift_function_name ref=totalBytesRead:0x101a59258 result=inferred]
-    func totalBytesRead() -> Int64 {
+    // L7 pilot e: Forward vtable F9 is a GETTER (shape G) declared before init (F10), so this is a get-only
+    // computed property, not a method; F11 after init is a dead M slot.
+    var totalBytesRead: Int64 {
         let current: Int64
         if let pb {
             current = pb.pointee.bytes_read
@@ -931,6 +928,15 @@ private class PBClass {
         }
         return add + current
     }
+
+    // memberwise — construction inlined at the pbArray-append site (vtable slot devirtualized; no standalone init)
+    init(pb: UnsafeMutablePointer<AVIOContext>?) {
+        self.pb = pb
+    }
+
+    /// Vtable F11: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
+    /// the declaration only holds the slot.
+    func unreadSlot11() {}
 }
 
 extension AbstractAVIOContext {
