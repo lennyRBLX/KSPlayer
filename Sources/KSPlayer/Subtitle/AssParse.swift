@@ -20,7 +20,7 @@ public class AssParse: KSParseProtocol {
     //   extraction (uudecode -> NSTemporaryDirectory write -> CTFontManagerRegisterFontsForURL),
     //   then reads the [Events] Format keys. audit_workflow + P42-disasm verified (session 18).
     public func canParse(scanner: Scanner) -> Bool {
-        styleMap = [:]
+        styleMap = [String: ASSStyle]()
         guard scanner.string.contains("Format: Name,") else {
             return false
         }
@@ -55,7 +55,7 @@ public class AssParse: KSParseProtocol {
             let fontScanner = Scanner(string: fontBlock)
             while fontScanner.scanString("fontname:") != nil {
                 guard let fontName = fontScanner.scanUpToCharacters(from: .newlines) else {
-                    break
+                    continue
                 }
                 guard let encoded = fontScanner.scanUpToString("fontname:") else {
                     // binary loops back to scanString("fontname:") on a nil body (skips an empty
@@ -64,26 +64,25 @@ public class AssParse: KSParseProtocol {
                 }
                 // Path = NSTemporaryDirectory() + "fontsDir/" + fontName (3-part, 2× String.append —
                 // P42-disasm-confirmed 0x101a97c6c-cfc: tmp @0x10345ac84, "fontsDir/" small-string @0x101a97c8c). ⚑ URL init form (fileURLWithPath vs string:) minor.
-                let url = URL(fileURLWithPath: NSTemporaryDirectory() + "fontsDir/" + fontName)
-                try? uudecode(encoded).write(to: url)
+                let url = URL(fileURLWithPath: NSTemporaryDirectory() + ("fontsDir/" + fontName))
+                let data = uudecode(encoded)
+                try? data.write(to: url)
                 // scope .process, error nil — P42-disasm-confirmed `CTFontManagerRegisterFontsForURL(url, w1=1, x2=0)` @0x101a97d6c-d70.
                 CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
             }
         }
         // Process the collected Style: lines into styleMap.
-        var styleMap = [String: ASSStyle]()
         for line in styleLines {
-            let values = line.components(separatedBy: ",")
-            guard let name = values.first else {
-                continue
+            var values = line.components(separatedBy: ",")
+            if values.count < keys.count {
+                values.append(contentsOf: [String](repeating: "", count: keys.count - values.count))
             }
             var dic = [String: String]()
             for i in 1 ..< keys.count {
                 dic[keys[i]] = values[i]
             }
-            styleMap[name] = dic.parseASSStyle()
+            styleMap[values[0]] = dic.parseASSStyle()
         }
-        self.styleMap = styleMap
         _ = scanner.scanString("[Events]")
         if scanner.scanString("Format: ") != nil {
             guard let eventLine = scanner.scanUpToCharacters(from: .newlines) else {
@@ -154,7 +153,7 @@ public class AssParse: KSParseProtocol {
         }
         var attributes: [NSAttributedString.Key: Any]?
         var textPosition: TextPosition
-        if let style = dic["Style"], let assStyle = styleMap[style] {
+        if let style = dic["Style"], let assStyle = styleMap.match(key: style) {
             attributes = assStyle.attrs
             textPosition = assStyle.textPosition
             if let marginL = dic["MarginL"].flatMap(Double.init), marginL != 0 {
@@ -167,7 +166,7 @@ public class AssParse: KSParseProtocol {
                 textPosition.verticalMargin = CGFloat(marginV)
             }
         } else {
-            textPosition = TextPosition()
+            textPosition = TextPosition(leftMargin: 10, rightMargin: 10)
         }
         guard var text = dic["Text"] else {
             return []
@@ -192,5 +191,15 @@ public struct ASSStyle {
 }
 
 extension Dictionary where Key == String {
-    public func match(key: String) -> Value? { fatalError("L7: Dictionary.match — Forward body unread") }
+    public func match(key: String) -> Value? {
+        if key.hasPrefix("*") {
+            let suffix = String(key[key.index(key.startIndex, offsetBy: 1)...])
+            return first { $0.key.hasSuffix(suffix) }?.value
+        } else if key.hasSuffix("*") {
+            let prefix = String(key[..<key.index(key.endIndex, offsetBy: -1)])
+            return first { $0.key.hasPrefix(prefix) }?.value
+        } else {
+            return self[key]
+        }
+    }
 }

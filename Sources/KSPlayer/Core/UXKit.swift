@@ -20,20 +20,55 @@ import AppKit
 /// Its checked `Int` conversions and integer-equality guard precede the two fit branches;
 /// the source below preserves that conversion order and trapping Swift.Int behavior.
 extension CGSize {
-    public var ratio: Double { fatalError("L7: CGSize.ratio — Forward body unread") }
-    public static var one: CGSize { fatalError("L7: CGSize.one — Forward body unread") }
+    public var ratio: Double {
+        if width == 0 || height == 0 {
+            return 16.0 / 9.0
+        }
+        return width / height
+    }
+    public static var one: CGSize {
+        CGSize(width: 1, height: 1)
+    }
     func within(ratio: Double) -> CGSize {
         guard ratio != 0 else { return self }
         let integerWidth = Int(width)
         let integerAspectWidth = Int(ratio * height)
         guard integerWidth != integerAspectWidth else { return self }
-        if ratio <= width / height {
-            return CGSize(width: Double(integerAspectWidth), height: Double(Int(height)))
-        } else {
+        if width / height < ratio {
             return CGSize(width: Double(integerWidth), height: Double(Int(width / ratio)))
+        } else {
+            return CGSize(width: Double(integerAspectWidth), height: Double(Int(height)))
         }
     }
-    public func convert(rect: CGRect, playRatio: Double, toSize: CGSize) -> CGRect { fatalError("L7: CGSize.convert — Forward body unread") }
+    public func convert(rect: CGRect, playRatio: Double, toSize: CGSize) -> CGRect {
+        guard height != 0, width != 0, toSize.width != 0, toSize.height != 0 else {
+            return rect
+        }
+        let widthScale = toSize.width / width
+        let heightScale = toSize.height / height
+        let scale = playRatio > 2.32 && playRatio < 2.34 ? widthScale : min(widthScale, heightScale)
+        var result = CGRect(x: rect.origin.x * scale, y: rect.origin.y * scale, width: rect.size.width * scale, height: rect.size.height * scale)
+        let imageScale = KSOptions.subtitleImageScale
+        if imageScale != 1.0 {
+            let midX = result.midX
+            let midY = result.midY
+            result.size.width *= imageScale
+            result.size.height *= imageScale
+            result.origin.x = midX - result.width * 0.5
+            result.origin.y = midY - result.height * 0.5
+        }
+        result.origin.x += (toSize.width - width * scale) * 0.5
+        let offsetY = (toSize.height - height * scale) * 0.5
+        result.origin.y += offsetY
+        if result.maxY > toSize.height {
+            result.origin.y += offsetY
+        }
+        result.origin = result.integral.origin
+        let offset = KSOptions.subtitleImageOffset
+        result.origin.x += offset.width
+        result.origin.y += offset.height
+        return result
+    }
 }
 
 /// ⚑[tool=export_trie_oracle ref=(extension in KSPlayer):__C.UIFont.with(weight:):0x1019f1e40]
@@ -106,7 +141,7 @@ extension UIView {
 
     #if canImport(UIKit)
     // ⚑[tool=member_add ref=UIView.backingScaleFactor:0x1019f2398 result=dne; Forward order backingLayer 0x1019f237c < this < viewController 0x1019f23e4]
-    var backingScaleFactor: CGFloat { @used get { fatalError("L7: UIView.backingScaleFactor — Forward body unread") } }
+    var backingScaleFactor: CGFloat { @used get { UITraitCollection.current.displayScale } }
     #endif
 
     var cornerRadius: CGFloat {
@@ -143,6 +178,13 @@ extension UIView {
             return
         }
         addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            view.leftAnchor.constraint(equalTo: leftAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            view.rightAnchor.constraint(equalTo: rightAnchor),
+        ])
     }
 }
 

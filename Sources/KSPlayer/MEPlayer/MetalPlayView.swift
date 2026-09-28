@@ -273,11 +273,37 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     }
 
     public func play() {
-        displayLink?.isPaused = false
+        let oldValue = isPaused
+        isPaused = false
+        if isPaused != oldValue {
+            if !renderUseDispatchSourceTimer {
+                displayLink!.isPaused = isPaused
+            }
+            if !backgroundTimer.isCancelled {
+                if isPaused {
+                    backgroundTimer.suspend()
+                } else {
+                    backgroundTimer.resume()
+                }
+            }
+        }
     }
 
     public func pause() {
-        displayLink?.isPaused = true
+        let oldValue = isPaused
+        isPaused = true
+        if isPaused != oldValue {
+            if !renderUseDispatchSourceTimer {
+                displayLink!.isPaused = isPaused
+            }
+            if !backgroundTimer.isCancelled {
+                if isPaused {
+                    backgroundTimer.suspend()
+                } else {
+                    backgroundTimer.resume()
+                }
+            }
+        }
     }
 
     @available(*, unavailable)
@@ -340,7 +366,14 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     }
 
     public func invalidate() {
-        displayLink?.invalidate()
+        flush()
+        displayLink!.invalidate()
+        if isPaused {
+            if !backgroundTimer.isCancelled {
+                backgroundTimer.resume()
+            }
+        }
+        backgroundTimer.cancel()
     }
 
     public func readNextFrame() {
@@ -509,10 +542,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         guard metalView.isHidden else {
             return
         }
-        guard let pixelBuffer else {
-            return
-        }
-        guard let imageBuffer = pixelBuffer.cvPixelBuffer else {
+        guard let imageBuffer = pixelBuffer?.cvPixelBuffer else {
             return
         }
         if let formatDescription {
@@ -594,11 +624,12 @@ class MetalView: UIView {
 
     init() {
         super.init(frame: .zero)
-        #if !canImport(UIKit)
+        #if canImport(UIKit)
+        tag = -1000
+        #else
         layer = CAMetalLayer()
         #endif
         metalLayer.device = MetalRender.device
-        metalLayer.framebufferOnly = true
 //        metalLayer.displaySyncEnabled = false
     }
 
@@ -914,9 +945,37 @@ protocol AudioFormatProtocol: AnyObject, Equatable {}
 
 extension AudioStreamBasicDescription {
     // ⚑[tool=member_add ref=AudioStreamBasicDescription.sampleRate.getter:0x1000ef030 result=dne; placed before sampleSize 0x101a65168 (Forward addr ICF-shared, order inferred)]
-    var sampleRate: Double { @used get { fatalError("L7: AudioStreamBasicDescription.sampleRate — Forward body unread") } }
-    var sampleSize: UInt32 { @used get { fatalError("L7: AudioStreamBasicDescription.sampleSize — Forward body unread") } }
-    var channelCount: UInt32 { @used get { fatalError("L7: AudioStreamBasicDescription.channelCount — Forward body unread") } }
-    var commonFormat: AVAudioCommonFormat { @used get { fatalError("L7: AudioStreamBasicDescription.commonFormat — Forward body unread") } }
-    var isInterleaved: Bool { @used get { fatalError("L7: AudioStreamBasicDescription.isInterleaved — Forward body unread") } }
+    var sampleRate: Double { @used get { mSampleRate } }
+    var sampleSize: UInt32 { @used get { mBitsPerChannel } }
+    var channelCount: UInt32 { @used get { mChannelsPerFrame } }
+    var commonFormat: AVAudioCommonFormat { @used get {
+        guard mFormatID == kAudioFormatLinearPCM else {
+            return .otherFormat
+        }
+        if mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            switch mBitsPerChannel {
+            case 32:
+                return .pcmFormatFloat32
+            case 64:
+                return .pcmFormatFloat64
+            default:
+                return .otherFormat
+            }
+        } else {
+            switch mBitsPerChannel {
+            case 16:
+                return .pcmFormatInt16
+            case 24, 32:
+                return .pcmFormatInt32
+            default:
+                return .otherFormat
+            }
+        }
+    } }
+    var isInterleaved: Bool { @used get {
+        guard mFormatID == kAudioFormatLinearPCM else {
+            return false
+        }
+        return mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+    } }
 }

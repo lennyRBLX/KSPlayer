@@ -108,7 +108,8 @@ class SubtitleDecode: DecodeProtocol {
         }
         for part in parts {
             // timestamp/duration are set inside SubtitleFrame.init @0x101a63adc.
-            completionHandler(.success(SubtitleFrame(part: part, timebase: timebase)))
+            let frame = SubtitleFrame(part: part, timebase: timebase)
+            completionHandler(.success(frame))
         }
     }
 
@@ -194,6 +195,11 @@ class SubtitleDecode: DecodeProtocol {
     @used func doFlushCodec() {
         if let codecContext {
             avcodec_flush_buffers(codecContext)
+        }
+        if let assImageRenderer {
+            Task {
+                await assImageRenderer.flush()
+            }
         }
     }
 
