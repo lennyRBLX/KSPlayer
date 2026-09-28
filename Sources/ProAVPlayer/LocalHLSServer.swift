@@ -168,9 +168,11 @@ class LocalHLSServer {
     /// Cancels the listener and clears the retry / keep-alive maps.
     @used func stop() {
         listener.cancel()
-        retryDelayMap = [:]
-        keepAliveBlockMap = [:]
-        // ⚑ trailing debug log ("stop HLS Server" / "stop()") omitted — KSLog form UNRESOLVED.
+        retryDelayMap = [URL: UInt64]()                  // one singleton load (x21) feeds both stores
+        keepAliveBlockMap = [String: (URL) -> Void]()
+        // Forward 0x101b70df0: level 3 (.warning, the default) gate; message small-string "stop HLS Server",
+        // #function small-string "stop()", line 0x46.
+        KSLog("stop HLS Server", file: "ProAVPlayer/LocalHLSServer.swift", function: "stop()", line: 70)
     }
 
     /// Binary: 0x101b70ed4 (vtable slot9), `throws`. ⚑ s105: the name is no longer inferred —
@@ -183,13 +185,16 @@ class LocalHLSServer {
     ///   http://<host>:<port>/<fileURL's path relative to rootDirectory>
     /// host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1"). Throws Forward's
     /// `KSPlayerError` (descriptor 0x1039edbd4) on an invalid URL — the binary boxes {code = .unknown
-    /// (0), message = "can not get url "} via `_swift_allocError`, matching `KSPlayerError(description:)`.
+    /// (0), message = "can not get url \(urlString)"} via `_swift_allocError` (`KSPlayerError(code:description:)`).
     /// ⚑ internal: a cross-class caller (FUN_101b69880) invokes it via the vtable; widen if needed.
     @used func getURL(for fileURL: URL, local: Bool) throws -> URL {
+        // Forward 0x101b70f68: relativePath(base:) is called BEFORE the `local` test.
+        let path = fileURL.relativePath(base: rootDirectory)
         let host = local ? "127.0.0.1" : (localIPAddress() ?? "127.0.0.1")
-        let path = relativePath(from: rootDirectory, to: fileURL)
-        guard let url = URL(string: "http://\(host):\(port)/\(path)") else {
-            throw KSPlayerError(code: 0, description: "can not get url ")
+        let urlString = "http://\(host):\(port)/\(path)"
+        guard let url = URL(string: urlString) else {
+            // Forward 0x101b7106c: grow(0x12) = 16-byte literal + 1 interpolation, then append(urlString).
+            throw KSPlayerError(code: 0, description: "can not get url \(urlString)")
         }
         return url
     }
@@ -394,7 +399,7 @@ class LocalHLSServer {
     //   (c) `ucvtf d0, x26` @0x101b744f0 converts it for `.now() + Double(delay)` — the UNSIGNED
     //       convert, where a `Swift.Int` emits `scvtf`.
     // Per-URL backoff delay.
-    private var retryDelayMap: [URL: UInt64] = [:]
+    private var retryDelayMap: [URL: UInt64] = [URL: UInt64]()   // L7: singleton store in init (0x101b708b4), not a literal call
 
     /// Binary: FUN_101b7138c (vtable slot10). ⚑ name from the debug-log string "startListen()". Accepts
     /// each connection, drives it to `.ready`, receives the HTTP request, and dispatches it. The `[weak self]`
