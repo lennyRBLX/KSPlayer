@@ -161,26 +161,24 @@ class VideoToolboxDecode: DecodeProtocol {
             }
         }
         do {
+            // ⚑ GAP (L7): Forward @0x101a6d170 first reads session.assetTrack.bitStreamFilter (+0x148) and, when
+            //   set, runs its throwing static requirement (witness +8) on (data, size), then frees the filtered
+            //   buffer after the decode call. BitStreamFilter declares no requirement here, so that step is absent.
             let sampleBuffer = try session.formatDescription.getSampleBuffer(data: data, size: Int(corePacket.size))
-            let flags: VTDecodeFrameFlags = [
-                ._EnableAsynchronousDecompression,
-            ]
-            var flagOut = VTDecodeInfoFlags.frameDropped
+            var flagOut = VTDecodeInfoFlags(rawValue: 0)
             // THE HOIST IS FORWARD'S, NOT A COMPILE FIX. The closure below escapes, so nothing may
             // capture the raw pointer; the binary reads its packet fields ONCE, up front, and
             // spills them to the frame under construction before the decode call:
             //   101a6cf1c  ldp x12,x13,[x21,#0x8]   pts, dts     -> 101a6cf40  stp x13,x12,[sp,#0x38]
             //   101a6cf24  ldr w11,[x21,#0x28]      flags        -> 101a6cf3c  str w11,[sp,#0x24]
             //   101a6cf28  ldp x9,x10,[x21,#0x40]   duration,pos -> 101a6cf38  stp x10,x9,[sp,#0x28]
-            // `timestamp` and `isKeyFrame` were `Packet` members; with D1 they are computed here
-            // from the same two fields the source's own `Packet` used — `timestamp` is
-            // `pts == Int64.min ? dts : pts` (Model.swift's assetTrack.didSet) and `isKeyFrame` is
-            // the AV_PKT_FLAG_KEY bit of `flags` (Model.swift's computed property).
+            // Forward @0x101a6d228: pts, else dts, else 0, rebased by the inlined
+            // FFmpegAssetTrack.timestamp(for:) (timebase +0xc0 then startTime +0xa0).
+            let timestamp = session.assetTrack.timestamp(for: corePacket.pts != Int64.min ? corePacket.pts : corePacket.dts != Int64.min ? corePacket.dts : 0)
             let packetFlags = corePacket.flags
             let duration = corePacket.duration
             let size = corePacket.size
             let position = corePacket.pos
-            let timestamp = corePacket.pts == Int64.min ? corePacket.dts : corePacket.pts
             let isKeyFrame = packetFlags & AV_PKT_FLAG_KEY == AV_PKT_FLAG_KEY
             let status = VTDecompressionSessionDecodeFrame(session.decompressionSession, sampleBuffer: sampleBuffer, flags: flags, infoFlagsOut: &flagOut) { [weak self] status, infoFlags, imageBuffer, _, _ in
                 guard let self, !infoFlags.contains(.frameDropped) else {
@@ -216,21 +214,14 @@ class VideoToolboxDecode: DecodeProtocol {
                 self.maxTimestamp += frame.duration // ⚑P3 lastPosition→maxTimestamp
                 completionHandler(.success(frame))
             }
-            if status == noErr {
-                if !flags.contains(._EnableAsynchronousDecompression) {
-                    VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
-                }
-            } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                if isKeyFrame {
-                    // ⚑ LIVE DIVERGENCE, recorded rather than silently "fixed": the binary's
-                    //   decodeFrame 0x101a6ce44-0x101a6d734 contains ZERO `_swift_allocError`, so it
-                    //   constructs NO error at this site. What it does instead is not yet read, so the
-                    //   throw is migrated to KSPlayerError rather than deleted — deleting it would be
-                    //   writing a control flow nobody has derived. Its own unit.
-                    throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
-                } else {
-                    // 解决从后台切换到前台，解码失败的问题
-                    needReconfig = true
+            // Forward @0x101a6d3f0: no throw and no needReconfig here — log at .error (line 250), then
+            // rebuild the session for the three VT failure codes (didSet invalidates the old one).
+            if status != noErr {
+                KSLog(level: .error, "[video] videoToolbox decode error \(status) isKeyFrame=\(isKeyFrame)", line: 250)
+                if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
+                    if let session = DecompressionSession(assetTrack: session.assetTrack, options: options) {
+                        self.session = session
+                    }
                 }
             }
         } catch {

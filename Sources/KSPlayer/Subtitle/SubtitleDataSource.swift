@@ -94,7 +94,10 @@ public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
         let file = fileURL.absoluteString
         let path = downloadURL.absoluteString
         var array = srtInfoCaches[file] ?? [String]()
-        if !array.contains(where: { $0 == path }) {
+        // L7 Forward @0x101aa55b4: Array<String>.contains(_:) (Equatable, FUN_10001e034), not contains(where:).
+        // ⚑ GAP: Forward persists via `Task { [weak self] in … }` (TaskPriority nil + FUN_101a03fd4), not
+        //   DispatchQueue.global().async — left as is (lane rule: no new Task {}).
+        if !array.contains(path) {
             array.append(path)
             srtInfoCaches[file] = array
             DispatchQueue.global().async { [weak self] in
@@ -327,7 +330,28 @@ public final class OpenSubtitleDataSource: SearchSubtitleDataSource {
     public init(apiKey: String) {
         self.apiKey = apiKey
     }
-    public func login(username: String, password: String) async throws { fatalError("L7: OpenSubtitleDataSource.login — Forward body unread") }
+    // L7 Forward @0x101aa8538 (+ continuations 0x101aa862c / 0x101aa8c7c / 0x101aa8d40 / 0x101aa901c).
+    public func login(username: String, password: String) async throws {
+        guard let loginApi = URL(string: host + "/login") else {
+            return
+        }
+        var request = URLRequest(url: loginApi)
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "User-Agent": "KSPlayer v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Api-Key": apiKey,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["username": username, "password": password])
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        if let token = json["token"] as? String {
+            self.token = token
+        }
+    }
 
     // Task 5 body 2/2 (session 20). Witness FUN_101aab81c → FUN_101aa9374 (the imdbID:tmdbID: delegate, args 0,0).  ⚑[tool=resolve_fun_pins ref=FUN_101aa9374:0x101aa9374 result=RESOLVES_UNIQUELY] = KSPlayer.OpenSubtitleDataSource.searchSubtitle(query: Swift.String, imdbID: Swift.Int, tmdbID: Swift.Int, languages: [Swift.String]) async throws -> [KSPlayer.URLSubtitleInfo]
     // Base cce7002 OpenSubtitleDataSouce P19-adapted: host-field URLs, dropped stored `infos` → RETURNS [URLSubtitleInfo]
@@ -360,14 +384,18 @@ public final class OpenSubtitleDataSource: SearchSubtitleDataSource {
         if queryItems.isEmpty {
             return []
         }
-        guard let searchApi = URL(string: host + "/subtitles")?.add(queryItems: queryItems) else {
+        // L7 Forward @0x101aa97cc: token is required (cbz on its bridge word before the URL is built),
+        // and the headers are one 4-entry allHTTPHeaderFields literal, not addValue calls.
+        guard let token, let searchApi = URL(string: host + "/subtitles")?.add(queryItems: queryItems) else {
             return []
         }
         var request = URLRequest(url: searchApi)
-        request.addValue(apiKey, forHTTPHeaderField: "Api-Key")
-        if let token {
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        request.allHTTPHeaderFields = [
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Api-Key": apiKey,
+            "Authorization": "Bearer " + token,
+        ]
         let (data, _) = try await URLSession.shared.data(for: request)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []
@@ -419,9 +447,10 @@ extension URL {
     // ⚑[tool=member_surface ref=URL.add(queryItems:):0x1019f4a38 result=ret URL (not URL?)] — both nil
     //   paths (URLComponents init tag==1 @0x1019f4c18, `.url` tag==1 @0x1019f4f7c) copy `self` into
     //   the result (vwt initializeWithCopy). isolation: no swift_task_* / ScM call in the body.
-    // L7: Forward also early-returns self on `queryItems.isEmpty` (cbz on count @0x1019f4be8); not ported (body logic).
+    // L7: Forward early-returns self on `queryItems.isEmpty` (cbz on count @0x1019f4be8), sharing the
+    // nil-components return-self tail.
     func add(queryItems: [String: String]) -> URL {
-        guard var urlComponents = components else {
+        guard !queryItems.isEmpty, var urlComponents = components else {
             return self
         }
         var reserved = CharacterSet.urlQueryAllowed

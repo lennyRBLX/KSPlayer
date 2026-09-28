@@ -31,7 +31,10 @@ public class KSPlayerResource: Equatable, Hashable {
      */
     public convenience init(url: URL, options: KSOptions = KSOptions(), name: String = "", cover: URL? = nil, subtitleURLs: [URL]? = nil, extinf: [String: String]? = nil) {
         let definition = KSPlayerResourceDefinition(url: url, definition: "", options: options)
-        let subtitleDataSource: ConstantURLSubtitleDataSource?
+        // L7: Forward @0x101b166cc builds the existential inside each branch (nil → (0, 0); else → (obj, the
+        // ConstantURLSubtitleDataSource: SubtitleDataSource witness)), so the local is already `(any SubtitleDataSource)?`
+        // — no cmp/csel witness select at the designated-init call.
+        let subtitleDataSource: (any SubtitleDataSource)?
         // 0x101b165fc = KSPlayerResource.__allocating_init(url:options:name:cover:subtitleURLs:extinf:). Its
         // prologue pins the parameter registers exactly as declared here: x0 url → x24, x1 options → x28,
         // x2/x3 name, x4 cover, x5 subtitleURLs → x20, x6 extinf. The guard at 0x101b166cc is a bare

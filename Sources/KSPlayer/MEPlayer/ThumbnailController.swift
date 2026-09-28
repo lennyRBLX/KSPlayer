@@ -54,22 +54,44 @@ public struct FFThumbnail: Sendable {
     ///   unlike its three siblings, which is what makes it private rather than a taste call.
     private let _image: UIImage?
     public let time: TimeInterval
-    public init(cgImage: CGImage, time: Double, preferCompressedStorage: Bool, compressionQuality: CGFloat) { fatalError("L7: FFThumbnail.init — Forward body unread") }
+    /// Forward @0x101a19188: the JPEG attempt is the out-of-line helper 0x101a1921c (no source decl —
+    /// gap); its logic is inlined here: encode, else redraw into an 8-bit RGBX context and re-encode.
+    public init(cgImage: CGImage, time: Double, preferCompressedStorage: Bool, compressionQuality: CGFloat) {
+        if preferCompressedStorage {
+            var data = cgImage.data(type: .jpg, quality: compressionQuality)
+            if data == nil, let context = CGContext(data: nil, width: cgImage.width, height: cgImage.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+                if let image = context.makeImage() {
+                    data = image.data(type: .jpg, quality: compressionQuality)
+                }
+            }
+            if let data {
+                jpegData = data
+                _image = nil
+                self.time = time
+                return
+            }
+        }
+        jpegData = nil
+        _image = UIImage(cgImage: cgImage)
+        self.time = time
+    }
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.FFThumbnail.image.getter:0x101a6c344 result=54-instr]
     /// The stored image when present, else decoded from `jpegData`:
     /// ⚑[tool=decode_objc_selector ref=0x10440b958 result='initWithData:']
     /// ⚑[tool=decode_objc_selector ref=0x10440b838 result='init']
-    /// Both nil paths — no data, and `initWithData:` returning nil (`cbnz x22`) — fall to the
-    /// bare `UIImage()`, which is why this cannot be spelled with a single `??`.
+    /// Both nil paths — no data, and `initWithData:` returning nil (`cbnz x22`) — end in a bare
+    /// `UIImage()`, but at two separate sites: Forward hoists the first `allocWithZone` above the
+    /// `jpegData` nil test (shared by `UIImage()` / `UIImage(data:)`), and `?? UIImage()` allocs again.
     public var image: UIImage {
         if let _image {
             return _image
         }
-        guard let jpegData, let decoded = UIImage(data: jpegData) else {
+        guard let jpegData else {
             return UIImage()
         }
-        return decoded
+        return UIImage(data: jpegData) ?? UIImage()
     }
 }
 

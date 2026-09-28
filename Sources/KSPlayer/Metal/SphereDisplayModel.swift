@@ -220,8 +220,10 @@ public class VRBoxDisplayModel: SphereDisplayModel {
         super.set(frame: frame, encoder: encoder)
         let layerSize = KSOptions.sceneSize
         let width = Double(layerSize.width / 2)
-        [(modelViewProjectionMatrixLeft, MTLViewport(originX: 0, originY: 0, width: width, height: Double(layerSize.height), znear: 0, zfar: 0)),
-         (modelViewProjectionMatrixRight, MTLViewport(originX: width, originY: 0, width: width, height: Double(layerSize.height), znear: 0, zfar: 0))].forEach { modelViewProjectionMatrix, viewport in
+        // Forward @0x101a8cba8 heap-allocates the 2-element array (allocObject 0x100) and walks it with
+        // no closure-entry executor check: a for-in, not `.forEach { }`.
+        for (modelViewProjectionMatrix, viewport) in [(modelViewProjectionMatrixLeft, MTLViewport(originX: 0, originY: 0, width: width, height: Double(layerSize.height), znear: 0, zfar: 0)),
+                                                      (modelViewProjectionMatrixRight, MTLViewport(originX: width, originY: 0, width: width, height: Double(layerSize.height), znear: 0, zfar: 0))] {
             encoder.setViewport(viewport)
             var matrix = modelViewProjectionMatrix * modelViewMatrix
             let matrixBuffer = MetalRender.device.makeBuffer(bytes: &matrix, length: MemoryLayout<simd_float4x4>.size)
