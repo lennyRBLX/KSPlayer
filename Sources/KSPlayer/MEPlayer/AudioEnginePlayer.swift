@@ -252,9 +252,12 @@ public class AudioEnginePlayer: AudioBaseOutput, AudioOutput {
     public func play() {
         let elapsed = CFAbsoluteTimeGetCurrent() - lastPrepareTime
         if lastPrepareTime > 0, elapsed < minDelayAfterPrepare {
-            let deadline = DispatchTime.now() + (minDelayAfterPrepare - elapsed)
+            // Forward order: delay (fsub) → DispatchQueue.main → now() + delay → weak box → block.
+            // The weak box stays ahead of the call: the `@MainActor` closure compiles in Swift 6 only
+            // with the literal `DispatchQueue.main.asyncAfter` receiver.
+            let delay = minDelayAfterPrepare - elapsed
             nonisolated(unsafe) weak var weakSelf = self
-            DispatchQueue.main.asyncAfter(deadline: deadline) { @MainActor in
+            DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + delay) { @MainActor in
                 weakSelf?.doPlay()
             }
         } else {
@@ -457,6 +460,7 @@ public final class AudioEngineDynamicsPlayer: AudioEnginePlayer, AudioDynamicsPr
 
     public required init() {
         super.init()
+        engine.attach(nbandEQ)
         engine.attach(dynamicsProcessor)
     }
 }

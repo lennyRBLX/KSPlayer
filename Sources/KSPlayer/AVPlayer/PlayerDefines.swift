@@ -388,7 +388,10 @@ public struct KSPlayerError: CustomNSError, CustomStringConvertible {
     // `Int`-raw enum would hold.
     public let code: Int32
     public let message: String?
-    public init(errorCode: KSPlayerErrorCode) { fatalError("L7: KSPlayerError.init — Forward body unread") }
+    public init(errorCode: KSPlayerErrorCode) {
+        code = 0
+        message = errorCode.rawValue
+    }
 
     // ⚑ s105: the label is `description:`, not `message:` — pin_sweep compares this init's
     // labels against the mangled name the linker wrote and reports (code, description). The
@@ -443,7 +446,9 @@ public struct KSPlayerError: CustomNSError, CustomStringConvertible {
         Int(code)
     }
 
-    public var description: String { fatalError("L7: CustomStringConvertible.description") }
+    public var description: String {
+        "Error Domain=KSPlayerError Code=\(code) Message=\(localizedDescription)"
+    }
 }
 
 /// ⚑[tool=export_trie_oracle ref=KSPlayer.KSPlayerError.localizedDescription.getter:0x1019e1f98 result=110-instr]
@@ -494,8 +499,9 @@ extension KSPlayerError: LocalizedError {
             let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 64)
             buffer.initialize(repeating: 0, count: 64)
             av_strerror(code, buffer, 64)
-            array.append(String(cString: buffer))
+            let string = String(cString: buffer)
             buffer.deallocate()
+            array.append(string)
         }
         return array.joined(separator: "|")
     }

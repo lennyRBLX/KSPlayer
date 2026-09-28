@@ -55,13 +55,11 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     /// 0x17008, 0x17012, 0x17002, 0x17011, 0x17005 = SRT, WEBVTT, TEXT, SUBRIP, MOV_TEXT.
     /// The SET is decidable; the source's ORDER is not, because the compiler split it 4+1 to
     /// vectorise. Written in enum order.
+    /// L7: the five constants sit in memory at 0x1044e8bc0 in the order SRT, WEBVTT, TEXT, SUBRIP,
+    /// MOV_TEXT — a statically-initialized array literal's storage, unrolled + vectorised 4+1 by
+    /// `contains`. A `switch` lowers to a bit test instead (the build's `lsr`/`and` form).
     public var isSrt: Bool {
-        switch codecpar.pointee.codec_id {
-        case AV_CODEC_ID_TEXT, AV_CODEC_ID_MOV_TEXT, AV_CODEC_ID_SRT, AV_CODEC_ID_SUBRIP, AV_CODEC_ID_WEBVTT:
-            return true
-        default:
-            return false
-        }
+        [AV_CODEC_ID_SRT, AV_CODEC_ID_WEBVTT, AV_CODEC_ID_TEXT, AV_CODEC_ID_SUBRIP, AV_CODEC_ID_MOV_TEXT].contains(codecpar.pointee.codec_id)
     }
 
     /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.isDVBTeletext.getter:0x101a1f2f0 result=6-instr]
@@ -142,7 +140,12 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     //   ⚑[tool=l2_field_gate ref=FFmpegAssetTrack.isConvertNALSize:field-records result=absent]
     //   ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.isConvertNALSize:trie result=no-symbol-of-any-kind]
     public var description: String {
+        // L7 @0x101a1fd10: profileName (+0x28) " (…)" precedes formatName (+0x80); the audio part is one
+        // interpolation `", <kmFormatted sampleRate>Hz, <channel.nb_channels (+0x24)>ch"`.
         var description = codecName
+        if let profileName {
+            description += " (\(profileName))"
+        }
         if let formatName {
             description += ", \(formatName)"
         }
@@ -150,8 +153,7 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
             description += "(\(bitsPerRawSample.kmFormatted) bit)"
         }
         if let audioDescriptor {
-            description += ", \(audioDescriptor.sampleRate)Hz"
-            description += ", \(audioDescriptor.channel.description)"
+            description += ", \(audioDescriptor.sampleRate.kmFormatted)Hz, \(audioDescriptor.channel.nb_channels)ch"
         }
         if let formatDescription {
             if mediaType == .video {
@@ -171,8 +173,10 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
         // previously carried CANNOT be what the original source had; it only ever compiled here
         // because SubtitleInfo.language had not been reconstructed yet. The annotation selects the
         // String? overload, which is the one a track description formats.
+        // L7: Forward appends the localized language (languageCode +0x48 → Locale.current
+        // .localizedString(forLanguageCode:)) directly — no literal around it.
         if let language: String = language {
-            description += "(\(language))"
+            description += language
         }
         return description
     }
@@ -361,8 +365,12 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
 
     // ⚑ P55 (session 32): `options: KSOptions?` — SubtitleDecode.init forwards a nullable options through here
     //   (binary FUN_101a6914c → this createContext with nullable options); codecpar.createContext is already KSOptions?.  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
+    // L7 @0x101a20dac: after the throwing call, `stp w9,w8,[x0,#0x5c]` writes AVCodecContext.pkt_timebase
+    // from stream(+0x98)->time_base(+0x20), or — stream nil — from `timebase` (+0xc0, beginAccess).
     func createContext(options: KSOptions?) throws -> UnsafeMutablePointer<AVCodecContext> {
-        try codecpar.pointee.createContext(options: options)
+        let codecContext = try codecpar.pointee.createContext(options: options)
+        codecContext.pointee.pkt_timebase = stream?.pointee.time_base ?? timebase.rational
+        return codecContext
     }
 
     /// ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.timestamp(for:):0x101a20e30 result=52-instr]

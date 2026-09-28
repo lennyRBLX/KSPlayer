@@ -261,7 +261,8 @@ public class DynamicInfo: ObservableObject {
         }
         videoDisplayCount = 0
         let bytesRead = bytesReadBlock()
-        networkSpeed = max(0, Float(bytesRead - lastBytesRead) / Float(interval))
+        // Forward `fcmp s0,#0.0` / `fcsel s9, <0>, s0, ls` = max(x, 0) (`0 >= x ? 0 : x`), not max(0, x).
+        networkSpeed = max(Float(bytesRead - lastBytesRead) / Float(interval), 0)
         lastBytesRead = bytesRead
         lastMediaTime = time
     }
@@ -519,22 +520,21 @@ public extension MediaPlayerProtocol {
     ///   4 is the (0,0) word pair, which IS `String?.none`. The optional chain is folded into the
     ///   table, so `?.description` returning nil for a nil range is the table lookup itself.
     ///
-    /// ⚑ SPELLING CORRECTED once `dynamicRange` below was read. This body's whole prologue — the
-    ///   `AVMediaTypeVideo` search, the `[x26,#0x58]`/`tbnz` enabled test, the call to 0x1019de560
-    ///   — is byte-for-byte the sibling `dynamicRange` getter below, followed by the description
-    ///   table. So the source is the sibling call, not a re-spelled chain; writing the chain out
-    ///   longhand would compile to the same code but is not what is there. The two are
-    ///   indistinguishable from THIS body alone, which is why it took reading `dynamicRange` to
-    ///   settle it.
+    /// ⚑ L7: the chain is spelled out here, NOT the sibling call. The prologue matches the sibling
+    ///   `dynamicRange` getter, but its MainActor closure check reports line 0x12d (301) where the
+    ///   sibling's reports 0x121 (289) — a closure of its own, six lines after `audioFormat`'s
+    ///   (0x127, 295). An inlined sibling would carry the sibling's line.
     var videoFormat: String? {
-        dynamicRange?.description
+        tracks(mediaType: .video).first { $0.isEnabled }?.dynamicRange?.description
     }
 
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.progress.getter:0x1019e0684 result=24-instr]
     /// Calls req0 into d8; `movi.2d v0,#0` then `fcmp d8,#0.0` / `b.eq` returns 0 when the
     /// duration is zero; otherwise calls req4 and `fdiv d0, d0, d8`.
     var progress: CGFloat {
-        duration == 0 ? 0 : currentPlaybackTime / duration
+        // Forward calls req0 (duration) ONCE and keeps it in d8 for both the zero test and the fdiv.
+        let total = duration
+        return total == 0 ? 0 : currentPlaybackTime / total
     }
 
     /// ⚑[tool=llvm-objdump ref=MediaPlayerProtocol.totalTime.getter:0x1019e06e4 result=3-instr]
@@ -706,7 +706,12 @@ public extension MediaPlayerTrack {
     }
 
     var dynamicRange: DynamicRange? {
-        if dovi != nil {
+        if let dovi {
+            // Forward @0x1019de560: `(x0 & 0xff0000) == 0x70000` (dv_profile == 7) →
+            // KSOptions.forceDVForProfile7 ? tag 3 (.dolbyVision) : tag 1 (.hdr10).
+            if dovi.dv_profile == 7 {
+                return KSOptions.forceDVForProfile7 ? .dolbyVision : .hdr10
+            }
             return .dolbyVision
         } else {
             return formatDescription?.dynamicRange
@@ -797,7 +802,9 @@ public extension MediaPlayerTrack {
             if dovi.dv_profile == 8, dovi.dv_bl_signal_compatibility_id == 1 {
                 return kCMVideoCodecType_DolbyVisionHEVC
             }
-            if dovi.dv_profile == 10, codecType == kCMVideoCodecType_AV1,
+            // Forward @0x1019e0c98 calls codecType BEFORE the profile test
+            // (`bl codecType` / `cmp w26,#10` / `ccmp w0,'av01'`), so codecType is the first operand.
+            if codecType == kCMVideoCodecType_AV1, dovi.dv_profile == 10,
                dovi.dv_bl_signal_compatibility_id == 1 || dovi.dv_bl_signal_compatibility_id == 4
             {
                 return CMFormatDescription.MediaSubType(string: "dav1").rawValue
@@ -859,9 +866,12 @@ public extension CMFormatDescription {
         let contentRange: DynamicRange
         if codecType.string == "dvhe" || codecType == kCMVideoCodecType_DolbyVisionHEVC {
             contentRange = .dolbyVision
-        } else if bitDepth == 10 || transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String { /// HDR
+        } else if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String { /// HDR
+            // Forward @0x101a0abb4 has no bitDepth test: dvhe/dvh1 → PQ → HLG → (no transfer, BT.2020) → SDR.
             contentRange = .hdr10
         } else if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG as String { /// HLG
+            contentRange = .hlg
+        } else if transferFunction == nil, colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_2020 as String {
             contentRange = .hlg
         } else {
             contentRange = .sdr
@@ -934,15 +944,91 @@ public extension CMFormatDescription {
             return false
         }
     }
-    public var displaySize: CGSize? { fatalError("L7: CMFormatDescription.displaySize — Forward body unread") }
-    public var hevcExtradata: Data? { fatalError("L7: CMFormatDescription.hevcExtradata — Forward body unread") }
-    public var channelCount: UInt32 { fatalError("L7: CMFormatDescription.channelCount — Forward body unread") }
-    public var sampleRate: Double { fatalError("L7: CMFormatDescription.sampleRate — Forward body unread") }
-    public var formatDescription: CMFormatDescription { fatalError("L7: CMFormatDescription.formatDescription — Forward body unread") }
-    public var sampleSize: UInt32 { fatalError("L7: CMFormatDescription.sampleSize — Forward body unread") }
-    public var commonFormat: AVAudioCommonFormat { fatalError("L7: CMFormatDescription.commonFormat — Forward body unread") }
-    public var isInterleaved: Bool { fatalError("L7: CMFormatDescription.isInterleaved — Forward body unread") }
-    public var layout: UnsafePointer<AudioChannelLayout>? { fatalError("L7: CMFormatDescription.layout — Forward body unread") }
+    /// @0x101a0b744 — extensions → DisplayWidth/DisplayHeight NSNumber.integerValue; both > 0 → size, else nil.
+    public var displaySize: CGSize? {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary?,
+           let width = (dictionary[kCVImageBufferDisplayWidthKey] as? NSNumber)?.intValue,
+           let height = (dictionary[kCVImageBufferDisplayHeightKey] as? NSNumber)?.intValue,
+           width > 0, height > 0
+        {
+            return CGSize(width: width, height: height)
+        }
+        return nil
+    }
+
+    /// @0x101a0ba94 — extensions as? [String: Any] → "SampleDescriptionExtensionAtoms" as? [String: Any] → "hvcC" as? Data.
+    public var hevcExtradata: Data? {
+        if let extensions = CMFormatDescriptionGetExtensions(self) as? [String: Any],
+           let atoms = extensions["SampleDescriptionExtensionAtoms"] as? [String: Any]
+        {
+            return atoms["hvcC"] as? Data
+        }
+        return nil
+    }
+
+    /// @0x101a6362c — ASBD +0x1c (mChannelsPerFrame), nil → 0.
+    public var channelCount: UInt32 {
+        CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee.mChannelsPerFrame ?? 0
+    }
+
+    /// @0x101a6364c — ASBD +0x0 (mSampleRate), nil → 0.
+    public var sampleRate: Double {
+        CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee.mSampleRate ?? 0
+    }
+
+    /// @0x101a6368c — `mov x0,x20; b objc_retain`.
+    public var formatDescription: CMFormatDescription {
+        self
+    }
+
+    /// @0x101a65204 — ASBD +0x20 (mBitsPerChannel), nil → 0.
+    public var sampleSize: UInt32 {
+        CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee.mBitsPerChannel ?? 0
+    }
+
+    /// @0x101a65224 — nil / non-'lpcm' → .otherFormat; float flag: 32 → Float32, 64 → Float64;
+    /// integer: 16 → Int16, 24/32 → Int32; anything else → .otherFormat.
+    public var commonFormat: AVAudioCommonFormat {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM
+        else {
+            return .otherFormat
+        }
+        if asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            switch asbd.mBitsPerChannel {
+            case 32:
+                return .pcmFormatFloat32
+            case 64:
+                return .pcmFormatFloat64
+            default:
+                return .otherFormat
+            }
+        } else {
+            switch asbd.mBitsPerChannel {
+            case 16:
+                return .pcmFormatInt16
+            case 24, 32:
+                return .pcmFormatInt32
+            default:
+                return .otherFormat
+            }
+        }
+    }
+
+    /// @0x101a652b0 — nil / non-'lpcm' → false; else !(flags & kAudioFormatFlagIsNonInterleaved).
+    public var isInterleaved: Bool {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM
+        else {
+            return false
+        }
+        return asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+    }
+
+    /// @0x101a652f8 — tail call CMAudioFormatDescriptionGetChannelLayout(self, nil).
+    public var layout: UnsafePointer<AudioChannelLayout>? {
+        CMAudioFormatDescriptionGetChannelLayout(self, sizeOut: nil)
+    }
 }
 
 func setHttpProxy() {
