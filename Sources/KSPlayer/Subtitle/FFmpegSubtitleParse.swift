@@ -221,8 +221,9 @@ actor FFmpegSubtitle: @preconcurrency KSSubtitleProtocol {
             }
         }
         av_packet_free(&packet)
-        // ⚑ GAP: Forward calls FUN_101a18c4c(query.size) here (@0x101a9ff60, x20 = &parts) — a mutating
-        //   [SubtitlePart] method (EmbedDataSouce.swift/KSMEPlayer.swift region) with no source decl.
+        // L7 lane 16: Forward calls 0x101a18c4c here (@0x101a9ff60: `ldp d0,d1,[query,#0x8]`, x20 = &parts) —
+        //   the mutating [SubtitlePart].adjust(size:) in EmbedDataSouce.swift — before the +0xa0 store.
+        parts.adjust(size: query.size)
         self.parts = parts
         updateTimeRange()
         return self.parts.filter { $0 == time }

@@ -880,7 +880,11 @@ open class KSOptions {
     /// 开启VR模式的陀飞轮
     public nonisolated(unsafe) static var enableSensor = true
     public nonisolated(unsafe) static var isClearVideoWhereReplace = true
-    public nonisolated(unsafe) static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
+    // ⚑ L7 lane 16 (I5): MetalPlayView's VideoOutput conformance is MainActor-isolated in Forward (conformance
+    //   descriptors 0x10356b4b0/0x10356b4c8 flags 0x80000), and an isolated conformance cannot feed a
+    //   `nonisolated(unsafe)` default ("main actor-isolated default value in a nonisolated(unsafe) context").
+    //   The once-init 0x1019bbdd0 stores wt 0x1041d8be8 with no executor check.
+    @preconcurrency @MainActor public static var videoPlayerType: (VideoOutput & UIView).Type = MetalPlayView.self
     public nonisolated(unsafe) static var yadifMode = 1
     public nonisolated(unsafe) static var deInterlaceAddIdet = false
     public let yadifMode: Int

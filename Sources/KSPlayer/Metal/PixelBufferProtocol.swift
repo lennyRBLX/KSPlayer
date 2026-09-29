@@ -447,3 +447,22 @@ extension CGSize {
 extension CVBuffer {
     @used func bytesPerRowOfPlane(at: Int) -> Int { CVPixelBufferGetBytesPerRowOfPlane(self, at) }
 }
+
+// INFERRED 0x101a8b878 (162 insns, no trie symbol): free func — d0/d1/w0 args, x20 never read. NSMutableDictionary
+//   literal (alloc 0x160 = 5 (Any, Any) pairs, key order as written) → CVPixelBufferCreate; status != 0 releases → nil.
+//   Callers: MetalPlayView.init(options:) 0x101a5f3e8 and formatDescription didSet 0x101a5e444 (1, 1, 'BGRA').
+func makePixelBuffer(width: CGFloat, height: CGFloat, pixelFormatType: OSType) -> CVPixelBuffer? {
+    let attributes: NSMutableDictionary = [
+        kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
+        kCVPixelBufferMetalCompatibilityKey: true,
+        kCVPixelBufferWidthKey: width,
+        kCVPixelBufferHeightKey: height,
+        kCVPixelBufferIOSurfacePropertiesKey: NSDictionary(),
+    ]
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(kCFAllocatorDefault, Int(width), Int(height), pixelFormatType, attributes, &pixelBuffer)
+    guard status == kCVReturnSuccess else {
+        return nil
+    }
+    return pixelBuffer
+}

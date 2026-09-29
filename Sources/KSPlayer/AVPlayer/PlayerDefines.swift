@@ -40,6 +40,11 @@ import UIKit
 //      — reaches it without a hop; that init has no trie symbol and is reached by `blr` from the
 //      once-init @0x1019bc664, so settling it means reading that chain. Do not delete `@MainActor`
 //      on the strength of the getter alone.
+// L7 lane 16: Forward (iOS) has no KSOptions windowScene/sceneSize symbols; its callers inline
+// UIApplication.sceneSize / activeWindowScene (UIKitExtend.swift, CallKit guard). The pair stays only for
+// UIKit platforms without CallKit (tvOS), whose `#else` arms (KSMEPlayer.naturalSize,
+// VRBoxDisplayModel.set) still read KSOptions.sceneSize.
+#if !canImport(CallKit)
 public extension KSOptions {
     @MainActor
     static var windowScene: UIWindowScene? {
@@ -52,6 +57,7 @@ public extension KSOptions {
         return window?.bounds.size ?? .zero
     }
 }
+#endif
 #else
 import AppKit
 import SwiftUI

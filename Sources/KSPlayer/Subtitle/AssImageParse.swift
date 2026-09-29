@@ -66,11 +66,11 @@ public final class AssImageParse: KSParseProtocol {
         }
         return false
     }
-    // parse 0x101a8f5a8: Forward passes `scanner.string.contains(" --> ") ? <SRT→ASS converter 0x101aa0390>(…) : scanner.string`.
-    //   The converter lives in KSParseProtocol.swift (closed lane 10, no Sources decl) → GAP review; until it exists
-    //   the plain-content arm is the only one written.
+    // parse 0x101a8f5a8: `scanner.string.contains(" --> ")` (Foundation contains 0x101a8f628, literal released before the
+    //   branch) → x20 = scanner, bl 0x101aa0390 (Scanner.assContent, KSParseProtocol.swift) with no other args; else a
+    //   second `scanner.string` send (0x101a8f654). Result → AssIncrementImageRenderer(content:) 0x101a92b90.
     public func parse(url _: URL, scanner: Scanner) throws -> KSSubtitleProtocol {
-        AssIncrementImageRenderer(content: scanner.string)
+        AssIncrementImageRenderer(content: scanner.string.contains(" --> ") ? scanner.assContent() : scanner.string)
     }
 }
 

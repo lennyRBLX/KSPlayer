@@ -253,6 +253,10 @@ open class PlayerView: UIView, KSPlayerLayerDelegate, @preconcurrency KSSliderDe
     public convenience init() {
         #if os(macOS)
         self.init(frame: .zero)
+        #elseif canImport(CallKit)
+        // Forward 0x1019feb58 inlines UIApplication.sceneSize (sharedApplication → activeWindow 0x101a02de0
+        // → bounds.size, nil → (1, 1)); no KSOptions-owned sceneSize exists in the binary.
+        self.init(frame: CGRect(origin: .zero, size: UIApplication.sceneSize))
         #else
         self.init(frame: CGRect(origin: .zero, size: KSOptions.sceneSize))
         #endif

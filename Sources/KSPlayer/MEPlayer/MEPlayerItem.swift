@@ -132,8 +132,7 @@ public final class MEPlayerItem: @unchecked Sendable {
     func startRecord(url: URL, mediaType: AVFoundation.AVMediaType?) {
         guard let formatContext else { return }
         if let remuxer {
-            remuxer.outputStreamInfo.writeTrailer()
-            remuxer.outputStreamInfo.stop()
+            remuxer.stop()
         }
         remuxer = nil
         do {
@@ -999,8 +998,7 @@ extension MEPlayerItem {
         allPlayerItemTracks.forEach { $0.shutdown() }
         closeFormatContext()
         if let remuxer {
-            remuxer.outputStreamInfo.writeTrailer()
-            remuxer.outputStreamInfo.stop()
+            remuxer.stop()
         }
         remuxer = nil
         delegate?.sourceDidClear()
@@ -1278,8 +1276,7 @@ extension MEPlayerItem {
     ///   writeTrailer/stop/nil triple — reconstructed in an earlier session from its own body.
     func stopRecord() {
         if let remuxer {
-            remuxer.outputStreamInfo.writeTrailer()
-            remuxer.outputStreamInfo.stop()
+            remuxer.stop()
         }
         remuxer = nil
     }

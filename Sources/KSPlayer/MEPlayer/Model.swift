@@ -749,7 +749,11 @@ public struct AmbientViewingEnvironment {
 //  the per-stream Copy/BSF builder (OutputStreamInfo slot13). Reconstructed FAITHFUL from write/slot7
 //  (0x101a65df0, 94 instr). Descriptor 0x1039f01e8, accessor 0x101a6608c.
 //  `final` not binary-pinned (no library evolution) — M2 verifies; matches the Copy/BSF/OSI `final` choice.
-public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:) @0x101a65df0)
+// ⚑ L7 lane 16: internal, not public. Forward's export trie carries the Mn/Ma/N/Mm metadata symbols for
+//   every public KSPlayer class (OutputStreamInfo, FormatContext, MEPlayerItem, …) but none for Remuxer —
+//   its only Remuxer-bearing symbol is MEPlayerItem.remuxer's pfi. A public init also stays an exported
+//   out-of-line entry point in the build (fc 0xd2410), where Forward inlines it into startRecord 0x101a483d4.
+class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:) @0x101a65df0)
     // 5 stored fields — reflection-authoritative NAMES + ORDER; offsets from the driver store-sequence (size 0x34).
     let formatCtx: UnsafeMutablePointer<AVFormatContext>  // +0x10 ⚑ inferred (symref); driver stores formatContext[+0x18];
                                                           //   matches the 1C.5 FormatContext convention (OSI.formatCtx is exactly this)
@@ -775,9 +779,9 @@ public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:
     //   nil, mediaType, nil); the throw arm frees the partial instance via swift_deallocPartialClassInstance
     //   (0x101a4851c) and +0x18 is stored only on success (0x101a48564). filename is computed by the caller
     //   before the allocation (ffmpegString 0x101a4846c) and released after the builder call (owned).
-    public init(formatContext: FormatContext,
-                filename: String,
-                mediaType: AVFoundation.AVMediaType?) throws {
+    init(formatContext: FormatContext,
+         filename: String,
+         mediaType: AVFoundation.AVMediaType?) throws {
         formatCtx = formatContext.formatCtx
         self.mediaType = mediaType
         outputStreamInfo = try FFmpegUtility.write(formatContext: formatContext, to: filename, isMergeStream: true, formatContextOptions: nil, outFormat: nil, mediaType: mediaType, allowAudioCodecs: nil)
@@ -849,13 +853,14 @@ public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:
         }
     }
 
-    // ⚑ UNRESOLVED → P3: write-output completion body (FUN_101a660d0). Emits the transcoded `outputPacket`
-    // to the output format context for `streamIndex` (av_write_frame / av_interleaved_write_frame — the actual
-    // write is devirtualized/unresolved). NOT invented. Reconstruct as its own unit (decompile FUN_101a660d0).
-    private func writeOutputPacket(_ outputPacket: UnsafeMutablePointer<AVPacket>?, streamIndex: Int32) {
-        // UNRESOLVED — devirtualized write-output (FUN_101a660d0); reconstruct as its own unit.
+    // slot 8 — dead in Forward (vtable entry bound to the deleted-method stub), so every use is inlined.
+    // ⚑ L7 lane 16: the writeTrailer/stop pair on `outputStreamInfo`. Forward's three teardown sites
+    //   (KSMEPlayer.stopRecord 0x101a44578/0x101a44580, startRecord 0x101a48430/0x101a48438, and
+    //   closeResources) load +0x18 into x20 and call OutputStreamInfo.writeTrailer (0x101a1b8d4) then
+    //   .stop (0x101a1bb5c) with NO retain/release of the OSI — the guaranteed-self shape of an inlined
+    //   Remuxer method. Spelled at the call site, the build retains/releases the OSI around each call.
+    func stop() { // INFERRED name (slot 8 has no symbol, literal or witness)
+        outputStreamInfo.writeTrailer()
+        outputStreamInfo.stop()
     }
-
-    // slot8 — devirtualized, no readable body.
-    // UNRESOLVED → P3: slot8 (devirt, no body)
 }

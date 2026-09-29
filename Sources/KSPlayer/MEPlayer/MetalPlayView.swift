@@ -37,10 +37,9 @@ public protocol VideoOutput: FrameOutput {
 //   flags 0x80000 = HasGlobalActorIsolation with trailing global-actor type "ScM" (MainActor) — an isolated
 //   conformance; every VideoOutput witness is a bare `b` / the class's own accessor with no executor check (the
 //   @preconcurrency build thunks carry swift_task_isCurrentExecutor checks).
-// GAP (joint KSOptions.swift): spelling `@MainActor VideoOutput` fails typecheck at KSOptions.swift:893
-//   ("main actor-isolated default value in a nonisolated(unsafe) context", `videoPlayerType = MetalPlayView.self`);
-//   Forward's once-init 0x1019bbdd0 stores wt 0x1041d8be8 with no check. Kept @preconcurrency until KSOptions moves.
-public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
+// ⚑ L7 lane 16 (I5): isolated conformance — Forward conformance descriptors 0x10356b4b0/0x10356b4c8 carry
+//   flags 0x80000 (global-actor isolated); KSOptions.videoPlayerType is @MainActor to allow it.
+public final class MetalPlayView: UIView, @MainActor VideoOutput {
 
     /// Field-record index 0 — it opens the class, ahead of `formatDescription`.
     /// Default READ from its own `vpfi` @0x10002c740, which is `mov w0,#1` / `ret` ⇒ `true`, and
@@ -63,7 +62,8 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// which is the second, independent witness.
     /// ⚑[tool=vpfi_initializer_oracle ref=MetalPlayView.dovi:0x10011a290 result=nil-tag-byte-1]
     ///
-    /// ⚠️ THREE THINGS THIS `didSet` DOES THAT THE SOURCE DOES NOT — each its own unit, NOT written
+    /// ✅ L7 lane 16: all three below are now written in the `didSet` (Forward 0x101a5e37c).
+    /// ⚠️ THREE THINGS THIS `didSet` DOES THAT THE SOURCE DID NOT — each its own unit, NOT written
     ///   here because none of them is needed to remove `isDovi`:
     ///   1. an early `guard self.formatDescription != nil else { return }` (`cbz x19` @0x101a5e3ac
     ///      jumping to the epilogue), so `updateVideo` is never reached with nil;
@@ -102,6 +102,22 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         didSet {
             // Forward didSet 0x101a5e37c starts `guard formatDescription != nil else { return }`.
             guard let formatDescription else { return }
+            // ⚑ L7 lane 16: 0x101a5e3b4..0x101a5e3e0 old/new naturalSize (0x101a0aeac) compare (old nil → rebuild);
+            //   layer cast 0x101a5e3f0 BEFORE the second naturalSize, then factory 0x101a8b878 ('BGRA') →
+            //   CVBuffer.formatDescription 0x101a88964 → enqueue(imageBuffer:formatDescription:) 0x101a61f60.
+            if oldValue?.naturalSize != formatDescription.naturalSize {
+                let displayLayer = displayView.displayLayer
+                let naturalSize = formatDescription.naturalSize
+                if let pixelBuffer = makePixelBuffer(width: naturalSize.width, height: naturalSize.height, pixelFormatType: kCVPixelFormatType_32BGRA),
+                   let bufferFormatDescription = pixelBuffer.formatDescription
+                {
+                    displayLayer.enqueue(imageBuffer: pixelBuffer, formatDescription: bufferFormatDescription)
+                }
+            }
+            // ⚑ L7 lane 16: 0x101a5e480..0x101a5e4f4 — options read access, dovi tag test (tag 1 = nil →
+            //   formatDescription.dynamicRange 0x101a0abb4, else #3 = .dolbyVision), one modify store at
+            //   KSOptions.dynamicRange (0x104c63388).
+            options.dynamicRange = dovi != nil ? .dolbyVision : formatDescription.dynamicRange
             options.updateVideo(refreshRate: fps, isDovi: dovi != nil, formatDescription: formatDescription)
         }
     }
@@ -298,9 +314,6 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         //   (0x1044ea8f8) → draw when not paused (0x1044ea8d8), draw(force:) closure 0x101a60fc8 inside
         //   objc_autoreleasePoolPush/Pop. Otherwise it keeps `pixelBuffer` (0x1044ea8b8) current from
         //   renderSource (0x1044ea8c8, weak) getVideoOutputRender(force: false) (wt+0x8) frame +0x18/+0x20.
-        // GAP: Forward 0x101a5f39c..0x101a5f414 then enqueues a 1x1 'BGRA' buffer from helper 0x101a8b878 into
-        //   displayView (formatDescription 0x101a88964, enqueue(imageBuffer:formatDescription:) 0x101a61f60);
-        //   the helper has no decl in the tree, so that tail is not written.
         backgroundTimer.setEventHandler { [weak self] in
             guard let self else {
                 return
@@ -312,6 +325,14 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
             } else {
                 self.pixelBuffer = self.renderSource?.getVideoOutputRender(force: false)?.pixelBuffer
             }
+        }
+        // ⚑ L7 lane 16: Forward 0x101a5f39c..0x101a5f414: layer cast first (held in x24 across the calls), then
+        //   factory 0x101a8b878 (1, 1, 'BGRA') → CVBuffer.formatDescription 0x101a88964 → enqueue 0x101a61f60.
+        let displayLayer = displayView.displayLayer
+        if let pixelBuffer = makePixelBuffer(width: 1, height: 1, pixelFormatType: kCVPixelFormatType_32BGRA),
+           let formatDescription = pixelBuffer.formatDescription
+        {
+            displayLayer.enqueue(imageBuffer: pixelBuffer, formatDescription: formatDescription)
         }
     }
 
@@ -434,15 +455,43 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         draw(force: true)
     }
 
+    // ⚑ L7 lane 16: the autoreleasepool closure is Forward 0x101a60fc8 (603 insns, MainActor check line 0x130).
+    //   · options.videoPipeline copied once (0x101a633c0) into a local; wt+0x20 beginFrameRendering(force:)
+    //     under `?.` (nil → 0); `videoPipeline != nil` read from the local's metadata word.
+    //   · every exit after that re-copies the local and calls wt+0x28 cancelFrameRendering() only when the
+    //     pipeline started and the metal arm did not run (frame nil @0x101a613d0, drawWithResult false
+    //     @0x101a618a0, tail `orn` @0x101a617e0) — one `defer`.
+    //   · frame.pixelBuffer (+0x18/+0x20) stored under a modify access; dovi 10-byte copy; fps store + didSet
+    //     0x101a5e568; cmtime; size 0x101a884b4 then aspectRatio wt+0x38; customizeDar vtable +0x9f8 → setter
+    //     wt+0x40; checkFormatDescription 0x101a61c60; cvPixelBuffer wt+0xc8 → isUseDisplayLayer vtable +0xa30
+    //     with the EDR-headroom test inline (window/windowScene/screen/currentEDRHeadroom, `> 1.0`).
+    //   · metal arm: frame+0x48 (adjustBuffer) = options.adjustBuffer; `drawable as? DrawableRenderResult`
+    //     (swift_dynamicCast flags 6) → wt+0x10 drawWithResult, else self.drawable wt+0x8 draw; both pass
+    //     options.display and &videoPipeline.
     @used private func draw(force: Bool) {
         autoreleasepool {
+            let videoPipeline = options.videoPipeline
+            let pipelineStarted = videoPipeline?.beginFrameRendering(force: force) ?? false
+            if videoPipeline != nil, !pipelineStarted {
+                if force {
+                    // GAP: Forward calls 0x101a61934 here (MetalPlayView method, x20 = self, 203 insns): when
+                    //   !forcedFrameRetryScheduled it sets it, then DispatchQueue.main.asyncAfter(deadline: .now() +
+                    //   (fps <= 1 ? 1/30 : min(1 / Double(fps), 1/30))) with a weak-self block 0x101a63410.
+                    //   No decl in the tree (name unknown).
+                }
+                return
+            }
+            var metalRendered = false
+            defer {
+                if pipelineStarted, !metalRendered {
+                    videoPipeline?.cancelFrameRendering()
+                }
+            }
             guard let frame = renderSource?.getVideoOutputRender(force: force) else {
                 return
             }
-            pixelBuffer = frame.pixelBuffer
-            guard let pixelBuffer else {
-                return
-            }
+            let pixelBuffer = frame.pixelBuffer
+            self.pixelBuffer = pixelBuffer
             // The binary copies the frame's `dovi` RECORD, not its `isDovi` Bool: a 10-byte POD
             // move `ldur x8,[frame,#0x7b]` / `ldurh w9,[frame,#0x83]` into self+0x78..0x81.
             // frame+0x85 (`VideoVTBFrame.isDovi`) is read nowhere in the 603-instruction body.
@@ -451,44 +500,36 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
             let cmtime = frame.cmtime
             let par = pixelBuffer.size
             let sar = pixelBuffer.aspectRatio
-            // The two arguments come from the binary's own signature. `isHDRScreen` is the static
-            // KSOptions.isHDRScreen, which is Optional there; the `?? false` coalesce at this call
-            // site is OURS — the default is not read from the caller.
-            if let pixelBuffer = pixelBuffer.cvPixelBuffer,
-               options.isUseDisplayLayer(frame: frame, isHDRScreen: KSOptions.isHDRScreen ?? false) {
-                if displayView.isHidden {
-                    displayView.isHidden = false
+            if let dar = options.customizeDar(sar: sar, par: par) {
+                pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
+            }
+            checkFormatDescription(pixelBuffer: pixelBuffer)
+            if let cvPixelBuffer = pixelBuffer.cvPixelBuffer,
+               options.isUseDisplayLayer(frame: frame, isHDRScreen: (window?.windowScene?.screen.currentEDRHeadroom ?? 0) > 1.0)
+            {
+                if !metalView.isHidden {
                     metalView.isHidden = true
-                    metalView.clear()
                 }
-                if let dar = options.customizeDar(sar: sar, par: par) {
-                    pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
+                if let formatDescription {
+                    displayView.displayLayer.enqueue(imageBuffer: cvPixelBuffer, formatDescription: formatDescription)
                 }
-                checkFormatDescription(pixelBuffer: pixelBuffer)
-                set(pixelBuffer: pixelBuffer, time: cmtime)
+                // GAP: Forward then calls 0x101a61d3c(frame) (MetalPlayView method, 67 insns): iOS 17+ →
+                //   pixelBuffer edrMetadata-like getter 0x101a88500 non-nil → flickerDetector (modify access)
+                //   0x101a6263c(pixelBuffer) → true → options.onPossibleDisplayLayerFlicker?(). No decl in the tree.
             } else {
-                if !displayView.isHidden {
-                    displayView.isHidden = true
+                if metalView.isHidden {
                     metalView.isHidden = false
                     displayView.displayLayer.flushAndRemoveImage()
                 }
-                let size: CGSize
-                if !options.display.isSphere {
-                    if let dar = options.customizeDar(sar: sar, par: par) {
-                        size = CGSize(width: par.width, height: par.width * dar.height / dar.width)
-                    } else {
-                        size = CGSize(width: par.width, height: par.height * sar.height / sar.width)
+                frame.adjustBuffer = options.adjustBuffer
+                if let drawable = drawable as? DrawableRenderResult {
+                    guard drawable.drawWithResult(frame: frame, display: options.display, pipeline: videoPipeline) else {
+                        return
                     }
                 } else {
-                    size = KSOptions.sceneSize
+                    drawable.draw(frame: frame, display: options.display, pipeline: videoPipeline)
                 }
-                checkFormatDescription(pixelBuffer: pixelBuffer)
-                #if !os(tvOS)
-                if #available(iOS 16, *) {
-                    metalView.metalLayer.edrMetadata = frame.edrMetadata
-                }
-                #endif
-                metalView.draw(frame: frame, display: options.display, size: size)
+                metalRendered = true
             }
             renderSource?.setVideo(time: cmtime, position: frame.position)
         }
@@ -644,16 +685,14 @@ extension MetalPlayView {
         draw(force: false)
     }
 
+    // ⚑ L7 lane 16: Forward 0x101a61c60 (55 insns, called from the draw closure @0x101a61334): formatDescription
+    //   nil → store; else matche wt+0x140 true → return. Then wt+0x30 formatDescription store + didSet
+    //   0x101a5e37c(old). No displayView removeFromSuperview/re-create arm.
     private func checkFormatDescription(pixelBuffer: PixelBufferProtocol) {
-        if formatDescription == nil || !pixelBuffer.matche(formatDescription: formatDescription!) {
-            if formatDescription != nil {
-                displayView.removeFromSuperview()
-                displayView = AVSampleBufferDisplayView()
-                displayView.frame = frame
-                addSubview(displayView)
-            }
-            formatDescription = pixelBuffer.formatDescription
+        if let formatDescription, pixelBuffer.matche(formatDescription: formatDescription) {
+            return
         }
+        formatDescription = pixelBuffer.formatDescription
     }
 
     private func set(pixelBuffer: CVPixelBuffer, time: CMTime) {
