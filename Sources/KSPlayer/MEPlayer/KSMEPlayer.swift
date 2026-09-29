@@ -78,7 +78,9 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     public private(set) var isReadyToPlay: Bool = false
     public var allowsExternalPlayback: Bool = false
     public var usesExternalPlaybackWhileExternalScreenIsActive: Bool = false
-    public private(set) var seekable: Bool = false // ⚑ M2: binary caches this (recon was computed `playerItem.seekable`)
+    // ⚑ L7 lane 13: export trie has seekable vg/vs/vM/vpMV/vpWvd/vpfi (setter 0x101a3dc04, modify 0x101a3dc50),
+    //   unlike isReadyToPlay/playableTime (vg only) → the setter is public, not private(set).
+    public var seekable: Bool = false // ⚑ M2: binary caches this (recon was computed `playerItem.seekable`)
 
     // ⚑ L7: Forward didSet 0x101a3dc90 (416 insns; reached from setter 0x101a3bd0c, modify 0x101a3e354 and
     //   sourceDidChange 0x101a41814). `oldValue != playbackRate` gate; KSLog "[audio] playbackRate=" level 3,
@@ -780,32 +782,30 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         playerItem.send(.open)
     }
 
-    nonisolated public func play() {
+    // ⚑ L7 lane 13 ISOLATION: MainActor (the MediaPlayerProtocol requirement's), not nonisolated. Forward's
+    //   witness thunk 0x101a44798 is a bare `b`, the body has no executor check, and the tail calls the
+    //   @MainActor KSPictureInPictureProtocol req4 (wt +0x28) no-hop; every Forward caller is MainActor
+    //   (setPlaying objc thunk 0x101a44838 checks MainActor; 0x101a46354 / 0x101a465a4 are the MainActor.run closures).
+    public func play() {
         // ⚑ line literal 0x24c = 588 (Forward 0x101a43830 `mov w6,#0x24c`; build had 650).
-        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — the requirement is now declared
-        // (lane 9), but it is MainActor and this method is nonisolated: isolation GAP, lane 13.
         KSLog("play \(self)", line: 588)
         playbackState = .playing
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
-            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
-            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
-            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
+        // Forward: pipController existential, getObjectType, wt +0x28 (req4 invalidatePlaybackState); no cast,
+        // no #available.
+        pipController?.invalidatePlaybackState()
     }
 
-    nonisolated public func pause() {
+    // ⚑ L7 lane 13 ISOLATION: MainActor (the MediaPlayerProtocol requirement's), not nonisolated. Forward's
+    //   witness thunk 0x101a4479c is a bare `b`, the body has no executor check, and the tail calls the
+    //   @MainActor KSPictureInPictureProtocol req4 (wt +0x28) no-hop; every Forward caller is MainActor
+    //   (setPlaying objc thunk 0x101a44838 checks MainActor; 0x101a46354 / 0x101a465a4 are the MainActor.run closures).
+    public func pause() {
         // ⚑ line literal 0x254 = 596 (Forward 0x101a43a48 `mov w6,#0x254`; build had 661).
-        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — the requirement is now declared
-        // (lane 9), but it is MainActor and this method is nonisolated: isolation GAP, lane 13.
         KSLog("pause \(self)", line: 596)
         playbackState = .paused
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            // req4 `invalidatePlaybackState` is a REAL requirement of the binary protocol
-            // (witness 0x1019c77d8 -> selref 0x10440bcb0), but it is iOS 15 / tvOS 15 while the
-            // protocol is tvOS 14, so it is pinned rather than declared. The cast is OURS.
-            (pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
+        // Forward: pipController existential, getObjectType, wt +0x28 (req4 invalidatePlaybackState); no cast,
+        // no #available.
+        pipController?.invalidatePlaybackState()
     }
 
     /// ⚑[tool=llvm-objdump ref=KSMEPlayer.flushVideo():0x101a43b24 result=15-instr]
@@ -893,39 +893,52 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     }
 }
 
+// ⚑ L7 lane 13 ISOLATION: the objc thunks of the sync witnesses all run the MainActor executor check
+//   (swift_task_isCurrentExecutor / reportUnexpectedExecutor "KSPlayer/KSMEPlayer.swift"): setPlaying 0x101a44838
+//   line 0x2d1, TimeRange 0x101a44a38 line 0x2d5, IsPlaybackPaused 0x101a44c4c line 0x2dd, didTransition
+//   0x101a44d1c line 0x2e1, ShouldProhibit 0x101a451b8 line 0x2e6 → @MainActor witnesses of a nonisolated ObjC
+//   protocol = @preconcurrency conformance. Lines pinned via #sourceLocation. skipByInterval stays the async GAP.
 @available(tvOS 14.0, *)
-extension KSMEPlayer: AVPictureInPictureSampleBufferPlaybackDelegate {
-    public func pictureInPictureController(_: AVPictureInPictureController, setPlaying playing: Bool) {
+extension KSMEPlayer: @preconcurrency AVPictureInPictureSampleBufferPlaybackDelegate {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 721)
+    @MainActor public func pictureInPictureController(_: AVPictureInPictureController, setPlaying playing: Bool) {
         playing ? play() : pause()
     }
+#sourceLocation()
 
-    public func pictureInPictureControllerTimeRangeForPlayback(_: AVPictureInPictureController) -> CMTimeRange {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 725)
+    @MainActor public func pictureInPictureControllerTimeRangeForPlayback(_: AVPictureInPictureController) -> CMTimeRange {
         // Handle live streams.
         if duration == 0 {
             return CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
         }
         return CMTimeRange(start: 0, end: duration)
     }
+#sourceLocation()
 
-    public func pictureInPictureControllerIsPlaybackPaused(_: AVPictureInPictureController) -> Bool {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 733)
+    @MainActor public func pictureInPictureControllerIsPlaybackPaused(_: AVPictureInPictureController) -> Bool {
         !isPlaying
     }
+#sourceLocation()
 
-    public func pictureInPictureController(_: AVPictureInPictureController, didTransitionToRenderSize _: CMVideoDimensions) {}
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 737)
+    @MainActor public func pictureInPictureController(_: AVPictureInPictureController, didTransitionToRenderSize _: CMVideoDimensions) {}
+#sourceLocation()
     /// ⚑ ISOLATION: `@MainActor` is Forward-evidenced — the async entry 0x101a44db4 loads
     ///   `MainActor.shared`, takes its `unownedExecutor` and `swift_task_switch`es to it before the
     ///   body 0x101a44e48; the nonisolated build switches to the generic executor (x2 = 0). Body
     ///   already matches (seek(time: currentPlaybackTime + skipInterval.seconds) + shared empty
-    ///   completion 0x10000e52c). GAP: `@MainActor` on this witness fails Swift 6 (non-Sendable
-    ///   `AVPictureInPictureController` sent into a MainActor witness of a nonisolated requirement);
-    ///   the isolation Forward used (SDK-side MainActor protocol?) is unresolved, so kept nonisolated.
-    public func pictureInPictureController(_: AVPictureInPictureController, skipByInterval skipInterval: CMTime) async {
+    ///   completion 0x10000e52c). L7 lane 13: typechecks under the @preconcurrency conformance.
+    @MainActor public func pictureInPictureController(_: AVPictureInPictureController, skipByInterval skipInterval: CMTime) async {
         seek(time: currentPlaybackTime + skipInterval.seconds) { _ in }
     }
 
-    public func pictureInPictureControllerShouldProhibitBackgroundAudioPlayback(_: AVPictureInPictureController) -> Bool {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 742)
+    @MainActor public func pictureInPictureControllerShouldProhibitBackgroundAudioPlayback(_: AVPictureInPictureController) -> Bool {
         false
     }
+#sourceLocation()
 }
 
 @available(macOS 12.0, iOS 15.0, tvOS 15.0, *)
