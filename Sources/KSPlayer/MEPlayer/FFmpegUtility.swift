@@ -46,10 +46,7 @@ public enum FFmpegUtility {
     //   (1952 insns, no self). All the OutputStreamInfo construction work lives here; the class is
     //   allocated only at the very end (swift_allocObject 0x79 @0x101a1e828) through OutputStreamInfo's
     //   internal fields-only init. Forward's trie has no OutputStreamInfo init symbol.
-    //   DEFERRED arms (not reconstructed, see the notes inline): the audio re-encode arm
-    //   (AudioTranscodeContext 0x101a1c02c), the subtitle re-encode arm (SubtitleTranscodeContext +
-    //   encoder helper 0x101a08a94), and the HEVC extradata repair. All three are GAPs (L7 lane 16, I6):
-    //   each needs a callee with no decl in this tree — see the inline notes.
+    //   DEFERRED arm: the HEVC extradata repair (see the note inline).
     public static func write(formatContext: FormatContext, to: String, isMergeStream: Bool, formatContextOptions: [String : Any]?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, allowAudioCodecs: [AVCodecID]?) throws -> OutputStreamInfo {
         // `cbz x24` @0x101a1d0f8: the nil arm builds the empty dictionary (0x1019c3148).
         var formatContextOptions = formatContextOptions ?? [:]
@@ -152,15 +149,17 @@ public enum FFmpegUtility {
             index += 1
             let codecpar = track.codecpar
             if track.mediaType == .audio {
-                // ⚑ GAP (L7 lane 16, I6): when allowAudioCodecs is non-nil, non-empty and does not contain
-                //   codec_id, Forward builds AudioTranscodeContext(codecpar, allowAudioCodecs[0]) (alloc 0x60,
-                //   init 0x101a1c02c, throws → 0x101a1ea24), inserts it into transcodeMap[trackID] (0x1019b3c2c),
-                //   sets timeBaseMap[trackID] = encodeContext.time_base (+0x54, via 0x1019c1a6c) and calls
-                //   avcodec_parameters_from_context(stream.codecpar, encodeContext) (0x1029f5738) instead of the
-                //   copy; the sample_rate == 0 → 48000 check below is shared. Blocked: that init's encoder
-                //   builder 0x101a08a94 has no decl (AVFFmpegExtension.swift's Forward range), so the
-                //   (codecpar, codecID) throwing init cannot be written here.
-                avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+                // ⚑ L7 lane 17: 0x101a1dccc — AudioTranscodeContext (alloc 0x60, init 0x101a1c02c, throw →
+                //   0x101a1ea24), transcodeMap insert 0x1019b3c2c, time_base (+0x54) via 0x1019c1a6c,
+                //   avcodec_parameters_from_context 0x1029f5738; the sample_rate check is shared (0x101a1dd0c).
+                if let allowAudioCodecs, !allowAudioCodecs.isEmpty, !allowAudioCodecs.contains(codecpar.pointee.codec_id) {
+                    let transcode = try AudioTranscodeContext(codecpar: codecpar, codecID: allowAudioCodecs[0])
+                    transcodeMap[trackID] = transcode
+                    timeBaseMap[trackID] = transcode.encodeContext.pointee.time_base
+                    avcodec_parameters_from_context(stream.pointee.codecpar, transcode.encodeContext)
+                } else {
+                    avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+                }
                 if stream.pointee.codecpar.pointee.sample_rate == 0 {
                     stream.pointee.codecpar.pointee.sample_rate = 48000
                 }
@@ -174,11 +173,24 @@ public enum FFmpegUtility {
                 // 0x101a19338 = MediaPlayerTrack.codecs specialized for FFmpegAssetTrack; byte-swapped, nil → 0.
                 stream.pointee.codecpar.pointee.codec_tag = track.codecs?.bigEndian ?? 0
             } else if track.mediaType == .subtitle {
-                // ⚑ GAP (L7 lane 16, I6): codecID = MOV_TEXT (0x17005) when ["mp4", "mov"] contains formatName,
-                //   else WEBVTT (0x17012, 0x101a1e000) for "hls"; codec_id != codecID → SubtitleTranscodeContext
-                //   arm: createContext(options:) (0x101a07dc8 @0x101a1e0b0) + the encoder builder 0x101a08a94
-                //   (@0x101a1e0c4, no decl in this tree) + accessor 0x101a1f2a4. Blocked on 0x101a08a94.
-                avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+                // ⚑ L7 lane 17: 0x101a1df98 — ["mp4", "mov"].contains(formatName) → MOV_TEXT (0x17012 - 0xd),
+                //   "hls" → WEBVTT (0x17012), else copy; codec_id (+0x4) != codecID → SubtitleTranscodeContext
+                //   (alloc 0x40, accessor 0x101a1f2a4), transcodeMap insert, avcodec_parameters_from_context.
+                let codecID: AVCodecID?
+                if ["mp4", "mov"].contains(formatName) {
+                    codecID = AV_CODEC_ID_MOV_TEXT
+                } else if formatName == "hls" {
+                    codecID = AV_CODEC_ID_WEBVTT
+                } else {
+                    codecID = nil
+                }
+                if let codecID, codecpar.pointee.codec_id != codecID {
+                    let transcode = try SubtitleTranscodeContext(codecpar: codecpar, codecID: codecID)
+                    transcodeMap[trackID] = transcode
+                    avcodec_parameters_from_context(stream.pointee.codecpar, transcode.encodeContext)
+                } else {
+                    avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+                }
             }
         }
         let result = avio_open(&formatCtx.pointee.pb, to, AVIO_FLAG_WRITE)

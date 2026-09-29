@@ -201,16 +201,13 @@ public final class AudioTranscodeContext: TranscodeProtocol {  // `final` not bi
     var sampleFormat:  AVSampleFormat                            // field-record concrete
     var sampleRate:    Int32                                     // ⚑ symref-walled; FFmpeg sample_rate is `int`(32) + siblings are FFmpeg-typed → Int32. l2_field_gate's `Int?` is an UNSCOPED property-symbol (another class's sampleRate) — adjudicated noise.
 
-    // ⚑ GAP (L7 lane 16, I6): Forward's init 0x101a1c02c is `(codecpar pointer x0, codecID x1) throws`:
-    //   decodeContext = try codecpar.createContext(options: nil) (0x101a07dc8, x0=nil, x20=codecpar), then
-    //   encodeContext = try <0x101a08a94>(codecID) — an AVCodecParameters encoder-context builder with NO
-    //   decl in this tree (its Forward range belongs to AVFFmpegExtension.swift, not this file) → not invented.
+    // ⚑ L7-17: Forward init 0x101a1c02c is `(codecpar x0, codecID x1) throws`: decodeContext =
+    //   try codecpar.createContext(options: nil) (0x101a07dc8, x0=nil, x20=codecpar) → +0x10, then
+    //   encodeContext = try createEncoderContext(codecID:) (0x101a08a94, x20 still codecpar) → +0x18.
     //   A throw from either lands in swift_deallocPartialClassInstance(self, meta, 0x60, 7) (0x101a1c0a8).
-    //   The signature below stays the inferred placeholder; everything AFTER the two contexts is Forward's.
-    public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
-                encodeContext: UnsafeMutablePointer<AVCodecContext>) {
-        self.decodeContext = decodeContext
-        self.encodeContext = encodeContext
+    public init(codecpar: UnsafeMutablePointer<AVCodecParameters>, codecID: AVCodecID) throws { // INFERRED labels
+        decodeContext = try codecpar.pointee.createContext(options: nil)
+        encodeContext = try codecpar.pointee.createEncoderContext(codecID: codecID)
         // Forward init 0x101a1c0ec-0x101a1c104: av_audio_fifo_alloc(encode +0x15c sample_fmt,
         // +0x164 ch_layout.nb_channels, +0x178 frame_size)!.
         fifo = av_audio_fifo_alloc(encodeContext.pointee.sample_fmt, encodeContext.pointee.ch_layout.nb_channels, encodeContext.pointee.frame_size)!
@@ -380,11 +377,12 @@ public final class SubtitleTranscodeContext: TranscodeProtocol {  // `final` not
     let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
     var subtitle:      AVSubtitle = AVSubtitle()                 // field-record concrete (the decoded AVSubtitle)
 
-    // init: vtable-empty, devirt init (no readable body) → minimal inferred. ⚑ inferred.
-    public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
-                encodeContext: UnsafeMutablePointer<AVCodecContext>) {
-        self.decodeContext = decodeContext
-        self.encodeContext = encodeContext
+    // ⚑ L7 lane 17: no standalone init in Forward — inlined into write 0x101a1d014 (alloc 0x40 via
+    //   accessor 0x101a1f2a4, subtitle +0x20..0x3c zeroed; createContext(options: nil) 0x101a07dc8 → +0x10,
+    //   throw → 0x101a1eb98; encoder builder 0x101a08a94 → +0x18, throw → 0x101a1eba0).
+    public init(codecpar: UnsafeMutablePointer<AVCodecParameters>, codecID: AVCodecID) throws { // INFERRED labels
+        decodeContext = try codecpar.pointee.createContext(options: nil)
+        encodeContext = try codecpar.pointee.createEncoderContext(codecID: codecID)
     }
 
     // req1 — ⚑ L7 lane 16: 0x101a1cc50 (witness thunk 0x101a1cda8). gotSubtitle = 0 on the stack;
@@ -438,11 +436,12 @@ public final class VideoTranscodeContext: TranscodeProtocol {  // `final` not bi
     let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
     var decodedFrame:  UnsafeMutablePointer<AVFrame>? = nil      // field-record concrete (optional)
 
-    // init: vtable-empty, devirt init (no readable body) → minimal inferred. ⚑ inferred.
-    public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
-                encodeContext: UnsafeMutablePointer<AVCodecContext>) {
-        self.decodeContext = decodeContext
-        self.encodeContext = encodeContext
+    // ⚑ L7 lane 17: no standalone init in Forward — inlined into write 0x101a1d014 (alloc 0x40 via
+    //   accessor 0x101a1f2a4, subtitle +0x20..0x3c zeroed; createContext(options: nil) 0x101a07dc8 → +0x10,
+    //   throw → 0x101a1eb98; encoder builder 0x101a08a94 → +0x18, throw → 0x101a1eba0).
+    public init(codecpar: UnsafeMutablePointer<AVCodecParameters>, codecID: AVCodecID) throws { // INFERRED labels
+        decodeContext = try codecpar.pointee.createContext(options: nil)
+        encodeContext = try codecpar.pointee.createEncoderContext(codecID: codecID)
     }
 
     // req1 — ⚑ L7 lane 16: 0x101a1ce14 (witness thunk 0x101a1cf10). avcodec_send_packet (0x102a1a424)

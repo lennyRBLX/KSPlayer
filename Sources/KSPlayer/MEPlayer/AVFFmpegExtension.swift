@@ -565,6 +565,67 @@ extension AVCodecParameters {
         }
         return ctx
     }
+
+    // ⚑ L7-17: Forward 0x101a08a94 (226 insns, AVFFmpegExtension.swift range, after 0x101a08744) — x0 codecID,
+    //   x20 = &self (mutating, no copy), throws. Callers: AudioTranscodeContext.init 0x101a1c08c, write()
+    //   subtitle arm @0x101a1e0c4.
+    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_find_encoder:0x102916b40 result=CONFIRMED]
+    //   avcodec_alloc_context3 0x102d5394c(codec); avcodec_get_supported_config 0x10294de58 (config 4 =
+    //   CHANNEL_LAYOUT); av_channel_layout_compare 0x103237220; av_mallocz 0x103254028; avcodec_open2 0x10294caf8.
+    //   Errors: find → code 0 + "Cannot find encoder for codec_id=" (33 B @0x103d35320) + codecID; alloc → code 0 +
+    //   33 B @0x103d34e50 (codecContextCreate); open → live code + 23 B @0x103d34e00 (codesContextOpen).
+    mutating func createEncoderContext(codecID: AVCodecID) throws -> UnsafeMutablePointer<AVCodecContext> { // INFERRED
+        guard let codec = avcodec_find_encoder(codecID) else {
+            throw KSPlayerError(code: 0, description: "Cannot find encoder for codec_id=\(codecID)")
+        }
+        var codecContextOption = avcodec_alloc_context3(codec)
+        guard let codecContext = codecContextOption else {
+            throw KSPlayerError(code: 0, description: KSPlayerErrorCode.codecContextCreate.rawValue)
+        }
+        if codec_type == AVMEDIA_TYPE_AUDIO {
+            // +0x98 → +0x158; codec+0x38 `cbz` → brk; first match of codecpar format (+0x2c) else sample_fmts[0].
+            codecContext.pointee.sample_rate = sample_rate
+            let sampleFmts = codec.pointee.sample_fmts!
+            var sampleFmt = sampleFmts[0]
+            var i = 0
+            while sampleFmts[i] != AV_SAMPLE_FMT_NONE {
+                if sampleFmts[i].rawValue == format {
+                    sampleFmt = sampleFmts[i]
+                    break
+                }
+                i += 1
+            }
+            codecContext.pointee.sample_fmt = sampleFmt
+            // supported layouts: exact (compare == 0) → same nb_channels → codecpar ch_layout (+0x80).
+            var layouts: UnsafeRawPointer?
+            var count: Int32 = 0
+            avcodec_get_supported_config(codecContext, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0, &layouts, &count)
+            var channelLayout = ch_layout
+            if let layouts {
+                let buffer = UnsafeBufferPointer(start: layouts.assumingMemoryBound(to: AVChannelLayout.self), count: Int(count))
+                channelLayout = buffer.first { ch_layout == $0 } ?? buffer.first { $0.nb_channels == ch_layout.nb_channels } ?? ch_layout
+            }
+            codecContext.pointee.ch_layout = channelLayout
+        } else if codec_type == AVMEDIA_TYPE_SUBTITLE {
+            // extradata_size (+0x18) → subtitle_header_size (+0x2ec); av_mallocz(size + 64)! + memcpy → +0x2f0;
+            // time_base (+0x54) = {1, 1000} (0x1035647a0).
+            codecContext.pointee.subtitle_header_size = extradata_size
+            if extradata_size > 0 {
+                let header = av_mallocz(Int(extradata_size + 64))!
+                memcpy(header, extradata, Int(extradata_size))
+                codecContext.pointee.subtitle_header = header.assumingMemoryBound(to: UInt8.self)
+            }
+            codecContext.pointee.time_base = AVRational(num: 1, den: 1000)
+        }
+        codecContext.pointee.width = width
+        codecContext.pointee.height = height
+        let result = avcodec_open2(codecContext, codec, nil)
+        guard result == 0 else {
+            avcodec_free_context(&codecContextOption)
+            throw KSPlayerError(code: result, description: KSPlayerErrorCode.codesContextOpen.rawValue)
+        }
+        return codecContext
+    }
 }
 
 extension String {
