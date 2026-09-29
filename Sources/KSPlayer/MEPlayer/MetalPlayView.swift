@@ -14,16 +14,32 @@ import QuartzCore
 #if canImport(MetalKit)
 import MetalKit
 #endif
+// ⚑ L7 lane 14: requirement order read from Forward protocol descriptor 0x1039efc54 and MetalPlayView's
+//   witness table 0x1041d8be8 (conformance 0x10356b4b0): +0x8 base FrameOutput (0x1041d8c80); +0x10-0x20
+//   renderSource g/s/m; +0x28-0x38 options g/s/m; +0x40 displayLayer g; +0x48-0x58 pixelBuffer g/s/m
+//   (s = MetalPlayView.pixelBuffer.setter 0x101a5e9cc itself); +0x60-0x70 rotation g/s/m (= MetalPlayView's own
+//   UInt16 accessors 0x101a5e8b4 / 0x101a5e8f4 / 0x101a5e940); +0x78 init(options:) 0x101a5ed78; +0x80 readNextFrame;
+//   +0x88 / +0x90 bare `b` thunks to enterBackground 0x101a6095c / enterForeground 0x101a60ad0. No `invalidate`
+//   slot: it is FrameOutput req3 (base table +0x20 → 0x101a60808).
 public protocol VideoOutput: FrameOutput {
     var renderSource: VideoOutputRenderSourceDelegate? { get set }
     var options: KSOptions { get set }
     var displayLayer: AVSampleBufferDisplayLayer { get }
-    var pixelBuffer: PixelBufferProtocol? { get }
+    var pixelBuffer: PixelBufferProtocol? { get set }
+    var rotation: UInt16 { get set }
     init(options: KSOptions)
-    func invalidate()
     func readNextFrame()
+    func enterBackground()
+    func enterForeground()
 }
 
+// ⚑ L7 lane 14 ISOLATION: Forward conformance descriptor 0x10356b4b0 (and its FrameOutput twin 0x10356b4c8) has
+//   flags 0x80000 = HasGlobalActorIsolation with trailing global-actor type "ScM" (MainActor) — an isolated
+//   conformance; every VideoOutput witness is a bare `b` / the class's own accessor with no executor check (the
+//   @preconcurrency build thunks carry swift_task_isCurrentExecutor checks).
+// GAP (joint KSOptions.swift): spelling `@MainActor VideoOutput` fails typecheck at KSOptions.swift:893
+//   ("main actor-isolated default value in a nonisolated(unsafe) context", `videoPlayerType = MetalPlayView.self`);
+//   Forward's once-init 0x1019bbdd0 stores wt 0x1041d8be8 with no check. Kept @preconcurrency until KSOptions moves.
 public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
 
     /// Field-record index 0 — it opens the class, ahead of `formatDescription`.
@@ -90,7 +106,8 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         }
     }
 
-    private var fps = Float(60) {
+    // ⚑ L7: Forward init(options:) stores the default 0x3f800000 (= 1.0) at 0x101a5eebc through the fps offset global 0x1044ea8e8.
+    private var fps = Float(1) {
         didSet {
             if fps != oldValue {
                 if KSOptions.preferredFrame {
@@ -146,7 +163,7 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     /// `ret` — so `= 0` is transcribed, not assumed to be the zero default.
     /// ⚑[tool=export_trie_oracle ref=MetalPlayView.rotation:0x10356b4e0 result=vpMV-public]
     public var rotation: UInt16 = 0
-    public private(set) var pixelBuffer: PixelBufferProtocol?
+    public var pixelBuffer: PixelBufferProtocol?
     public var options: KSOptions
     // Binary type is the NARROWER `VideoOutputRenderSourceDelegate?`; OutputRenderSourceDelegate
     // refines it with the audio half, which this view never uses.
@@ -244,10 +261,6 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     // ⚑[tool=fieldrec ref=MetalPlayView:0x1039efd08 result=17-fields-no-displayLayerDelegate]
     public init(options: KSOptions) {
         self.options = options
-        // @0x101a5f144: `ldrb w8,[options, <KSOptions global 0x104c63400>]` then
-        // `strb w8,[self, <global 0x1044ea928>]`. Both globals are named by their `vpWvd`, so both
-        // sides of this assignment are read rather than matched by name.
-        renderUseDispatchSourceTimer = options.renderUseDispatchSourceTimer
         // ⚑[tool=export_trie_oracle ref=MetalPlayView.init(options:):0x101a5eda8 result=drawable-store@0x101a5f0ec]
         // Read from the init, via the OFFSET GLOBAL — this class is `metadata_init=1`, so field
         // accesses index by a register loaded from a per-field global and never use a literal
@@ -261,15 +274,45 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
         // ⚑[tool=bind_oracle ref=__got:0x104112e20 result=swift_dynamicCastObjCClassUnconditional]
         // ⚑[tool=bind_oracle ref=__objc_classrefs:0x104410d20 result=CAMetalLayer]
         drawable = metalView.layer as! CAMetalLayer
+        // @0x101a5f144: `ldrb w8,[options, <KSOptions global 0x104c63400>]` then
+        // `strb w8,[self, <global 0x1044ea928>]`. Both globals are named by their `vpWvd`, so both
+        // sides of this assignment are read rather than matched by name.
+        renderUseDispatchSourceTimer = options.renderUseDispatchSourceTimer
         super.init(frame: .zero)
-        addSubview(displayView)
-        addSubview(metalView)
+        // ⚑ L7: Forward 0x101a5f194 / 0x101a5f1b0 call UIView.addSub(view:) 0x1019f245c (UXKit.swift), not addSubview.
+        addSub(view: displayView)
+        addSub(view: metalView)
         metalView.isHidden = true
         //        displayLink = CADisplayLink(block: renderFrame)
-        displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
+        // ⚑ L7: Forward 0x101a5f1d4..0x101a5f288: add(to:forMode:) is sent to the new link before the optional is
+        //   read back, then `isPaused` is set through DisplayLinkProtocol wt+0x10 with constant 1 on a force-unwrap
+        //   (no pause() call; play()/pause() only react to a change of the stored isPaused, which starts true).
+        let displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
+        self.displayLink = displayLink
         // 一定要用common。不然在视频上面操作view的话，那就会卡顿了。
-        displayLink?.add(to: .main, forMode: .common)
-        pause()
+        displayLink.add(to: .main, forMode: .common)
+        self.displayLink!.isPaused = true
+        // ⚑ L7: Forward 0x101a5f294..0x101a5f35c: setEventHandler(qos:flags:handler:) with default qos/flags; the
+        //   handler 0x101a628bc → 0x101a5f4b8 captures a weak box (swift_unknownObjectWeakInit) and runs a MainActor
+        //   executor check. Timer-driven render: `renderUseDispatchSourceTimer`(0x1044ea928) && !`isBackground`
+        //   (0x1044ea8f8) → draw when not paused (0x1044ea8d8), draw(force:) closure 0x101a60fc8 inside
+        //   objc_autoreleasePoolPush/Pop. Otherwise it keeps `pixelBuffer` (0x1044ea8b8) current from
+        //   renderSource (0x1044ea8c8, weak) getVideoOutputRender(force: false) (wt+0x8) frame +0x18/+0x20.
+        // GAP: Forward 0x101a5f39c..0x101a5f414 then enqueues a 1x1 'BGRA' buffer from helper 0x101a8b878 into
+        //   displayView (formatDescription 0x101a88964, enqueue(imageBuffer:formatDescription:) 0x101a61f60);
+        //   the helper has no decl in the tree, so that tail is not written.
+        backgroundTimer.setEventHandler { [weak self] in
+            guard let self else {
+                return
+            }
+            if self.renderUseDispatchSourceTimer, !self.isBackground {
+                if !self.isPaused {
+                    self.draw(force: false)
+                }
+            } else {
+                self.pixelBuffer = self.renderSource?.getVideoOutputRender(force: false)?.pixelBuffer
+            }
+        }
     }
 
     public func play() {
@@ -356,12 +399,23 @@ public final class MetalPlayView: UIView, @preconcurrency VideoOutput {
     }
     #endif
 
+    // ⚑ L7 lane 14: Forward 0x101a60488 (118 insns): pixelBuffer = nil (modify, 2-word store); `metalView.isHidden`
+    //   (0x1044ea8a0) → displayLayer.flushAndRemoveImage(); else `drawable` (0x1044ea8d0) existential copy →
+    //   Drawable wt +0x10 (clear()), then a MainActor Task (nil priority, empty capture) 0x101a63318 → 0x101a60660:
+    //   Task.sleep(nanoseconds: 0x3b9aca00) throwing (error resume 0x101a607d4 returns it) → 0x101a60760:
+    //   MetalRender.mtlTextureCache (once 0x101a83794) non-nil → CVMetalTextureCacheFlush(cache, 0).
     public func flush() {
         pixelBuffer = nil
-        if displayView.isHidden {
-            metalView.clear()
-        } else {
+        if metalView.isHidden {
             displayView.displayLayer.flushAndRemoveImage()
+        } else {
+            drawable.clear()
+            Task {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                if let mtlTextureCache = MetalRender.mtlTextureCache {
+                    CVMetalTextureCacheFlush(mtlTextureCache, 0)
+                }
+            }
         }
     }
 

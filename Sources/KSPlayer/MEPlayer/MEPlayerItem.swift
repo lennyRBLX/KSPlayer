@@ -879,7 +879,7 @@ extension MEPlayerItem {
         let first = (formatContext?.assetTracks ?? []).first { $0.trackID == corePacket.pointee.stream_index }
         if let first, first.isEnabled {
             if let formatContext, formatContext.seekByBytes, formatContext.byteSeek,
-               let playList = formatContext.ioContext as? PlayList, playList.currentStream != nil
+               let playList = formatContext.ioContext as? PlayList, let currentStream = playList.currentStream
             {
                 if corePacket.pointee.dts > 0 {
                     var position = corePacket.pointee.pos
@@ -887,14 +887,22 @@ extension MEPlayerItem {
                         position = prePosition
                     }
                     if position > 0, fileSize > 0, (self.formatContext?.duration ?? 0) > 0 {
-                        for _ in playList.playlists {
-                            // ⚑ GAP (PlayerDefines.swift MovieStream): Forward reads MovieStream witness
-                            //   +0x20 (Int64 byte offset) per stream and takes the first with position < it,
-                            //   compares CMTime(value: dts * tb.num, timescale: tb.den).seconds / duration
-                            //   with Double(position) / Double(fileSize); when they differ by more than 0.01
-                            //   it reads currentStream's witness +0x8 (Double), converts it to a timestamp
-                            //   delta (value * den / num), adds it to dts and pts, then breaks.
-                            //   MovieStream declares no requirements, so the loop body cannot be written.
+                        // ⚑ L7 (#49): Forward 0x101a51578 keeps the PlayList wt+0x20 result (currentStream) and
+                        //   0x101a51634 calls ITS wt+0x18 (MovieStream.files, 0x28-stride PlayFileProtocol existentials).
+                        //   Each element: wt+0x20 (endPosition), `cmp position, x0; b.lt` → first hit leaves the loop
+                        //   (0x101a51a24). Hit: first.timebase (+0xc0) cmtime(for: dts) seconds / (formatContext?.duration
+                        //   ?? 0) vs Double(position) / Double(fileSize), `fabd` > 0.01 (0x103487958); then wt+0x8
+                        //   (startTime) * den / num → Int64 added (checked) to dts (+0x10) then pts (+0x8).
+                        for file in currentStream.files {
+                            if position < file.endPosition {
+                                let seconds = first.timebase.cmtime(for: corePacket.pointee.dts).seconds / (self.formatContext?.duration ?? 0)
+                                if abs(Double(position) / Double(fileSize) - seconds) > 0.01 {
+                                    let delta = first.timebase.getPosition(from: file.startTime)
+                                    corePacket.pointee.dts += delta
+                                    corePacket.pointee.pts += delta
+                                }
+                                break
+                            }
                         }
                     }
                     prePosition = position

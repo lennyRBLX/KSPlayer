@@ -730,9 +730,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     //     if !isSame { self.videoOutput.<VideoOutput wt +0x50>(nil) }; audioOutput.flush() (FrameOutput +0x18);
     //     if self.videoOutput === captured videoOutput, window != nil, let tb = displayLayer.controlTimebase
     //     { CMTimebaseSetTime(tb, CMTimeMake(Int64(currentPlaybackTime), 1)) } }; completion(result).
-    // GAP (MetalPlayView.swift, VideoOutput): wt +0x50 is called with a 2-word nil — the setter of
-    //   `pixelBuffer: PixelBufferProtocol? { get set }` (class-bound existential; getter is +0x48). This tree
-    //   declares `pixelBuffer { get }`, so `videoOutput.pixelBuffer = nil` cannot be spelled; the arm is empty.
+    //   wt +0x50 is called with a 2-word nil — the setter of `pixelBuffer: PixelBufferProtocol? { get set }`.
     nonisolated public func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void)) {
         KSLog("\(self) seek from \(currentPlaybackTime) to \(time)", line: 522)
         let time = max(time, 0)
@@ -755,7 +753,7 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
                 if result {
                     loadState = .loading
                     if !isSameTime {
-                        // GAP: self.videoOutput.pixelBuffer = nil (VideoOutput wt +0x50, undeclared setter)
+                        self.videoOutput.pixelBuffer = nil
                     }
                     audioOutput.flush()
                     if self.videoOutput === videoOutput, videoOutput.window != nil, let controlTimebase = videoOutput.displayLayer.controlTimebase {
@@ -870,17 +868,17 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
         videoOutput.pixelBuffer?.cgImage()
     }
 
-    // ⚑ L7 GAP (MetalPlayView.swift, VideoOutput): Forward 0x101a44008 (15 insns) is exactly
-    //   `videoOutput.<VideoOutput wt +0x88>()`, and enterForeground 0x101a44044 opens with wt +0x90. MetalPlayView
-    //   has enterBackground()/enterForeground(), but this tree's VideoOutput ends at readNextFrame (Forward +0x80),
-    //   so neither requirement is declared and the calls cannot be spelled. Body left empty.
-    public func enterBackground() {}
+    // ⚑ L7: Forward 0x101a44008 (15 insns) is exactly `videoOutput.<VideoOutput wt +0x88>()` (enterBackground).
+    public func enterBackground() {
+        videoOutput.enterBackground()
+    }
 
-    // ⚑ L7: Forward 0x101a44044 (106 insns): [VideoOutput wt +0x90 — GAP above]; playbackState == .paused (2);
+    // ⚑ L7: Forward 0x101a44044 (106 insns): videoOutput.<VideoOutput wt +0x90>() (enterForeground); playbackState == .paused (2);
     //   playerItem.seekable INLINED (formatContext / pb / pb.seekable > 0 / duration != 0); playerItem.duration > 0;
     //   options.hardwareDecode; then seek(time: currentPlaybackTime) (0x101a42944) with the [weak self] closure
     //   0x101a441ec: shouldResumePlayback (0x1044ea1c0) && !options.isDLNARunning (+0x47) → .playing, else .paused.
     public func enterForeground() {
+        videoOutput.enterForeground()
         if playbackState == .paused, playerItem.seekable, duration > 0, options.hardwareDecode {
             seek(time: currentPlaybackTime) { [weak self] _ in
                 guard let self else { return }
