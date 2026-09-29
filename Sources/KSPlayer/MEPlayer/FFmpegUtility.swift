@@ -507,23 +507,29 @@ public final class IOInterruptContext {
     //   The field's mangled type carries a private discriminator, so IOInterruptToken IS file-private
     //   in Forward (the access level is readable after all). `fileprivate` here because a stored
     //   property cannot be more visible than its type, and openFormatContext (same file) reads it.
-    fileprivate let token: IOInterruptToken // @ +0x28
+    // Initial value: Forward emits `variable initialization expression of token` 0x10199acdc (36 insns,
+    // 0x10199acdc–0x10199ad6c), and init FUN_101a391bc inlines the same sequence: swift_once 0x1044e9ab8 →
+    // registry 0x1044e9ac0; lock(reg+0x10); id = reg+0x18; `add x8,id,#1; cmp x8,#1; mov w8,#1;
+    // csinc x8,x8,id,ls` @0x10199ad18 → nextID = id+1 (wrapping), 1 when that is 0; unlock; allocObject 0x20;
+    // tok+0x10 = id; `cbz id → brk` (bitPattern!); tok+0x18 = id.
+    fileprivate let token: IOInterruptToken = {
+        let reg = IOInterruptRegistry.shared
+        reg.lock.lock()
+        let id = reg.nextID
+        let next = id &+ 1
+        reg.nextID = next == 0 ? 1 : next
+        reg.lock.unlock()
+        return IOInterruptToken(id: id, opaque: UnsafeMutableRawPointer(bitPattern: UInt(id))!)
+    }() // @ +0x28
 
     /// Designated init — reconstructed from FUN_101a391bc (vtable slot 0).
     /// Allocating thunk @0x101a33658 calls this then balances ARC on the closure.
     @used init(_ block: (@Sendable () -> Bool)?) {
-        // *(self+0x10) = 0 is the declaration default above.
-        let reg = IOInterruptRegistry.shared           // _swift_once → DAT_1044e9ac0
-        reg.lock.lock()                                // objc_stub::lock(reg+0x10)
-        let id = reg.nextID                            // id = *(reg+0x18)
-        reg.nextID = id &+ 1                           // reg.nextID = id &+ 1 (wrapping)
-        reg.lock.unlock()                              // objc_stub::unlock(reg+0x10)
-        // token built inline @FUN_101a391bc: tok.id = id; tok.opaque = id (raw ptr).
-        // body guards `if (id != 0)` before the opaque store → bitPattern!/non-nil is faithful.
-        let token = IOInterruptToken(id: id, opaque: UnsafeMutableRawPointer(bitPattern: UInt(id))!)
-        self.block = block                             // *(self+0x18)=fn, *(self+0x20)=ctx
-        self.token = token                             // *(self+0x28) = tok
-        reg.register(self, token: token)               // FUN_101a34a20 → contexts[id] = weak(self)
+        // flag (+0x10) and token (+0x28) come from their declaration initial values; Forward
+        // 0x101a3923c stores block fn/ctx (+0x18/+0x20) with the token, retains token, then
+        // FUN_101a34a20 register(self, token) with x20 still the registry from the inlined token init.
+        self.block = block
+        IOInterruptRegistry.shared.register(self, token: token)
     }
 
     /// deinit `0x101a34cd4` (51 insns; trie `…IOInterruptContextCfd`, deallocating thunk `…CfD`

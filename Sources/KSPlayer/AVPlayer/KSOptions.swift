@@ -545,17 +545,6 @@ open class KSOptions {
 
     // 缓冲算法函数
     open func playable(capacitys: [CapacityProtocol], isFirst: Bool, isSeek: Bool) -> LoadingState {
-        // Forward 0x1019ec77c (PlayerDefines.swift, no decl here): Double -> UInt8 that returns 0 for
-        // negative/NaN, 255 for >= 255, else the truncating conversion.
-        func progressValue(_ value: Double) -> UInt8 {
-            if value < 0 || value.isNaN {
-                return 0
-            }
-            if value >= 255 {
-                return 255
-            }
-            return UInt8(value)
-        }
         // Forward 0x1019b8524: one min(by:) over frameCount + packetCount, then both counts read off it.
         let capacity = capacitys.min { $0.frameCount + $0.packetCount < $1.frameCount + $1.packetCount }
         let packetCount = capacity?.packetCount ?? 0
@@ -565,9 +554,10 @@ open class KSOptions {
         let loadedTimes = capacitys.map(\.loadedTime)
         let maxLoadedTime = loadedTimes.max() ?? 0
         let minLoadedTime = loadedTimes.min() ?? 0
+        // Forward 0x1019b82a4 `bl 0x1019ec77c` (shared with KSAVPlayer.updatePlayableDuration 0x1019a7c80).
         let progress: UInt8 = preferredForwardBufferDuration == 0
             ? 100
-            : progressValue(maxLoadedTime * 100.0 / preferredForwardBufferDuration)
+            : bufferingProgressValue(maxLoadedTime * 100.0 / preferredForwardBufferDuration)
         // Forward closure 0x1019b88cc.
         let isPlayable = capacitys.allSatisfy { capacity in
             if capacity.isEndOfFile {

@@ -132,9 +132,10 @@ class VideoSwresample: FrameChange {
         self.format = format
         self.height = height
         self.width = width
-        if self.dstWidth == nil, self.dstHeight == nil,
-           format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_YUV420P10LE
-               || format == AV_PIX_FMT_YUV422P10LE || format == AV_PIX_FMT_YUV444P10LE {
+        // Forward 0x101a66370-0x101a663a0: the same `cmeq`/`umaxv` lanes as transfer(frame:) 0x101a66770 — lanes 0-2
+        // from the static array elements 0x1044eb2f8 (object 0x1044eb2d8, AVPixelFormat.leftShift's literal), lane 3
+        // `movi v2.4s,#0x1a` (RGBA).
+        if self.dstWidth == nil, self.dstHeight == nil, format.leftShift > 0 || format == AV_PIX_FMT_RGBA {
             return
         }
         let dstWidth = dstWidth ?? width
