@@ -159,7 +159,9 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         condition.lock()
         defer { condition.unlock() }
         var index = headIndex
-        if index > 0, index == tailIndex {
+        // Forward 0x101a17248: `ldp x8,x9,[x20,#0x20]` loads tailIndex unconditionally, then
+        // `cmp x8,#0; ccmp x8,x9,#0,ne` — the tailIndex compare is not behind the `> 0` short-circuit.
+        if index == tailIndex, index > 0 {
             index -= 1
         }
         guard let item = _buffer[Int(index & mask)] else {
@@ -181,10 +183,11 @@ public class CircularBuffer<Item: ObjectQueueItem> {
                     index -= 1
                     while index > headIndex {
                         if let packet = _buffer[Int(index & mask)] as? Packet, packet.isKeyFrame {
-                            if abs(packet.seconds - seconds) <= 10 {
-                                return (index, packet.seconds)
+                            // Forward 0x101a17a28 `b.le` (ule) to the success arm = !(abs > 10): NaN succeeds.
+                            if abs(packet.seconds - seconds) > 10 {
+                                return nil
                             }
-                            return nil
+                            return (index, packet.seconds)
                         }
                         index -= 1
                     }
@@ -217,9 +220,21 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         return nil
     }
 
-    /// Vtable F28: a dead slot of shape M, so Forward keeps no body, callers or strings. Name INFERRED;
-    /// the declaration only holds the slot.
-    func unreadSlot28() {}
+    /// Vtable F28 (M; ledger: seek F27 < F28 < flush F29): the slot's Impl is dead in Forward (WMO devirtualized),
+    /// but the body survives INLINED at two call sites:
+    ///   - AsyncPlayerItemTrack.updateCache override 0x101a5db74, range 0x101a5dbe0–0x101a5dc1c on packetQueue (+0xa0):
+    ///     condition(+0x18).lock(); `ldr x8,[x20,#0x28]; cmp x8,x19; b.cc` → if headIndex <= tailIndex(+0x28)
+    ///     { headIndex(+0x20) = headIndex; condition.signal() }; condition.unlock(). No swift_beginAccess.
+    ///   - MEPlayerItem.usePacketCacheSeek 0x101a55de4 on subtitle outputRenderQueue with argument 0 (compare folded).
+    /// Name and label INFERRED (no symbol).
+    func update(headIndex: UInt) { // INFERRED
+        condition.lock()
+        defer { condition.unlock() }
+        if headIndex <= tailIndex {
+            self.headIndex = headIndex
+            condition.signal()
+        }
+    }
 
     public func flush() {
         condition.lock()

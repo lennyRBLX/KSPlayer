@@ -521,7 +521,7 @@ public final class VideoVTBFrame: MEFrame {
     // edrMetaData, doviData, rpuBuffer. The init itself is dead-stripped; parameter order is ours.
     init(pixelBuffer: PixelBufferProtocol, fps: Float, isKeyFrame: Bool, dovi: DOVIDecoderConfigurationRecord?, edrMetaData: EDRMetaData?, doviData: KSDOVIMetadata?, rpuBuffer: Data?) {
         self.pixelBuffer = pixelBuffer
-        configureColorSpace(dovi: dovi, pixelBuffer: pixelBuffer)
+        pixelBuffer.configureColorSpace(dovi: dovi)
         self.fps = fps
         self.isKeyFrame = isKeyFrame
         isDovi = dovi != nil

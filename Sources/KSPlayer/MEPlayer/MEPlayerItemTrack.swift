@@ -359,10 +359,20 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
         packetQueue.seek(seconds: time, needKeyFrame: needKeyFrame)
     }
 
-    // ⚑ L7 gap: Forward also overrides updateCache(headIndex:time:) here (0x101a5db74, override-table entry 9):
-    //   seekTime (isAccurateSeek-gated), isLoopModel = false, state = .flush, outputRenderQueue.flush(), then
-    //   CircularBuffer's dead slot F28 inlined (lock; if headIndex <= tailIndex { headIndex = …; signal }; unlock).
-    //   That CircularBuffer method is lane 11's decl; the override waits for it.
+    // Forward 0x101a5db74 (override-table entry 9): seekTime (options+0x71 isAccurateSeek, fcsel), isLoopModel(+0x60)
+    // = false then its didSet 0x101a5d1bc, state(+0x28) = .flush, outputRenderQueue(+0x58).flush() 0x101a17ac4,
+    // then packetQueue(+0xa0).update(headIndex:) inlined (CircularBuffer F28). No isEndOfFile / isNeedKeyFrame store.
+    override func updateCache(headIndex: UInt, time: TimeInterval) {
+        if options.isAccurateSeek {
+            seekTime = time
+        } else {
+            seekTime = 0
+        }
+        isLoopModel = false
+        state = .flush
+        outputRenderQueue.flush()
+        packetQueue.update(headIndex: headIndex)
+    }
 
     override func seek(time: TimeInterval) {
         if decodeTask.isFinished {

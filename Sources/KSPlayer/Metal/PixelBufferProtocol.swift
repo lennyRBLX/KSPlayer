@@ -98,6 +98,39 @@ extension PixelBufferProtocol {
         return nil
     }
     #endif
+
+    // INFERRED name: Forward 0x101a88b68 (KSPlayer/PixelBufferProtocol.swift, no trie symbol) is a
+    // protocol-extension method — self x20, dovi x0/x1, Self metadata x2, witness table x3 — laid out
+    // after edrMetadata (0x101a88500); CVBuffer specialization 0x101a6c9ec. Witness reads:
+    // transferFunction get/set wt+0x80/+0x88, colorPrimaries get wt+0x68, colorspace get/set wt+0x98/+0xa0;
+    // KSOptions.colorSpace(colorPrimaries:transferFunction:dovi:) 0x1019c6878; the dovi fallbacks inline
+    // CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ / _HLG) keyed on dv_bl_signal_compatibility_id
+    // (x0 byte 7: < 2 → PQ, == 4 → HLG).
+    func configureColorSpace(dovi: DOVIDecoderConfigurationRecord?) { // INFERRED
+        if transferFunction == nil, let dovi {
+            switch dovi.dv_bl_signal_compatibility_id {
+            case 0, 1:
+                transferFunction = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+            case 4:
+                transferFunction = kCVImageBufferTransferFunction_ITU_R_2100_HLG
+            default:
+                break
+            }
+        }
+        if let colorPrimaries {
+            colorspace = KSOptions.colorSpace(colorPrimaries: colorPrimaries, transferFunction: transferFunction, dovi: dovi)
+        }
+        if colorspace == nil, let dovi {
+            switch dovi.dv_bl_signal_compatibility_id {
+            case 0, 1:
+                colorspace = KSOptions.colorSpace2020PQ
+            case 4:
+                colorspace = KSOptions.colorSpace2020HLG
+            default:
+                break
+            }
+        }
+    }
 }
 
 extension CVPixelBuffer: PixelBufferProtocol {

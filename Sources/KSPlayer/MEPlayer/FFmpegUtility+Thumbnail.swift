@@ -251,7 +251,20 @@ extension FFmpegUtility {
                     KSLog(level: .verbose, "[Thumb] decoded frame: index=\(index), pts=\(pts), time=\(String(format: "%.2f", time))s, format=\(frame.pointee.format), size=\(frame.pointee.width)x\(frame.pointee.height)", line: 475)
                     let thumbnail: FFThumbnail? = try autoreleasepool {
                         let pixelBuffer = try reScale.transfer(frame: frame.pointee)
-                        guard var cgImage = thumbnailImage(frame: frame.pointee, pixelBuffer: pixelBuffer, dovi: assetTrack?.dovi) else {
+                        // thumbnailImage(frame:pixelBuffer:dovi:) body, inline here in Forward
+                        // (0x101a25dc0: frame copy, dovi read, doviMetadata 0x101a2fedc,
+                        // configureColorSpace 0x101a88b68, renderThumbnail 0x101a300f8, else cgImage() wt+0x120).
+                        let avFrame = frame.pointee
+                        let dovi = assetTrack?.dovi
+                        let image: CGImage?
+                        if let doviData = doviMetadata(frame: avFrame), pixelBuffer.planeCount > 1 {
+                            let vtbFrame = VideoVTBFrame(pixelBuffer: pixelBuffer, fps: 60, isKeyFrame: avFrame.flags & AV_FRAME_FLAG_KEY != 0, dovi: dovi, edrMetaData: nil, doviData: doviData, rpuBuffer: nil)
+                            pixelBuffer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+                            image = renderThumbnail(frame: vtbFrame)
+                        } else {
+                            image = pixelBuffer.cgImage()
+                        }
+                        guard var cgImage = image else {
                             return nil
                         }
                         if cgImage.width > Int(thumbWidth) {
@@ -426,24 +439,29 @@ public class ThumbnailSession {
             throw KSPlayerError(code: 0, description: "Avg frame rate = 0, ignore")
         }
         // A fresh KSOptions carrying only the decoder knobs, with hardware decode forced off. Forward
-        // unwraps codecpar (0x101a27038) before the option copy, so the copy is the argument expression.
+        // unwraps codecpar (0x101a27038 cbz → brk) before the option copy, and the copy is inline
+        // (KSOptions.init 0x1019b2f7c at 0x101a27070, no closure), released after createContext.
+        let codecParameters: UnsafeMutablePointer<AVCodecParameters> = videoStream.pointee.codecpar
+        var codecOptions: KSOptions?
+        if let options {
+            let copied = KSOptions()
+            copied.decoderOptions = options.decoderOptions
+            copied.lowres = options.lowres
+            copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
+            copied.hardwareDecode = false
+            codecOptions = copied
+        }
         let codecContext: UnsafeMutablePointer<AVCodecContext>
         do {
-            codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: options.map { options in
-                let copied = KSOptions()
-                copied.decoderOptions = options.decoderOptions
-                copied.lowres = options.lowres
-                copied.videoSoftDecodeThreadCount = options.videoSoftDecodeThreadCount
-                copied.hardwareDecode = false
-                return copied
-            })
+            codecContext = try codecParameters.pointee.createContext(options: codecOptions)
         } catch {
             FFmpegUtility.close(formatCtx: formatCtx)
             throw error
         }
         self.codecContext = codecContext
         guard let frame = av_frame_alloc() else {
-            var codecContext: UnsafeMutablePointer<AVCodecContext>? = codecContext
+            // Forward 0x101a27264 reloads self.codecContext (ldur x8,[x19,#0x8]) for the free.
+            var codecContext = self.codecContext
             avcodec_free_context(&codecContext)
             FFmpegUtility.close(formatCtx: formatCtx)
             throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
@@ -459,7 +477,9 @@ public class ThumbnailSession {
         let hasDovi = assetTrack?.isDovi ?? false
         self.hasDovi = hasDovi
         dovi = assetTrack?.dovi
-        isHDR = hasDovi || colorTrc == AVCOL_TRC_SMPTE2084 || colorTrc == AVCOL_TRC_ARIB_STD_B67
+        // Forward 0x101a27354-6c: w26 = hasDovi, then `orr w9,trc,#2; cmp #0x12` sets it — the two trc
+        // compares fold to one unconditional test, hasDovi is or-ed in, no short-circuit branch.
+        isHDR = colorTrc == AVCOL_TRC_SMPTE2084 || colorTrc == AVCOL_TRC_ARIB_STD_B67 || hasDovi
         KSLog("[Thumb] HDR检测: isHDR=\(isHDR), color_trc=\(colorTrc.rawValue), hasDovi=\(hasDovi)", line: 739)
         reScale = VideoSwresample(dstWidth: thumbWidth, dstHeight: thumbHeight, dstFormat: thumbnailPixelFormat(AVPixelFormat(rawValue: format)), fps: 60, dovi: assetTrack?.dovi)
         let duration = av_rescale_q(formatCtx.pointee.duration, AVRational(num: 1, den: AV_TIME_BASE), videoStream.pointee.time_base)
@@ -512,7 +532,10 @@ public class ThumbnailSession {
         isClosed = true
         reScale?.shutdown()
         reScale = nil
+        // Forward 0x101a27b8c-b90: `str xzr,[x20,#0x20]` after av_frame_free inside the same access
+        // scope (merged with the nil store); codecContext gets no such store.
         av_frame_free(&frame)
+        frame = nil
         avcodec_free_context(&codecContext)
         if formatCtx != nil {
             FFmpegUtility.close(formatCtx: formatCtx)
@@ -916,6 +939,10 @@ private func doviMetadata(frame: AVFrame) -> KSDOVIMetadata? {
 
 /// FUN_101a306bc. With Dolby Vision RPU metadata on a bi-planar buffer, render through the DV
 /// pipeline; otherwise the buffer's own `cgImage()`. Name inferred.
+/// `@inline(never)`: Forward keeps 0x101a306bc out of line at generateThumbnail(for:), both
+/// generateThumbnail(at:), generateSequentially and generateThumbnailAtTime(formatCtx:); only
+/// generateThumbnailFromCache carries the body inline (written out there).
+@inline(never)
 private func thumbnailImage(frame: AVFrame, pixelBuffer: PixelBufferProtocol, dovi: DOVIDecoderConfigurationRecord?) -> CGImage? {
     if let doviData = doviMetadata(frame: frame), pixelBuffer.planeCount > 1 {
         let vtbFrame = VideoVTBFrame(pixelBuffer: pixelBuffer, fps: 60, isKeyFrame: frame.flags & AV_FRAME_FLAG_KEY != 0, dovi: dovi, edrMetaData: nil, doviData: doviData, rpuBuffer: nil)

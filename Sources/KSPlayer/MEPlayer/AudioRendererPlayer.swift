@@ -92,7 +92,7 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setPreferredOutputNumberOfChannels(Int(audioFormat.channelCount))
         try? AVAudioSession.sharedInstance().setPreferredSampleRate(audioFormat.sampleRate)
-        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)")
+        KSLog("[audio] set preferredOutputNumberOfChannels=\(audioFormat.channelCount) outputNumberOfChannels=\(AVAudioSession.sharedInstance().outputNumberOfChannels)", line: 72)
         #endif
         if let periodicTimeObserver {
             synchronizer.removeTimeObserver(periodicTimeObserver)
@@ -110,10 +110,13 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
         }
         flushTime = true
         if timestamp != -1 {
+            // Forward 0x101a13d14: swift_isEscapingClosureAtFileLocation w2=0x53 (#filePath len), w3=0x56 (86), w4=0x1f.
+#sourceLocation(file: "/Users/johnil/Work/git/KSPlayer/Sources/KSPlayer/MEPlayer/AudioRendererPlayer.swift", line: 86)
             requestQueue.sync {
                 currentRender = nil
                 renderer.stopRequestingMediaData()
             }
+#sourceLocation()
         }
     }
 
@@ -156,7 +159,7 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
     // flush-pending flag, then on the requestQueue tears down the in-flight render + renderer state.
     override public func flush() {
         flushTime = true
-#sourceLocation(file: "KSPlayer/AudioRendererPlayer.swift", line: 123)
+#sourceLocation(file: "/Users/johnil/Work/git/KSPlayer/Sources/KSPlayer/MEPlayer/AudioRendererPlayer.swift", line: 123)
         requestQueue.sync {
             currentRender = nil
             renderer.stopRequestingMediaData()
