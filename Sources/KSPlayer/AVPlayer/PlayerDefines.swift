@@ -206,8 +206,11 @@ extension DynamicRange {
 // vtable +0x108 dispatch thunk], SphereDisplayModel wt 0x1041da228 [+0x10 = 0x101a8c5a4, vtable
 // +0x198 thunk]. Isolation evidence points the other way from this @MainActor: both conformance
 // descriptors have flags 0 (no isolated conformance), the witnesses have no executor check, and
-// MetalRender 0x101a873b4 / 0x101a86090 call `set` with none. Kept @MainActor because the
-// conformers (DisplayModel.swift, SphereDisplayModel.swift — not this lane) are @MainActor.
+// MetalRender 0x101a873b4 / 0x101a86090 call `set` with none. Kept @MainActor because a
+// `nonisolated` requirement does not typecheck (L7 lane 12 probe, 11 errors): the witnesses read
+// class-isolated state (pipeline(pixelBuffer:), posBuffer/uvBuffer/indexBuffer, modelViewMatrix) and
+// SphereDisplayModel.set calls the @MainActor MotionSensor.shared.matrix() (Metal/MotionSensor.swift);
+// DoviDisplayModel.set also overrides it. Unpicking that is a cross-file isolation unit (writer GAP).
 @MainActor
 public protocol DisplayEnum: AnyObject {
     // nonisolated: it is a stored immutable Bool, and KSOptions reads it from a nonisolated
@@ -853,29 +856,32 @@ extension AbstractAVIOContext: DownloadProtocol {}
 // protocol_signature: 2 requirements, BOTH instance Methods; NumRequirementsInSignature 0, so it
 // is NOT class-constrained and must not be written `: AnyObject`; no associated types.
 //
-// Declared EMPTY with its requirements pinned, on the same footing as `MovieStream` and
-// `VideoPipeline`. The two requirement names are NOT recoverable:
-//   · conformance_walker gives three conformers — __C.CAMetalLayer (wt 0x1041d9e70) and two
-//     RealityKit types whose conformer descriptors lie outside the image (0x1052f5900,
-//     0x1052f5700), so decode_witness_table cannot walk them at all.
-//   · CAMetalLayer's own two witnesses are 0x101a856dc, which forwards to the trie-negative
-//     0x101a854b0, and 0x101a856fc, whose only distinguishing act is an ObjC `setEDRMetadata:`
-//     send — a selector, not a Swift requirement name.
+// Requirement names come from the L7 lane 10/12 walk of __swift5_proto: all three witness tables
+// (CAMetalLayer wt 0x1041d9e70, RealityKit.TextureResource wt 0x1041d9ea0, TextureResource.DrawableQueue
+// wt 0x1041d9ed0) forward +0x8 to each conformer's exported
+// `draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?)` (0x101a856dc → 0x101a854b0,
+// 0x101a85e60 → 0x101a85778, 0x101a85ec8 → 0x101a85cac) and +0x10 to its exported `clear()`
+// (0x101a856fc, 0x101a85e80, and DrawableQueue's ICF'd `ret` 0x10000e52c). The conformer descriptors are
+// the ones in MetalRender.swift (cd 0x10356c4f8 / 0x10356c528 / 0x10356c548); the three types' draw and
+// clear are exported, so public witnesses satisfy this public protocol.
 //
-// A NEAR MISS WORTH RECORDING, because it would be easy to take as evidence: the trie contains
-// `(extension in KSPlayer):RealityKit.TextureResource.Drawable.present(commandBuffer:)`. That
-// `Drawable` is RealityKit's own NESTED TextureResource.Drawable, a different type that merely
-// shares the name — it is not a requirement of this protocol, and reading it as one would put a
-// fabricated method here.
-// ⚑[tool=conformance_walker ref=KSPlayer.Drawable:0x1039eda20 result=requirement-names-irreducible]
+// The trie's `(extension in KSPlayer):RealityKit.TextureResource.Drawable.present(commandBuffer:)` is
+// RealityKit's NESTED TextureResource.Drawable (a KSDrawable conformer), not a requirement here.
+// ⚑[tool=witness_walk ref=KSPlayer.Drawable:0x1039eda20 result=+0x8 draw(frame:display:pipeline:), +0x10 clear()]
 public protocol Drawable {
-    // 2 instance Method requirements, left undeclared. The L7 lane 10 walk of __swift5_proto names
-    // them: all three witness tables (CAMetalLayer 0x1041d9e70, TextureResource 0x1041d9ea0,
-    // DrawableQueue 0x1041d9ed0) forward +0x8 to each conformer's exported
-    // `draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?)` and +0x10 to its
-    // exported `clear()` (DrawableQueue's is the ICF'd `ret` 0x10000e52c). They are held back because
-    // the source's CAMetalLayer witnesses (MetalRender.swift) are internal, and a public protocol's
-    // witnesses on an open class must be public, so declaring them here would fail the build.
+    func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?)
+    func clear()
+}
+
+// DrawableRenderResult @0x1039eda48 (`$s8KSPlayer20DrawableRenderResultMp` is NOT in the export trie → internal),
+// the descriptor right after Drawable's. protocol_signature: requirement +0x8 is the base-protocol
+// entry `Self: Drawable`, +0x10 one instance method. Conformers CAMetalLayer (cd 0x10356c518,
+// wt 0x1041d9e88 → 0x101a85750 → 0x101a854b0), TextureResource (cd 0x10356c538, wt 0x1041d9eb8 →
+// 0x101a85ea0 → 0x101a85778) and DrawableQueue (cd 0x10356c558, wt 0x1041d9ee8 → 0x101a85ee8 →
+// 0x101a85cac). The method name is the `#function` string each of those Bool bodies passes to KSLog,
+// "drawWithResult(frame:display:pipeline:)", and the return is their `w0` Bool.
+protocol DrawableRenderResult: Drawable {
+    func drawWithResult(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) -> Bool
 }
 
 //  Reconstructed binary-faithful from Forward 1.3.17 (KSPlayer module).
@@ -1314,6 +1320,10 @@ public struct KSClock {
 
     // @0x101a58100..0x101a58124 (inlined copy): `time.seconds` is evaluated first, then
     // `rate * (CACurrentMediaTime() - lastMediaTime)` is added — the rate factor was missing.
+    // Operand order is left as is: the two inlined copies disagree. MEPlayerItem @0x101a58120 is
+    // `fmul d0, d11(rate), d0(now - last)` = `rate * (…)`, but KSOptions' copy @0x1019bf164 is
+    // `fmul d0, d0(now - last), d1(rate)` = `(…) * rate`, and it also loads lastMediaTime/rate after
+    // CACurrentMediaTime rather than before. fmul is commutative, so the binary cannot pick one.
     func getTime() -> TimeInterval {
         time.seconds + rate * (CACurrentMediaTime() - lastMediaTime)
     }

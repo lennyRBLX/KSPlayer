@@ -11,6 +11,9 @@ import Metal
 import QuartzCore
 import simd
 import UIKit
+#if canImport(RealityKit)
+import RealityKit
+#endif
 
 class MetalRender {
 
@@ -76,14 +79,18 @@ class MetalRender {
         return buffer
     }()
 
-    private nonisolated(unsafe) static let leftShiftMatrixBuffer: MTLBuffer? = {
+    // Not private: DoviDisplayModel.set 0x101a825b4 reads storage 0x104c63710 directly (once token
+    // 0x1044ed228, `add x8,x8,#0x710` @0x101a827bc), same storage setFragmentBuffer 0x101a86ea4 reads @0x101a86f64.
+    nonisolated(unsafe) static let leftShiftMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<UInt8>(1, 1, 1)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<UInt8>>.size)
         buffer?.label = "leftShit"
         return buffer
     }()
 
-    private nonisolated(unsafe) static let leftShiftSixMatrixBuffer: MTLBuffer? = {
+    // Not private: DoviDisplayModel.set 0x101a825b4 reads storage 0x104c63718 directly (once token
+    // 0x1044ed180, `add x8,x8,#0x718` @0x101a827a0), same storage setFragmentBuffer 0x101a86ea4 reads @0x101a86f2c.
+    nonisolated(unsafe) static let leftShiftSixMatrixBuffer: MTLBuffer? = {
         var firstColumn = SIMD3<UInt8>(64, 64, 64)
         let buffer = MetalRender.device.makeBuffer(bytes: &firstColumn, length: MemoryLayout<SIMD3<UInt8>>.size)
         buffer?.label = "leftShit"
@@ -105,9 +112,105 @@ class MetalRender {
         commandBuffer.commit()
     }
 
-    // MetalRender.draw is GONE. It had no counterpart in the binary under any name; Forward's
-    // real render entry point is the MTLRenderCommandEncoder extension at the bottom of this
-    // file, and keeping a second one would have meant inventing a call path.
+    // Forward 0x101a873b4, no symbol. Name from the `#function` cstring its KSLog passes,
+    // "draw(frame:display:drawable:pipeline:)" (0x103d39e50), KSLog line 113 (`mov w6,#0x71`).
+    // Called direct (`bl`) from CAMetalLayer.drawWithResult 0x101a854b0 with (frame, display
+    // existential, drawable, pipeline address) and no self → static. Returns the Bool that
+    // drawWithResult returns.
+    // INFERRED owner MetalRender (static, self unused; upstream KSPlayer's MetalRender.draw(…drawable:)).
+    // The Anime4KFrameDump gate 0x101a784d4 and dumpDecoded 0x101a778a8 / dumpRendered 0x101a77d20
+    // calls have no decl in Anime4KFrameDump.swift and are not written (writer GAP, review).
+    static func draw(frame: VideoVTBFrame, display: DisplayEnum, drawable: CAMetalDrawable, pipeline: VideoPipeline?) -> Bool {
+        if let inputTexture = pipeline?.inputTexture {
+            let size = frame.pixelBuffer.size
+            if inputTexture.width != Int(size.width) || inputTexture.height != Int(size.height) {
+                KSLog("[MetalRender] \u{26A0}\u{FE0F} inputTexture size mismatch: texture=\(inputTexture.width)x\(inputTexture.height), video=\(Int(size.width))x\(Int(size.height))")
+            }
+            renderPassDescriptor.colorAttachments[0].texture = inputTexture
+            renderPassDescriptor.colorAttachments[0].storeAction = .store
+        } else {
+            renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
+        }
+        let pixelBuffer = frame.pixelBuffer
+        let inputTextures = pixelBuffer.textures()
+        guard !inputTextures.isEmpty,
+              let commandBuffer = commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)
+        else {
+            return false
+        }
+        encoder.pushDebugGroup("RenderFrame")
+        encoder.setFragmentSamplerState(samplerState, index: 0)
+        for (index, texture) in inputTextures.enumerated() {
+            texture.label = "texture\(index)"
+            encoder.setFragmentTexture(texture, index: index)
+        }
+        // Forward calls the DisplayEnum `set` witness with no executor hop; the hop stays here
+        // only because the requirement is still @MainActor in this source (writer GAP, DisplayEnum isolation).
+        nonisolated(unsafe) let unsafeDisplay = display
+        nonisolated(unsafe) let unsafeFrame = frame
+        nonisolated(unsafe) let unsafeEncoder = encoder
+        MainActor.assumeIsolated {
+            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
+        }
+        encoder.popDebugGroup()
+        encoder.endEncoding()
+        pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+        if pipeline == nil {
+            commandBuffer.waitUntilCompleted()
+        }
+        return true
+    }
+
+    #if canImport(RealityKit)
+    // Forward 0x101a86090, no symbol. Same `#function` cstring (0x103d39e50), KSLog line 160
+    // (`mov w6,#0xa0`). Called direct from TextureResource.DrawableQueue.drawWithResult 0x101a85cac.
+    // Same body as the CAMetalDrawable overload except it presents through RealityKit's
+    // `MTLCommandBuffer.present(_: TextureResource.Drawable)` and never waits for completion.
+    // INFERRED owner MetalRender (static, self unused).
+    static func draw(frame: VideoVTBFrame, display: DisplayEnum, drawable: TextureResource.Drawable, pipeline: VideoPipeline?) -> Bool {
+        if let inputTexture = pipeline?.inputTexture {
+            let size = frame.pixelBuffer.size
+            if inputTexture.width != Int(size.width) || inputTexture.height != Int(size.height) {
+                KSLog("[MetalRender] \u{26A0}\u{FE0F} inputTexture size mismatch: texture=\(inputTexture.width)x\(inputTexture.height), video=\(Int(size.width))x\(Int(size.height))")
+            }
+            renderPassDescriptor.colorAttachments[0].texture = inputTexture
+            renderPassDescriptor.colorAttachments[0].storeAction = .store
+        } else {
+            renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
+        }
+        let pixelBuffer = frame.pixelBuffer
+        let inputTextures = pixelBuffer.textures()
+        guard !inputTextures.isEmpty,
+              let commandBuffer = commandQueue?.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)
+        else {
+            return false
+        }
+        encoder.pushDebugGroup("RenderFrame")
+        encoder.setFragmentSamplerState(samplerState, index: 0)
+        for (index, texture) in inputTextures.enumerated() {
+            texture.label = "texture\(index)"
+            encoder.setFragmentTexture(texture, index: index)
+        }
+        // Forward calls the DisplayEnum `set` witness with no executor hop; the hop stays here
+        // only because the requirement is still @MainActor in this source (writer GAP, DisplayEnum isolation).
+        nonisolated(unsafe) let unsafeDisplay = display
+        nonisolated(unsafe) let unsafeFrame = frame
+        nonisolated(unsafe) let unsafeEncoder = encoder
+        MainActor.assumeIsolated {
+            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
+        }
+        encoder.popDebugGroup()
+        encoder.endEncoding()
+        pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+        return true
+    }
+    #endif
 
     // NOT private: the trie exports `static KSPlayer.MetalRender.setFragmentBuffer(encoder:pixelBuffer:)`
     // at 0x101a83720, and a private static would export nothing. Both display models call it.
@@ -280,63 +383,33 @@ public extension MTLRenderCommandEncoder {
     }
 }
 
-// The only conformer whose witness table is walkable in this image. The other two are RealityKit
-// types (TextureResource and TextureResource.DrawableQueue) whose conformances the binary records
-// but whose descriptors are out of image, so they are not declared here.
-extension CAMetalLayer: Drawable {
-    func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
-        // Forward 0x101a84b18. Four callees have no declaration in this source and are written as
-        // local funcs: the MasteringDisplayMetadata byte packer 0x101a654f4 (Model.swift; the
-        // ContentLight/AmbientViewing packers are inlined in Forward), the pixelBuffer EDR-metadata
-        // helper 0x101a88500 and the layer EDR-headroom check 0x1019f26e4. Byte appends are spelled
-        // out because Array<UInt8>.append(UInt16/UInt32) (0x1019e7290/0x1019e7374) is not mutating here.
-        func append(_ value: UInt16, to bytes: inout [UInt8]) {
-            bytes.append(UInt8(truncatingIfNeeded: value))
-            bytes.append(UInt8(truncatingIfNeeded: value >> 8))
-        }
-        func append(_ value: UInt32, to bytes: inout [UInt8]) {
-            bytes.append(UInt8(truncatingIfNeeded: value))
-            bytes.append(UInt8(truncatingIfNeeded: value >> 8))
-            bytes.append(UInt8(truncatingIfNeeded: value >> 16))
-            bytes.append(UInt8(truncatingIfNeeded: value >> 24))
-        }
+// Drawable conformers (__swift5_proto): CAMetalLayer cd 0x10356c4f8 / wt 0x1041d9e70, and
+// DrawableRenderResult cd 0x10356c518 / wt 0x1041d9e88. The two RealityKit conformers are in the
+// `#if canImport(RealityKit)` block below. Trie exports draw/updateInfo/clear → public.
+extension CAMetalLayer: Drawable, DrawableRenderResult {
+    public func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        // Forward 0x101a84b18. Byte appends go through the [UInt8].append(UInt16/UInt32) helpers
+        // (KSParseProtocol.swift, Forward 0x1019e7290 / 0x1019e7374) and the pixel-buffer EDR metadata
+        // through PixelBufferProtocol.edrMetadata (0x101a88500), as Forward calls them. Two callees
+        // still have no declaration in this source and stay local: the MasteringDisplayMetadata byte
+        // packer 0x101a654f4 (Model.swift, lane 13 GAP) and the layer EDR-headroom check 0x1019f26e4
+        // (a CAMetalLayer extension in Core/UXKit.swift, review GAP).
         func data(_ displayData: MasteringDisplayMetadata) -> Data {
             var bytes = [UInt8]()
-            append(displayData.display_primaries_r_x, to: &bytes)
-            append(displayData.display_primaries_r_y, to: &bytes)
-            append(displayData.display_primaries_g_x, to: &bytes)
-            append(displayData.display_primaries_g_y, to: &bytes)
-            append(displayData.display_primaries_b_x, to: &bytes)
-            append(displayData.display_primaries_b_y, to: &bytes)
-            append(displayData.white_point_x, to: &bytes)
-            append(displayData.white_point_y, to: &bytes)
-            append(displayData.minLuminance, to: &bytes)
-            append(displayData.maxLuminance, to: &bytes)
+            bytes.append(displayData.display_primaries_r_x)
+            bytes.append(displayData.display_primaries_r_y)
+            bytes.append(displayData.display_primaries_g_x)
+            bytes.append(displayData.display_primaries_g_y)
+            bytes.append(displayData.display_primaries_b_x)
+            bytes.append(displayData.display_primaries_b_y)
+            bytes.append(displayData.white_point_x)
+            bytes.append(displayData.white_point_y)
+            bytes.append(displayData.minLuminance)
+            bytes.append(displayData.maxLuminance)
             bytes.reverse()
             return Data(bytes)
         }
         #if !os(tvOS)
-        func pixelBufferEDRMetadata(_ pixelBuffer: PixelBufferProtocol) -> CAEDRMetadata? {
-            if let displayInfo = pixelBuffer.displayInfo, let contentInfo = pixelBuffer.contentInfo {
-                return CAEDRMetadata.hdr10(displayInfo: displayInfo, contentInfo: contentInfo, opticalOutputScale: 10000)
-            }
-            if let ambientViewingEnvironment = pixelBuffer.ambientViewingEnvironment {
-                if #available(macOS 14.0, iOS 17.0, *) {
-                    return CAEDRMetadata.hlg(ambientViewingEnvironment: ambientViewingEnvironment)
-                }
-                return CAEDRMetadata.hlg
-            }
-            if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ {
-                return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
-            }
-            if pixelBuffer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
-                if KSPlayer.DynamicRange.availableHDRModes.contains(.hlg) {
-                    return CAEDRMetadata.hlg
-                }
-                return CAEDRMetadata.hdr10(minLuminance: 0.1, maxLuminance: 1000, opticalOutputScale: 10000)
-            }
-            return nil
-        }
         func isEDRScreen() -> Bool {
             guard let view = delegate as? UIView else {
                 return true
@@ -349,23 +422,23 @@ extension CAMetalLayer: Drawable {
             pixelBuffer.displayInfo = edrMetaData.displayData.map { data($0) }
             pixelBuffer.contentInfo = edrMetaData.contentData.map { contentData in
                 var bytes = [UInt8]()
-                append(contentData.MaxCLL, to: &bytes)
-                append(contentData.MaxFALL, to: &bytes)
+                bytes.append(contentData.MaxCLL)
+                bytes.append(contentData.MaxFALL)
                 bytes.reverse()
                 return Data(bytes)
             }
             pixelBuffer.ambientViewingEnvironment = edrMetaData.ambientViewingEnvironment.map { ambientViewingEnvironment in
                 var bytes = [UInt8]()
-                append(ambientViewingEnvironment.ambient_illuminance, to: &bytes)
-                append(ambientViewingEnvironment.ambient_light_x, to: &bytes)
-                append(ambientViewingEnvironment.ambient_light_y, to: &bytes)
+                bytes.append(ambientViewingEnvironment.ambient_illuminance)
+                bytes.append(ambientViewingEnvironment.ambient_light_x)
+                bytes.append(ambientViewingEnvironment.ambient_light_y)
                 bytes.reverse()
                 return Data(bytes)
             }
         }
         let pixelBuffer = frame.pixelBuffer
         #if !os(tvOS)
-        var edrMetadata = pixelBufferEDRMetadata(pixelBuffer)
+        var edrMetadata = pixelBuffer.edrMetadata
         if edrMetadata == nil {
             if let doviData = frame.doviData {
                 let minLuminance = doviData.minLuminance
@@ -394,7 +467,12 @@ extension CAMetalLayer: Drawable {
         }
         var size: CGSize
         if display.isSphere {
+            // Forward: sharedApplication → UIApplication.activeWindow (0x101a02de0, UIKitExtend.swift) → bounds.
+            #if canImport(CallKit)
+            size = UIApplication.shared.activeWindow?.bounds.size ?? CGSize(width: 1, height: 1)
+            #else
             size = UIApplication.shared.windows.first?.bounds.size ?? CGSize(width: 1, height: 1)
+            #endif
         } else {
             let pixelSize = pixelBuffer.size
             let aspectRatio = pixelBuffer.aspectRatio
@@ -406,59 +484,29 @@ extension CAMetalLayer: Drawable {
         }
         drawableSize = size
     }
-    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
-        // Forward: 1-insn thunk 0x101a854ac → Bool body 0x101a854b0, which calls the CAMetalDrawable
-        // render helper 0x101a873b4 `draw(frame:display:drawable:pipeline:)` (inlined here; no decl).
-        // The Anime4KFrameDump gate/dump calls (0x101a784d4, 0x101a778a8, 0x101a77d20) have no decl
-        // in this source and are not written.
+    // Drawable requirement +0x8 (wt 0x1041d9e70 → 0x101a856dc). Exported in the trie → public.
+    // Forward 0x101a854ac is the single instruction `b 0x101a854b0`: a tail call of drawWithResult.
+    @used public func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        drawWithResult(frame: frame, display: display, pipeline: pipeline)
+    }
+
+    // Forward 0x101a854b0, trie-negative → internal. Name from its `#function` cstring (0x101a85590
+    // reference). DrawableRenderResult requirement +0x10 (wt 0x1041d9e88 → 0x101a85750).
+    // The render tail is MetalRender.draw(frame:display:drawable:pipeline:) 0x101a873b4.
+    @discardableResult func drawWithResult(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) -> Bool {
         guard bounds.width > 0, bounds.height > 0 else {
-            return
+            return false
         }
         updateInfo(frame: frame, display: display, pipeline: pipeline)
         guard let drawable = nextDrawable() else {
             KSLog("[video] CAMetalLayer not readyForMoreMediaData")
-            return
+            return false
         }
-        if let inputTexture = pipeline?.inputTexture {
-            let size = frame.pixelBuffer.size
-            if inputTexture.width != Int(size.width) || inputTexture.height != Int(size.height) {
-                KSLog("[MetalRender] \u{26A0}\u{FE0F} inputTexture size mismatch: texture=\(inputTexture.width)x\(inputTexture.height), video=\(Int(size.width))x\(Int(size.height))")
-            }
-            MetalRender.renderPassDescriptor.colorAttachments[0].texture = inputTexture
-            MetalRender.renderPassDescriptor.colorAttachments[0].storeAction = .store
-        } else {
-            MetalRender.renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
-        }
-        let pixelBuffer = frame.pixelBuffer
-        let inputTextures = pixelBuffer.textures()
-        guard !inputTextures.isEmpty,
-              let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor)
-        else {
-            return
-        }
-        encoder.pushDebugGroup("RenderFrame")
-        encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
-        for (index, texture) in inputTextures.enumerated() {
-            texture.label = "texture\(index)"
-            encoder.setFragmentTexture(texture, index: index)
-        }
-        nonisolated(unsafe) let unsafeDisplay = display
-        nonisolated(unsafe) let unsafeFrame = frame
-        nonisolated(unsafe) let unsafeEncoder = encoder
-        MainActor.assumeIsolated {
-            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
-        }
-        encoder.popDebugGroup()
-        encoder.endEncoding()
-        pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
-        if pipeline == nil {
-            commandBuffer.waitUntilCompleted()
-        }
+        return MetalRender.draw(frame: frame, display: display, drawable: drawable, pipeline: pipeline)
     }
-    @used func clear() {
+
+    // Drawable requirement +0x10 (wt 0x1041d9e70 → 0x101a856fc). Exported in the trie → public.
+    @used public func clear() {
         #if !os(tvOS)
         edrMetadata = nil
         #endif
@@ -479,19 +527,32 @@ struct VertexIn {
 }
 
 #if canImport(RealityKit)
-import RealityKit
-
-extension RealityKit.TextureResource.Drawable {
-    @used func present(commandBuffer: MTLCommandBuffer) {
+// Forward: RealityKit.TextureResource.Drawable : KSDrawable, cd 0x10356c4e8 / wt 0x1041d9e58
+// (trie `$s10RealityKit15TextureResourceC8DrawableC8KSPlayer10KSDrawableAFWP`). `texture` is
+// RealityKit's own (+0x8 0x101a84ac0); present(commandBuffer:) is exported (0x101a84a8c) → public,
+// and the +0x10 witness 0x101a84ae0 repeats its body.
+extension RealityKit.TextureResource.Drawable: KSDrawable {
+    @used public func present(commandBuffer: MTLCommandBuffer) {
         commandBuffer.present(self)
         commandBuffer.commit()
     }
 }
 
-extension RealityKit.TextureResource {
-    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
-        // Forward: 1-insn thunk 0x101a85774 → Bool body 0x101a85778; both queue paths call the
-        // DrawableQueue body 0x101a85cac (DrawableQueue.draw below).
+// Drawable cd 0x10356c528 / wt 0x1041d9ea0 [0x101a85e60 → 0x101a85778, 0x101a85e80];
+// DrawableRenderResult cd 0x10356c538 / wt 0x1041d9eb8 (→ 0x101a85ea0 → 0x101a85778).
+// Both descriptors carry flags 0x8 (no global-actor-isolated bit), i.e. plain conformances. The
+// current SDK's TextureResource is @MainActor, so a plain conformance fails [#ConformanceIsolation];
+// `@preconcurrency` keeps the Forward conformances declared at the cost of a runtime executor check
+// in the witness thunks (writer GAP, review).
+extension RealityKit.TextureResource: @preconcurrency Drawable, @preconcurrency DrawableRenderResult {
+    // Forward 0x101a85774: `b 0x101a85778` (tail call of drawWithResult). Exported → public.
+    @used public func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        drawWithResult(frame: frame, display: display, pipeline: pipeline)
+    }
+
+    // Forward 0x101a85778, trie-negative → internal; `#function` names it (0x101a85978 reference).
+    // Both queue paths return DrawableQueue.drawWithResult 0x101a85cac.
+    @discardableResult func drawWithResult(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) -> Bool {
         let pixelBuffer = frame.pixelBuffer
         var width = pixelBuffer.width
         var height = pixelBuffer.height
@@ -501,67 +562,41 @@ extension RealityKit.TextureResource {
             KSLog("[MetalRender] \u{1F4D0} TextureResource using pipeline size: \(width)x\(height)")
         }
         if let drawableQueue, drawableQueue.width == width, drawableQueue.height == height {
-            drawableQueue.draw(frame: frame, display: display, pipeline: pipeline)
-            return
+            return drawableQueue.drawWithResult(frame: frame, display: display, pipeline: pipeline)
         }
         let descriptor = TextureResource.DrawableQueue.Descriptor(pixelFormat: KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth), width: width, height: height, usage: [.renderTarget, .shaderRead, .shaderWrite], mipmapsMode: .none)
         guard let queue = try? TextureResource.DrawableQueue(descriptor) else {
-            return
+            return false
         }
         replace(withDrawables: queue)
-        queue.draw(frame: frame, display: display, pipeline: pipeline)
+        return queue.drawWithResult(frame: frame, display: display, pipeline: pipeline)
     }
-    @used func clear() {
+
+    // Drawable requirement +0x10. Exported → public.
+    @used public func clear() {
         drawableQueue?.clear()
     }
 }
 
-extension RealityKit.TextureResource.DrawableQueue {
+// Drawable cd 0x10356c548 / wt 0x1041d9ed0 [0x101a85ec8 → 0x101a85cac, 0x10000e52c];
+// DrawableRenderResult cd 0x10356c558 / wt 0x1041d9ee8 (→ 0x101a85ee8 → 0x101a85cac).
+extension RealityKit.TextureResource.DrawableQueue: Drawable, DrawableRenderResult {
     // ⚑[tool=member_add ref=DrawableQueue.clear():0x10000e52c result=ICF-folded into the shared 1-instr `ret`] empty body.
-    @used func clear() {}
-    @used func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
-        // Forward: 1-insn thunk 0x101a85ec4 → Bool body 0x101a85cac, which calls the
-        // TextureResource.Drawable render helper 0x101a86090 `draw(frame:display:drawable:pipeline:)`
-        // (inlined here; no decl). Anime4KFrameDump gate/dump calls not written (no decl).
+    @used public func clear() {}
+
+    // Forward 0x101a85ec4: tail call of drawWithResult 0x101a85cac. Exported → public.
+    @used public func draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
+        drawWithResult(frame: frame, display: display, pipeline: pipeline)
+    }
+
+    // Forward 0x101a85cac, trie-negative → internal; `#function` names it (0x101a85d20 reference).
+    // The render tail is MetalRender.draw(frame:display:drawable:pipeline:) 0x101a86090.
+    @discardableResult func drawWithResult(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) -> Bool {
         guard let drawable = try? nextDrawable() else {
             KSLog("[video] TextureResource not readyForMoreMediaData")
-            return
+            return false
         }
-        if let inputTexture = pipeline?.inputTexture {
-            let size = frame.pixelBuffer.size
-            if inputTexture.width != Int(size.width) || inputTexture.height != Int(size.height) {
-                KSLog("[MetalRender] \u{26A0}\u{FE0F} inputTexture size mismatch: texture=\(inputTexture.width)x\(inputTexture.height), video=\(Int(size.width))x\(Int(size.height))")
-            }
-            MetalRender.renderPassDescriptor.colorAttachments[0].texture = inputTexture
-            MetalRender.renderPassDescriptor.colorAttachments[0].storeAction = .store
-        } else {
-            MetalRender.renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
-        }
-        let pixelBuffer = frame.pixelBuffer
-        let inputTextures = pixelBuffer.textures()
-        guard !inputTextures.isEmpty,
-              let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: MetalRender.renderPassDescriptor)
-        else {
-            return
-        }
-        encoder.pushDebugGroup("RenderFrame")
-        encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
-        for (index, texture) in inputTextures.enumerated() {
-            texture.label = "texture\(index)"
-            encoder.setFragmentTexture(texture, index: index)
-        }
-        nonisolated(unsafe) let unsafeDisplay = display
-        nonisolated(unsafe) let unsafeFrame = frame
-        nonisolated(unsafe) let unsafeEncoder = encoder
-        MainActor.assumeIsolated {
-            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
-        }
-        encoder.popDebugGroup()
-        encoder.endEncoding()
-        pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
+        return MetalRender.draw(frame: frame, display: display, drawable: drawable, pipeline: pipeline)
     }
 }
 #endif
