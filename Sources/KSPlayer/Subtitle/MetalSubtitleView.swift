@@ -14,8 +14,21 @@ import QuartzCore
 import UIKit
 #endif
 
-// MetalDrawable — KSPlayer protocol (§8.6, descriptor-named). ⚑ requirements → P4 M2 (marker assumed for the M1 compile).
-protocol MetalDrawable {}
+// MetalDrawable — KSPlayer protocol (§8.6, descriptor 0x1039f2274; trie names MetalDrawableMp / MetalDrawableTL).
+// Forward's __swift5_proto has no conformer, so the requirement names come from no witness; both are INFERRED.
+// The protocol_surface pass records two instance-method requirements (flags 0x11), at wt+0x8 and wt+0x10.
+// Public (L7 lane 12): `MetalSubtitleView.metalDrawable` has a property descriptor (…13metalDrawable…vpMV) on a
+// public class, so its type must be public for that property to typecheck.
+public protocol MetalDrawable {
+    // wt+0x8 — Forward metalDrawable didSet 0x101abfc64: x0 = `layer as! CAMetalLayer` (cast @0x101abfd04),
+    // x1/x2 = the opened existential's metadata/wt, `blr [wt+0x8]` @0x101abfd14, and no result is used.
+    // INFERRED name (vtable-ledger: MetalDrawable req0 wt+0x8, Forward caller 0x101abfd14, no symbol).
+    func setup(layer: CAMetalLayer)
+    // wt+0x10 — Forward draw(in:) 0x101ac0e24: x0 = the render command encoder, d0/d1 = p0.drawableSize,
+    // `blr [wt+0x10]`. The caller does not call endEncoding afterwards.
+    // INFERRED name (vtable-ledger: MetalDrawable req1 wt+0x10, Forward caller in 0x101ac0e24, no symbol).
+    func draw(encoder: any MTLRenderCommandEncoder, size: CGSize)
+}
 
 // MetalSubtitleView @0x1039f229c — :MTKView (superclass-read So7MTKViewC). 7 fields reflection-ordered,
 // types §8.3/§8.6. Bodies → P4 M2.
@@ -58,8 +71,41 @@ protocol MetalDrawable {}
 // ⚑[tool=bind_oracle ref=__got:0x104112d10 result=__swiftEmptySetSingleton]
 // ⚑[tool=field_offset_vector ref=MetalSubtitleView:0x1044230b8 result=offsets-0x8-0x30-0x38-0x40-0x48-0x50-0x58]
 // MTKViewDelegate: Forward has the objc thunk drawInMTKView: (0x101ac1380), and init 0x101ac03cc sets delegate = self.
-class MetalSubtitleView: MTKView, MTKViewDelegate {
-    public var metalDrawable: (any MetalDrawable)? // §8.6 — offset global 0x1044ef5a8 (vpWvd)
+// Public (L7 lane 12): the trie names carry property descriptors MetalSubtitleViewC12dynamicRange…vpMV and
+// …C13metalDrawable…vpMV, which are emitted only for public properties of a public class. The two
+// MTKViewDelegate witnesses are then public too, because a public class witnessing a public protocol must be.
+// Everything else stays as it was: the stored fields keep the private discriminator
+// _1D4F9FA947E132855061D664DF1FC640, and init(subtitleModel:), updateSubtitle and init(coder:) have no trie name.
+public class MetalSubtitleView: MTKView, MTKViewDelegate {
+    // Forward setter 0x101abff8c / modify call the didSet FUN_101abfc64 (161 insns).
+    // Nil: the layer is reset to the SDR subtitle configuration. Set: layer config is left to requirement wt+0x8.
+    // The edrMetadata / wantsExtendedDynamicRangeContent calls are API_UNAVAILABLE(tvos), so they get the
+    // MetalRender `#if !os(tvOS)` guard.
+    public var metalDrawable: (any MetalDrawable)? { // §8.6 — offset global 0x1044ef5a8 (vpWvd)
+        didSet {
+            if let metalDrawable {
+                metalDrawable.setup(layer: layer as! CAMetalLayer)
+            } else {
+                (layer as! CAMetalLayer).framebufferOnly = true
+                (layer as! CAMetalLayer).drawableSize = drawableSize
+                colorPixelFormat = .bgra8Unorm
+                if !KSOptions.enableHDRSubtitle {
+                    (layer as! CAMetalLayer).colorspace = nil
+                }
+                #if !os(tvOS)
+                (layer as! CAMetalLayer).edrMetadata = nil
+                if !KSOptions.enableHDRSubtitle {
+                    (layer as! CAMetalLayer).wantsExtendedDynamicRangeContent = false
+                }
+                #endif
+            }
+            #if canImport(UIKit)
+            setNeedsDisplay()
+            #else
+            needsDisplay = true
+            #endif
+        }
+    }
     public var dynamicRange: DynamicRange = .sdr { // ⚑ default inferred → M2; offset global 0x1044ef5b8 (vpWvd)
         didSet {
             #if os(iOS)
@@ -83,12 +129,16 @@ class MetalSubtitleView: MTKView, MTKViewDelegate {
             #endif
         }
     }
-    @used final func mtkView(_ p0: MTKView, drawableSizeWillChange: CGSize) {
+    @used public final func mtkView(_ p0: MTKView, drawableSizeWillChange: CGSize) {
         #if os(iOS)
         updateSubtitle(size: drawableSizeWillChange)
         #endif
     }
-    final func draw(in p0: MTKView) {
+    // Forward 0x101ac0e24. With a metalDrawable set, requirement wt+0x10 gets (encoder, p0.drawableSize).
+    // Otherwise the encoder subtitle helper @0x101ac11ec gets (subtitleImages, pendingTexts, dynamicRange,
+    // p0.drawableSize, UITraitCollection.current.displayScale), with Self from swift_getObjectType(encoder).
+    // Both callees end the encoding themselves.
+    public final func draw(in p0: MTKView) {
         guard let drawable = p0.currentDrawable,
               let commandBuffer = MetalRender.commandQueue?.makeCommandBuffer()
         else {
@@ -100,15 +150,15 @@ class MetalSubtitleView: MTKView, MTKViewDelegate {
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         renderPassDescriptor.colorAttachments[0].storeAction = .store
         if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) {
-            // Forward @0x101ac0e24: a set metalDrawable gets its encoder requirement (wt+0x10) with
-            // (encoder, p0.drawableSize); otherwise the encoder subtitle helper @0x101ac11ec gets
-            // (subtitleImages, pendingTexts, dynamicRange, p0.drawableSize, displayScale). Neither the
-            // requirement nor the helper is declared in this source (writer GAP), so this keeps the
-            // helper's sampler setup and endEncoding.
-            if metalDrawable == nil {
-                encoder.setFragmentSamplerState(MetalRender.samplerState, index: 0)
+            if let metalDrawable {
+                metalDrawable.draw(encoder: encoder, size: p0.drawableSize)
+            } else {
+                #if canImport(UIKit)
+                encoder.drawSubtitle(images: subtitleImages, texts: pendingTexts, dynamicRange: dynamicRange, size: p0.drawableSize, scale: UITraitCollection.current.displayScale)
+                #else
+                encoder.drawSubtitle(images: subtitleImages, texts: pendingTexts, dynamicRange: dynamicRange, size: p0.drawableSize, scale: 1)
+                #endif
             }
-            encoder.endEncoding()
         }
         commandBuffer.present(drawable)
         commandBuffer.commit()
@@ -145,17 +195,12 @@ class MetalSubtitleView: MTKView, MTKViewDelegate {
             .store(in: &cancellables)
     }
 
-    // ⚑ init shape inferred → M2 witness-verify (real init wires the Metal device + Combine subscriptions)
-    override init(frame frameRect: CGRect, device: (any MTLDevice)?) {
-        super.init(frame: frameRect, device: device)
-    }
-
+    // init(frame:device:) is not declared. Forward 0x1033961ac is the compiler-synthesized
+    // _swift_stdlib_reportUnimplementedInitializer trap, emitted because init(subtitleModel:) is a new designated init.
     required init(coder: NSCoder) {
         super.init(coder: coder)
     }
-    // ⚑ UNRESOLVED → P4 M2: the Metal subtitle render bodies. In Forward, mtkView(_:drawableSizeWillChange:)
-    //   @0x101ac0d48, draw(in:) @0x101ac0e24 and the init sink are absent here. They are the callers of
-    //   the slot-40 method below.
+    // Callers of the slot-40 method below: mtkView(_:drawableSizeWillChange:) @0x101ac0d48 and the init sink.
 
     #if os(iOS)
     /// Vtable slot 40 @0x101ac0a90 (flags 0x10, the last of 24 entries starting at slot 17). Argument:
@@ -172,6 +217,35 @@ class MetalSubtitleView: MTKView, MTKViewDelegate {
         setNeedsDisplay()
     }
     #endif
+}
+
+// Encoder subtitle helper — Forward 0x101ac11ec (101 insns). It is a protocol-extension method on
+// MTLRenderCommandEncoder: self (the encoder) arrives in x20 and Self metadata in x3, from the caller's
+// swift_getObjectType. x0 is images, x1 texts, w2 dynamicRange, d0/d1 size and d2 scale. No symbol exists
+// (internal), so the name is INFERRED (vtable-ledger: no slot — extension method, Forward 0x101ac11ec,
+// caller draw(in:) 0x101ac0e24).
+// Forward body:
+//   brightness = 1, and when dynamicRange != .sdr with KSOptions.subtitleExposure (0x104c6314c) != 0,
+//     brightness = max(exp2(subtitleExposure), 0)
+//   setFragmentSamplerState(MetalRender.samplerState, 0)
+//   var instances = []
+//   per-image 0x101ac1444(scale, size, brightness, i, images, self, &instances)
+//   atlas draw 0x101ac23b4(size, brightness, instances)
+//   per-text 0x101ac25b0(size, scale, brightness, i, texts)
+//   endEncoding()
+// ⚑ Writer GAP (L7 lane 12 batch 3): the draw tree under 0x101ac1444 / 0x101ac23b4 / 0x101ac25b0 is not
+// reconstructed here. It is about 2400 instructions and covers palette and texture quads, ASS atlas packing
+// (0x101ac3110) and the text layout at 0x101ac26a4. It needs KSOptions 0x1019c4770 (1291 insns, unpaired in
+// the build) and the text-image helper 0x1019ea6c4. Its three swift_once pipeline statics also need Metal
+// functions that are absent from Shaders.metal: vertexTexture, assAtlasVertex, paletteFragment, plus two
+// 16-byte fragment names at 0x103d3a490 and 0x103d3a4b0.
+// Until then the body keeps only the helper's own sampler setup and endEncoding, so nothing crashes; the
+// brightness value is left out because nothing here reads it yet.
+extension MTLRenderCommandEncoder {
+    func drawSubtitle(images: [SubtitleImageInfo], texts: [SubtitleTextInfo], dynamicRange: DynamicRange, size: CGSize, scale: CGFloat) {
+        setFragmentSamplerState(MetalRender.samplerState, index: 0)
+        endEncoding()
+    }
 }
 
 // AssLayerSource @0x1039f23bc
