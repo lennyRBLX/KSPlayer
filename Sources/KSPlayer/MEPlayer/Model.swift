@@ -506,6 +506,116 @@ public final class AudioFrame: MEFrame {
 // wt 0x1041d8e88) sit between AudioFrame's and VideoVTBFrame's records; witness thunks 0x101a65118.. are Model.swift.
 extension AVAudioFormat: AudioFormatProtocol {}
 
+extension AudioStreamBasicDescription {
+    // ⚑[tool=member_add ref=AudioStreamBasicDescription.sampleRate.getter:0x1000ef030 result=dne; placed before sampleSize 0x101a65168 (Forward addr ICF-shared, order inferred)]
+    var sampleRate: Double { @used get { mSampleRate } }
+    var sampleSize: UInt32 { @used get { mBitsPerChannel } }
+    var channelCount: UInt32 { @used get { mChannelsPerFrame } }
+    var commonFormat: AVAudioCommonFormat { @used get {
+        guard mFormatID == kAudioFormatLinearPCM else {
+            return .otherFormat
+        }
+        if mFormatFlags & kAudioFormatFlagIsFloat == 0 {
+            switch mBitsPerChannel {
+            case 24, 32:
+                return .pcmFormatInt32
+            case 16:
+                return .pcmFormatInt16
+            default:
+                return .otherFormat
+            }
+        } else {
+            switch mBitsPerChannel {
+            case 32:
+                return .pcmFormatFloat32
+            case 64:
+                return .pcmFormatFloat64
+            default:
+                return .otherFormat
+            }
+        }
+    } }
+    var isInterleaved: Bool { @used get {
+        guard mFormatID == kAudioFormatLinearPCM else {
+            return false
+        }
+        return mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+    } }
+}
+
+// Moved from MediaPlayerProtocol.swift (L7 lane 16): forward_fn file KSPlayer/Model.swift for 0x101a6362c/
+// 0x101a6364c/0x101a6368c/0x101a65204/0x101a65224/0x101a652b0/0x101a652f8; the ASBD getters 0x101a65168..0x101a651d8
+// (from MetalPlayView.swift) precede them, between the AVAudioFormat (0x101a65118..) and CMFormatDescription
+// (0x101a65304) witness thunks — all after AudioFrame and before VideoVTBFrame.
+public extension CMFormatDescription {
+    /// @0x101a6362c — ASBD +0x1c (mChannelsPerFrame), nil → 0.
+    var channelCount: UInt32 {
+        CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee.mChannelsPerFrame ?? 0
+    }
+
+    /// @0x101a6364c — ASBD +0x0 (mSampleRate), nil → 0.
+    var sampleRate: Double {
+        CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee.mSampleRate ?? 0
+    }
+
+    /// @0x101a6368c — `mov x0,x20; b objc_retain`.
+    var formatDescription: CMFormatDescription {
+        self
+    }
+
+    /// @0x101a65204 — ASBD +0x20 (mBitsPerChannel), nil → 0.
+    var sampleSize: UInt32 {
+        CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee.mBitsPerChannel ?? 0
+    }
+
+    /// @0x101a65224 — nil / non-'lpcm' → .otherFormat; float flag: 32 → Float32, 64 → Float64;
+    /// integer: 16 → Int16, 24/32 → Int32; anything else → .otherFormat.
+    var commonFormat: AVAudioCommonFormat {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM
+        else {
+            return .otherFormat
+        }
+        if asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            switch asbd.mBitsPerChannel {
+            case 32:
+                return .pcmFormatFloat32
+            case 64:
+                return .pcmFormatFloat64
+            default:
+                return .otherFormat
+            }
+        } else {
+            // Forward @0x101a65258-0x101a65270: 16 branches; then `csel` (==32 inner, ==24 outer).
+            switch asbd.mBitsPerChannel {
+            case 16:
+                return .pcmFormatInt16
+            case 24:
+                return .pcmFormatInt32
+            case 32:
+                return .pcmFormatInt32
+            default:
+                return .otherFormat
+            }
+        }
+    }
+
+    /// @0x101a652b0 — nil / non-'lpcm' → false; else !(flags & kAudioFormatFlagIsNonInterleaved).
+    var isInterleaved: Bool {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(self)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM
+        else {
+            return false
+        }
+        return asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+    }
+
+    /// @0x101a652f8 — tail call CMAudioFormatDescriptionGetChannelLayout(self, nil).
+    var layout: UnsafePointer<AudioChannelLayout>? {
+        CMAudioFormatDescriptionGetChannelLayout(self, sizeOut: nil)
+    }
+}
+
 extension CMFormatDescription: AudioFormatProtocol {}
 
 public final class VideoVTBFrame: MEFrame {
