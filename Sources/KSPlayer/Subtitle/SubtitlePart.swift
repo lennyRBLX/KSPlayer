@@ -24,6 +24,18 @@ public struct TextPosition {
     public var rightMargin: CGFloat = 0
     public var verticalMargin: CGFloat = 10
 
+    // init 0x101abac2c (23 instr), trie-exported `…verticalMargin…tcfC` = public, so explicit (the implicit
+    // memberwise init would be internal). The body first runs the stored-property initializers — `bl`
+    // VerticalAlignment.bottom.getter, `bl` HorizontalAlignment.center.getter (the 0/0/10 CGFloat defaults are
+    // dead stores) — then stores the five arguments in declaration order.
+    public init(verticalAlign: VerticalAlignment = .bottom, horizontalAlign: HorizontalAlignment = .center, leftMargin: CGFloat = 0, rightMargin: CGFloat = 0, verticalMargin: CGFloat = 10) {
+        self.verticalAlign = verticalAlign
+        self.horizontalAlign = horizontalAlign
+        self.leftMargin = leftMargin
+        self.rightMargin = rightMargin
+        self.verticalMargin = verticalMargin
+    }
+
     public mutating func ass(alignment: String?) {
         switch alignment {
         case "1":

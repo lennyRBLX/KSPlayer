@@ -1,6 +1,8 @@
 import CoreFoundation
 import CoreGraphics
+import CoreText
 import Foundation
+import MediaAccessibility
 import SwiftUI
 #if canImport(Translation) && !os(tvOS) && !os(watchOS)
 import Translation
@@ -108,7 +110,7 @@ open class SubtitleModel: ObservableObject {
             if #available(iOS 18, macOS 15, *) {
                 if translation {
                     guard _translationSessionConf as? TranslationSession.Configuration == nil else { return }
-                    let source = selectedSubtitleInfo?.subtitleLanguage
+                    let source = selectedSubtitleInfo?.language
                     let target = Locale.current.language
                     guard source != target else { return }
                     translationSessionConf = .init(source: source, target: target)
@@ -211,7 +213,28 @@ open class SubtitleModel: ObservableObject {
     // NON-OPTIONAL in the binary — the field mangle carries no `Sg`. Set by init(url:options:)
     // @0x101ab34a0, the only designated initialiser Forward carries.
     // ⚑[tool=field_surface ref=SubtitleModel.url result=forward Foundation.URL (not URL?/URL!)]
-    public var url: URL
+    // didSet @0x101ab1d8c (364 insns), called by the setter 0x101ab243c (`bl 0x101ab1d8c` @0x101ab24a0) and the
+    // modify resume 0x101ab2510 (@0x101ab2530). Order: subtitleDataSources (self+0x40) ← empty; subtitleInfos
+    // Published modify (keypaths 0x10356d140/168) ← empty; selectedSubtitleInfo = nil (willSet 0x101ab2540 then
+    // store); secondarySubtitleInfo = nil (willSet 0x101ab2de4); then per KSOptions.subtitleDataSources element the
+    // inlined addSubtitle(dataSource:) (append + MainActor Task, closure 0x101abaa08 → 0x101ab7a4c, the same body
+    // the out-of-line 0x101ab9b00 launches); last a nil-isolation Task (ctx 0x28 {nil, nil, self}, afp 0x10356d538
+    // → 0x101abaa8c → 0x101ab233c `task_switch(0x101ab2354, 0, 0)`) that sets `parts` = [] (keypaths d1e8/d210).
+    public var url: URL {
+        didSet {
+            subtitleDataSources.removeAll()
+            subtitleInfos.removeAll()
+            selectedSubtitleInfo = nil
+            secondarySubtitleInfo = nil
+            for dataSource in KSOptions.subtitleDataSources {
+                addSubtitle(dataSource: dataSource)
+            }
+            nonisolated(unsafe) let strongSelf = self
+            Task {
+                strongSelf.parts = []
+            }
+        }
+    }
     private var firstSubtitleActor: SubtitleActor?
     // FUN_101ab2540 — selectedSubtitleInfo willSet (P67: 11 assign-site callers, call-before-store w/ newValue;
     // the prior recon guess @Published+didSet was wrong — binary is plain-stored with a willSet).
@@ -234,7 +257,7 @@ open class SubtitleModel: ObservableObject {
                 // FUN_101ab2540 translation branch: build a Configuration from the new subtitle's language and the
                 // current locale, skipping when they already match (nothing to translate).
                 if translation, #available(iOS 18, macOS 15, *) {
-                    let source = info.subtitleLanguage
+                    let source = info.language
                     let target = Locale.current.language
                     if source != target {
                         translationSessionConf = .init(source: source, target: target)
@@ -293,11 +316,90 @@ open class SubtitleModel: ObservableObject {
 
     // Forward: init(url:options:) @0x101ab34a0 (allocating 0x101aaf2c8) — no init(options:).
     // ⚑[tool=export_trie_oracle ref=SubtitleModel.init(url:options:):0x101ab34a0 result=OWNER_MATCH]
+    // After the stored-property defaults and before `options`: `swift_once(0x1044eeed8, 0x101ab31b8)` — a
+    // once-initialised static (see captionAppearanceObserver below).
     public init(url: URL, options: KSOptions) {
+        _ = SubtitleModel.captionAppearanceObserver
         self.options = options
         self.url = url
         for dataSource in KSOptions.subtitleDataSources {
             addSubtitle(dataSource: dataSource)
+        }
+    }
+
+    // INFERRED name (static, no vtable slot; no trie/export symbol — lazily-initialised statics carry none).
+    // Once token 0x1044eeed8, initialiser 0x101ab31b8 (called only from init(url:options:) @0x101ab34a0):
+    // reads KSOptions.useMACaptionAppearance (0x104c63154, `cmp w8,#1`); when true calls 0x101ab9ddc, then
+    // NSNotificationCenter.defaultCenter addObserverForName:kMACaptionAppearanceSettingsChangedNotification
+    // (GOT 0x10410d358) object:nil queue:nil usingBlock: (closure 0x101ab32b4), releasing the returned token —
+    // nothing is stored, so the static's value is Void. The block body 0x101ab32b4 is the inlined
+    // runOnMainThread (Utility.swift: isMainThread → assumeIsolated / Task) around closure 0x101ab33f8 = `b 0x101ab9ddc`.
+    private static let captionAppearanceObserver: Void = {
+        if KSOptions.useMACaptionAppearance {
+            updateCaptionAppearance()
+            _ = NotificationCenter.default.addObserver(forName: NSNotification.Name(kMACaptionAppearanceSettingsChangedNotification as String), object: nil, queue: nil) { _ in
+                runOnMainThread {
+                    SubtitleModel.updateCaptionAppearance()
+                }
+            }
+        }
+    }()
+
+    // INFERRED name (static ⇒ no vtable slot; no trie/export symbol). Body @0x101ab9ddc (499 insns, zero args —
+    // metatype dropped), writing only KSOptions statics, each identified by its swift_once initialiser / storage:
+    //   textShadowColor 0x104c63190 (once 0x1019ba2c8), textStrokeColor 0x104c63160 (once 0x1019b9e14),
+    //   textStrokeWidth 0x104c63168, textShadowOffset 0x104c63170, textShadowBlurRadius 0x104c63188,
+    //   textFontName 0x1044e50a8, subtitleFontSize 0x1044e50b8, textColor 0x104c63158 (once 0x1019b9d00),
+    //   textBackgroundColor 0x104c63180 (once 0x1019ba0dc).
+    // Edge-style switch (cmp #2 b.gt / b.cs, then ==3/==4/==5, else skip): shadow offsets are the __const pairs
+    // 0x1035646d0 (-3.5, 3.5) raised, 0x1035646c0 (3.5, -3.5) depressed, 0x1035646e0 (0, 3.5) drop shadow; blur
+    // 5.0 / 5.0 / 6.0; stroke width 0 / 0 / 0 / 2 / 1 (d8 = movi 0, fmov #2.0, fmov #1.0).
+    // Font: CopyFontDescriptorForStyle(.user, nil, .default); CTFontDescriptorCopyAttribute(kCTFontNameAttribute)
+    // `cbz → brk` (force unwrap) then swift_dynamicCast flags 7 to String (`as!`); CTFontCreateWithFontDescriptor(d, 0, nil);
+    // CTFontGetSize × GetRelativeCharacterSize (`fmul d8,d8,d0`). Colours: UIColor(cgColor:) is nil-tested
+    // (`cbz x21` @0x101aba348, `cbz x22` @0x101aba3d8) before the opacity read + withAlphaComponent + store.
+    private static func updateCaptionAppearance() {
+        switch MACaptionAppearanceGetTextEdgeStyle(.user, nil) {
+        case .undefined, .none:
+            KSOptions.textShadowColor = .clear
+            KSOptions.textStrokeColor = .clear
+            KSOptions.textStrokeWidth = 0
+        case .raised:
+            KSOptions.textShadowColor = .black
+            KSOptions.textShadowOffset = CGSize(width: -3.5, height: 3.5)
+            KSOptions.textShadowBlurRadius = 5
+            KSOptions.textStrokeColor = .clear
+            KSOptions.textStrokeWidth = 0
+        case .depressed:
+            KSOptions.textShadowColor = .black
+            KSOptions.textShadowOffset = CGSize(width: 3.5, height: -3.5)
+            KSOptions.textShadowBlurRadius = 5
+            KSOptions.textStrokeColor = .clear
+            KSOptions.textStrokeWidth = 0
+        case .uniform:
+            KSOptions.textShadowColor = .clear
+            KSOptions.textStrokeColor = .black
+            KSOptions.textStrokeWidth = 2
+        case .dropShadow:
+            KSOptions.textShadowColor = .black
+            KSOptions.textShadowOffset = CGSize(width: 0, height: 3.5)
+            KSOptions.textShadowBlurRadius = 6
+            KSOptions.textStrokeColor = .black
+            KSOptions.textStrokeWidth = 1
+        @unknown default:
+            break
+        }
+        let descriptor = MACaptionAppearanceCopyFontDescriptorForStyle(.user, nil, .default).takeRetainedValue()
+        KSOptions.textFontName = CTFontDescriptorCopyAttribute(descriptor, kCTFontNameAttribute)! as! String
+        let font = CTFontCreateWithFontDescriptor(descriptor, 0, nil)
+        KSOptions.subtitleFontSize = CTFontGetSize(font) * MACaptionAppearanceGetRelativeCharacterSize(.user, nil)
+        let foreground: UIColor? = UIColor(cgColor: MACaptionAppearanceCopyForegroundColor(.user, nil).takeRetainedValue())
+        if let foreground {
+            KSOptions.textColor = foreground.withAlphaComponent(MACaptionAppearanceGetForegroundOpacity(.user, nil))
+        }
+        let background: UIColor? = UIColor(cgColor: MACaptionAppearanceCopyBackgroundColor(.user, nil).takeRetainedValue())
+        if let background {
+            KSOptions.textBackgroundColor = background.withAlphaComponent(MACaptionAppearanceGetBackgroundOpacity(.user, nil))
         }
     }
 
@@ -505,6 +607,10 @@ open class SubtitleModel: ObservableObject {
     // Forward dead slots 100-104 (Impl 0) hold the five methods whose trie symbols all sit on the dead stub
     // 0x10198eb18; `stillCurrent`/`publishIfCurrent` have no Forward symbol (inlined), so they take no slot.
     // Order inside 100-104 is an inference: dead slots carry no name.
+    // Names/signatures are NOT invented: `dyld_info -exports` lists all five as weak-def exports on the dead
+    // stub 0x0198EB18 with discriminator _912797C474A4D482F764324552AD86D2 (…010invalidateB8Searches…yyF,
+    // …011shouldApplyB6Result…16searchGeneration0M8Sequence8newParts…, …03areB17PartsStillCurrent…ySbSayAA0B4PartVGF,
+    // …04nextB14SearchSequence…16primaryQueryTime09secondarynO0…, …41invalidateRenderedPartsForSelectionChange…yyF).
     // ⚑[tool=vtable_surface ref=KSPlayer.SubtitleModel#100-104 result=dead slots ↔ Forward-dead methods]
     private func nextSubtitleSearchSequence(primaryQueryTime: Double?, secondaryQueryTime: Double?) -> UInt64 { 0 }
 
@@ -522,9 +628,10 @@ open class SubtitleModel: ObservableObject {
     // body had been declared as `searchSubtitle(query:languages:)` with both args ignored — a CONFLATION.
     // The trie names it `invalidateParts()`, zero-arg and PRIVATE (discriminator _912797…); the real
     // searchSubtitle is a distinct 2312-byte body at slot 109, written out below.
-    // NOT private: KSPlayerLayer.seek calls this immediately before the player seek, so the
-    // binary reaches it across a class boundary.
-    func invalidateParts() {
+    // PRIVATE: trie `$s8KSPlayer13SubtitleModelC15invalidateParts33_912797C474A4D482F764324552AD86D2LLyyF` carries
+    // the file discriminator. KSPlayerLayer.seek reaches it only through public `cleanParts()` (Sources
+    // KSPlayerLayer.swift:582), whose one-instruction `b 0x101ab68d8` body is inlined there.
+    private func invalidateParts() {
         subtitleSearchGeneration &+= 1
         subtitleSearchSequence &+= 1
         latestPrimarySubtitleQueryTime = nil
@@ -629,8 +736,35 @@ open class SubtitleModel: ObservableObject {
     // WITH a method descriptor. KSPlayerLayer.changeLoadState calls this; my first pass reached
     // into `subtitleDataSources` directly and widened it, which compiled and matched by type but
     // was not the member the binary names.
+    // Body = FUN_101ab9b00 (the Existential→Generic signature specialization init(url:options:) calls; the url
+    // didSet inlines it): append to subtitleDataSources, then `Task` (helper 0x101a03fd4, ctx 0x38
+    // {MainActor.shared, witness, dataSource, witness, self}, afp 0x10356d540 → 0x101abab2c → 0x101ab7a4c).
+    // Task body @0x101ab7a4c/7b04: hop to MainActor; conformsToProtocol 0x1039f1ac0 'URLSubtitleDataSource' →
+    // read `url`, await searchSubtitle(fileURL:), upcast map (wt 0x1041da4f8) + subtitleInfos Published modify
+    // append (0x101ab7d2c); else conformsToProtocol 0x1039f1a8c 'ConstantSubtitleDataSource' → await infos(),
+    // each element → `bl 0x101ab3a3c` with w2=1 (0x101ab7e64) = addSubtitle(info:) inlined; neither → return.
+    // Both throw arms (0x101ab7f04 / 0x101ab80b4) KSLog level 2 with #file 'KSPlayer/SubtitleModel.swift'
+    // (0x1c) #function 'addSubtitle(dataSource:)' (0x18) #line 0x169 — one catch.
     public func addSubtitle(dataSource: any SubtitleDataSource) {
         subtitleDataSources.append(dataSource)
+        nonisolated(unsafe) let strongSelf = self
+        nonisolated(unsafe) let source = dataSource
+        Task { @MainActor in
+            do {
+                if let source = source as? URLSubtitleDataSource {
+                    nonisolated(unsafe) let source = source
+                    let infos = try await SubtitleModel.delegateSearch(source, fileURL: strongSelf.url)
+                    strongSelf.subtitleInfos.append(contentsOf: infos)
+                } else if let source = source as? ConstantSubtitleDataSource {
+                    let infos = try await SubtitleModel.delegateInfos(source)
+                    for info in infos {
+                        strongSelf.addSubtitle(info: info)
+                    }
+                }
+            } catch {
+                KSLog(error, line: 361)
+            }
+        }
     }
 
     // Concurrency plumbing (§1 — recon-chosen, binary-invisible; NOT a distinct binary function), the same
@@ -644,6 +778,17 @@ open class SubtitleModel: ObservableObject {
                                        languages: [String]) async throws -> sending [URLSubtitleInfo]
     {
         try await dataSource.searchSubtitle(query: query, languages: languages)
+    }
+
+    // Same binary-invisible `sending` plumbing for addSubtitle(dataSource:)'s two awaited requirements.
+    private static func delegateSearch(_ dataSource: sending any URLSubtitleDataSource,
+                                       fileURL: URL) async throws -> sending [URLSubtitleInfo]
+    {
+        try await dataSource.searchSubtitle(fileURL: fileURL)
+    }
+
+    private static func delegateInfos(_ dataSource: sending any ConstantSubtitleDataSource) async throws -> sending [any SubtitleInfo] {
+        try await dataSource.infos()
     }
 
     // Slot 111 @0x101ab8250 — shared helper invoked by BOTH select willSets on the newly-selected info (2 call sites).  ⚑[tool=resolve_fun_pins ref=FUN_101ab8250:0x101ab8250 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleModel.(select in _912797C474A4D482F764324552AD86D2)(subtitleInfo: KSPlayer.SubtitleInfo) -> ()
@@ -695,28 +840,19 @@ public actor SubtitleActor: KSSubtitleProtocol {
         self.info = info
     }
 
-    // FUN_101ab6b5c/6c2c — inlined into SubtitleModel.searchSubtitle's Task at its single call site
-    // (`await firstSubtitleActor?.reset(); await secondarySubtitleActor?.reset()`). Invalidates this
-    // actor's in-flight search state. ⚑ method name unrecoverable (P28), recon-chosen.
-    func reset() {
-        searchGeneration &+= 1
-        latestQueryTime = nil
-        parts = []
-    }
-
-    // KSSubtitleProtocol requirement — witness impl 0x101ab9a44 (WT 0x1041daad0, async-fp 0x10356d4a8).
+    // Vtable order is pinned by Forward's method descriptors (desc 0x1039f20b8, 14 slots): 9 init · 10 async
+    // (dead) · 11 async 0x101ab8864 · 12 sync (dead) · 13 sync 0x101ab959c — so after init come the two async
+    // searches, then reset(), then the sync stale-query filter.
+    //
+    // Slot 10 — KSSubtitleProtocol requirement, witness 0x101ab9a44 (WT 0x1041daad0, async-fp 0x10356d4a8).
     // MUST stay `nonisolated`: the requirement carries non-Sendable KSSubtitleQuery/[SubtitlePart], so an
-    // actor-isolated witness can't satisfy it. The witness hops onto the actor (9a44 task_switch) into the
-    // isolated worker, laundering the non-Sendable crossings via the base's `nonisolated(unsafe)` idiom (P62).
+    // actor-isolated witness can't satisfy it. 9a44 stores query/self and task_switches with executor 0 (the
+    // generic executor = nonisolated), and the continuation 9a5c bumps the generation at self+0x88 IN PLACE,
+    // off the actor, then tail-calls search(with:generation:) 0x101ab8864 — one function, no isolated worker
+    // (the former `bumpAndSearch` took a vtable slot Forward does not have). The Unmanaged +0x88 read/write is
+    // the Swift 6 spelling of that unisolated field access; the query crosses via the P62 launder.
     public nonisolated func search(with query: KSSubtitleQuery) async -> [SubtitlePart] {
         nonisolated(unsafe) let query = query
-        return await bumpAndSearch(with: query)
-    }
-
-    // 9a5c (isolated) — the on-actor realization of the req: bump the generation, delegate to the gen-search.
-    // ⚑ recon-named (P28): the 9a44→9a5c hop implies this isolated worker; source name unrecoverable.
-    @used private func bumpAndSearch(with query: KSSubtitleQuery) async -> sending [SubtitlePart] {
-        // Forward reads and writes the actor's generation at +0x88 directly.
         let generationSlot = Unmanaged.passUnretained(self).toOpaque()
             .advanced(by: 0x88).assumingMemoryBound(to: UInt64.self)
         let generation = generationSlot.pointee &+ 1
@@ -724,7 +860,7 @@ public actor SubtitleActor: KSSubtitleProtocol {
         return await search(with: query, generation: generation)
     }
 
-    // Internal generation-guarded search (0x101ab8864 → 8884 → 8938 → 898c; three call sites: bumpAndSearch
+    // Internal generation-guarded search (0x101ab8864 → 8884 → 8938 → 898c; three call sites: search(with:)
     // above + the two SubtitleModel drivers FUN_101ab438c/4c54). Reentrancy-safe across the `await info.search`:
     // a newer search that bumps searchGeneration during suspension makes this call stale, so it neither records
     // its query time (8884 guard) nor commits its results (898c gate @0x101ab9558).
@@ -791,26 +927,42 @@ public actor SubtitleActor: KSSubtitleProtocol {
                     }
                 }
             }
+            // 0x101ab9530: store, then RE-READ `parts` (`ldr x20,[x19,#0x70]` after the str) as the result.
             parts = result
+            result = parts
         } else {
-            // 959c (FUN_101ab959c) — the reentrancy-stale path yields the parts at `latestQueryTime`, adopting
-            // a non-empty fresh filter of `result` into `parts` as a side effect (this stale query's own
-            // generation is never adopted). ⚑ inlined (an isolated helper can't `sending`-return actor parts).
-            if let time = latestQueryTime {
-                let filtered = result.filter { $0.start <= time && time < $0.end }
-                if !filtered.isEmpty {
-                    parts = filtered
-                    result = filtered            // re-filtering by `time` is a no-op → return it whole
-                } else {
-                    result = parts.filter { $0.start <= time && time < $0.end }
-                }
-            } else {
-                result = []
-            }
+            // 0x101ab9000 `b.ne 0x101ab9224` → `bl 0x101ab959c` (slot 13) on `result`, release result, return.
+            result = currentParts(result)
         }
         // launder the actor-derived result across the `sending` return (§1 recon-chosen plumbing).
         nonisolated(unsafe) let out = result
         return out
+    }
+
+    // Slot 12 (sync, Impl 0) — FUN_101ab6b5c/6c2c inline it into SubtitleModel.invalidateParts' Task
+    // (`await firstSubtitleActor?.reset(); await secondarySubtitleActor?.reset()`). Invalidates this
+    // actor's in-flight search state. ⚑ method name unrecoverable (P28), recon-chosen.
+    func reset() {
+        searchGeneration &+= 1
+        latestQueryTime = nil
+        parts = []
+    }
+
+    // Slot 13 @0x101ab959c (287 instr, sync, self in x20, the array in x0, array returned) — the stale-query
+    // path of search(with:generation:). `latestQueryTime` nil (tag +0x98) returns the empty-array singleton.
+    // Otherwise two identical inlined filters: each keeps a part when it is not an empty-text `.right`
+    // (tag +0x81 == 1 → `text.string` count test; `.left` skips it) and start <= time < end. A non-empty
+    // filter of the argument is stored into `parts` (+0x70); the return value is `parts` re-filtered.
+    // INFERRED name: the actor has no owner-position trie symbols; slot kind/position/signature are read.
+    func currentParts(_ newParts: [SubtitlePart]) -> [SubtitlePart] {
+        guard let time = latestQueryTime else {
+            return []
+        }
+        let filtered = newParts.filter { !$0.isEmpty && $0.start <= time && time < $0.end }
+        if !filtered.isEmpty {
+            parts = filtered
+        }
+        return parts.filter { !$0.isEmpty && $0.start <= time && time < $0.end }
     }
 
     // Concurrency plumbing (§1 — recon-chosen, binary-invisible; NOT a distinct binary function): the actor

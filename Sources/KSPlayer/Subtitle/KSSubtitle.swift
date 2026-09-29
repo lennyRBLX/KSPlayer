@@ -28,14 +28,17 @@ public protocol SubtitleInfo: KSSubtitleProtocol, AnyObject {
     var name: String { get }
     var delay: TimeInterval { get }
     // Order pinned to the URLSubtitleInfo:SubtitleInfo witness table getters (+0x10..+0x38 =
-    // subtitleID / name / delay / languageCode / subtitleLanguage / isEnabled): languageCode (witness
-    // 0x100c55b00, String? getter @self+0x40) then subtitleLanguage (witness +0x30, FUN_101aa3cc8) sit
+    // subtitleID / name / delay / languageCode / language / isEnabled): languageCode (witness
+    // 0x100c55b00, String? getter @self+0x40) then language (witness +0x30, FUN_101aa3cc8) sit
     // between delay and isEnabled.
     var languageCode: String? { get }
-    // subtitleLanguage = the subtitle's language as a `Locale.Language` (the translation SOURCE). Named
-    // `subtitleLanguage` (not `language`) to avoid the `MediaPlayerTrack.language: String?` collision on
-    // FFmpegAssetTrack. ⚑ P28: true name stripped.
-    var subtitleLanguage: Locale.Language? { get }
+    // Requirement +0x30 (protocol_surface fwd unit idx 5, getter-only, Locale.Language?). Its name is
+    // stripped with every other requirement (no `Tq` in the trie), but the trie's only SubtitleInfo member
+    // of this type is the extension default `PAAE8language…vg/vpMV` @0x101aa23d0, and all four slot-5
+    // witnesses (0x101aa3cc8 / 0x101aa269c / 0x101aa242c / 0x100abde9c) are default-impl specializations
+    // of that body (languageCode → Locale.Language(identifier:)) — the same requirement+default pairing as
+    // `isSrt` (+0x50 / `PAAE5isSrtSbvg`). So the requirement is `language`, defaulted below.
+    var language: Locale.Language? { get }
     //    var userInfo: NSMutableDictionary? { get set }
     //    var subtitleDataSouce: SubtitleDataSouce? { get set }
 //    var comment: String? { get }
@@ -65,15 +68,9 @@ public extension SubtitleInfo {
     /// So the closure result is non-optional and the map is `map`, not `flatMap`.
     /// ⚑[tool=bind_oracle ref=__got:0x104109ed8 result=Locale.Language.init(identifier:)]
     ///
-    /// ⚑ OPEN, and deliberately NOT acted on: the protocol above declares a `Locale.Language?`
-    ///   requirement whose name this reconstruction invented as `subtitleLanguage` ("true name
-    ///   stripped"), and the trie's ONLY `SubtitleInfo` member of that type is this `language`.
-    ///   That makes "the requirement is really named `language`, and this is its default" the
-    ///   obvious hypothesis — but it is NOT proven and was not assumed. All four conformers'
-    ///   slot-5 witnesses (URLSubtitleInfo 0x101aa3cc8, EmptySubtitleInfo 0x101aa269c,
-    ///   AVMediaSelectionTrack 0x100abde9c) are 37-instruction bodies reading their OWN stored
-    ///   fields, not thunks to 0x101aa23d0, so nothing here shows this member serving as that
-    ///   requirement's default. Renaming on that hypothesis would assert more than is read.
+    /// The protocol's +0x30 requirement is this member (see the requirement note above); the former
+    /// invented `subtitleLanguage` requirement + identical extension body is gone, so mergefunc no longer
+    /// folds this getter into it.
     var language: Locale.Language? {
         languageCode.map { Locale.Language(identifier: $0) }
     }
@@ -84,10 +81,6 @@ public extension SubtitleInfo {
     /// Trie: `(extension in KSPlayer):KSPlayer.SubtitleInfo.isSrt.getter : Swift.Bool`, i.e. the
     /// binary places it in an extension of the protocol, which is where it is written here.
     var isSrt: Bool { true }
-    // FUN_101aa3cc8: `Locale.Language(identifier:)` from `languageCode`, or nil when `languageCode` is nil.
-    var subtitleLanguage: Locale.Language? {
-        languageCode.map { Locale.Language(identifier: $0) }
-    }
     func hash(into hasher: inout Hasher) {
         hasher.combine(subtitleID)
     }
@@ -177,7 +170,11 @@ public final class EmptySubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
 // §8.3 — flattened: the KSSubtitle base is REMOVED (§8.2); fields in binary reflection order.
 // +searchProtocol/isDownloading/languageCode/renderMode vs recon. Conforms KSSubtitleProtocol+SubtitleInfo
 // directly (§8.5). The recon isEnabled-didSet parse-trigger + init download/rename logic → P4 M2.
-public final class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
+// `@unchecked Sendable` is a marker conformance (no record in the binary). It is what lets the isEnabled
+// didSet spell Forward's `Task { [weak self] in … }` under Swift 6 (SendingClosureRisksDataRace otherwise):
+// 0x101aa2b54 allocates the 0x18 weak box AFTER the TaskPriority metadata / nil-priority store and BEFORE the
+// 0x28 Task context — capture-list order; the `nonisolated(unsafe) weak var` launder allocates earlier.
+public final class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo, @unchecked Sendable {
     private var searchProtocol: (any KSSubtitleProtocol)? = nil // §8.6
     private var isDownloading: Bool = false
     public var languageCode: String? = nil
@@ -195,12 +192,8 @@ public final class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
         didSet {
             if isEnabled, searchProtocol == nil, !isDownloading {
                 isDownloading = true
-                // Swift 6: Task's operation is `sending`, and URLSubtitleInfo is not Sendable. This is the
-                //   repo's established `nonisolated(unsafe) weak var` launder (see init). Like the binary, it
-                //   lowers to one 0x18 heap box holding the weak reference.
-                nonisolated(unsafe) weak var weakSelf = self
-                Task {
-                    guard let self = weakSelf else {
+                Task { [weak self] in
+                    guard let self else {
                         return
                     }
                     do {
