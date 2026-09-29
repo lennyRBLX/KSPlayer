@@ -242,16 +242,16 @@ public enum ClockProcessType {
 // 缓冲情况
 public protocol CapacityProtocol {
     var fps: Float { get }
-    var packetCount: Int { get }
-    var frameCount: Int { get }
+    var packetCount: UInt { get }
+    var frameCount: UInt { get }
     var frameMaxCount: Int { get }
     var isEndOfFile: Bool { get }
     var mediaType: AVFoundation.AVMediaType { get }
     // 7th requirement (wt+0x38): KSOptions.playable @0x1019b84b4 does `ldr x8,[x26,#0x38]; blr` and
     // stores d0 into the mapped array — `capacitys.map(\.loadedTime)`. Order +0x8..+0x30 above is
     // consistent with the same function (+0x10/+0x18 counts, +0x28 isEndOfFile).
-    // ⚑ Forward packetCount/frameCount are UInt (`adds x22,x21,x0; b.hs` @0x1019b8598/0x1019b85ec);
-    // types kept Int here — conformers are lane 11 (GAP).
+    // ⚑ Forward packetCount/frameCount are UInt (`adds x22,x21,x0; b.hs` @0x1019b8598/0x1019b85ec).
+    // L7 lanes 14+15 joint: the requirements and the MEPlayerItemTrack conformers are UInt together.
     var loadedTime: TimeInterval { get } // INFERRED 0x1019b84b4 wt+0x38
 }
 
