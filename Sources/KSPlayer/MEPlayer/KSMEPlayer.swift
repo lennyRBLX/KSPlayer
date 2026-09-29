@@ -87,11 +87,12 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
     //   function "playbackRate", line 0x44; MEPlayerItem.playbackRate's setter INLINED (audioClock then
     //   videoClock +0x10, modify accesses); displayLayer (VideoOutput +0x40) controlTimebase → CMTimebaseSetRate;
     //   KSOptions vtable +0x700 = isAudioRateByFilter() picks the filter arm, else AudioOutput +0x30 setter.
-    // ⚑ GAP (isolation): the filter closure carries a MainActor executor check (reportUnexpectedExecutor
-    //   "KSPlayer/KSMEPlayer.swift" line 0x4a), so Forward's didSet is MainActor-isolated; sourceDidChange
-    //   calls it no-hop and its MEPlayerDelegate witness thunk 0x101a42328 is a bare `b`. Kept nonisolated.
+    // ⚑ L7 lane 14 ISOLATION: @MainActor. The inlined filter closure carries a MainActor executor check
+    //   (0x101a3dc90 reportUnexpectedExecutor "KSPlayer/KSMEPlayer.swift" line 0x4a = 74, pinned via
+    //   #sourceLocation); its no-hop caller is the @MainActor sourceDidChange(loadingState:) (0x101a41ed0).
     // ⚑ L7: filter arm tail (0x101a3e248-0x101a3e270): `playbackState != .idle` → MEPlayerItem 0x101a48158
     //   (AVMediaType.audio), result discarded.
+    @MainActor
     public var playbackRate: Float = 1 {
         didSet {
             if oldValue != playbackRate {
@@ -101,9 +102,11 @@ public final class KSMEPlayer: NSObject, @unchecked Sendable {
                     CMTimebaseSetRate(controlTimebase, rate: Double(playbackRate))
                 }
                 if options.isAudioRateByFilter() {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 74)
                     var audioFilters = options.audioFilters.filter {
                         !$0.hasPrefix("atempo=")
                     }
+#sourceLocation()
                     if playbackRate != 1 {
                         audioFilters.append("atempo=\(playbackRate)")
                     }
@@ -252,16 +255,24 @@ private extension KSMEPlayer {
         }
     }
 
-    @objc private func spatialCapabilityChange(notification _: Notification) {
+    // ⚑ L7 lane 14 ISOLATION: @MainActor. The @objc thunk 0x101a3f960 → shared 0x101a402e8 runs
+    //   swift_task_isCurrentExecutor / reportUnexpectedExecutor("KSPlayer/KSMEPlayer.swift", line 0xf3 = 243);
+    //   body 0x101a3f338 KSLog line 0xf4 = 244. Lines pinned via #sourceLocation.
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 243)
+    @MainActor @objc private func spatialCapabilityChange(notification _: Notification) {
         KSLog("[audio] spatialCapabilityChange")
         for track in tracks(mediaType: .audio) {
             (track as? FFmpegAssetTrack)?.audioDescriptor?.updateAudioFormat()
         }
     }
+#sourceLocation()
 
     #if !os(macOS)
-    @objc private func audioRouteChange(notification: Notification) {
-        KSLog("[audio] audioRouteChange")
+    // ⚑ L7 lane 14 ISOLATION: @MainActor. The @objc thunk 0x101a402d8 → shared 0x101a402e8 checks the MainActor
+    //   executor at line 0x104 = 260; body 0x101a3f970 KSLog line 0x109 = 265.
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 260)
+    @MainActor @objc private func audioRouteChange(notification: Notification) {
+        KSLog("[audio] audioRouteChange", line: 265)
         guard let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else {
             return
         }
@@ -274,6 +285,7 @@ private extension KSMEPlayer {
         }
         audioOutput.flush()
     }
+#sourceLocation()
     #endif
 }
 
@@ -337,25 +349,12 @@ extension KSMEPlayer: MEPlayerDelegate {
     //     "[audio] audio type=" + audioOutput + " prepare audioFormat )" line 0x143 = 323;
     //     audioOutput.prepare(audioFormat:) (AudioOutput wt +0x90). audioDescriptor is released at closure end.
     //   · controlTimebase / startPlayTime > 1 → CMTimebaseSetTime(CMTimeMake(Int64(startPlayTime), 1)).
-    //   · rotation block (see GAP below), then delegate?.readyToPlay(player: self) (wt +0x8).
-    // GAP (isolation, not written): Forward, when !options.isRotateByFilter, runs
-    //     if let videoTrack = tracks(mediaType: .video).first(where: { $0.isEnabled }) {   // check line 0x149 = 329
-    //         if videoTrack.rotation != 0 {                                               // MediaPlayerTrack wt +0x48
-    //             let angle: UInt16 = UIApplication.isLandscape && videoTrack.rotation != 180 ? 0 : videoTrack.rotation
-    //             NotificationCenter.default.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { [weak self, videoTrack] _ in
-    //                 guard let self else { return }                                      // 0x101a473bc → 0x101a41164
-    //                 videoOutput.centerRotate(by: UIApplication.isLandscape ? 0 : videoTrack.rotation)
-    //             }
-    //             videoOutput.centerRotate(by: angle)                                     // inlined UIView.centerRotate
-    //         }
-    //     }
-    //   (isLandscape inlined via the connectedScenes helper 0x101a02f64; centerRotate inlined as setTransform:.)
-    //   The observer block is NS_SWIFT_SENDABLE, yet Forward captures the non-Sendable `any MediaPlayerTrack`
-    //   and calls MainActor UIView API from it with NO executor check — the decl-level isolation that makes that
-    //   compile under Swift 6 (MediaPlayerTrack: Sendable? nonisolated centerRotate?) is not resolvable here.
-    //   Also needs an `#if os(iOS)` guard (UIDeviceOrientationDidChangeNotification is tvOS/visionOS-unavailable).
-    //   The observer body 0x101a41164 has NO Task (no swift_task_create) and NO assumeIsolated / executor check:
-    //   weak-load self → videoOutput → activeWindowScene (0x101a02f64) interfaceOrientation → setTransform.
+    //   · rotation block (written in the closure, `#if os(iOS)`), then delegate?.readyToPlay(player: self) (wt +0x8).
+    // ⚑ L7 lane 14: rotation block written. `tracks(mediaType: .video).first { isEnabled }` carries the closure
+    //   executor check line 0x149 = 329 (pinned via #sourceLocation); MediaPlayerTrack.rotation is wt +0x48;
+    //   isLandscape is inlined through the connectedScenes helper 0x101a02f64; centerRotate is inlined as
+    //   setTransform:. The observer block 0x101a473bc → 0x101a41164 has no Task, no assumeIsolated and no
+    //   executor check (weak-load self → videoOutput → activeWindowScene interfaceOrientation → setTransform).
     public func sourceDidOpened() {
         isReadyToPlay = true
         seekable = playerItem.seekable
@@ -378,6 +377,22 @@ extension KSMEPlayer: MEPlayerDelegate {
             if let controlTimebase = videoOutput.displayLayer.controlTimebase, options.startPlayTime > 1 {
                 CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(options.startPlayTime), timescale: 1))
             }
+            #if os(iOS)
+            if !options.isRotateByFilter {
+#sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 329)
+                if let videoTrack = tracks(mediaType: .video).first(where: { $0.isEnabled }) {
+#sourceLocation()
+                    if videoTrack.rotation != 0 {
+                        let angle: UInt16 = UIApplication.isLandscape && videoTrack.rotation != 180 ? 0 : videoTrack.rotation
+                        NotificationCenter.default.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { [weak self, videoTrack] _ in
+                            guard let self else { return }
+                            videoOutput.centerRotate(by: UIApplication.isLandscape ? 0 : videoTrack.rotation)
+                        }
+                        videoOutput.centerRotate(by: angle)
+                    }
+                }
+            }
+            #endif
             delegate?.readyToPlay(player: self)
         }
     }
@@ -439,6 +454,8 @@ extension KSMEPlayer: MEPlayerDelegate {
     //     "sourceDidChange(loadingState:)", line 0x19f) precede `loadState = .playable` (setter 0x101a3e44c).
     //   · tail: delegate witness +0x20 = changePlaybackTime(player:time:).
     //   · live-rate gate: MEPlayerItem 0x101a486b0 (`isLive`, 0x101a41e14) before the playbackState/loadState tests.
+    //   · ISOLATION: @MainActor (MEPlayerDelegate req0, Model.swift); bare wt thunk 0x101a42328.
+    @MainActor
     public func sourceDidChange(loadingState: LoadingState) {
         if loadingState.isEndOfFile {
             playableTime = duration
@@ -483,9 +500,9 @@ extension KSMEPlayer: MEPlayerDelegate {
                 playbackRate = rate
             }
         }
-        // ⚑ GAP (isolation): Forward's tail is a no-hop `delegate?.changePlaybackTime(player:time:)`
-        //   (MediaPlayerDelegate wt +0x20); the requirement is MainActor-isolated here and this method is
-        //   nonisolated, so the call is a Swift 6 error — same unresolved decl-level isolation as playbackRate.
+        // Forward 0x101a41ed4-0x101a41f40: weak load + getObjectType, then currentPlaybackTime (0x101a41fe4),
+        //   then MediaPlayerDelegate wt +0x20 no-hop.
+        delegate?.changePlaybackTime(player: self, time: currentPlaybackTime)
     }
 
     public func sourceDidChange(oldBitRate: Int64, newBitrate: Int64) {

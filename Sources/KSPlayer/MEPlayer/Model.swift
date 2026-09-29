@@ -88,7 +88,14 @@ protocol CodecCapacityDelegate: AnyObject {
 ///   reabstraction thunk, so this one is by elimination) · req6 **`sourceDidClear()`**.
 /// A requirement's index is its witness-table slot, so appending the two at the end would have
 /// put `sourceDidEOF` in the wrong slot.
+/// ⚑ L7 lane 14 ISOLATION: per-requirement, not protocol-level. req0 is `@MainActor`: KSMEPlayer's witness
+///   0x101a41814 calls the MainActor playbackRate didSet 0x101a3dc90 and MediaPlayerDelegate wt +0x20
+///   (0x101a41f38) with no hop, its wt thunk 0x101a42328 is a bare `b` (no @preconcurrency check), and the only
+///   MEPlayerItem caller is the @MainActor tick. req1–req4 stay nonisolated: MEPlayerItem.send 0x101a48b04 calls
+///   wt +0x20 (0x101a49018), +0x28 (0x101a49ea0), +0x10 (0x101a4a2c8), +0x18 (0x101a4a4f4) directly, and send
+///   itself is called no-hop from the nonisolated Task bodies 0x101a4d168 / 0x101a4dba8.
 public protocol MEPlayerDelegate: AnyObject {
+    @MainActor
     func sourceDidChange(loadingState: LoadingState)
     func sourceDidOpened()
     func sourceDidEOF()
@@ -645,16 +652,25 @@ public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:
                                                          //   field-record + write-usage are authoritative (§19). ⚑ key/value width via §7-walled symref
     var lock: os_unfair_lock = os_unfair_lock()          // +0x30  (4-byte os_unfair_lock, init 0)
 
-    // init — minimal inferred (devirt slot6, inlined in the P3 driver → signature UNRECOVERABLE).
-    // ⚑ init inferred — devirt slot6, built inline by the P3 driver 0x101a483d4 (alloc+field-stores);
-    //   exact signature unrecoverable.
-    public init(formatCtx: UnsafeMutablePointer<AVFormatContext>,
-                outputStreamInfo: OutputStreamInfo,
-                mediaType: AVFoundation.AVMediaType?) {
-        self.formatCtx = formatCtx
-        self.outputStreamInfo = outputStreamInfo
+    // init — inlined into MEPlayerItem.startRecord 0x101a483d4, so parameter labels are INFERRED.
+    // ⚑ L7 lane 14: the init THROWS and builds the OutputStreamInfo itself. Forward allocates (0x101a4848c),
+    //   stores startTime [:] (+0x28) and lock 0 (+0x30), then formatContext+0x18 → +0x10 and mediaType → +0x20
+    //   (0x101a484a8-0x101a484b0), then try-calls the builder 0x101a1d014 (formatContext, filename, true, nil,
+    //   nil, mediaType, nil); the throw arm frees the partial instance via swift_deallocPartialClassInstance
+    //   (0x101a4851c) and +0x18 is stored only on success (0x101a48564). filename is computed by the caller
+    //   before the allocation (ffmpegString 0x101a4846c) and released after the builder call (owned).
+    public init(formatContext: FormatContext,
+                filename: String,
+                mediaType: AVFoundation.AVMediaType?) throws {
+        formatCtx = formatContext.formatCtx
         self.mediaType = mediaType
-        // startTime defaults to [:]; lock defaults to os_unfair_lock().
+        outputStreamInfo = try OutputStreamInfo(formatContext: formatContext,
+                                                filename: filename,
+                                                forceTranscode: true,
+                                                formatContextOptions: nil,
+                                                formatName: nil,
+                                                mediaType: mediaType,
+                                                transcodeCodecIDs: nil)
     }
 
     // ── write (slot7 @0x101a65df0, 94 instr) — FAITHFUL (DTS-clamp + lock + → slot13) ─────────────

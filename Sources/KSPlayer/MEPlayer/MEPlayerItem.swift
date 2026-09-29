@@ -137,16 +137,7 @@ public final class MEPlayerItem: @unchecked Sendable {
         }
         remuxer = nil
         do {
-            let outputStreamInfo = try OutputStreamInfo(formatContext: formatContext,
-                                                        filename: url.ffmpegString,
-                                                        forceTranscode: true,
-                                                        formatContextOptions: nil,
-                                                        formatName: nil,
-                                                        mediaType: mediaType,
-                                                        transcodeCodecIDs: nil)
-            remuxer = Remuxer(formatCtx: formatContext.formatCtx,
-                              outputStreamInfo: outputStreamInfo,
-                              mediaType: mediaType)
+            remuxer = try Remuxer(formatContext: formatContext, filename: url.ffmpegString, mediaType: mediaType)
         } catch {
             // The OVERLOAD is derived, not chosen. `KSLog(_ error:)` (KSOptions.swift:1016) forwards
             // as `KSLog(level: .error, error() as NSError, …)`, and that `as NSError` step is what
@@ -163,11 +154,8 @@ public final class MEPlayerItem: @unchecked Sendable {
             //            table of the global existential projected at 0x101a485e8
             //   file/fn  two 27-char literals tagged `orr …,#0x8000000000000000` @0x101a48634/0x101a48638
             //   line     `mov w6,#0x2bd` = 701
-            // ⚑ GAP (Model.swift): Forward allocates the Remuxer BEFORE the throwing call and fails through
-            //   `swift_deallocPartialClassInstance` @0x101a4851c. That is the codegen of a THROWING Remuxer
-            //   init that builds OutputStreamInfo itself: it stores formatContext+0x18 into +0x10 and
-            //   mediaType into +0x20, with [:] at +0x28 and 0 at +0x30, then calls the builder. Model.swift's
-            //   Remuxer init is non-throwing, so the two-step spelling above stays until that decl lands.
+            // ⚑ L7 lane 14: Remuxer.init is now the THROWING init (Model.swift) that builds OutputStreamInfo
+            //   itself, which gives Forward's alloc-first / swift_deallocPartialClassInstance @0x101a4851c shape.
             KSLog(error, line: 701)
         }
     }
@@ -365,7 +353,8 @@ public final class MEPlayerItem: @unchecked Sendable {
     // await funclets 0x101a4ed3c/0x101a4f9e0/0x101a50680, close 0x101a4cd88 + 0x101a4cf9c) and the
     // @MainActor timer closure 0x101a4bf20. All KSLog calls carry function "send(_:)" (#function inside
     // the closures too). The CapacityProtocol test `isEndOfFile && packetCount == 0 && frameCount == 0`
-    // is Forward helper 0x1019e1b6c (PlayerDefines.swift, not in source) — written inline here.
+    // is the PlayerDefines extension getter `isFinished` (0x1019e1b6c, INFERRED name), called out of line
+    // at 0x101a49754 (the trackFinished allSatisfy loop) and 0x101a4a554 (the EOF arm's first track).
     func send(_ event: MEPlayerItem.Event) {
         switch (state, event) {
         // Forward 0x101a4902c `cmp w22, #0x8`: the closed test reuses the state byte loaded for the switch
@@ -530,7 +519,7 @@ public final class MEPlayerItem: @unchecked Sendable {
             if !options.isLoopPlay {
                 state = .endOfStream
                 delegate?.sourceDidEOF()
-                if let track = videoAudioTracks.first, track.isEndOfFile, track.packetCount == 0, track.frameCount == 0 {
+                if let track = videoAudioTracks.first, track.isFinished {
                     send(.trackFinished(track))
                 }
             } else if allPlayerItemTracks.contains(where: { $0.isLoopModel }) {
@@ -598,7 +587,7 @@ public final class MEPlayerItem: @unchecked Sendable {
             if track.mediaType == .audio {
                 isAudioStalled = true
             }
-            if videoAudioTracks.allSatisfy({ $0.isEndOfFile && $0.packetCount == 0 && $0.frameCount == 0 }) {
+            if videoAudioTracks.allSatisfy({ $0.isFinished }) {
                 if options.isLoopPlay {
                     isAudioStalled = audioTrack == nil
                     allPlayerItemTracks.forEach { $0.isLoopModel = false }
@@ -1137,10 +1126,10 @@ extension MEPlayerItem {
                         caches.append((subtitle, cache.0, cache.1))
                     }
                 } else {
-                    // ⚑ GAP (CircularBuffer.swift): Forward inlines a CircularBuffer method on
-                    //   subtitle.outputRenderQueue (+0x58) here: condition.lock(); headIndex = 0;
-                    //   condition.signal(); condition.unlock(). Both fields are private and the method
-                    //   (vtable F28, dead slot) is lane 11's decl.
+                    // Forward 0x101a55de4: CircularBuffer vtable F28 `update(headIndex:)` (INFERRED name, dead slot)
+                    //   inlined on subtitle.outputRenderQueue (+0x58) with 0 (the <= tailIndex compare folds):
+                    //   condition.lock(); headIndex = 0; condition.signal(); condition.unlock().
+                    subtitle.outputRenderQueue.update(headIndex: 0)
                 }
             }
         }
@@ -1483,9 +1472,14 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
             break
         case .empty:
             break
+        // Forward 0x101a588f8-0x101a589c4: the popped frame lives in ONE variable declared before the loop
+        //   (x28 = nil @0x101a588f8; each pass releases the previous value right after pop @0x101a5894c, and
+        //   the last value is released after the loop @0x101a589b8); a copy of it is held across the
+        //   droppedVideoFrameCount increment (retain @0x101a58960, release @0x101a5899c). Local names INFERRED.
         case var .dropFrame(count: count):
+            var dropped: VideoVTBFrame?
             repeat {
-                let dropped = videoTrack.outputRenderQueue.pop { item, _ -> Bool in
+                dropped = videoTrack.outputRenderQueue.pop { item, _ -> Bool in
                     !item.isKeyFrame
                 }
                 count -= 1
@@ -1503,12 +1497,20 @@ extension MEPlayerItem: OutputRenderSourceDelegate { // refines Audio+Video (ses
                 send(.seek(to: currentPlaybackTime, useCache: options.seekUsePacketCache, completion: nil))
             }
         case .dropGOPPacket:
+            // Forward 0x101a58b10-0x101a58bd4: same var shape as .dropFrame. The popped packet stays alive
+            //   across the increment (retain @0x101a58b40 / release @0x101a58b84) and is released only after
+            //   the NEXT pop (@0x101a58bcc), which is an assignment into a variable that outlives the pass.
+            //   Local name INFERRED.
             if let videoTrack = videoTrack as? AsyncPlayerItemTrack {
-                while videoTrack.packetQueue.pop(where: { item, _ -> Bool in
-                    !item.isKeyFrame
-                }) != nil {
-                    dynamicInfo.droppedVideoPacketCount += 1
-                }
+                var packet: Packet?
+                repeat {
+                    packet = videoTrack.packetQueue.pop { item, _ -> Bool in
+                        !item.isKeyFrame
+                    }
+                    if packet != nil {
+                        dynamicInfo.droppedVideoPacketCount += 1
+                    }
+                } while packet != nil
             }
         }
         return frame
