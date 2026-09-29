@@ -27,12 +27,12 @@ public struct KSVideoPlayer {
     }
     // L7: Forward 0x1019d6d98 calls the Coordinator init body 0x1019dd320 and reads the MainActor
     // KSPlayerLayer's url/options synchronously with no swift_task_switch or executor check, so the
-    // init itself is MainActor-isolated.
+    // init itself is MainActor-isolated. Order: Coordinator 0x1019dd320, url copy, options load+retain,
+    // then ObservedObject(wrappedValue:) store and options store = arguments evaluated, then the
+    // memberwise init(coordinator:url:options:) body inlined.
     @MainActor
     public init(playerLayer: KSPlayerLayer) {
-        coordinator = Coordinator(playerLayer: playerLayer)
-        url = playerLayer.url
-        options = playerLayer.options
+        self.init(coordinator: Coordinator(playerLayer: playerLayer), url: playerLayer.url, options: playerLayer.options)
     }
 
     // L7: Forward 0x1019d6f0c: nil check on Coordinator.playerLayer (cbz → return nil), else the
