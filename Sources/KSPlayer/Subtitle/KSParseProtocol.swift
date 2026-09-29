@@ -85,10 +85,13 @@ public class SrtParse: KSParseProtocol {
      {\an4}慢慢来
      */
     public func parsePart(scanner: Scanner) -> [SubtitlePart] {
-        guard let cue = scanSubtitleCue(scanner) else {
+        // Forward @0x101aa0f30-0x101aa0f60 releases each cue string right after its use (start after
+        // parseDuration, end after parseDuration, text after the tag parse): the tuple is destructured
+        // into three independent lets. Binding `cue` and projecting keeps all three alive to the end.
+        guard let (start, end, text) = scanSubtitleCue(scanner) else {
             return []
         }
-        return [makeTextSubtitlePart(start: cue.start.parseDuration(), end: cue.end.parseDuration(), text: cue.text)]
+        return [makeTextSubtitlePart(start: start.parseDuration(), end: end.parseDuration(), text: text)]
     }
     public static func parsePart(scanner: Scanner) -> (start: String, end: String, text: String)? {
         scanSubtitleCue(scanner)
@@ -451,19 +454,23 @@ public class VTTParse: SrtParse {
     //   components and emit ONE SubtitlePart per component (a cue → multiple parts, which is why the return is
     //   [SubtitlePart]); otherwise emit a single part. Multi-part split = FUN_101a9b838 (vttCueComponents).
     override public func parsePart(scanner: Scanner) -> [SubtitlePart] {
-        guard let cue = scanSubtitleCue(scanner) else {
+        // Forward @0x101aa1160-0x101aa1184: start/end strings are released right after parseDuration →
+        // destructured cue tuple (see SrtParse.parsePart). The map closure also destructures its element:
+        // Forward's loop keeps the per-iteration `cmp x28,x8; b.cs brk` bounds check (0x101aa1210), which
+        // swiftc emits for `{ (a, b, c) in }` but eliminates for a single `component in` parameter.
+        guard let (start, end, text) = scanSubtitleCue(scanner) else {
             return []
         }
-        let start = cue.start.parseDuration()
-        let end = cue.end.parseDuration()
-        if cue.text.contains("><c>") {
-            return vttCueComponents(cue.text).map { component in
-                makeTextSubtitlePart(start: component.start.map { $0.parseDuration() } ?? start,
-                                     end: component.end.map { $0.parseDuration() } ?? end,
-                                     text: component.text)
+        let startTime = start.parseDuration()
+        let endTime = end.parseDuration()
+        if text.contains("><c>") {
+            return vttCueComponents(text).map { (componentStart, componentEnd, componentText) in
+                makeTextSubtitlePart(start: componentStart.map { $0.parseDuration() } ?? startTime,
+                                     end: componentEnd.map { $0.parseDuration() } ?? endTime,
+                                     text: componentText)
             }
         }
-        return [makeTextSubtitlePart(start: start, end: end, text: cue.text)]
+        return [makeTextSubtitlePart(start: startTime, end: endTime, text: text)]
     }
 
     // FUN_101a9b838 — WebVTT inline-timestamp (karaoke) cue splitter: `<HH:MM:SS.mmm><c>text</c>` segments →

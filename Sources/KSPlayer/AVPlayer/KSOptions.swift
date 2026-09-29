@@ -1939,8 +1939,9 @@ public extension Array {
     }
     // Forward 0x1019e711c is `mutating`: `var result = []; try removeAll { if try p0($0) { result.append($0); return true }; return false }; return result`
     // (closure 0x1019e71d4).
+    // Empty literal: Forward 0x1019e7148 calls Array._allocateUninitialized(0, Element) (x0=#0, x1=Element), not Array.init().
     public mutating func removeAllAndReturn(where p0: (Element) throws -> Bool) throws -> [Element] {
-        var result = [Element]()
+        var result: [Element] = []
         try removeAll { element in
             if try p0(element) {
                 result.append(element)

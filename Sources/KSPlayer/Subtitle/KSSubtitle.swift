@@ -291,10 +291,10 @@ public final class URLSubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     // search witness 0x101aa3dc0 → real body FUN_101aa3a94 (async): delegate to searchProtocol when set, else [].
     // The nil-check is the searchProtocol existential's metadata word (self+0x28; searchProtocol = field[0] @0x10,
     // a 5-word `any KSSubtitleProtocol?`). No stored `parts` after the KSSubtitle-flatten.
+    // Forward 0x101aa3a94 tests the field's metadata word in place (ldr [self,#0x28]; cbz) and copies only the
+    // payload (outlined copy 0x1001263e0) — optional chaining; `if let` copies the whole Optional into a frame
+    // temp first (frame +0x28 larger: query slot 0x78 vs Forward 0x50).
     public func search(with query: KSSubtitleQuery) async -> [SubtitlePart] {
-        if let searchProtocol {
-            return await searchProtocol.search(with: query)
-        }
-        return []
+        await searchProtocol?.search(with: query) ?? []
     }
 }

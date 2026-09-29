@@ -887,10 +887,13 @@ public extension MediaPlayerTrack {
         }
         // Forward @0x1019e0d80-0x1019e0d98: profile 8 branches to its own `cmp x8,#4`, profile 10 uses
         // `ccmp x8,#4` — two separate arms, not the merged `(p|2)==10` test the `||` form lowers to.
+        // ⚑ Arm order: swiftc lays the SECOND source arm out as the `b.eq` branch and the first as the
+        //   fall-through `ccmp`; Forward branches on 8 and ccmps 10, so the profile-10 arm is first
+        //   (checked with Xcode 6.3 swiftc -O on an isolated copy: 8-first gives `cmp #0xa; b.eq`).
         if let dovi {
-            if dovi.dv_profile == 8, dovi.dv_bl_signal_compatibility_id == 4 {
+            if dovi.dv_profile == 10, dovi.dv_bl_signal_compatibility_id == 4 {
                 return "HLG"
-            } else if dovi.dv_profile == 10, dovi.dv_bl_signal_compatibility_id == 4 {
+            } else if dovi.dv_profile == 8, dovi.dv_bl_signal_compatibility_id == 4 {
                 return "HLG"
             }
         }

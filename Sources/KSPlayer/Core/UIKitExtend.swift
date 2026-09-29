@@ -227,13 +227,14 @@ extension UIApplication {
     }
 
     /// @0x101a02edc — sharedApplication → activeWindow (0x101a02de0) → screen.currentEDRHeadroom > 1.0; no window → false.
-    // ⚑ residue: Forward also nil-checks the `screen` result (cbz @0x101a02f2c); UIWindow.screen is
-    // nonnull in the SDK header, so that test is not expressible from source.
+    // Forward nil-checks the `screen` result (cbz @0x101a02f2c) and releases the window before
+    // currentEDRHeadroom (0x101a02f28): the optional chain `activeWindow?.screen` bound by one `guard let`
+    // yields a nullable pointer LLVM must test, since the msgSend return carries no nonnull attribute.
     public static var isHDRScreen: Bool {
-        guard let window = shared.activeWindow else {
+        guard let screen = shared.activeWindow?.screen else {
             return false
         }
-        return window.screen.currentEDRHeadroom > 1.0
+        return screen.currentEDRHeadroom > 1.0
     }
 
     // @0x101a02f64 — walks `connectedScenes` for the first scene whose `activationState` is 0
