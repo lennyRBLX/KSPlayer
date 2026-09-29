@@ -527,6 +527,46 @@ public extension Dictionary where Key == String {
     }
 }
 
+// Bitstream-filter setup, Forward 0x101a08744..0x101a08a94 (212 insns), attributed to AVFFmpegExtension.swift
+// and emitted between Dictionary.avOptions (0x101a08224) and AVRational.== (0x101a09454). No symbol names it
+// (not in the export trie), so the name and label are INFERRED. Live-ins: x0/x1 = the filter name String
+// (its utf8CString feeds av_bsf_get_by_name and it is re-appended into the not-found message), and x20 =
+// the codec parameters, used unchanged as the `src` of avcodec_parameters_copy. The caller loads codecpar
+// into x20, so it is `self` here: a mutating method passes `&self` as that address with no copy.
+// Returns the raw context; the caller builds the BSFTranscodeContext.
+//   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_alloc:0x10295b0d4 result=CONFIRMED]
+//   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED]
+//   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_init:0x10295b198 result=CONFIRMED]
+//   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_free:0x10295b040 result=CONFIRMED]
+extension AVCodecParameters {
+    mutating func makeADTSBitstreamFilter(_ name: String) -> UnsafeMutablePointer<AVBSFContext>? {  // INFERRED
+        guard let filter = av_bsf_get_by_name(name) else {
+            print("bsf \(name) not found")
+            return nil
+        }
+        var ctx: UnsafeMutablePointer<AVBSFContext>?
+        let allocResult = av_bsf_alloc(filter, &ctx)
+        guard allocResult >= 0 else {
+            // No av_bsf_free on this path.
+            print("Failed to allocate bitstream filter context: \(allocResult)")
+            return nil
+        }
+        let copyResult = avcodec_parameters_copy(ctx?.pointee.par_in, &self)
+        guard copyResult >= 0 else {
+            av_bsf_free(&ctx)
+            print("Failed to copy codec parameters: \(copyResult)")
+            return nil
+        }
+        let initResult = av_bsf_init(ctx)
+        guard initResult >= 0 else {
+            av_bsf_free(&ctx)
+            print("Failed to initialize bitstream filter: \(initResult)")
+            return nil
+        }
+        return ctx
+    }
+}
+
 extension String {
     init(avErrorCode code: Int32) {
         let buf = UnsafeMutablePointer<Int8>.allocate(capacity: Int(AV_ERROR_MAX_STRING_SIZE))

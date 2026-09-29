@@ -100,12 +100,16 @@ public protocol MEPlayerDelegate: AnyObject {
 
 // MARK: protocol
 
+// ⚑ L7 lane 13: Forward requirement list = five lone getters (protocol_surface fwd_units g×5). Order read from
+//   Packet's witness table 0x1041d8d90 (conf 0x10356b578): +0x8 assetTrack(+0x40)→timebase, +0x10 field +0x18
+//   timestamp, +0x18 field +0x10 duration, +0x20 field +0x20 position, +0x28 field +0x28 size. The setters
+//   are MEFrame's (below).
 public protocol ObjectQueueItem {
     var timebase: Timebase { get }
-    var timestamp: Int64 { get set }
-    var duration: Int64 { get set }
+    var timestamp: Int64 { get }
+    var duration: Int64 { get }
     // byte position
-    var position: Int64 { get set }
+    var position: Int64 { get }
     // ⚑[tool=type_surface ref=ObjectQueueItem:requirements result=5 getters] Forward's requirement list
     //   is five lone getters; AudioFrame satisfies `size` with a computed getter (no stored field).
     var size: Int32 { get }
@@ -128,8 +132,13 @@ public protocol FrameOutput: AnyObject {
     func invalidate()
 }
 
+// ⚑ L7 lane 13: Forward MEFrame = base + 4 (setter, modify) pairs; AudioFrame's witness table 0x1041d8dc0
+//   (conf 0x10356b588) stores fields +0x20 timebase, +0x28 timestamp, +0x30 duration, +0x38 position in that order.
 protocol MEFrame: ObjectQueueItem {
     var timebase: Timebase { get set }
+    var timestamp: Int64 { get set }
+    var duration: Int64 { get set }
+    var position: Int64 { get set }
 }
 
 // MARK: model
@@ -219,7 +228,10 @@ extension Timebase {
     public var cmtime: CMTime { CMTime(value: Int64(num), timescale: den) }
 }
 
-final class Packet: ObjectQueueItem {
+// ⚑ L7 lane 13: public (lane 10): Forward KSOptions.makeDecode 0x1019b604c keeps swift_beginAccess on
+//   packet+0x40 and the ObjectQueueItem witnesses (0x101a63a44…) beginAccess every field; the trie exports
+//   the field accessors but no Packet init (init stays internal).
+public final class Packet: ObjectQueueItem {
     public var duration: Int64 = 0
     public var timestamp: Int64 = 0
     public var position: Int64 = 0
@@ -257,7 +269,8 @@ final class Packet: ObjectQueueItem {
     // and a field record cannot tell `T!` from `T?` — so `?` is the only spelling the binary
     // supports, and MEMORY forbids writing `T!` off a field record.
     // Declaration default: Forward emits `variable initialization expression of assetTrack` (0x10002d9d4, `mov x0,#0`).
-    public var assetTrack: FFmpegAssetTrack? = nil {
+    // ⚑ L7 lane 13: trie exports assetTrack getter only (vg/vpWvd/vpMV/vpfi), no setter/modify → internal(set).
+    public internal(set) var assetTrack: FFmpegAssetTrack? = nil {
         didSet {
             guard let packet = corePacket?.pointee else {
                 return

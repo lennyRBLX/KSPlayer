@@ -227,13 +227,19 @@ public class AudioDataBuffer {
     }
 }
 
+// ⚑ L7 lane 13: Forward requirement table (protocol_surface): outputLatency {get set} (Double) at wt
+//   +0x58/+0x60/+0x68 before isMuted (+0x70), and a method at +0x98 after prepare(audioFormat:): its
+//   witnesses are the extension resetTime() below (AudioRendererPlayer wt 0x1041d72f0 +0x98 → 0x101a11b0c
+//   → 0x101a11b10) and KSMEPlayer.replace(item:) calls it through the table (`ldr x8,[x23,#0x98]`).
 public protocol AudioOutput: FrameOutput {
     var renderSource: AudioOutputRenderSourceDelegate? { get set }
     var playbackRate: Float { get set }
     var volume: Float { get set }
+    var outputLatency: TimeInterval { get set }
     var isMuted: Bool { get set }
     init()
     func prepare(audioFormat: AVAudioFormat)
+    func resetTime()
 }
 
 // ⚑ s105: a body the binary places in an EXTENSION of AudioOutput —

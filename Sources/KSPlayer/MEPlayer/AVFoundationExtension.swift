@@ -404,8 +404,9 @@ enum VP9FrameType: UInt8 {
 // conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (AVFFmpegExtension.swift..AudioEnginePlayer.swift).
 // ⚑[tool=type_surface ref=AV1OBUType:0x1039ee74c result=enum AV1OBUType: UInt8]
 enum AV1OBUType: UInt8 {
-    // L7: raw values are the implicit 0-based sequence; Forward's rawValue body was not read
-    case reserved0, sequenceHeader, temporalDelimiter, frameHeader, tileGroup, metadata, frame, redundantFrameHeader, tileList, padding
+    // L7 lane 13: Forward raw-value table @0x103569fca = 0…8, 15 (padding = 15).
+    case reserved0, sequenceHeader, temporalDelimiter, frameHeader, tileGroup, metadata, frame, redundantFrameHeader, tileList
+    case padding = 15
     var description: String { "av1 \(self) (\(rawValue))" }
 }
 

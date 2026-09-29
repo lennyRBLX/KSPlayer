@@ -64,7 +64,64 @@ public enum FFmpegUtility {
         var startPlayTime = 0.0
         return try conversion(formatContext: formatContext, outputStreamInfo: outputStreamInfo, loadSecond: loadSecond, startPlayTime: &startPlayTime, progress: progress, completion: completion)
     }
-    public static func conversion(formatContext: FormatContext, outputStreamInfo: OutputStreamInfo, loadSecond: Int, startPlayTime: inout Double, progress: (@Sendable (Double, Double) async -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> { fatalError("L7: FFmpegUtility.conversion(formatContext:) — Swift 6 sending closure needs OutputStreamInfo: Sendable (lane 11 gap)") }
+    public static func conversion(formatContext: FormatContext, outputStreamInfo: OutputStreamInfo, loadSecond: Int, startPlayTime: inout Double, progress: (@Sendable (Double, Double) async -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> {
+        // 0x101a1a030 (185 insns). The alloc failure throws, then the catch closes formatContext and
+        // rethrows (willThrow ×2 around FormatContext.close 0x101a3302c).
+        do {
+            guard let packet = av_packet_alloc() else {
+                throw KSPlayerError(code: 0, description: "can not av_packet_alloc")
+            }
+            if startPlayTime > 0 {
+                _ = formatContext.performSeek(time: startPlayTime, flags: AVSEEK_FLAG_BACKWARD)
+            }
+            // frameRate (+0x28) * loadSecond, overflow-checked; a negative count skips the loop without
+            // trapping and the increment is unchecked ⇒ stride(through:), not a ClosedRange.
+            for i in stride(from: 0, through: outputStreamInfo.frameRate * loadSecond, by: 1) {
+                if Task.isCancelled || av_read_frame(formatContext.formatCtx, packet) < 0 {
+                    break
+                }
+                if i == 0, let timebase = outputStreamInfo.timeBaseMap[packet.pointee.stream_index] {
+                    let timestamp = packet.pointee.pts != Int64.min ? packet.pointee.pts : packet.pointee.dts != Int64.min ? packet.pointee.dts : 0
+                    startPlayTime = CMTime(value: timestamp * Int64(timebase.num), timescale: timebase.den).seconds
+                }
+                _ = outputStreamInfo.transcode(packet: packet, block: nil)
+                av_packet_unref(packet)
+            }
+            /// INFERRED name: Task.isCancelled read once here, captured at context +0x20.
+            let isCancelled = Task.isCancelled
+            /// INFERRED name: heap box (0x18, value 0) captured at context +0x50.
+            var lastTime = 0.0
+            // Task(name:priority:operation:) = 0x101a03fd4; name "KSPlayer-Conversion" (0x103d356c0);
+            // body 0x101a1a390 / resume 0x101a1a7a0. time(index:timestamp:) is inlined (its NOPTS guard
+            // folds because the timestamp is never Int64.min).
+            return Task(name: "KSPlayer-Conversion", priority: .background) {
+                if !isCancelled {
+                    while !Task.isCancelled, av_read_frame(formatContext.formatCtx, packet) >= 0 {
+                        if outputStreamInfo.transcode(packet: packet, block: nil) == 0, let progress,
+                           let time = formatContext.time(index: packet.pointee.stream_index, timestamp: packet.pointee.pts != Int64.min ? packet.pointee.pts : packet.pointee.dts != Int64.min ? packet.pointee.dts : 0),
+                           time - lastTime > 2
+                        {
+                            let isStop = await progress(time, formatContext.duration)
+                            lastTime = time
+                            if isStop {
+                                av_packet_unref(packet)
+                                break
+                            }
+                        }
+                        av_packet_unref(packet)
+                    }
+                }
+                outputStreamInfo.writeTrailer()
+                outputStreamInfo.stop()
+                FFmpegUtility.free(packet: packet)   // inlined: stack copy +0x88, av_packet_free
+                formatContext.close()
+                completion(outputStreamInfo.url, isCancelled || Task.isCancelled)
+            }
+        } catch {
+            formatContext.close()
+            throw error
+        }
+    }
     /// FUN_101a39028 (101 instr), #function "close(formatCtx:)", #line 93, default level.
     /// Clears the interrupt callback before closing so a pending read cannot call back into a
     /// released owner.
@@ -334,6 +391,9 @@ public final class IOInterruptContext {
     /// then the ivar destroys (block @+0x18 via 0x1000b6684, token @+0x28).
     deinit {
         let reg = IOInterruptRegistry.shared
+        // Forward loads and retains self.token (+0x28) BEFORE the lock and releases it after the unlock;
+        // the build read token.id after the lock with no retain. Local name INFERRED.
+        let token = self.token
         reg.lock.lock()
         reg.contexts.removeValue(forKey: token.id)
         reg.lock.unlock()
@@ -766,8 +826,8 @@ private final class WeakIOInterruptContext {
 //  `seekByBytes = s.<MovieStream req #3: array>.count >= 2` and, when true,
 //  `formatCtx.pointee.duration = Int64(duration * 1_000_000)` (strb w8,[x24,#0x58] @0x101a3623c).
 //  Arm 2 (@LAB_101a358b8, per track): startTime snap, then PlayList audio/subtitleLanguageCodeMap
-//  (wt +0x08/+0x10) overrides. MovieStream's requirements are unnamed in PlayerDefines.swift, so this
-//  init row is DEFERRED (gap) and the body below still lacks both arms.
+//  (wt +0x08/+0x10) overrides. Arm 1 is in the body below (MovieStream duration/files, PlayerDefines.swift).
+//  Arm 2 stays a GAP: it writes FFmpegAssetTrack.languageCode, whose setter is private to that file.
 //  FFmpeg provenance (P32) — every av* symbol named in this file is ffmpeg_name_oracle result=CONFIRMED:
 //    ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]     (FUN_103253ed0, avutil/mem.o — free+null idiom)
 //    ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]  (FUN_10323a9d8, avutil/dict.o — inside toDictionary)
@@ -775,7 +835,7 @@ private final class WeakIOInterruptContext {
 // let/var is NOT binary-determinable for this class (vtable has NO accessor slots).
 // Param-fed fields declared `let`; derived/defaulted fields declared `var`.
 // let/var inferred — no vtable accessors.
-public final class FormatContext {
+public final class FormatContext: @unchecked Sendable {
     // Stored fields in reflection (offset) order. Types transcribed from the class's
     // own __swift5_fieldmd field-records (authoritative), NOT inferred from the
     // decompile's undefined8/long/char* widths (those are decompiler noise).
@@ -789,7 +849,7 @@ public final class FormatContext {
     public let formatName: String                            // +0x48  DERIVED (from formatCtx->iformat->name)
     // Forward getter 0x10070cad8 is `ldrb w0,[x20,#0x58]` with no swift_beginAccess, so the field is a `let`. Forward
     // does not fold it to a constant because the init's PlayList arm stores `count >= 2` here (`strb w8,[x24,#0x58]`
-    // @0x101a3623c). That arm is the MovieStream gap (lane-8 report), so the build folds the getter until it lands.
+    // @0x101a3623c); that arm is now in the init.
     public let seekByBytes: Bool                             // +0x58  DERIVED (conditionally 0/1 across branches; default false)
 
     // time(index:timestamp:) `0x101a32e28` (109 instr, extent exact from LC_FUNCTION_STARTS
@@ -924,112 +984,88 @@ public final class FormatContext {
                 interrupt: IOInterruptContext,
                 ioContext: AbstractAVIOContext?,
                 fontsDir: URL?) {
-        // ── Scalar derivations into LOCALS first. Swift init-order forbids reading `self.startTime`
-        //    (or calling any `self` member) until EVERY stored property is assigned, and the per-track
-        //    startTime alignment in the loop needs the container startTime — so it reads the LOCAL. ──
-
-        // +0x5c = CMTime from formatCtx.start_time (== AV_NOPTS_VALUE(Int64.min) ? .zero :
-        //   CMTime(value:, timescale: AV_TIME_BASE)). FUN_101a350bc prologue @unaff_x20+0x5c; MEPlayerItem:238-239 idiom.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
-        let startTimeValue: CMTime = formatCtx.pointee.start_time != Int64.min
+        // Store order read from 0x101a350bc: interrupt/formatCtx/ioContext/fontsDir, then startTime (+0x5c),
+        // then fileSize (+0x30), then the duration/seekByBytes arms.
+        self.interrupt = interrupt
+        self.formatCtx = formatCtx
+        self.ioContext = ioContext
+        self.fontsDir = fontsDir
+        startTime = formatCtx.pointee.start_time != Int64.min
             ? CMTime(value: formatCtx.pointee.start_time, timescale: AV_TIME_BASE)
             : .zero
-        // +0x28 duration: the binary re-derives durationSeconds = max(formatCtx.duration,0)/AV_TIME_BASE (INTEGER
-        //   divide → Double) and stores THAT on every non-PlayList path — the dominant path (plain file playback:
-        //   ioContext is nil / not a PlayList).
-        // ⚠️ A `// UNRESOLVED: the ioContext as? PlayList seg>=2 branch` marker stood here and is REMOVED:
-        //   the cast is not in this function. See the corrected header block — 1153 instructions with zero
-        //   swift_dynamicCast, zero swift_conformsToProtocol and zero adrp to page 0x1039ed.
-        let durationSecondsInt = max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE)
-        let durationValue = Double(durationSecondsInt)
-        // +0x48 = String(cString: iformat.name). FUN_101a350bc reads *(*(formatCtx+8)); MEPlayerItem:236 idiom.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
-        let formatNameValue = String(cString: formatCtx.pointee.iformat.pointee.name)
-        // +0x59 = (flags & AVFMT_NO_BYTE_SEEK == 0) && (flags & (AVFMT_TS_DISCONT|AVFMT_NOTIMESTAMPS) != 0) &&
-        //   formatName != "ogg". FUN_101a350bc @0x101a35494-0x101a354e8 disasm-verified (and #0x280; "ogg" 0x67676f).  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
-        let iformatFlags = formatCtx.pointee.iformat.pointee.flags
-        let byteSeekValue = (iformatFlags & AVFMT_NO_BYTE_SEEK == 0)
-            && (iformatFlags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0)
-            && (formatNameValue != "ogg")
-        // +0x78 = (flags & AVFMT_TS_DISCONT) ? 10 : 3600. FUN_101a350bc reads (flags & 0x200); MEPlayerItem:233-234 (here Int, `Si`).  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
-        let maxFrameDurationValue = iformatFlags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
-
-        // ── +0x40 assetTracks: per-stream loop over formatCtx.streams[0..<nb_streams] (MEPlayerItem:283-284 idiom).
-        //    Builds an FFmpegAssetTrack per stream via the EXISTING FFmpegAssetTrack(stream:) (= FUN_101a211ec, the
-        //    625-instr builder, already reconstructed — NOT re-derived here); appends non-nil tracks; on a nil track
-        //    that is an ATTACHMENT stream, extracts the embedded font. ──
-        var assetTracks: [FFmpegAssetTrack] = []
+        self.fileSize = fileSize
+        // max(duration, 0) is `bic x8,x8,x8,ASR #63`; the divide by AV_TIME_BASE is the umulh @0x101a35274.
+        let durationSeconds = max(formatCtx.pointee.duration, 0) / Int64(AV_TIME_BASE)
+        // PlayList arm (0x101a3527c..0x101a3540c): swift_dynamicCast flags 6 @0x101a352c0, PlayList wt +0x20
+        // (currentStream), MovieStream wt +0x10 (duration, read twice) and +0x18 (files). A count of 2 or more
+        // rewrites formatCtx.duration and stores seekByBytes = 1 (`strb w8,[x24,#0x58]` @0x101a3623c).
+        if let ioContext, let playList = ioContext as? PlayList, let stream = playList.currentStream,
+           stream.duration > Double(durationSeconds + 3600)
+        {
+            duration = stream.duration
+            if stream.files.count >= 2 {
+                formatCtx.pointee.duration = Int64(duration * 1_000_000)
+                seekByBytes = true
+            } else {
+                seekByBytes = false
+            }
+        } else {
+            duration = Double(durationSeconds)
+            seekByBytes = false
+        }
+        formatName = String(cString: formatCtx.pointee.iformat.pointee.name)
+        let flags = formatCtx.pointee.iformat.pointee.flags
+        maxFrameDuration = flags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
+        byteSeek = flags & AVFMT_NO_BYTE_SEEK == 0 && flags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0 && formatName != "ogg"
+        var assetTracks = [FFmpegAssetTrack]()
         for i in 0 ..< Int(formatCtx.pointee.nb_streams) {
             guard let stream = formatCtx.pointee.streams[i] else { continue }
             if let track = FFmpegAssetTrack(stream: stream) {
-                // GROUNDED @LAB_101a358b8 head (no PlayList): subtitle tracks — and any track whose start is within
-                //   10s of the container — snap to the container startTime.
-                if track.mediaType == .subtitle || abs((track.startTime - startTimeValue).seconds) < 10 {
-                    track.startTime = startTimeValue
+                if track.mediaType == .subtitle || abs((track.startTime - startTime).seconds) < 10 {
+                    track.startTime = startTime
                 }
-                // ⚠️ A `// UNRESOLVED: the ioContext as? PlayList per-entry override` marker stood here, citing
-                //   the LAB_101a358b8 tail. REMOVED: 0x101a358b8 is inside this extent and is a plain
-                //   `mov x26,x0 / ldr x0,[x0,#0x78] / bl 0x10345745c` string-bridge sequence — no cast, no
-                //   protocol descriptor. The marker was describing code that is not here.
+                // GAP (review): @LAB_101a358b8 Forward also applies the PlayList audio/subtitleLanguageCodeMap
+                // (wt +0x08/+0x10) override to track.languageCode (track+0x48) and, when name == codecName,
+                // to track.name. languageCode is `public private(set)` in FFmpegAssetTrack.swift, so the
+                // write cannot be spelled from this file.
                 assetTracks.append(track)
-            } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_ATTACHMENT {
-                // Embedded-font attachment: codec_id ∈ {NONE, 0x18000 TTF, 0x18006 OTF} — raw compare = the binary's
-                //   `iVar3 == 0 || == 0x18000 || == 0x18006`. Extract extradata → Data, write under fontsDir, register
-                //   with CoreText, then av_freep the extradata. FUN_101a350bc @0x101a35540-0x101a35840 font block.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext  ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]
-                let codecpar = stream.pointee.codecpar.pointee
-                let codecID = codecpar.codec_id
-                if codecID == AV_CODEC_ID_NONE || codecID.rawValue == 0x18000 || codecID.rawValue == 0x18006,
-                   let fontsDir, let extradata = codecpar.extradata {
-                    // FUN_100036e98 = Data(bytes:count:) from codecpar.extradata (+0x10) / extradata_size (+0x18).
-                    let data = Data(bytes: extradata, count: Int(codecpar.extradata_size))
-                    let metadata = toDictionary(stream.pointee.metadata)   // FUN_101a07bd8 = av_dict_get loop → [String:String]
-                    try? FileManager.default.createDirectory(at: fontsDir, withIntermediateDirectories: true)
-                    // ⚑ filename = "<stream.index>" + (metadata["filename"] ?? ".ttf"): index@stream+8, the "filename"
-                    //   key + ".ttf" literal are GROUNDED; the exact concatenation is the clearest reading of the two
-                    //   String.append + appendPathComponent (SSA register aliasing leaves the composition slightly fuzzy).
-                    let fontName = "\(stream.pointee.index)" + (metadata["filename"] ?? ".ttf")
-                    let fontURL = fontsDir.appendingPathComponent(fontName)
-                    try? data.write(to: fontURL)
-                    // scope .process (=1), error nil (=0) — same call as KSParseProtocol:99 (P42-disasm-confirmed).
-                    CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
-                    // FUN_103253ed0 = av_freep(&extradata) idiom (free + null), then extradata_size = 0 (codecpar+0x18).
-                    av_freep(&stream.pointee.codecpar.pointee.extradata)
-                    stream.pointee.codecpar.pointee.extradata_size = 0
+            } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_ATTACHMENT, let fontsDir {
+                // fontsDir copy + nil check (0x101a355d0) precede the codec_id compares, which run
+                // NONE, 0x18006 (OTF), 0x18000 (TTF) in that order.
+                let codecID = stream.pointee.codecpar.pointee.codec_id.rawValue
+                if codecID == 0 || codecID == 0x18006 || codecID == 0x18000 {
+                    // metadata is built before the extradata nil check (0x101a35630).
+                    let metadata = toDictionary(stream.pointee.metadata)
+                    if let extradata = stream.pointee.codecpar.pointee.extradata {
+                        let data = Data(bytes: extradata, count: Int(stream.pointee.codecpar.pointee.extradata_size))
+                        try? FileManager.default.createDirectory(at: fontsDir, withIntermediateDirectories: true)
+                        var fontURL = fontsDir
+                        // "<index>" + "_" (`mov w0,#0x5f` @0x101a3575c) + (metadata["filename"] ?? ".ttf"),
+                        // then the mutating appendPathComponent on the copy (@0x101a35808).
+                        var fontName = stream.pointee.index.description
+                        fontName += "_"
+                        fontName += metadata["filename"] ?? ".ttf"
+                        fontURL.appendPathComponent(fontName)
+                        try? data.write(to: fontURL)
+                        CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+                        av_freep(&stream.pointee.codecpar.pointee.extradata)
+                        stream.pointee.codecpar.pointee.extradata_size = 0
+                    }
                 }
             }
         }
-
-        // +0x38 bitrate: duration>0 && fileSize≥1 → max((fileSize*8)/Int(duration), 1) (the binary's `< 2 → 1` clamp).
-        //   Else the fallback keys off the FIRST .video track: if that track's bitRate>0 → Σ all tracks' bitRate;
-        //   else (or no .video track) → 1. The selector M = .video, recovered by disasm @0x101a35fc4 (loads
-        //   GOT[0x104108740] — the AVMediaType slot the decompiler dropped, adjacent to Audio@0x104108730 /
-        //   Subtitle@0x104108738) + elimination (FFmpegAssetTrack.mediaType ∈ {audio,video,subtitle}). It is a FIRST-
-        //   match on mediaType, NOT contains-any-positive (@0x101a35fd0-0x101a36114). FUN_101a350bc @0x101a35e00-0x101a361cc.  ⚑[tool=resolve_fun_pins ref=FUN_101a350bc:0x101a350bc result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.init(formatCtx: Swift.UnsafeMutablePointer<__C.AVFormatContext>, fileSize: Swift.Int64, interrupt: KSPlayer.IOInterruptContext, ioContext: KSPlayer.AbstractAVIOContext?, fontsDir: Foundation.URL?) -> KSPlayer.FormatContext
-        let bitrateValue: Int64
-        if durationValue > 0, fileSize >= 1 {
-            let bps = (fileSize * 8) / durationSecondsInt
-            bitrateValue = bps < 2 ? 1 : bps
+        self.assetTracks = assetTracks
+        // +0x38 bitrate: duration > 0 && fileSize >= 1 → (fileSize * 8) / Int64(duration) (the Double duration,
+        //   not the integer seconds), clamped `< 2 → 1`. Else the first .video track decides (@0x101a35fc4):
+        //   its bitRate > 0 → Σ bitRate, otherwise 1.
+        if duration > 0, fileSize >= 1 {
+            let bps = (fileSize * 8) / Int64(duration)
+            bitrate = bps < 2 ? 1 : bps
         } else {
-            bitrateValue = (assetTracks.first { $0.mediaType == .video }?.bitRate ?? 0) > 0
+            bitrate = (assetTracks.first { $0.mediaType == .video }?.bitRate ?? 0) > 0
                 ? assetTracks.reduce(0) { $0 + $1.bitRate }
                 : 1
         }
-
-        // ── Store every stored property (param-fed offsets confirmed in the inner-decompile prologue) ──
-        self.interrupt = interrupt   // +0x10 = param_4
-        self.formatCtx = formatCtx   // +0x18 = param_2
-        self.ioContext = ioContext   // +0x20 = param_5
-        self.fileSize = fileSize     // +0x30 = param_3
-        self.fontsDir = fontsDir     // (sym field) from param_6
-        self.duration = durationValue
-        // +0x58 seekByBytes: false on every path in this function.
-        // ⚠️ A `// UNRESOLVED: the ioContext as? PlayList seg>=2 branch` marker stood here and is REMOVED for
-        //   the same measured reason as the other two.
-        self.seekByBytes = false
-        self.assetTracks = assetTracks
-        self.formatName = formatNameValue
-        self.byteSeek = byteSeekValue
-        self.startTime = startTimeValue
-        self.maxFrameDuration = maxFrameDurationValue
-        self.bitrate = bitrateValue
     }
 
     // pause `0x101a362c0` / play `0x101a362c8` — two 2-instruction tail-call thunks, extents exact from

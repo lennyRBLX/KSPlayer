@@ -95,8 +95,15 @@ public protocol TranscodeProtocol {
 //  TranscodeProtocol conformer. Binary: 0 stored fields, root class. The stream-copy (no-transcode)
 //  path: copy the input packet into the caller's output buffer, stamp AV_NOPTS, fire completion.
 //  Body GROUNDED from CopyTC_req1 @0x101a1bee0. req2/req3 = trivial shared witness.
-public final class CopyTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (no library evolution); 0 fields → no stored state
+public final class CopyTranscodeContext: TranscodeProtocol, Sendable {  // `final` not binary-pinned (no library evolution); 0 fields → no stored state
     public init() {}  // root class, 0 fields — devirt init has no readable body; minimal inferred init
+    // Forward's copy branch of OutputStreamInfo.transcode(packet:block:) does not allocate: it calls this
+    // class's metadata accessor (0x101a1f188) and then swift_initStaticObject(metadata, 0x1044e8be8)
+    // (@0x101a1addc-0x101a1adec). That is a statically initialized global object, which is what a
+    // `static let` of this 0-field class becomes. No symbol names the global (it is not in the export
+    // trie and Ghidra has no label at 0x1044e8be8), so the name is INFERRED. `Sendable` is a marker
+    // conformance with no record; Swift 6 needs it for the static let.
+    static let shared = CopyTranscodeContext()  // INFERRED
 
     // req1 — stream-copy packet op @0x101a1bee0 (the witness itself; self unused):
     //   av_packet_ref(output, input) (0x102d622ec — body read: ref/alloc buf + copy props; result DISCARDED —
@@ -294,7 +301,7 @@ public final class VideoTranscodeContext: TranscodeProtocol {  // `final` not bi
     }
 }
 
-public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor gives OSI a 16-slot method vtable (slots 0-15,
+public class OutputStreamInfo: @unchecked Sendable { // NON-final (P21): parse_class_descriptor gives OSI a 16-slot method vtable (slots 0-15,
                                       // incl. slot13/14/15 dispatched by RemuxerIOAction via +0x118/+0x120/+0x128) — a `final class`
                                       // emits NO method vtable, so `final` was the structural bug (as LocalHLSServer/ProAVPlayer/ProPlayerItem).
                                       // ⚑ EXACT 16-slot layout = tracked structural debt (member-level finality/order — vtable_anchor_diff, not fabricated).
@@ -362,6 +369,9 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
     //   ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
     //   ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
     //   (avio_open @0x1030c0914 CONFIRMED too — not FFMPEG_RE-scanned)
+    //  ⚑ L7 lane 13: Forward's trie has no OSI fC/fc, so this init is not public in Forward (RemuxerIO calls
+    //    FFmpegUtility.write @0x101b85b9c instead). Kept `public` here because ProAVPlayer/RemuxerIO.swift:832 (not a
+    //    lane-13 file) calls it across modules → gap owner "review".
     public init(formatContext: FormatContext,
                 filename: String,
                 forceTranscode: Bool = false,          // ⚑ p4 name INFERRED
@@ -513,12 +523,12 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             context = existing
         } else if removeADTS, stream.pointee.codecpar.pointee.codec_id == AV_CODEC_ID_AAC, packet.pointee.size > 2,
                   packet.pointee.data[0] == 0xFF, packet.pointee.data[1] & 0xF0 == 0xF0,
-                  let bsfContext = makeADTSBitstreamFilter("aac_adtstoasc", stream.pointee.codecpar)
+                  let bsfContext = stream.pointee.codecpar.pointee.makeADTSBitstreamFilter("aac_adtstoasc")
         {
             context = BSFTranscodeContext(bsfContext: bsfContext)
             transcodeMap[index] = context
         } else {
-            context = CopyTranscodeContext()
+            context = CopyTranscodeContext.shared
         }
         return context.transcode(packet, output: outPacket) { packet in
             block?(packet)
@@ -554,166 +564,6 @@ public class OutputStreamInfo {       // NON-final (P21): parse_class_descriptor
             av_packet_unref(packet)
             return ret
         }
-    }
-
-    // ── slot 13 @0x101a1ab5c — per-stream: GET-OR-CREATE the transcode context, then RUN it ────────
-    // 🚨 THE CLAIM "not in binary" IS FALSE, AND THE WHOLE SIGNATURE IS WRONG. The export trie names
-    // 0x101a1ab5c outright:
-    //   KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>,
-    //                                       block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?)
-    //     -> Swift.Int32
-    // Four differences from the declaration below, not one:
-    //   · base name    — `buildTranscodeContext` is INVENTED; it is `transcode`.
-    //   · first label  — `packet:`, not unlabelled `_`.
-    //   · second param — `block:`, not `completion:`, AND THE OPTIONALITY IS INVERTED: the binary has
-    //                    an OPTIONAL closure taking a NON-optional pointer; the source has a
-    //                    non-optional closure taking an OPTIONAL pointer.
-    //   · return type  — `Int32`, not `Void`.
-    // ⚠️ NOT CORRECTED HERE ON PURPOSE. Making `block` optional changes what is forwarded to
-    // `TranscodeProtocol.transcode(_:output:completion:)`, and the `Int32` return needs a value on
-    // each of the body's return paths — both require reading the 205-instruction body
-    // (0x101a1ab5c-0x101a1ae90), which is its own unit. Applying half the signature would leave a
-    // declaration that looks verified and is not. The FALSE "not in binary" claim is what is fixed.
-    // ⚑[tool=export_trie_oracle ref=OutputStreamInfo.transcode:0x101a1ab5c result=transcode(packet:block:)-Int32]
-    // Called by Remuxer.write
-    // as s13(packet, completion). NOT just a builder: it ensures a per-stream Copy/BSF context exists
-    // (dispatch AAC/ADTS → BSF, else Copy) AND invokes `ctx.transcode(packet, output: outPacket, completion:)`
-    // — the terminal witness call (L161) is the function's PRIMARY effect [body-audit re-walk fix].
-    // param_1 = AVPacket* (data@+0x18, size@+0x20, stream_index@+0x24 — header-verified).
-    //
-    // Decompile outer shape (FUN_101a1ab5c) — the outer branch keys on assetTrackMap[idx] (OSI+0x10),  ⚑[tool=resolve_fun_pins ref=FUN_101a1ab5c:0x101a1ab5c result=RESOLVES_UNIQUELY] = KSPlayer.OutputStreamInfo.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>, block: ((Swift.UnsafeMutablePointer<__C.AVPacket>) -> ())?) -> Swift.Int32
-    // NOT transcodeMap [orchestrator re-walk fix]:
-    //   if (assetTrackMap.count==0 || assetTrackMap[idx] miss)  → BUILD the context (this faithful path)
-    //   else (assetTrackMap[idx] present)                       → FUN_101a1ae90 = steady-state per-packet  ⚑[tool=resolve_fun_pins ref=FUN_101a1ae90:0x101a1ae90 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>) -> ()
-    //                                                             copy/enqueue (UNRESOLVED, flagged below).
-    // BUILD is further guarded by outPacket(+0x60) live + streamMapping[idx] + timeBaseMap[idx] + a live
-    // output AVStream (formatCtx->streams[mapped]); then decide Copy vs BSF and store transcodeMap[idx].
-    // (Which branch dominates at runtime is binary-UNVERIFIED — assetTrackMap's populator was not located.)
-    // ⚑ NAME AND SIGNATURE ARE WRONG — see the trie signature recorded above this comment block.
-    final func buildTranscodeContext(_ packet: UnsafeMutablePointer<AVPacket>,           // ⚑ INVENTED name; real name is `transcode`
-                               completion: (UnsafeMutablePointer<AVPacket>?) -> Void) {  // forwarded to ctx.transcode (binary: callback FUN_101a660d0 + closure box, adapted by the compiler reabstraction thunk FUN_101a1f1a8 — not source-level)
-        let idx = packet.pointee.stream_index                                     // *(uint*)(packet+0x24)
-
-        // Outer branch keys on assetTrackMap[idx] (self+0x10) — track ABSENT → BUILD; PRESENT → steady-state.
-        guard assetTrackMap[idx] == nil else {                                    // self+0x10 (FUN_1019c10ec)
-            // ── STEADY-STATE per-packet path (assetTrackMap[idx] EXISTS) = FUN_101a1ae90 (64 instr) ──  ⚑[tool=resolve_fun_pins ref=FUN_101a1ae90:0x101a1ae90 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>) -> ()
-            // ⚑ UNRESOLVED → own follow-up unit: alloc queued-packet (FUN_101a65be4) + packet-copy  ⚑[tool=resolve_fun_pins ref=FUN_101a65be4:0x101a65be4 result=RESOLVES_UNIQUELY] = type metadata accessor for KSPlayer.Packet
-            //   (FUN_102d622ec, sidecar-flagged UNRESOLVED) + enqueue @+0x100. The packet-copy core + the
-            //   queue type are unresolved → NOT invented (cardinal). The body-audit + M3 packet-harness are
-            //   the arbiters; the M3 test drives the BUILD path below to arbitrate the dispatch.
-            //   Cached decompile: reconstruction/decompiles/OutputStreamInfo_s13else_101a1ae90.txt
-            return  // UNRESOLVED — steady-state enqueue (FUN_101a1ae90), reconstruct as its own unit  ⚑[tool=resolve_fun_pins ref=FUN_101a1ae90:0x101a1ae90 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.transcode(packet: Swift.UnsafeMutablePointer<__C.AVPacket>) -> ()
-        }
-
-        // ── BUILD path (assetTrackMap[idx] absent): set up the per-stream transcode context ──
-        // Build-guards faithful to the nested binary conditions: a live outPacket, the input→output stream
-        // mapping, a timebase entry, and a live output AVStream before constructing a context.
-        guard outPacket != nil,                                                   // self+0x60 (binary's first build-guard)
-              !streamMapping.isEmpty, let mapped = streamMapping[idx],            // self+0x40 (FUN_1019c10ec)
-              !timeBaseMap.isEmpty, timeBaseMap[idx] != nil,                      // self+0x20 (timebase must exist)
-              let outStream = formatCtx.pointee.streams[Int(mapped)]              // formatCtx->streams[mapped] (self+0x58 → +0x30 → *8)
-        else { return }
-        // Get-or-create the per-stream context (binary INNER branch @L94 on transcodeMap[idx]):
-        //   present → reuse the existing context (FUN_1001263e0 COW, L146-150);
-        //   absent  → build by the dispatch below (BSF stored; Copy is a transient static singleton).
-        let ctx: any TranscodeProtocol
-        if let existing = transcodeMap[idx] {                                     // self+0x18 present → reuse
-            ctx = existing
-        } else {
-            let codecpar = outStream.pointee.codecpar                             // *(outStream+0x10) — AVCodecParameters*
-            // DISPATCH (grounded + deterministic): AAC + ADTS-syncword + removeADTS → aac_adts BSF; else Copy.
-            let useBSF = removeADTS                                               // self+0x78 == 1
-                && codecpar?.pointee.codec_id == AV_CODEC_ID_AAC                  // codec_id == 0x15002 (header-verified)
-                && packet.pointee.size > 2                                        // packet+0x20
-                && packet.pointee.data[0] == 0xFF                                 // packet.data[0] == -1
-                && (packet.pointee.data[1] & 0xF0) == 0xF0                        // (byte)data[1] > 0xEF
-            // BSF only when useBSF AND the filter builds. On BSF-alloc FAILURE the binary FALLS THROUGH to
-            // Copy (L115 `if (lVar13 != 0)` has no else/no return) → degrade to unfiltered Copy, do NOT drop
-            // the packet [re-audit fix]. The `else` covers both non-AAC/non-ADTS and BSF-alloc-failed.
-            // BOTH inputs are caller-supplied and the wrapper is built HERE, not inside the helper:
-            //   x0/x1 = the filter NAME (13-char small string, decoded below), x20 = codecpar (loaded from
-            //   outStream.pointee.codecpar immediately before the call, then cbz-checked — which is the
-            //   `let codecpar` binding above). The BSFTranscodeContext is a 24-byte swift_allocObject at the
-            //   CALL SITE whose single field receives the helper's raw return.
-            if useBSF, let codecpar, let bsfContext = makeADTSBitstreamFilter("aac_adtstoasc", codecpar) {
-                let bsf = BSFTranscodeContext(bsfContext: bsfContext)             // built at the call site, not in the helper
-                transcodeMap[idx] = bsf                                           // STORE per-stream BSF (FUN_1019b3c2c, L131)
-                ctx = bsf
-            } else {
-                // Copy: binary uses a static singleton (initStaticObject, L138) and does NOT store it in
-                // transcodeMap. ⚑ modeled as a fresh stateless instance (CopyTranscodeContext = 0 fields →
-                // observationally equivalent); a `static let shared` would be byte-faithful (refinement).
-                ctx = CopyTranscodeContext()                                      // FUN_101a1f188
-            }
-        }
-
-        // PRIMARY EFFECT (binary terminal witness call @L161 `(*ctx.witness[1])(packet, outPacket, …)`):
-        // run the context on the packet, FORWARDING the completion (the compiler reabstraction thunk
-        // FUN_101a1f1a8 is not source-level → the completion is passed through, not constructed here).
-        // ⚑ ADAPTER ONLY (TranscodeProtocol.transcode now `-> Int32` with an Int32 completion): this function's own
-        //   signature/closure (trie: transcode(packet:block:) -> Int32; closure 0x101a1af90 returns the write
-        //   result) is its own unit — the `return 0` below is NOT binary-read.
-        _ = ctx.transcode(packet, output: outPacket!, completion: { completion($0); return 0 })
-    }
-
-    // BSF allocation (FUN_101a08744, 0x101a08744..0x101a08a94, 212 instr). export_trie_oracle = NOT IN TRIE,
-    // so the base name AND the labels stay inferred (⚑ P28) — but the ARITY, the value types and the return
-    // type are now BINARY-READ, not inferred.
-    // ⚑ SIGNATURE CORRECTION. The retired pin claimed "makeADTS true binary sig is 4-param, not no-arg".
-    //   That is wrong in both directions: the body reads exactly THREE live-in registers = TWO values.
-    //     x0/x1 = a Swift String — String.utf8CString.getter feeds av_bsf_get_by_name, and the SAME x0/x1
-    //             are re-appended into the not-found message, which only makes sense for a String parameter.
-    //     x20   = UnsafeMutablePointer<AVCodecParameters>, live-in and never written on the success path,
-    //             consumed as the `src` of avcodec_parameters_copy. x20 is NOT self: the sole caller keeps
-    //             its own self in x21 and deliberately loads codecpar into x20 four instructions earlier.
-    // ⚑ THE HARD-CODED FILTER NAME WAS WRONG AND UNRUNNABLE. Source said "aac_adts", which is not an FFmpeg
-    //   bitstream filter at all, so this body could only ever return nil. The name is a PARAMETER, and the
-    //   caller passes a 13-char small string: x0 = 0x737464615f636161 -> "aac_adts", x1 = 0xed00006373616f74
-    //   -> "toasc" with discriminator 0xED = 0xE0|13 -> count 13 => "aac_adtstoasc", which is the real filter
-    //   (libavcodec/bsf/aac_adtstoasc.c). The old comment's constant 0x737364615f636161 decodes to "aac_adss"
-    //   — a mistyped read of only the first of the two registers.
-    // ⚑ RETURN is the raw pointer; there is NO swift_allocObject on the success path. The 24-byte
-    //   BSFTranscodeContext is built by the CALLER (see the call site above).
-    // ⚑ the declaration form that lands the pointer in x20 rather than x2 (an UnsafeMutablePointer extension's
-    //   `self` vs a nested function's capture) is NOT binary-recoverable — modelled as an ordinary second
-    //   parameter; the register assignment is the only unmatched detail.
-    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_get_by_name:0x102957ca0 result=UNKNOWN] — this was recorded
-    //     "(oracle-CONFIRMED)"; --resolve now returns UNKNOWN, so the name is retained on call-shape grounds
-    //     only. Stale provenance, corrected rather than carried forward.
-    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_alloc:0x10295b0d4 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_init:0x10295b198 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=av_bsf_free:0x10295b040 result=CONFIRMED]
-    private final func makeADTSBitstreamFilter(_ name: String,                          // ⚑ label inferred (P28)
-                                         _ codecpar: UnsafeMutablePointer<AVCodecParameters>) // ⚑ label inferred (P28)
-        -> UnsafeMutablePointer<AVBSFContext>?
-    {
-        guard let filter = av_bsf_get_by_name(name) else {                        // name is the PARAMETER, not a literal
-            print("bsf \(name) not found")                                        // "bsf " (count 4) + name + " not found" (count 10)
-            return nil
-        }
-        var ctx: UnsafeMutablePointer<AVBSFContext>?
-        let allocResult = av_bsf_alloc(filter, &ctx)
-        guard allocResult >= 0 else {
-            // NO av_bsf_free here — the binary does not free on the alloc-failure path (ctx is still nil).
-            print("Failed to allocate bitstream filter context: \(allocResult)")  // literal count 45, Int32 interpolation
-            return nil
-        }
-        // The long-deferred "UNRESOLVED par-setup" is now READ: src is the `codecpar` parameter, and this
-        // branch has its own failure arm + message that the previous reconstruction lacked entirely.
-        let copyResult = avcodec_parameters_copy(ctx?.pointee.par_in, codecpar)   // par_in read by NAME from bsf.h
-        guard copyResult >= 0 else {
-            av_bsf_free(&ctx)
-            print("Failed to copy codec parameters: \(copyResult)")               // literal count 33
-            return nil
-        }
-        let initResult = av_bsf_init(ctx)
-        guard initResult >= 0 else {
-            av_bsf_free(&ctx)
-            print("Failed to initialize bitstream filter: \(initResult)")         // literal count 39
-            return nil
-        }
-        return ctx                                                                // raw pointer; wrapper built by the caller
     }
 
     // ── slot14 @0x101a1b8d4 (162 instr) — drain-all + write the container trailer, run-once. Void (P44:
