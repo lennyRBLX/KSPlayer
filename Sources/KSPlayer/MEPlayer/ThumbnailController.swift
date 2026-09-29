@@ -54,27 +54,38 @@ public struct FFThumbnail: Sendable {
     ///   unlike its three siblings, which is what makes it private rather than a taste call.
     private let _image: UIImage?
     public let time: TimeInterval
-    /// Forward @0x101a19188: the JPEG attempt is the out-of-line helper 0x101a1921c (no source decl —
-    /// gap); its logic is inlined here: encode, else redraw into an 8-bit RGBX context and re-encode.
+    /// Forward @0x101a19188 (37 insns): `tbz` on preferCompressedStorage, `bl 0x101a1921c`, a non-nil `Data?`
+    /// (top nibble < 0xf) returns it with `_image` nil; otherwise `UIImage(cgImage:)`.
     public init(cgImage: CGImage, time: Double, preferCompressedStorage: Bool, compressionQuality: CGFloat) {
-        if preferCompressedStorage {
-            var data = cgImage.data(type: .jpg, quality: compressionQuality)
-            if data == nil, let context = CGContext(data: nil, width: cgImage.width, height: cgImage.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
-                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-                if let image = context.makeImage() {
-                    data = image.data(type: .jpg, quality: compressionQuality)
-                }
-            }
-            if let data {
-                jpegData = data
-                _image = nil
-                self.time = time
-                return
-            }
+        if preferCompressedStorage, let data = FFThumbnail.compressedData(cgImage: cgImage, compressionQuality: compressionQuality) {
+            jpegData = data
+            _image = nil
+            self.time = time
+            return
         }
         jpegData = nil
         _image = UIImage(cgImage: cgImage)
         self.time = time
+    }
+
+    // INFERRED name — Forward 0x101a1921c (71 insns, no symbol), laid out right after init(cgImage:…)
+    // 0x101a19188 and called out of line from it and from FFmpegUtility.generateThumbnail(for:…)
+    // @0x101a24dac / generateThumbnailFromCache 0x101a250fc. cgImage x0, quality d0, no self.
+    // AVFileTypeJPEG loaded once (x19) for both CGImage.data(type:quality:) 0x1019e97b8 calls; the retry
+    // redraws into CGBitmapContextCreate(nil, w, h, 8, 0, DeviceRGB, 5 = noneSkipLast).
+    @inline(never)
+    static func compressedData(cgImage: CGImage, compressionQuality: CGFloat) -> Data? {
+        if let data = cgImage.data(type: .jpg, quality: compressionQuality) {
+            return data
+        }
+        guard let context = CGContext(data: nil, width: cgImage.width, height: cgImage.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            return nil
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        guard let image = context.makeImage() else {
+            return nil
+        }
+        return image.data(type: .jpg, quality: compressionQuality)
     }
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayer.FFThumbnail.image.getter:0x101a6c344 result=54-instr]

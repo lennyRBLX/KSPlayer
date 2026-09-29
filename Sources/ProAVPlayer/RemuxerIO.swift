@@ -456,9 +456,9 @@ public actor DemuxerIO {
     //   the inlined `get() throws(Failure)` erased into an UNTYPED throw (a typed-throws body returns the
     //   error unboxed, as waitFirstSegment's inlined copy 0x101b69dd0 does). Otherwise w1 byte 0 != 1
     //   (Double? non-nil) → currentTime + delegate.
-    // ⚑ Forward's readPacket is untyped `throws`; kept `throws(Int32)` because ConversionInfo.waitFirstSegment
-    //   (`throws(Int32)`, not staged) calls it — GAP joint with ConversionInfo.swift.
-    public func readPacket() throws(Int32) {
+    // Untyped `throws` (#4): out of line the Int32 is boxed (`swift_allocError` @0x101b81354, x21 = box), and
+    //   readingLoop's catch casts it back (`swift_dynamicCast` flags 6). waitFirstSegment converts to Int32.
+    public func readPacket() throws {
         if let value = try ioAction.performRead(formatCtx: formatContext.formatCtx).get() {
             currentTime = value
             delegate?.didUpdateCurrentTime(value)
@@ -511,7 +511,7 @@ public actor DemuxerIO {
     //   `let`s (formatContext, ioAction) give none.
 }
 
-/// Typed-throw support for `DemuxerIO.readPacket() throws(Int32)`. Binary-implied — the slot29 throw path
+/// Typed-throw support for `DemuxerIO.readPacket()` (`Result<Double?, Int32>.get()`). Binary-implied — the slot29 throw path
 /// boxes an `Int32` as an `Error` (`_swift_allocError`/`_swift_willThrowTypedImpl` on the Swift.Int32
 /// metadata), which requires `Int32: Error` in the module. ⚑ Placement inferred (Forward-new, ProAVPlayer).
 extension Int32: Error {}
@@ -794,22 +794,42 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     //   `mov x21,#0` + `cbz x21` = `try`); completion ((Bool) -> Void)? = the closure context 0x1041e0c68
     //   forwarded by thunk 0x10003983c.
     func reconstruct(completion: ((Bool) -> Void)?) throws {
-        // ── Body DEFERRED to owner-phase (blocked on OutputStreamInfo's devirt API + RemuxerIOActionDelegate).
-        //    Grounded control flow from FUN_101b7e2f4 (239i; prefetch-cached + disasm-verified — NOT live code, to
-        //    avoid fabricating the OutputStreamInfo interface / mis-placing the swifterror-guarded resets, P32/P36):
-        //    1. [KSLog debug gate: `if logLevel > 2` (FUN_1019b4074) — form UNRESOLVED, class-wide]  ⚑[tool=resolve_fun_pins ref=FUN_1019b4074:0x1019b4074 result=RESOLVES_UNIQUELY] = KSPlayer.KSOptions.logLevel.unsafeMutableAddressor : KSPlayer.LogLevel
-        //    2. Tear down the current output — THROWING devirt calls on self.outputStreamInfo (@0x20):
-        //       `<+0xb0>()` ; `<+0xb8>([])` ; `<+0x128>()`  (OutputStreamInfo vtable; owner-phase API — not fabricated).
-        //    3. Rebuild: `let new = try self.write(formatContext:dir:formatContextOptions:masterM3U8Context:)`
-        //       [FUN_101b8559c] — throwing; write() sets up the HLS output + builds the OSI via the real
-        //       factory FUN_101a1d014 (see the write() grounded-doc at the end of the class). NOT a raw
-        //       "OutputStreamInfo build" — same mislabel, CORRECTED.
-        //    4. guard(no swifterror from 2–3 — `cbz x21` @0x101b7e4ec) else early-out (bridgeObjectRelease). No-error path:
-        //         `self.outputStreamInfo = new` (release old) ; `new.<+0xb8>(old)`
-        //         `for track in subtitles { <per-element FUN_101a20fb0> }`   // iteration recoverable; per-element UNRESOLVED  ⚑[tool=resolve_fun_pins ref=FUN_101a20fb0:0x101a20fb0 result=RESOLVES_UNIQUELY] = KSPlayer.FFmpegAssetTrack.flush() -> ()
-        //         `startPlayTime = nil`                                       // str xzr@+0x10 + tag=1@+0x18 (disasm-confirmed; no-error path ONLY)
-        //         `if completion == nil { delegate?.<notify>(2) }`           // weak RemuxerIOActionDelegate req (undeclared) — UNRESOLVED
-        //         `Task { completion?() }`                                   // async completion spawn (FUN_101b76920, &DAT_103571988) — UNRESOLVED
+        // @0x101b7e378: inlined KSLog gate `logLevel >= 3` (.warning), message "" (String 0 / 0xe0…), line 0x15b.
+        KSLog("", file: "ProAVPlayer/RemuxerIO.swift", function: "reconstruct(completion:)", line: 347)
+        // OSI vtable +0xb0 get, +0xb8 set (`[:]` via 0x101b6b54c), +0x128 stop — each on a fresh load of +0x20.
+        let assetTrackMap = outputStreamInfo.assetTrackMap
+        outputStreamInfo.assetTrackMap = [:]
+        outputStreamInfo.stop()
+        // 0x101b8559c; on throw (`cbz x21` @0x101b7e4ec) only the saved map is released.
+        let outputStreamInfo = try Self.write(formatContext: formatContext, dir: dir, formatContextOptions: formatContextOptions, masterM3U8Context: masterM3U8Context)
+        self.outputStreamInfo = outputStreamInfo
+        outputStreamInfo.assetTrackMap = assetTrackMap
+        // `bl 0x101a20fb0` per element (FFmpegAssetTrack.flush, out of line).
+        for track in subtitles {
+            track.flush()
+        }
+        // str xzr,[+0x10] + tag 1 @+0x18.
+        startPlayTime = nil
+        // `cbnz x22` (completion fn) skips; weak delegate (ivar offset 0x104c63900), RemuxerIOActionDelegate wt +8, w0 = 2.
+        if completion == nil {
+            delegate?.remuxerDidChangeState(2)
+        }
+        // GAP(owner 15, joint Utility.swift): Task @0x101b7e62c (ctx 0x38 {isolation nil, self, completion}, async fn
+        // ptr 0x103571988 → 0x101b85c74 → body 0x101b820e0/0x101b82144/0x101b82234/0x101b8229c):
+        //   Task {
+        //       let url = dir.appendingPathComponent("segment_0_00001.ts")      // String 0x103d3e090 (18)
+        //       await directoryWatcher.watchNew(fileURL: url) { [weak self] isNew in   // actor hop, vtable +0x90 (slot 6)
+        //           guard let self else { return }                               // closure 0x101b85d4c → 0x101b822e0
+        //           if let completion {
+        //               completion(isNew)
+        //           } else {
+        //               delegate?.remuxerDidChangeState(isNew ? 1 : 0)          // wt +8 with `param_1 & 1`
+        //           }
+        //       }
+        //   }
+        // Not emitted: DirectoryWatcher.watchNew (Utility.swift, lane 15) is internal; Forward calls it cross-module
+        // (trie `$s8KSPlayer16DirectoryWatcherC8watchNew7fileURL10completiony…`), so it must be `package` like
+        // watchModify. Until then completion is never invoked on this path.
     }
 
     // DemuxerIOAction 3rd requirement impl, inlined at DemuxerIO.send(.endOfStream): load

@@ -969,7 +969,7 @@ private final class WeakIOInterruptContext {
 //  `formatCtx.pointee.duration = Int64(duration * 1_000_000)` (strb w8,[x24,#0x58] @0x101a3623c).
 //  Arm 2 (@LAB_101a358b8, per track): startTime snap, then PlayList audio/subtitleLanguageCodeMap
 //  (wt +0x08/+0x10) overrides. Arm 1 is in the body below (MovieStream duration/files, PlayerDefines.swift).
-//  Arm 2 stays a GAP: it writes FFmpegAssetTrack.languageCode, whose setter is private to that file.
+//  Arm 2 is in the track loop below (languageCode setter is internal).
 //  FFmpeg provenance (P32) — every av* symbol named in this file is ffmpeg_name_oracle result=CONFIRMED:
 //    ⚑[tool=ffmpeg_name_oracle ref=av_freep:0x103253ed0 result=CONFIRMED]     (FUN_103253ed0, avutil/mem.o — free+null idiom)
 //    ⚑[tool=ffmpeg_name_oracle ref=av_dict_get:0x10323a9d8 result=CONFIRMED]  (FUN_10323a9d8, avutil/dict.o — inside toDictionary)
@@ -1166,10 +1166,28 @@ public final class FormatContext: @unchecked Sendable {
                 if track.mediaType == .subtitle || abs((track.startTime - startTime).seconds) < 10 {
                     track.startTime = startTime
                 }
-                // GAP (review): @LAB_101a358b8 Forward also applies the PlayList audio/subtitleLanguageCodeMap
-                // (wt +0x08/+0x10) override to track.languageCode (track+0x48) and, when name == codecName,
-                // to track.name. languageCode is `public private(set)` in FFmpegAssetTrack.swift, so the
-                // write cannot be spelled from this file.
+                // @LAB_101a358b8: audio then subtitle (sequential, not else-if) — mediaType String compare,
+                // `ioContext as? PlayList` (swift_dynamicCast flags 6 on the optional), map getter wt +0x08 /
+                // +0x10 read twice (isEmpty, then subscript keyed by stream+0xc = AVStream.id), languageCode
+                // (+0x48) only when nil, then name (+0x38) = code when it still equals codecName (+0x18).
+                if track.mediaType == .audio, let playList = ioContext as? PlayList, !playList.audioLanguageCodeMap.isEmpty,
+                   track.languageCode == nil, let stream = track.stream,
+                   let code = playList.audioLanguageCodeMap[stream.pointee.id]
+                {
+                    track.languageCode = code
+                    if track.name == track.codecName {
+                        track.name = code
+                    }
+                }
+                if track.mediaType == .subtitle, let playList = ioContext as? PlayList, !playList.subtitleLanguageCodeMap.isEmpty,
+                   track.languageCode == nil, let stream = track.stream,
+                   let code = playList.subtitleLanguageCodeMap[stream.pointee.id]
+                {
+                    track.languageCode = code
+                    if track.name == track.codecName {
+                        track.name = code
+                    }
+                }
                 assetTracks.append(track)
             } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_ATTACHMENT, let fontsDir {
                 // fontsDir copy + nil check (0x101a355d0) precede the codec_id compares, which run

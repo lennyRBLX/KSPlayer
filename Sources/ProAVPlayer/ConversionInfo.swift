@@ -190,8 +190,9 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
                 return
             }
             if finished {
-                // GAP(review): Forward 0x101b6a1d0 `try remuxerIOAction.reconstruct(completion: completion)` (throws, x21
-                // propagated); RemuxerIO.swift declares it private with `(() -> Void)?`.
+                // GAP(joint Utility.swift, lane 15): Forward 0x101b6a1d0 `try remuxerIOAction.reconstruct(completion: completion)`
+                // (throws, x21 propagated). Held until reconstruct's watchNew Task can be spelled (DirectoryWatcher.watchNew
+                // internal → package); without it the completion would never fire.
                 _ = self
                 completion(true)
             } else {
@@ -221,10 +222,17 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
 
     /// FUN_101b69c34 (async, typed throws Int32 — `swift_willThrowTypedImpl` on Swift.Int32). The read is
     /// `DemuxerIO.readPacket()` inlined on the demuxer executor (0x101b69dd0). ⚑ NAME INFERRED (no symbol).
+    /// readPacket is untyped `throws`; the inlined copy stores the Int32 unboxed into the typed error slot
+    /// (ctx+0x48) with no swift_allocError, i.e. the box + cast back to Int32 fold after inlining.
+    /// ⚑ INFERRED conversion shape (`as!`): the folded cast leaves no flags word to pick `as?`/`as!`.
     private func waitFirstSegment() async throws(Int32) {
         let path = remuxerIOAction.dir.appendingPathComponent("segment_0_00001.ts").path
         while !Task.isCancelled, !FileManager.default.fileExists(atPath: path) {
-            try await demuxerIO.readPacket()
+            do {
+                try await demuxerIO.readPacket()
+            } catch {
+                throw error as! Int32
+            }
         }
     }
 

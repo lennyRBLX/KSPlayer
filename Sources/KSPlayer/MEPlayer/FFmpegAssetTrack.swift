@@ -70,7 +70,9 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
         codecpar.pointee.codec_id == AV_CODEC_ID_DVB_TELETEXT
     }
     public var name: String = ""
-    public private(set) var languageCode: String?
+    // Setter internal: FormatContext.init (0x101a350bc @LAB_101a358b8) writes track+0x48 from the PlayList
+    // language-code maps; the export trie has only the getter.
+    public internal(set) var languageCode: String?
 
     public var isEnabled: Bool {
         get {
@@ -419,7 +421,9 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     /// or 0.0 into the field at 0x10 = `seekTime`. Decoded from the slot, never counted from
     /// declaration order.
     /// ⚑[tool=vtable_walk ref=SyncPlayerItemTrack:slot25@0x101a5ba30 result=seek(time:)]
-    func flush() {
+    /// package: RemuxerIOAction.reconstruct(completion:) (ProAVPlayer, 0x101b7e2f4) calls it cross-module,
+    /// out of line (`bl 0x101a20fb0` @0x101b7e574); the export trie has `$s8KSPlayer16FFmpegAssetTrackC5flushyyF`.
+    package func flush() {
         subtitle?.seek(time: 0)
     }
 

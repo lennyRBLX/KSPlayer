@@ -211,12 +211,15 @@ class VideoSwresample: FrameChange {
             pbuf = pixelBuffer
         }
         pbuf.aspectRatio = frame.sample_aspect_ratio.size
-        configureColorSpace(dovi: dovi, pixelBuffer: pbuf)
+        pbuf.configureColorSpace(dovi: dovi)
         return pbuf
     }
 
     // RECONSTRUCT FAITHFUL (T2) — slot31 @0x101a66c6c, PURE-sws (field-offset-verified DV-free):
     // sws_scale path + manual plane pixel-copy (CVPixelBuffer plane ops + memmove).
+    // Forward 0x101a666f8 calls this out of line (`bl 0x101a66c6c` @0x101a668a8); its autoreleasepool closure
+    // is inlined into 0x101a66c6c (__objc_autoreleasePoolPush in-body).
+    @inline(never)
     func transfer(format: AVPixelFormat, width: Int32, height: Int32, data: [UnsafeMutablePointer<UInt8>?], linesize: [Int32]) -> CVPixelBuffer? {
         // Forward 0x101a66c6c: empty `linesize` returns nil before setup; a 1-element array takes linesize[0].
         guard !linesize.isEmpty else {
@@ -414,37 +417,6 @@ class VideoSwresample: FrameChange {
     func shutdown() {
         sws_freeContext(imgConvertCtx)
         imgConvertCtx = nil
-    }
-}
-
-// ⚑[invented=configureColorSpace addr=0x101a88b68 exhaustion=name_exhaustion_gate approved=orchestrator]
-func configureColorSpace(dovi: DOVIDecoderConfigurationRecord?, pixelBuffer: PixelBufferProtocol) {
-    if pixelBuffer.transferFunction == nil, let dovi {
-        switch dovi.dv_bl_signal_compatibility_id {
-        case 0, 1:
-            pixelBuffer.transferFunction = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
-        case 4:
-            pixelBuffer.transferFunction = kCVImageBufferTransferFunction_ITU_R_2100_HLG
-        default:
-            break
-        }
-    }
-    if let colorPrimaries = pixelBuffer.colorPrimaries {
-        pixelBuffer.colorspace = KSOptions.colorSpace(
-            colorPrimaries: colorPrimaries,
-            transferFunction: pixelBuffer.transferFunction,
-            dovi: dovi
-        )
-    }
-    if pixelBuffer.colorspace == nil, let dovi {
-        switch dovi.dv_bl_signal_compatibility_id {
-        case 0, 1:
-            pixelBuffer.colorspace = KSOptions.colorSpace2020PQ
-        case 4:
-            pixelBuffer.colorspace = KSOptions.colorSpace2020HLG
-        default:
-            break
-        }
     }
 }
 
