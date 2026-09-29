@@ -156,7 +156,10 @@ public enum FFmpegUtility {
             guard let frame = avframe else {
                 return videoInfo
             }
-            var codecContext: UnsafeMutablePointer<AVCodecContext>? = try videoTrack.createContext(options: options)
+            // Forward keeps codecContext in a register (x27) through the decode loop and spills it to a
+            // fresh stack slot (+0x88) only for avcodec_free_context @0x101a33d0c: a `let` freed through
+            // a local optional copy (FFmpegUtility+Thumbnail.swift precedent).
+            let codecContext = try videoTrack.createContext(options: options)
             // dstFormat = FUN_101a09124(codecpar.format) — AVPixelFormat.bestPixelFormat.
             let reScale = VideoSwresample(dstFormat: AVPixelFormat(rawValue: videoTrack.codecpar.pointee.format).bestPixelFormat, dovi: videoTrack.dovi)
             var packet = av_packet_alloc()
@@ -182,7 +185,8 @@ public enum FFmpegUtility {
             }
             av_packet_free(&packet)
             reScale.shutdown()
-            avcodec_free_context(&codecContext)
+            var codecContextOption: UnsafeMutablePointer<AVCodecContext>? = codecContext
+            avcodec_free_context(&codecContextOption)
             videoInfo.coverImage = image
         }
         return videoInfo
@@ -212,7 +216,9 @@ public enum FFmpegUtility {
         guard let frame = avframe else {
             throw KSPlayerError(code: 0, description: "can not av_frame_alloc")
         }
-        var codecContext: UnsafeMutablePointer<AVCodecContext>? = try videoTrack.createContext(options: options)
+        // Forward keeps codecContext in x24 and spills it to +0x98 only for avcodec_free_context
+        // @0x101a347ac (same let + local optional copy shape as getMetadata).
+        let codecContext = try videoTrack.createContext(options: options)
         // VideoSwresample alloc 0xc70: dstFormat +0x40 = 0x19 (AV_PIX_FMT_ARGB), fps 60, dovi +0x4c.
         let reScale = VideoSwresample(dstFormat: AV_PIX_FMT_ARGB, dovi: videoTrack.dovi)
         let interval = Int(formatContext.duration) / thumbnailCount
@@ -254,7 +260,8 @@ public enum FFmpegUtility {
         }
         av_packet_free(&packet)
         reScale.shutdown()
-        avcodec_free_context(&codecContext)
+        var codecContextOption: UnsafeMutablePointer<AVCodecContext>? = codecContext
+        avcodec_free_context(&codecContextOption)
     }
     public static func generateThumbnail(for p0: URL, options: KSOptions?, thumbnailCount: Int, thumbWidth: Int32, progressBlock: ([FFThumbnail], Int) -> Void) throws -> [FFThumbnail] {
         // 16-insn body: streamThumbnail specialised with this closure (0x101a3a89c); thumbWidth is

@@ -282,7 +282,9 @@ public final class Packet: ObjectQueueItem {
             guard let packet = corePacket?.pointee else {
                 return
             }
-            timestamp = packet.pts == Int64.min ? packet.dts : packet.pts
+            // Forward didSet 0x101a637d0: pts/dts csel with 0 fallback (AVPacket.timestamp), force-unwrapped
+            // assetTrack (trap), startTime/timebase-adjusted = FFmpegAssetTrack.timestamp(for:) inlined.
+            timestamp = assetTrack!.timestamp(for: packet.timestamp)
             position = packet.pos
             duration = packet.duration
             size = packet.size
