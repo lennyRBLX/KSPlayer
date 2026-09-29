@@ -39,15 +39,15 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
     }
 
     var isEndOfFile: Bool = false
-    var packetCount: Int { 0 }
+    var packetCount: UInt { 0 }
     let description: String
     weak var delegate: CodecCapacityDelegate?
     let mediaType: AVFoundation.AVMediaType
     let outputRenderQueue: CircularBuffer<Frame>
     var isLoopModel = false
-    // Forward frameCount / frameMaxCount getters (vtable #19/#20): plain load of the UInt, no `tbnz #63 → brk` overflow trap,
-    // so the conversion is `Int(bitPattern:)`, not the trapping `Int(_:)`.
-    var frameCount: Int { Int(bitPattern: outputRenderQueue.count) }
+    // Forward frameCount / frameMaxCount getters (vtable #19/#20): plain load of the UInt, no `tbnz #63 → brk` overflow trap.
+    // frameCount is UInt (CapacityProtocol: `adds x22,x21,x0; b.hs` @0x1019b8598/0x1019b85ec).
+    var frameCount: UInt { outputRenderQueue.count }
     var frameMaxCount: Int {
         Int(bitPattern: outputRenderQueue.maxCount)
     }
@@ -261,7 +261,7 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     // 无缝播放使用的PacketQueue
     private var loopPacketQueue: CircularBuffer<Packet>?
     var packetQueue = CircularBuffer<Packet>()
-    override var packetCount: Int { Int(packetQueue.count) }
+    override var packetCount: UInt { packetQueue.count }
     // Forward 0x101a5d0bc: UInt adds (overflow-checked) of packetQueue, loopPacketQueue and outputRenderQueue
     // counts, converted once, over fps read directly.
     override var loadedTime: TimeInterval {

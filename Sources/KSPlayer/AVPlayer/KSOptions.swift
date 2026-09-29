@@ -591,8 +591,8 @@ open class KSOptions {
             return capacity.loadedTime >= self.preferredForwardBufferDuration
         }
         return LoadingState(maxLoadedTime: maxLoadedTime, minLoadedTime: minLoadedTime,
-                            progress: progress, packetCount: UInt(packetCount),
-                            frameCount: UInt(frameCount), isEndOfFile: isEndOfFile,
+                            progress: progress, packetCount: packetCount,
+                            frameCount: frameCount, isEndOfFile: isEndOfFile,
                             isPlayable: isPlayable, isFirst: isFirst, isSeek: isSeek)
     }
 
