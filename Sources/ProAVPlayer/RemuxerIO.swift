@@ -33,7 +33,7 @@ public actor DemuxerIO {
     /// `public` is forced twice over: `…5StateO9hashValueSivpMV` exists, and the control shows an
     /// internal enum's automatic-Hashable `hashValue` emits NO vpMV while a public one does; and a
     /// public `state` property cannot expose an internal type.
-    public enum State {
+    public enum State: Sendable {
         case ready, reading, seeking, paused, endOfStream, closed, failed
     }
 
@@ -579,7 +579,7 @@ public protocol DemuxerIODelegate: AnyObject {
 //  Binary: desc=0x1039f561c, vtable=1 (vtable-empty; methods devirtualized → M2 / witness-anchoring).
 /// Demuxes the source and writes HLS segments + the master M3U8 that LocalHLSServer serves.
 /// Forward-new (ProAVPlayer module).
-final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x103571970, witness-validated); DemuxerIOAction reqs → M2
+final class RemuxerIOAction: DemuxerIOAction, @unchecked Sendable {   // binary conformance (conf@0x103571970, witness-validated); DemuxerIOAction reqs → M2
     // 10 reflection fields (order = layout). Types: field-record-concrete / decode_composite-resolved.
     var startPlayTime: Double? = nil   // internal (was `private`): ConversionInfo.didUpdateCurrentTime reads it directly (FUN_101b6a40c @remuxerIOAction+0x10/+0x18) — cross-file same-module access is binary-arbitrated; modifier under-included (§1/P34-style)
     private var outputStreamInfo: OutputStreamInfo             // binary non-optional — RETIRED from IUO (init assigns via Self.write; reconstruct() reassigns)
@@ -793,7 +793,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     // #45: internal (ConversionInfo's seek send-completion funclet 0x101b6a1d0 calls it cross-file with
     //   `mov x21,#0` + `cbz x21` = `try`); completion ((Bool) -> Void)? = the closure context 0x1041e0c68
     //   forwarded by thunk 0x10003983c.
-    func reconstruct(completion: ((Bool) -> Void)?) throws {
+    func reconstruct(completion: (@Sendable (Bool) -> Void)?) throws {
         // @0x101b7e378: inlined KSLog gate `logLevel >= 3` (.warning), message "" (String 0 / 0xe0…), line 0x15b.
         KSLog("", file: "ProAVPlayer/RemuxerIO.swift", function: "reconstruct(completion:)", line: 347)
         // OSI vtable +0xb0 get, +0xb8 set (`[:]` via 0x101b6b54c), +0x128 stop — each on a fresh load of +0x20.

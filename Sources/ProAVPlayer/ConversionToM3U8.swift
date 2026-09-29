@@ -10,14 +10,14 @@
 
 import Foundation
 import AVFoundation
-import KSPlayer
+@preconcurrency import KSPlayer
 #if canImport(UIKit)
 import UIKit
 #endif
 
 /// Produces the local HLS (master M3U8 + segments) under `videoSaveURL` for `LocalHLSServer` to serve.
 /// Forward-new (ProAVPlayer module).
-final class ConversionToM3U8 {
+final class ConversionToM3U8: @unchecked Sendable {
     // 2 reflection fields (order = layout). Types: decode_composite + the field-store decompile.
     // ⚑ binary NON-optional (field-record mangle has no `Sg`; FUN_101b6bf88 value-witness-copies a URL
     //   value directly into the field — value type, not Optional). `!` (IUO) is the M1 placeholder-init

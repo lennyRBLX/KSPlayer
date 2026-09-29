@@ -75,7 +75,7 @@ let package = Package(
             name: "ProAVPlayer",
             dependencies: ["KSPlayer", "PreLoadIOContext"],
             path: "Sources/ProAVPlayer",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "KSPlayerTests",

@@ -28,7 +28,7 @@ import Network
 /// `final` + prop_c's identity/type are not deterministically recoverable.
 // L7: public — Forward keeps dynamic exclusivity on listener (beginAccess @0x101b70d68 stop, @0x101b7550c probeListener,
 // @0x101b70cd8 ping closure), which WMO strips for an internal class; public-only port.getter 0x101b702c4 is emitted.
-public class LocalHLSServer {
+public class LocalHLSServer: @unchecked Sendable {
     // 7 reflection fields (order = layout). Mutability kept `var` (M1 under-claim; l2 mutability partial).
     public let port: UInt16                          // init param; self+0x10 (__uint16)
     public var listener: NWListener {                // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
@@ -161,7 +161,7 @@ public class LocalHLSServer {
     // Ready: NWParameters.tcp @0x101b755b8 first, Host.init(_: String) @0x101b755dc (not stringLiteral), endpoint copied (vwt+0x10 @0x101b7567c) and
     // destroyed after start (@0x101b75728) → both locals; stateUpdateHandler body 0x101b71e74: .waiting/.failed(error) →
     // KSLog(error) line 140, cancel, block(false); .ready → cancel, block(true).
-    private final func probeListener(block: @escaping (Bool) -> Void) {
+    private final func probeListener(block: @escaping @Sendable (Bool) -> Void) {
         if listener.state != .ready {
             KSLog(level: .error, "listener not ready", file: "ProAVPlayer/LocalHLSServer.swift", function: "probeListener(block:)", line: 124)
             block(false)
@@ -425,9 +425,9 @@ public class LocalHLSServer {
 
     /// Binary: FUN_101b7138c (vtable slot10). ⚑ name from the debug-log string "startListen()". Accepts
     /// each connection, drives it to `.ready`, receives the HTTP request, and dispatches it. The `[weak self]`
-    /// captures in these `@Sendable` handlers are faithful to the binary (weakInit/weakLoadStrong); they
-    /// compile because ProAVPlayer is built in Swift 5 language mode (Package.swift — Forward's own mode,
-    /// since LocalHLSServer has no Sendable conformance). Per-state KSLog forms UNRESOLVED (as elsewhere).
+    /// captures in these `@Sendable` handlers are faithful to the binary (weakInit/weakLoadStrong). ProAVPlayer
+    /// is Swift 6 mode (L7 lane 17 H2: ConciseMagicFile `#file` strings); `@unchecked Sendable` is a marker
+    /// (no conformance record) that the mode requires here. Per-state KSLog forms UNRESOLVED (as elsewhere).
     @used private final func startListen() {
         listener.newConnectionHandler = { [weak self] connection in            // accept: FUN_101b71590
             guard let self else { return }
