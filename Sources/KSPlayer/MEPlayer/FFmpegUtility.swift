@@ -519,7 +519,7 @@ public final class IOInterruptContext {
         let next = id &+ 1
         reg.nextID = next == 0 ? 1 : next
         reg.lock.unlock()
-        return IOInterruptToken(id: id, opaque: UnsafeMutableRawPointer(bitPattern: UInt(id))!)
+        return IOInterruptToken(id: id)
     }() // @ +0x28
 
     /// Designated init — reconstructed from FUN_101a391bc (vtable slot 0).
@@ -930,9 +930,11 @@ private final class IOInterruptToken {
     let opaque: UnsafeMutableRawPointer                // @ +0x18
 
     // memberwise — construction inlined @FUN_101a391bc; vtable slot devirtualized (UNRESOLVED in binary)
-    init(id: UInt64, opaque: UnsafeMutableRawPointer) {
+    // L7: Forward pfi 0x10199acdc allocates, stores id (+0x10) @0x10199ad38, THEN `cbz x19 → brk` @0x10199ad3c and
+    // stores opaque (+0x18) @0x10199ad40 — the bitPattern unwrap is inside this init, after the id store.
+    init(id: UInt64) {
         self.id = id
-        self.opaque = opaque
+        self.opaque = UnsafeMutableRawPointer(bitPattern: UInt(id))!
     }
 }
 
