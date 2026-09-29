@@ -25,7 +25,11 @@
 // ⚑[tool=export_trie_oracle ref=Anime4KFrameDump.{enabled,maxFrames,outputDirectory,dumpDecoded,dumpRendered} result=NAMES+ACCESS RECOVERED, superseding "all property names INFERRED"]
 //
 
+import CoreGraphics
 import Foundation
+import ImageIO
+import Metal
+import UniformTypeIdentifiers
 
 public enum Anime4KFrameDump {
     /// Master enable toggle. Storage DAT_104c636c0; direct setter @0x101a76c08 (no once-guard).
@@ -134,5 +138,119 @@ public enum Anime4KFrameDump {
         stateLock.lock()
         frameCounter = 0
         stateLock.unlock()
+    }
+
+    // L7 lane 15. The four bodies below carry no trie symbol (internal; no private discriminator seen).
+    // .o order: reset 0x101a7783c < dumpDecoded 0x101a778a8 < dumpRendered 0x101a77d20 < gate 0x101a784d4
+    // < PNG writer 0x101a78640. Called by both MetalRender draw helpers (0x101a873b4, 0x101a86090).
+
+    // Forward 0x101a778a8 (167 insns): args x0/x1 = pixelBuffer existential, x2 = frameIndex. Reads
+    // `enabled` 0x104c636c0 then `dumpDecoded` 0x1044ebcc8 (beginAccess each), `cgImage()` = wt+0x120 @0x101a779a4,
+    // then `queue.async` with context {frameIndex @+0x10, image @+0x18} (`stp x24,x20,[x0,#0x10]` @0x101a779e0),
+    // body 0x101a77b44 via partial apply 0x101a77cfc. Format literal 0x103d37550 "decoded_%04d.png".
+    static func dumpDecodedFrame(pixelBuffer: PixelBufferProtocol, frameIndex: Int) { // INFERRED
+        guard enabled, dumpDecoded, let image = pixelBuffer.cgImage() else {
+            return
+        }
+        queue.async {
+            let url = outputDirectory.appendingPathComponent(String(format: "decoded_%04d.png", frameIndex))
+            writePNG(image, to: url)
+        }
+    }
+
+    // Forward 0x101a77d20 (143 insns): args x0 = texture, x1 = commandBuffer, x2 = frameIndex. Pixel-format
+    // gate `sub x8,x0,#0x46; cmp x8,#0xb; mov w9,#0xc03; tst` @0x101a77da4 = raw 70/71/80/81. width*4 overflow
+    // check @0x101a77ddc, `mul/smulh` length @0x101a77df8, `newBufferWithLength:options:` x3=0 @0x101a77e24,
+    // blit copy @0x101a77e84 (origin 0, size {w,h,1}, offset 0), endEncoding, addCompletedHandler @0x101a77f14.
+    // Completion context (0x48) {buffer, length, width, height, bytesPerRow, pixelFormat, frameIndex}
+    // @0x101a77ea4..b0; completion body 0x101a77f5c re-captures the same 7 into `queue.async`
+    // (partial apply 0x101a788dc → body 0x101a781a4).
+    static func dumpRenderedFrame(texture: MTLTexture, commandBuffer: MTLCommandBuffer, frameIndex: Int) { // INFERRED
+        guard enabled, dumpRendered else {
+            return
+        }
+        let pixelFormat = texture.pixelFormat
+        switch pixelFormat {
+        case .rgba8Unorm, .rgba8Unorm_srgb, .bgra8Unorm, .bgra8Unorm_srgb:
+            break
+        default:
+            return
+        }
+        let width = texture.width
+        let height = texture.height
+        let bytesPerRow = width * 4
+        let length = bytesPerRow * height
+        guard let buffer = texture.device.makeBuffer(length: length, options: .storageModeShared),
+              let blitEncoder = commandBuffer.makeBlitCommandEncoder()
+        else {
+            return
+        }
+        blitEncoder.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
+                         sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                         sourceSize: MTLSize(width: width, height: height, depth: 1),
+                         to: buffer, destinationOffset: 0,
+                         destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: length)
+        blitEncoder.endEncoding()
+        commandBuffer.addCompletedHandler { _ in
+            queue.async {
+                // Body 0x101a781a4: Data(bytes:count:) 0x100036e98 from `contents` @0x101a78254,
+                // CGColorSpaceCreateDeviceRGB @0x101a78260, one [CGBitmapInfo] stack literal picked by
+                // `(pixelFormat & ~1) == 0x50` (pairs {0x2000,2}/{0x4000,1} at 0x1035647b0/0x1035647c0) folding to
+                // `csel w6, 0x2002, 0x4001` @0x101a782f8; CGImageCreate(8, 32, decode nil, interpolate 1, intent 0).
+                // pixelFormat is captured after bytesPerRow, so its first use sits in the CGImage argument list.
+                // Format literal 0x103d37570 "rendered_%04d.png" (count 0x11 @0x101a783e8).
+                let data = Data(bytes: buffer.contents(), count: length)
+                let colorSpace = CGColorSpaceCreateDeviceRGB()
+                guard let provider = CGDataProvider(data: data as CFData),
+                      let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                          bytesPerRow: bytesPerRow, space: colorSpace,
+                                          bitmapInfo: pixelFormat == .bgra8Unorm || pixelFormat == .bgra8Unorm_srgb
+                                              ? [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)]
+                                              : [.byteOrder32Big, CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)],
+                                          provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+                else {
+                    return
+                }
+                let url = outputDirectory.appendingPathComponent(String(format: "rendered_%04d.png", frameIndex))
+                writePNG(image, to: url)
+            }
+        }
+    }
+
+    // Forward 0x101a784d4 (91 insns): arg x0 = address of `VideoPipeline?`; returns Int? (x0, w1 nil flag).
+    // `enabled` beginAccess + `cmp w8,#1` @0x101a7850c; Optional copy 0x10002e588, nil → destroy 0x10003751c;
+    // swift_dynamicCast flags 6 to Anime4KPipeline (accessor 0x101a7c88c) @0x101a7856c, result released.
+    // stateLock (token 0x1044ebce0) lock; frameCounter 0x1044ebcf0 read with no beginAccess; `maxFrames`
+    // beginAccess @0x101a785bc; `b.ge` @0x101a785c8; `add x9,x22,#1; str` then unlock, return old value.
+    static func nextFrameIndex(pipeline: VideoPipeline?) -> Int? { // INFERRED
+        guard enabled, pipeline is Anime4KPipeline else {
+            return nil
+        }
+        stateLock.lock()
+        let index = frameCounter
+        if index < maxFrames {
+            frameCounter = index + 1
+            stateLock.unlock()
+            return index
+        }
+        stateLock.unlock()
+        return nil
+    }
+
+    // Forward 0x101a78640 (153 insns): args x0 = CGImage, x1 = URL (indirect). `createDirectory(at:
+    // withIntermediateDirectories:attributes:)` on a copy of `outputDirectory`; on error only
+    // swift_errorRelease then return. CGImageDestinationCreateWithURL(url, UTType.png.identifier, 1, nil),
+    // AddImage(dest, image, nil), Finalize.
+    static func writePNG(_ image: CGImage, to url: URL) { // INFERRED
+        do {
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            return
+        }
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            return
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationFinalize(destination)
     }
 }

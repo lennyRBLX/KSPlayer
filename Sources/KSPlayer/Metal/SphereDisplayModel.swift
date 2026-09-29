@@ -5,7 +5,6 @@ import simd
 import UIKit
 #endif
 
-@MainActor
 public class SphereDisplayModel: DisplayEnum {
     // FIELD ORDER: the five lazy pipeline slots come FIRST in this class's field records
     // (indices 0-4, offsets 0x10..0x37) and isSphere is index 5 at 0x38 — the same layout
@@ -28,7 +27,7 @@ public class SphereDisplayModel: DisplayEnum {
     // DisplayEnum requirement 0, stored at offset 0x38 with a declaration default, exactly as on
     // PlaneDisplayModel. NOTE its getter is NOT in the trie — only Plane's is — so the address
     // 0x10002c740 (`mov w0,#1; ret`) is anchored solely by this class's witness table.
-    public nonisolated let isSphere = true
+    public let isSphere = true
     @exclusivity(unchecked) private var fingerRotationX = Float(0)
     @exclusivity(unchecked) private var fingerRotationY = Float(0)
     @exclusivity(unchecked) fileprivate var modelViewMatrix = matrix_identity_float4x4
@@ -180,8 +179,9 @@ public class SphereDisplayModel: DisplayEnum {
 public class VRDisplayModel: SphereDisplayModel {
     private let modelViewProjectionMatrix: simd_float4x4
 
+    // Forward 0x101a8c5b4 inlines UIApplication.sceneSize (sharedApplication → 0x101a02de0), no KSOptions wrapper.
     override required init() {
-        let size = KSOptions.sceneSize
+        let size = UIApplication.sceneSize
         let aspect = Float(size.width / size.height)
         let projectionMatrix = simd_float4x4(perspective: Float.pi / 3, aspect: aspect, nearZ: 0.1, farZ: 400.0)
         let viewMatrix = simd_float4x4(lookAt: SIMD3<Float>.zero, center: [0, 0, -1000], up: [0, 1, 0])
@@ -204,7 +204,7 @@ public class VRBoxDisplayModel: SphereDisplayModel {
     private let modelViewProjectionMatrixLeft: simd_float4x4
     private let modelViewProjectionMatrixRight: simd_float4x4
     override required init() {
-        let size = KSOptions.sceneSize
+        let size = UIApplication.sceneSize
         let aspect = Float(size.width / size.height) / 2
         let viewMatrixLeft = simd_float4x4(lookAt: [-0.012, 0, 0], center: [0, 0, -1000], up: [0, 1, 0])
         let viewMatrixRight = simd_float4x4(lookAt: [0.012, 0, 0], center: [0, 0, -1000], up: [0, 1, 0])

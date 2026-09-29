@@ -190,6 +190,22 @@ extension UIView {
     }
 }
 
+#if canImport(UIKit) && !os(tvOS)
+// L7 lane 15: Forward 0x1019f26e4 (58 insns, no symbol → internal), laid out directly after UIView.addSub
+// 0x1019f245c (+162 insns). Receiver is the layer in x20: CAMetalLayer.updateInfo 0x101a84b18 calls it with
+// `mov x20,x19; bl 0x1019f26e4` @0x101a84cf8 and @0x101a851b8 (x19 = self layer). Selectors decoded from the
+// stubs: delegate, window, windowScene, screen, currentEDRHeadroom; `swift_dynamicCastObjCClass` to UIView;
+// nil delegate / failed cast → `mov w0,#1`; nil window / scene → `mov w0,#0`; `fcmp d8, #1.0; cset w0,gt`.
+extension CAMetalLayer {
+    func isEDRScreen() -> Bool { // INFERRED
+        guard let view = delegate as? UIView else {
+            return true
+        }
+        return (view.window?.windowScene?.screen.currentEDRHeadroom ?? 0) > 1.0
+    }
+}
+#endif
+
 @objc public enum ControlEvents: Int {
     case touchDown
     case touchUpInside

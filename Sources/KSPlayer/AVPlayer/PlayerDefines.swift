@@ -197,28 +197,16 @@ extension DynamicRange {
 //   2 Method  touchesMoved(touch:) — PlaneDisplayModel's witness is a bare `ret`, an empty body.
 // `pipeline(...)` is NOT a requirement: all three slots are accounted for above.
 //
-// @MainActor is carried over from the enum this replaces. It is NOT binary-derived — actor
-// isolation leaves no reflection record — but it is load-bearing for the existing source,
-// whose SphereDisplayModel.touchesMoved is already @MainActor and could not otherwise witness
-// requirement 2.
-// ⚑ L7 lane 10: protocol_surface's "drop set(frame:encoder:)" is a thunk_callee misattribution —
-// both Forward witness tables carry it: PlaneDisplayModel wt 0x1041d9e18 [+0x10 = 0x101a82018,
-// vtable +0x108 dispatch thunk], SphereDisplayModel wt 0x1041da228 [+0x10 = 0x101a8c5a4, vtable
-// +0x198 thunk]. Isolation evidence points the other way from this @MainActor: both conformance
-// descriptors have flags 0 (no isolated conformance), the witnesses have no executor check, and
-// MetalRender 0x101a873b4 / 0x101a86090 call `set` with none. Kept @MainActor because a
-// `nonisolated` requirement does not typecheck (L7 lane 12 probe, 11 errors): the witnesses read
-// class-isolated state (pipeline(pixelBuffer:), posBuffer/uvBuffer/indexBuffer, modelViewMatrix) and
-// SphereDisplayModel.set calls the @MainActor MotionSensor.shared.matrix() (Metal/MotionSensor.swift);
-// DoviDisplayModel.set also overrides it. Unpicking that is a cross-file isolation unit (writer GAP).
-@MainActor
+// L7 lane 15: requirement set is nonisolated — Forward's MetalRender draw helpers 0x101a873b4/0x101a86090
+// call the `set` witness with no executor hop, and Sphere set 0x101a8c200 calls MotionSensor with no hop;
+// touchesMoved stays @MainActor (UITouch).
 public protocol DisplayEnum: AnyObject {
     // nonisolated: it is a stored immutable Bool, and KSOptions reads it from a nonisolated
-    // context (isUseDisplayLayer). Isolation is not reflection-visible, so neither the
-    // @MainActor above nor this is binary-derived — both are carried over from the enum.
-    nonisolated var isSphere: Bool { get }
+    // context (isUseDisplayLayer). Isolation is not reflection-visible, so this is not
+    // binary-derived — it is carried over from the enum.
+    var isSphere: Bool { get }
     func set(frame: VideoVTBFrame, encoder: MTLRenderCommandEncoder)
-    func touchesMoved(touch: UITouch)
+    @MainActor func touchesMoved(touch: UITouch)
 }
 
 public struct VideoAdaptationState {
@@ -1352,6 +1340,15 @@ public protocol KSDrawable {
 // ⚑[tool=type_surface ref=PlayFileProtocol:0x1039edd00 result=protocol PlayFileProtocol]
 // Exported (`$s8KSPlayer16PlayFileProtocolMp` / `TL` in the export trie) → public. 4 instance
 // getter requirements; only two are typed by Forward uses (MEPlayerItem.reading 0x101a51634):
-// +0x8 Double (seconds offset) and +0x20 Int (byte position). +0x10/+0x18 have no Forward use,
-// so the requirements are deferred rather than invented. Element type of MovieStream.files.
-public protocol PlayFileProtocol {}
+// +0x8 Double (seconds offset) and +0x20 Int (byte position). Element type of MovieStream.files.
+// L7 lane 15: MEPlayerItem.reading (Forward body 0x101a512b4) walks `files` calling wt+0x20 (`cmp x27,x0; b.lt`
+// @0x101a516ac/0x101a516b0: the byte position is below this file's end offset) and, on the hit, wt+0x8
+// (@0x101a51ae0, d0 * timebase.den / timebase.num added to pts/dts). +0x10/+0x18 are getter records with no Forward
+// use and no conformer, so their names and types are unread; they are declared as `unreadRequirementNN` (the
+// vtable ledger's INFERRED dead-slot convention) only to keep +0x20 at its witness offset.
+public protocol PlayFileProtocol {
+    var startTime: TimeInterval { get } // INFERRED wt+0x8
+    var unreadRequirement10: Bool { get } // INFERRED wt+0x10, name/type unread
+    var unreadRequirement18: Bool { get } // INFERRED wt+0x18, name/type unread
+    var endPosition: Int { get } // INFERRED wt+0x20
+}

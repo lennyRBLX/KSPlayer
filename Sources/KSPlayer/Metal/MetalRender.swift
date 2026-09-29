@@ -15,7 +15,11 @@ import UIKit
 import RealityKit
 #endif
 
-class MetalRender {
+// L7 lane 15: public. The trie exports MetalRender's CMn/CMa/CN/CfD and `device`'s vau/vgZ/vpZMV, and other files
+// reach `device` through the GOT: DoviDisplayModel.set 0x101a82844..4c `adrp; add x8,x8,#0x6e0; ldr x0,[x8]`
+// (ld64-relaxed GOT load; the internal `library` 0x104c636f0 is a direct `ldr x20,[x8,#0x6f0]` @0x101a81dac).
+// With an internal class `public static let device` stays hidden and the build folds it to `ldr x0,[x8,#off]`.
+public class MetalRender {
 
     // s100 @0x101a83020 (278 instr) is an MTLLibrary method: body reads self from x20 (`mov x0,x20` -> newFunctionWithName:), callers pass x5 = swift_getObjectType(library).
     static func makePipelineState(fragmentFunction: String, isSphere: Bool = false, bitDepth: Int32 = 8) -> MTLRenderPipelineState {
@@ -118,8 +122,10 @@ class MetalRender {
     // existential, drawable, pipeline address) and no self → static. Returns the Bool that
     // drawWithResult returns.
     // INFERRED owner MetalRender (static, self unused; upstream KSPlayer's MetalRender.draw(…drawable:)).
-    // The Anime4KFrameDump gate 0x101a784d4 and dumpDecoded 0x101a778a8 / dumpRendered 0x101a77d20
-    // calls have no decl in Anime4KFrameDump.swift and are not written (writer GAP, review).
+    // L7 lane 15: Anime4KFrameDump calls placed as Forward does — gate 0x101a784d4 (`mov x0,x23` pipeline
+    // address) @0x101a878f8 before `frame.pixelBuffer`; dumpDecoded 0x101a778a8 @0x101a87b44 after endEncoding
+    // (skipped when the gate's w1 nil flag is set, `cmp w8,#1; b.eq` @0x101a87b34); dumpRendered 0x101a77d20
+    // @0x101a87c24 with drawable.texture after `pipeline?.encode`, before present.
     static func draw(frame: VideoVTBFrame, display: DisplayEnum, drawable: CAMetalDrawable, pipeline: VideoPipeline?) -> Bool {
         if let inputTexture = pipeline?.inputTexture {
             let size = frame.pixelBuffer.size
@@ -131,6 +137,7 @@ class MetalRender {
         } else {
             renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
         }
+        let dumpFrameIndex = Anime4KFrameDump.nextFrameIndex(pipeline: pipeline) // INFERRED
         let pixelBuffer = frame.pixelBuffer
         let inputTextures = pixelBuffer.textures()
         guard !inputTextures.isEmpty,
@@ -145,17 +152,17 @@ class MetalRender {
             texture.label = "texture\(index)"
             encoder.setFragmentTexture(texture, index: index)
         }
-        // Forward calls the DisplayEnum `set` witness with no executor hop; the hop stays here
-        // only because the requirement is still @MainActor in this source (writer GAP, DisplayEnum isolation).
-        nonisolated(unsafe) let unsafeDisplay = display
-        nonisolated(unsafe) let unsafeFrame = frame
-        nonisolated(unsafe) let unsafeEncoder = encoder
-        MainActor.assumeIsolated {
-            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
-        }
+        // Forward calls the DisplayEnum `set` witness with no executor hop: the requirement is nonisolated (L7 lane 15).
+        display.set(frame: frame, encoder: encoder)
         encoder.popDebugGroup()
         encoder.endEncoding()
+        if let dumpFrameIndex {
+            Anime4KFrameDump.dumpDecodedFrame(pixelBuffer: pixelBuffer, frameIndex: dumpFrameIndex)
+        }
         pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
+        if let dumpFrameIndex {
+            Anime4KFrameDump.dumpRenderedFrame(texture: drawable.texture, commandBuffer: commandBuffer, frameIndex: dumpFrameIndex)
+        }
         commandBuffer.present(drawable)
         commandBuffer.commit()
         if pipeline == nil {
@@ -169,6 +176,7 @@ class MetalRender {
     // (`mov w6,#0xa0`). Called direct from TextureResource.DrawableQueue.drawWithResult 0x101a85cac.
     // Same body as the CAMetalDrawable overload except it presents through RealityKit's
     // `MTLCommandBuffer.present(_: TextureResource.Drawable)` and never waits for completion.
+    // Anime4KFrameDump sites: gate @0x101a865cc, dumpDecoded @0x101a8681c, dumpRendered @0x101a868e8.
     // INFERRED owner MetalRender (static, self unused).
     static func draw(frame: VideoVTBFrame, display: DisplayEnum, drawable: TextureResource.Drawable, pipeline: VideoPipeline?) -> Bool {
         if let inputTexture = pipeline?.inputTexture {
@@ -181,6 +189,7 @@ class MetalRender {
         } else {
             renderPassDescriptor.colorAttachments[0].texture = pipeline?.inputTexture ?? drawable.texture
         }
+        let dumpFrameIndex = Anime4KFrameDump.nextFrameIndex(pipeline: pipeline) // INFERRED
         let pixelBuffer = frame.pixelBuffer
         let inputTextures = pixelBuffer.textures()
         guard !inputTextures.isEmpty,
@@ -195,17 +204,17 @@ class MetalRender {
             texture.label = "texture\(index)"
             encoder.setFragmentTexture(texture, index: index)
         }
-        // Forward calls the DisplayEnum `set` witness with no executor hop; the hop stays here
-        // only because the requirement is still @MainActor in this source (writer GAP, DisplayEnum isolation).
-        nonisolated(unsafe) let unsafeDisplay = display
-        nonisolated(unsafe) let unsafeFrame = frame
-        nonisolated(unsafe) let unsafeEncoder = encoder
-        MainActor.assumeIsolated {
-            unsafeDisplay.set(frame: unsafeFrame, encoder: unsafeEncoder)
-        }
+        // Forward calls the DisplayEnum `set` witness with no executor hop: the requirement is nonisolated (L7 lane 15).
+        display.set(frame: frame, encoder: encoder)
         encoder.popDebugGroup()
         encoder.endEncoding()
+        if let dumpFrameIndex {
+            Anime4KFrameDump.dumpDecodedFrame(pixelBuffer: pixelBuffer, frameIndex: dumpFrameIndex)
+        }
         pipeline?.encode(commandBuffer: commandBuffer, outputTexture: drawable.texture)
+        if let dumpFrameIndex {
+            Anime4KFrameDump.dumpRenderedFrame(texture: drawable.texture, commandBuffer: commandBuffer, frameIndex: dumpFrameIndex)
+        }
         commandBuffer.present(drawable)
         commandBuffer.commit()
         return true
@@ -364,7 +373,8 @@ extension vImage_YpCbCrToARGBMatrix {
 // discriminator, "texture" with count-7), which decode_string_literal has no path for; they were
 // read from the mov/movk immediates.
 public extension MTLRenderCommandEncoder {
-    @MainActor
+    // L7 lane 15: not @MainActor — Forward 0x101a84830 (151 insns) has no executor check and calls the
+    // nonisolated DisplayEnum `set` witness directly; no in-module caller.
     func draw(frame: VideoVTBFrame, display: any DisplayEnum) {
         // No unwrap: VideoVTBFrame.pixelBuffer is a non-optional `let` in the source now too, so
         // this matches the binary, which loads the field with no nil check.
@@ -392,16 +402,9 @@ extension CAMetalLayer: Drawable, DrawableRenderResult {
         // (KSParseProtocol.swift, Forward 0x1019e7290 / 0x1019e7374) and the pixel-buffer EDR metadata
         // through PixelBufferProtocol.edrMetadata (0x101a88500), as Forward calls them. The
         // MasteringDisplayMetadata byte packer is the module-level `data(_:)` in Model.swift (Forward
-        // 0x101a654f4, `bl` at 0x101a84b88; declared by lane 13, 9635b38). The layer EDR-headroom check
-        // 0x1019f26e4 (a CAMetalLayer extension in Core/UXKit.swift, review GAP) stays local.
-        #if !os(tvOS)
-        func isEDRScreen() -> Bool {
-            guard let view = delegate as? UIView else {
-                return true
-            }
-            return (view.window?.windowScene?.screen.currentEDRHeadroom ?? 0) > 1.0
-        }
-        #endif
+        // 0x101a654f4, `bl` at 0x101a84b88; declared by lane 13, 9635b38). The layer EDR-headroom check is
+        // the CAMetalLayer extension `isEDRScreen()` in Core/UXKit.swift (Forward 0x1019f26e4, called with the
+        // layer in x20 @0x101a84cfc / @0x101a851bc) — L7 lane 15.
         if let edrMetaData = frame.edrMetaData {
             let pixelBuffer = frame.pixelBuffer
             pixelBuffer.displayInfo = edrMetaData.displayData.map { data($0) }
@@ -443,11 +446,17 @@ extension CAMetalLayer: Drawable, DrawableRenderResult {
         pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
         if let colorspace = pixelBuffer.colorspace, self.colorspace != colorspace {
             self.colorspace = colorspace
+// L7 lane 15: Forward passes line 408 (`mov w6,#0x198` @0x101a85028) and file "KSPlayer/MetalRender.swift" (0x1a).
+#sourceLocation(file: "KSPlayer/MetalRender.swift", line: 408)
             KSLog("[video] CAMetalLayer colorspace \(String(describing: colorspace))")
+#sourceLocation()
             #if !os(tvOS)
             let name = colorspace.name
             wantsExtendedDynamicRangeContent = colorspace != CGColorSpaceCreateDeviceRGB() && name != CGColorSpace.sRGB && name != CGColorSpace.itur_709 && isEDRScreen()
+// L7 lane 15: Forward passes line 417 (`mov w6,#0x1a1` @0x101a85304).
+#sourceLocation(file: "KSPlayer/MetalRender.swift", line: 417)
             KSLog("[video] CAMetalLayer wantsExtendedDynamicRangeContent \(wantsExtendedDynamicRangeContent)")
+#sourceLocation()
             #endif
         }
         var size: CGSize

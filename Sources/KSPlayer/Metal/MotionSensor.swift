@@ -9,11 +9,15 @@
 import CoreMotion
 import Foundation
 import simd
-import UIKit
+@preconcurrency import UIKit
 
-@MainActor
+// L7 lane 15: not @MainActor. SphereDisplayModel.set (nonisolated DisplayEnum witness, Forward 0x101a8c200) calls
+// `shared` (swift_once 0x1044ed378 → 0x101a87ef0, no hop) and matrix() 0x101a880e4 directly; matrix() and init
+// 0x101a87fc8 read UIApplication.shared.activeWindowScene (0x101a02f64) → interfaceOrientation with no executor
+// check. `@preconcurrency import UIKit` is what lets that UIKit read typecheck here; `nonisolated(unsafe)` on
+// `shared` is the Swift 6 spelling of Forward's unguarded once-global (no Sendable conformance is recorded).
 final class MotionSensor {
-    static let shared = MotionSensor()
+    nonisolated(unsafe) static let shared = MotionSensor()
     private let manager = CMMotionManager()
     private let worldToInertialReferenceFrame = simd_float4x4(euler: -90, y: 0, z: 90)
     private var deviceToDisplay = simd_float4x4.identity
@@ -36,7 +40,7 @@ final class MotionSensor {
     }
 
     private init() {
-        switch KSOptions.windowScene?.interfaceOrientation {
+        switch UIApplication.shared.activeWindowScene?.interfaceOrientation {
         case .landscapeRight:
             defaultRadiansY = -.pi / 2
         case .landscapeLeft:
@@ -65,7 +69,7 @@ final class MotionSensor {
         if var matrix = manager.deviceMotion.flatMap(simd_float4x4.init(motion:)) {
             matrix = matrix.transpose
             matrix *= worldToInertialReferenceFrame
-            orientation = KSOptions.windowScene?.interfaceOrientation ?? .portrait
+            orientation = UIApplication.shared.activeWindowScene?.interfaceOrientation ?? .portrait
             matrix = deviceToDisplay * matrix
             matrix = matrix.rotateY(radians: defaultRadiansY)
             return matrix

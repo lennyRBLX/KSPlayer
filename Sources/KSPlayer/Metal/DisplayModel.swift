@@ -21,7 +21,6 @@ import UIKit
 // `isSphere` on this class, and a public member of a file-private class is not expressible.
 // Widening is also what lets KSOptions.display hold one of these as an existential and what
 // lets ThumbnailDoviDisplayModel subclass it from another file.
-@MainActor
 public class PlaneDisplayModel: DisplayEnum {
     private lazy var yuv = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayYUVTexture")
     private lazy var yuvp010LE = MetalRender.makePipelineState(vertexFunction: "mapTexture", fragmentFunction: "displayYUVTexture", bitDepth: 10)
@@ -31,7 +30,7 @@ public class PlaneDisplayModel: DisplayEnum {
 
     // DisplayEnum requirement 0. STORED with a declaration default, at offset 0x38 — the class's
     // field_offset_vector is 5 lazy slots (0x10..0x37) then isSphere, InstanceSize 0x39.
-    public nonisolated let isSphere = false
+    public let isSphere = false
 
     // The six stored properties this class used to declare — indexCount, indexType,
     // primitiveType, indexBuffer, posBuffer, uvBuffer — together with genSphere() and the init
@@ -40,7 +39,7 @@ public class PlaneDisplayModel: DisplayEnum {
     // implicit one. That absence is the whole reason set(frame:encoder:) below draws
     // non-indexed: there is no index buffer to draw from.
 
-    public nonisolated init() {}
+    public init() {}
 
     // Slot 32 @0x101a81f08, 51 instructions. PRIVATE in the binary (the mangled name carries a
     // private discriminator) and NOT a protocol requirement. It takes the pixel buffer
