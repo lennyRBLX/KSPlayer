@@ -37,6 +37,11 @@ public class MetalRender {
         return library
     }()
 
+    // Forward 0x101a839c8 (once 0x1044ed2b0, storage 0x104c63700) — name INFERRED. Initialized between
+    // library (0x101a838b4) and renderPassDescriptor (0x101a83a44); csel stores 0x4000 / 0x2000 (Int).
+    // `supportsFamily` 0x3eb = .apple3. Read by MetalSubtitleView's ASS atlas packer 0x101ac3110.
+    static let maxTextureSize = MetalRender.device.supportsFamily(.apple3) ? 16384 : 8192
+
     nonisolated(unsafe) static let renderPassDescriptor = MTLRenderPassDescriptor()
     /// ⚑ static getter 0x10002d9d4 — `mov x0, #0` / `ret`, the image's canonical constant-zero
     /// body. Its storage at 0x10356c4e0 independently reads 0 as well, so both routes agree on
@@ -169,6 +174,24 @@ public class MetalRender {
             commandBuffer.waitUntilCompleted()
         }
         return true
+    }
+
+    // Forward 0x101a87d50 (95 insns) — name INFERRED, INFERRED owner MetalRender (static, self unused).
+    // Emitted in MetalRender.o right after the CAMetalDrawable draw 0x101a873b4; MetalSubtitleView's
+    // drawPalette 0x101ac1f68 / drawTexture 0x101ac2260 call it direct (`bl`) with (rect, size) in d0-d5
+    // and no metatype. Computes minX, maxX, minY, maxY in that order and returns a 4-element [VertexIn]
+    // (stride 0x20): pos (x', y', 0, 1) with x' = 2x/w - 1, y' = 1 - 2y/h; uv (0,0) (1,0) (0,1) (1,1).
+    static func subtitleVertices(rect: CGRect, size: CGSize) -> [VertexIn] {
+        let minX = Float(rect.minX * 2 / size.width - 1)
+        let maxX = Float(rect.maxX * 2 / size.width - 1)
+        let minY = Float(1 - rect.minY * 2 / size.height)
+        let maxY = Float(1 - rect.maxY * 2 / size.height)
+        return [
+            VertexIn(pos: SIMD4<Float>(minX, minY, 0, 1), uv: SIMD2<Float>(0, 0)),
+            VertexIn(pos: SIMD4<Float>(maxX, minY, 0, 1), uv: SIMD2<Float>(1, 0)),
+            VertexIn(pos: SIMD4<Float>(minX, maxY, 0, 1), uv: SIMD2<Float>(0, 1)),
+            VertexIn(pos: SIMD4<Float>(maxX, maxY, 0, 1), uv: SIMD2<Float>(1, 1)),
+        ]
     }
 
     #if canImport(RealityKit)

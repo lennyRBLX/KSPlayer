@@ -6,10 +6,12 @@
 //
 
 import AVFoundation
+import CoreText
 import CryptoKit
 import SwiftUI
 import Dispatch
 import Foundation
+import Metal
 
 #if canImport(UIKit)
 import UIKit
@@ -904,6 +906,273 @@ extension HTTPURLResponse {
         }
         return nil
     }
+}
+
+#if canImport(UIKit)
+// Subtitle text rasterizer. Forward lays these out between HTTPURLResponse.filename and
+// Double.kmFormatted (0x1019ea0dc…0x1019ec370). Every name in this block is INFERRED (no Forward
+// symbols); addresses are the Forward bodies. The Forward escape checks use #filePath length 0x4c
+// with lines 200 / 210 / 220, which does not match this file's path (see L7 note), so line
+// numbers are not reproduced.
+
+// INFERRED — Forward 0x1019ea0dc works on four CGFloats in the order left, right, top, bottom
+// (ldp q0,q3,[x20]), which is not UIEdgeInsets' order (top, left, bottom, right).
+private struct SubtitleShadowInsets {
+    var left: CGFloat = 0
+    var right: CGFloat = 0
+    var top: CGFloat = 0
+    var bottom: CGFloat = 0
+
+    // INFERRED — Forward 0x1019ea0dc (77 insns): alpha gate, then blur*2 (fadd d,d) before
+    // shadowOffset; Swift max(old, new) → fcmge/bit per lane.
+    mutating func formUnion(_ shadow: NSShadow) {
+        guard shadow.subtitleAlpha > 0 else { return }
+        let blur = shadow.shadowBlurRadius * 2
+        let offset = shadow.shadowOffset
+        left = max(left, blur - offset.width)
+        right = max(right, blur + offset.width)
+        top = max(top, blur + offset.height)
+        bottom = max(bottom, blur - offset.height)
+    }
+}
+
+extension NSShadow {
+    // INFERRED — Forward 0x1019ea210 (58 insns): nil colour or non-UIColor → 1.
+    fileprivate var subtitleAlpha: CGFloat {
+        (shadowColor as? UIColor)?.cgColor.alpha ?? 1
+    }
+}
+
+// INFERRED — Forward 0x1019ea2f8 (100 insns): CGFloat, then Double, then NSNumber
+// (CGFloat(truncating:)) dynamic casts of the attribute value.
+private func subtitleCGFloat(_ value: Any?) -> CGFloat? {
+    if let value = value as? CGFloat {
+        return value
+    }
+    if let value = value as? Double {
+        return value
+    }
+    if let value = value as? NSNumber {
+        return CGFloat(truncating: value)
+    }
+    return nil
+}
+
+extension NSAttributedString {
+    // INFERRED — inlined into 0x1019ea6c4 and 0x1019eba7c (both escape-check line 200 col 92);
+    // closure body 0x1019ec2f8 does max(maxStrokeWidth, width) (fcmp/fcsel ls).
+    fileprivate func maxSubtitleStrokeWidth(_ strokeWidth: CGFloat) -> CGFloat {
+        var maxStrokeWidth = strokeWidth
+        enumerateAttribute(.subtitleStrokeWidth, in: NSRange(location: 0, length: length), options: []) { value, _, _ in
+            if let width = subtitleCGFloat(value) {
+                maxStrokeWidth = max(maxStrokeWidth, width)
+            }
+        }
+        return maxStrokeWidth
+    }
+
+    // INFERRED — inlined into 0x1019ea6c4 (escape-check line 210 col 79); closure body
+    // 0x1019ea540 → 0x1019ea0dc.
+    fileprivate func subtitleShadowInsets() -> SubtitleShadowInsets {
+        var insets = SubtitleShadowInsets()
+        enumerateAttribute(.shadow, in: NSRange(location: 0, length: length), options: []) { value, _, _ in
+            if let shadow = value as? NSShadow {
+                insets.formUnion(shadow)
+            }
+        }
+        return insets
+    }
+
+    // INFERRED — inlined into 0x1019eaf04 (escape-check line 220 col 79); closure body
+    // 0x1019ea5ec calls 0x1019ea210 and sets stop.
+    fileprivate func firstSubtitleShadow() -> NSShadow? {
+        var shadow: NSShadow?
+        enumerateAttribute(.shadow, in: NSRange(location: 0, length: length), options: []) { value, _, stop in
+            if let value = value as? NSShadow, value.subtitleAlpha > 0 {
+                shadow = value
+                stop.pointee = true
+            }
+        }
+        return shadow
+    }
+
+    // INFERRED — Forward 0x1019ea6c4 (528 insns), called from SubtitleTextInfo's texture builder
+    // 0x101ac26a4 (d0 width, d1 scale, d2 strokeWidth, x0 backgroundColor, x1 strokeColor,
+    // x2 Optional<UnsafeMutablePointer<UIEdgeInsets>>). Int(exactly:) is the stdlib
+    // specialization 0x1019eb8bc.
+    func subtitleContext(width: CGFloat, scale: CGFloat, strokeWidth: CGFloat, backgroundColor: UIColor, strokeColor: UIColor, insets: UnsafeMutablePointer<UIEdgeInsets>?) -> CGContext? {
+        let alpha = backgroundColor.cgColor.alpha
+        var width = width
+        var horizontalPadding: CGFloat = 0
+        var verticalPadding: CGFloat = 0
+        var offsetX: CGFloat = 0
+        var offsetY: CGFloat = 0
+        if alpha > 0 {
+            width -= 20
+            offsetY = 4
+            offsetX = 8
+            horizontalPadding = 20
+            verticalPadding = 12
+        }
+        let string = NSMutableAttributedString(attributedString: self)
+        string.removeAttribute(.strokeWidth, range: NSRange(location: 0, length: string.length))
+        let maxStrokeWidth = string.maxSubtitleStrokeWidth(strokeWidth)
+        let shadowInsets = string.subtitleShadowInsets()
+        // fmaxnm d11,d11,#1.0: max(1, width) (max(width, 1) would not fold to fmaxnm).
+        width = max(1, width)
+        if let insets {
+            insets.pointee = UIEdgeInsets(top: shadowInsets.top, left: shadowInsets.left, bottom: shadowInsets.bottom, right: shadowInsets.right)
+        }
+        let padding: CGFloat = alpha > 0 || shadowInsets.left != 0 || shadowInsets.right != 0 || shadowInsets.top != 0 || shadowInsets.bottom != 0 ? 4 : 0
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        let size = CTFramesetterSuggestFrameSizeWithConstraints(framesetter, CFRange(location: 0, length: length), nil, CGSize(width: width, height: .greatestFiniteMagnitude), nil)
+        let textWidth = ceil(size.width) + maxStrokeWidth * UITraitCollection.current.displayScale
+        let contentWidth = alpha > 0 ? horizontalPadding + textWidth : padding + textWidth
+        let textHeight = ceil(size.height) + maxStrokeWidth * UITraitCollection.current.displayScale
+        let contentHeight = alpha > 0 ? verticalPadding + textHeight : padding + textHeight
+        guard let pixelWidth = Int(exactly: (scale * (shadowInsets.left + shadowInsets.right + contentWidth)).rounded(.up)),
+              let pixelHeight = Int(exactly: (scale * (shadowInsets.top + shadowInsets.bottom + contentHeight)).rounded(.up)),
+              pixelWidth > 0, pixelHeight > 0
+        else {
+            return nil
+        }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(data: nil, width: pixelWidth, height: pixelHeight, bitsPerComponent: 8, bytesPerRow: pixelWidth * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return nil
+        }
+        context.scaleBy(x: scale, y: scale)
+        if alpha > 0 {
+            context.setFillColor(backgroundColor.cgColor)
+            // fminnm(h * 0.5, 10): min(10, h * 0.5).
+            let radius = min(10, contentHeight * 0.5)
+            let path = CGPath(roundedRect: CGRect(x: shadowInsets.left, y: shadowInsets.top, width: contentWidth, height: contentHeight), cornerWidth: radius, cornerHeight: radius, transform: nil)
+            context.addPath(path)
+            context.fillPath()
+            context.translateBy(x: offsetX + shadowInsets.left + 2, y: offsetY + shadowInsets.top + 2)
+        } else {
+            context.translateBy(x: shadowInsets.left + 2, y: shadowInsets.top + 2)
+        }
+        context.drawSubtitleShadow(string, width: textWidth, height: textHeight)
+        let strokeString = NSMutableAttributedString(attributedString: string)
+        strokeString.removeAttribute(.shadow, range: NSRange(location: 0, length: strokeString.length))
+        context.drawSubtitleStroke(strokeString, width: textWidth, height: textHeight, strokeWidth: strokeWidth, strokeColor: strokeColor)
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: textWidth, height: textHeight), transform: nil)
+        let frame = CTFramesetterCreateFrame(CTFramesetterCreateWithAttributedString(strokeString), CFRange(location: 0, length: length), path, nil)
+        CTFrameDraw(frame, context)
+        return context
+    }
+}
+
+extension CGContext {
+    // INFERRED — Forward 0x1019eaf04 (532 insns): d0 width, d1 height, x0 string, x20 self.
+    fileprivate func drawSubtitleShadow(_ attributedString: NSAttributedString, width: CGFloat, height: CGFloat) {
+        guard attributedString.firstSubtitleShadow() != nil else { return }
+        let string = NSMutableAttributedString(attributedString: attributedString)
+        string.removeAttribute(.shadow, range: NSRange(location: 0, length: string.length))
+        beginTransparencyLayer(auxiliaryInfo: nil)
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: height), transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: string.length), path, nil)
+        let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
+        for (index, line) in lines.enumerated() {
+            let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
+            for runIndex in 0 ..< runs.count {
+                let run = runs[runIndex]
+                let range = CTRunGetStringRange(run)
+                let origin = origins[index]
+                // CTRunGetAttributes is called and released unused (0x1019eb318).
+                _ = CTRunGetAttributes(run)
+                guard range.location >= 0, range.location < attributedString.length,
+                      let shadow = attributedString.attribute(.shadow, at: range.location, effectiveRange: nil) as? NSShadow,
+                      shadow.subtitleAlpha > 0
+                else {
+                    continue
+                }
+                saveGState()
+                let color = (shadow.shadowColor as? UIColor)?.cgColor ?? KSOptions.textShadowColor.cgColor
+                setShadow(offset: shadow.shadowOffset, blur: shadow.shadowBlurRadius * 2, color: color)
+                setTextDrawingMode(.fill)
+                textPosition = origin
+                CTRunDraw(run, self, CFRange(location: 0, length: 0))
+                restoreGState()
+                saveGState()
+                setBlendMode(.clear)
+                setTextDrawingMode(.fill)
+                textPosition = origin
+                CTRunDraw(run, self, CFRange(location: 0, length: 0))
+                restoreGState()
+            }
+        }
+        endTransparencyLayer()
+    }
+
+    // INFERRED — Forward 0x1019eb754 (72 insns): CGBitmapContextGetData (nil → nil), width, height,
+    // bytesPerRow; .rgba8Unorm (0x46) texture, shaderRead, shared; replace region.
+    func subtitleTexture() -> MTLTexture? {
+        guard let data else { return nil }
+        let width = width
+        let height = height
+        let bytesPerRow = bytesPerRow
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+        let texture = MetalRender.device.makeTexture(descriptor: descriptor)
+        texture?.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: data, bytesPerRow: bytesPerRow)
+        return texture
+    }
+
+    // INFERRED — Forward 0x1019eba7c (543 insns): d0 width, d1 height, d2 strokeWidth, x0 string,
+    // x1 strokeColor, x20 self. Removes .foregroundColor; per run reads the run attributes as an
+    // NSDictionary (objectForKey:) for .subtitleStrokeWidth / .subtitleStrokeColor.
+    fileprivate func drawSubtitleStroke(_ attributedString: NSAttributedString, width: CGFloat, height: CGFloat, strokeWidth: CGFloat, strokeColor: UIColor) {
+        guard attributedString.maxSubtitleStrokeWidth(strokeWidth) > 0 else { return }
+        let string = NSMutableAttributedString(attributedString: attributedString)
+        string.removeAttribute(.foregroundColor, range: NSRange(location: 0, length: string.length))
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: height), transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: string.length), path, nil)
+        let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
+        for (index, line) in lines.enumerated() {
+            let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
+            for runIndex in 0 ..< runs.count {
+                let run = runs[runIndex]
+                // CTRunGetStringRange is called and its result unused (0x1019ebf1c).
+                _ = CTRunGetStringRange(run)
+                let origin = origins[index]
+                let attributes = CTRunGetAttributes(run) as NSDictionary
+                let lineWidth = subtitleCGFloat(attributes[NSAttributedString.Key.subtitleStrokeWidth]) ?? strokeWidth
+                guard lineWidth > 0 else { continue }
+                let color = attributes[NSAttributedString.Key.subtitleStrokeColor] as? UIColor ?? strokeColor
+                saveGState()
+                setLineWidth(lineWidth)
+                setLineJoin(.round)
+                setTextDrawingMode(.stroke)
+                setStrokeColor(color.cgColor)
+                textPosition = origin
+                CTRunDraw(run, self, CFRange(location: 0, length: 0))
+                restoreGState()
+            }
+        }
+    }
+}
+#endif
+
+// INFERRED — Forward 0x1019ec77c (30 insns), outlined and shared by KSAVPlayer.updatePlayableDuration
+// 0x1019a7c80 and KSOptions.playable 0x1019b82a4. Emitted after the subtitle rasterizer block and before
+// the Double extensions. `b.pl` / `fcmp d0,d0; b.vs` → 0 for negative or NaN, `b.ge` 255.0 → 255, then the
+// checked UInt8(Double) conversion (its traps are unreachable).
+func bufferingProgressValue(_ value: Double) -> UInt8 {
+    if value < 0 || value.isNaN {
+        return 0
+    }
+    if value >= 255 {
+        return 255
+    }
+    return UInt8(value)
 }
 
 public extension Double {

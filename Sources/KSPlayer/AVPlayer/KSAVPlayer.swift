@@ -736,8 +736,32 @@ extension KSAVPlayer {
         }
     }
 
+    // Forward 0x1019a7c80 (239 insns). loadedTimeRanges bridged unconditionally to [NSValue]; the
+    // first(where:) predicate is inlined with its MainActor executor check (#fileID
+    // "KSPlayer/KSAVPlayer.swift", line 430): timeRangeValue, then item.currentTime(), then
+    // CMTimeRangeContainsTime. On a hit: one modify access on duration (fcmp #0; b.mi; b.gt → runs on
+    // zero or NaN) ← item.duration.seconds; playableTime ← timeRangeValue.end.seconds, `b.le` return;
+    // currentPlaybackTime inlined (shouldSeekTo ?? (isReadyToPlay ? playerView.player.currentTime().seconds
+    // : 0)), difference `b.le` return; preferredForwardBufferDuration == 0 → 100, else
+    // (loaded * 100) / preferredForwardBufferDuration (re-read) through the shared clamp 0x1019ec77c;
+    // then the bufferingProgress store + didSet. No loadState write.
     private func updatePlayableDuration(item: AVPlayerItem) {
-        // ⚑ UNRESOLVED → KSAVPlayer M2: playableTime / bufferingProgress(UInt8) / loadState buffering computation.
+        let first = item.loadedTimeRanges.first { CMTimeRangeContainsTime($0.timeRangeValue, time: item.currentTime()) }
+        guard let first else {
+            return
+        }
+        if duration == 0 || duration.isNaN {
+            duration = item.duration.seconds
+        }
+        playableTime = first.timeRangeValue.end.seconds
+        guard playableTime > 0 else {
+            return
+        }
+        let loadedTime = playableTime - currentPlaybackTime
+        guard loadedTime > 0 else {
+            return
+        }
+        bufferingProgress = item.preferredForwardBufferDuration == 0 ? 100 : bufferingProgressValue(loadedTime * 100 / item.preferredForwardBufferDuration)
     }
 
     private func playOrPause() {
@@ -1193,7 +1217,8 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
     // its value stays unread (dead-stripped init, above), so init assigns it under an L7 marker.
     let reorderSize: Int32
     let bitDepth: Int32
-    let rotation: UInt16 = 0
+    // Forward 0x10199fdc4 stores it in init (strh +0x5c) from preferredTransform; no declaration default.
+    let rotation: UInt16
     let fieldOrder: FFmpegFieldOrder = .unknown
     let isImageSubtitle = false
     let isPlayable: Bool
@@ -1211,17 +1236,35 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
     }
 
     // L7 lane 15: async fn ptr 0x103566c10 → 0x10199fcc4 (ctx 0xf0) hops to MainActor.shared's
-    //   executor; the caller's continuation 0x1019a676c tests x20 → 0x1019a6e18 (throws). The body
-    //   0x10199fdc4 (rotation from preferredTransform etc.) is NOT transcribed here.
+    //   executor; the caller's continuation 0x1019a676c tests x20 → 0x1019a6e18 (throws).
+    // Body 0x10199fdc4: `assetTrack` is sent ONCE for the first group (cbz → else-branch stores 0 / .video /
+    //   "" / "" / 24.0 (0x41c00000) / 0 / rotation 0), then again for isPlayable and formatDescriptions.
+    //   languageCode is stored as "" (0, 0xe000000000000000) on both nil paths — not Optional.none.
+    //   estimatedDataRate is read twice: exponent != 0 && != 0xff (isNormal) gates the trapping Int64(Float).
+    //   rotation: atan2(b, a) (d0 = b, d1 = a) * 180 / .pi, frinta, checked Int, srem 360, +360 when
+    //   negative, strh with no range check.
     @MainActor
     init(track: AVPlayerItemTrack) async throws {
         self.track = track
-        trackID = track.assetTrack?.trackID ?? 0
-        mediaType = track.assetTrack?.mediaType ?? .video
-        name = track.assetTrack?.languageCode ?? ""
-        languageCode = track.assetTrack?.languageCode
-        nominalFrameRate = track.assetTrack?.nominalFrameRate ?? 24.0
-        bitRate = Int64(track.assetTrack?.estimatedDataRate ?? 0)
+        if let assetTrack = track.assetTrack {
+            trackID = assetTrack.trackID
+            mediaType = assetTrack.mediaType
+            name = assetTrack.languageCode ?? ""
+            languageCode = assetTrack.languageCode ?? ""
+            nominalFrameRate = assetTrack.nominalFrameRate
+            bitRate = assetTrack.estimatedDataRate.isNormal ? Int64(assetTrack.estimatedDataRate) : 0
+            let transform = assetTrack.preferredTransform
+            let degrees = Int((atan2(transform.b, transform.a) * 180 / .pi).rounded()) % 360
+            rotation = UInt16(degrees < 0 ? degrees + 360 : degrees)
+        } else {
+            trackID = 0
+            mediaType = .video
+            name = ""
+            languageCode = ""
+            nominalFrameRate = 24.0
+            bitRate = 0
+            rotation = 0
+        }
         reorderSize = 0 // L7: Forward's init is dead-stripped; the stored value was not read
         dovi = nil // L7: Forward's init is dead-stripped; the stored value was not read
         #if os(xrOS)

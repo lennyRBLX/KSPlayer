@@ -84,9 +84,11 @@ class SubtitleDecode: DecodeProtocol {
             // case index 2), i.e. the KSLog(_ error:) overload inlined (error() as NSError @0x101a6943c).
             KSLog(error)
         }
-        // 0x101a69520/28: codecContext nil or subtitle_header nil → assParse (+0x48) = nil, return.
+        // 0x101a69520/28: codecContext nil or subtitle_header nil → assParse (+0x48) = nil (0x101a69558), then
+        // subtitleHeader (+0x70) = nil (0x101a69564 `stp xzr,xzr` + release of the old +0x78), return.
         guard let pointer = codecContext?.pointee.subtitle_header else {
             assParse = nil
+            self.subtitleHeader = nil
             return
         }
         var subtitleHeader = String(cString: pointer)

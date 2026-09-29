@@ -312,7 +312,7 @@ extension MTLRenderCommandEncoder {
     // brightness 2; triangle strip of 4.
     private func drawPalette(rect: CGRect, size: CGSize, brightness: Float, texture: MTLTexture, palette: Data) {
         setRenderPipelineState(palettePipeline)
-        let vertices = subtitleVertices(rect: rect, size: size)
+        let vertices = MetalRender.subtitleVertices(rect: rect, size: size)
         setVertexBytes(vertices, length: MemoryLayout<VertexIn>.stride * vertices.count, index: 0)
         setFragmentTexture(texture, index: 0)
         palette.withUnsafeBytes { buffer in
@@ -330,7 +330,7 @@ extension MTLRenderCommandEncoder {
     // Forward 0x101ac2260 — name INFERRED. Pipeline once 0x1044ef620 → 0x101ac2c68 (storage 0x1044ef628).
     private func drawTexture(rect: CGRect, size: CGSize, brightness: Float, texture: MTLTexture) {
         setRenderPipelineState(subtitlePipeline)
-        let vertices = subtitleVertices(rect: rect, size: size)
+        let vertices = MetalRender.subtitleVertices(rect: rect, size: size)
         setVertexBytes(vertices, length: MemoryLayout<VertexIn>.stride * vertices.count, index: 0)
         setFragmentTexture(texture, index: 0)
         var brightness = brightness
@@ -357,23 +357,6 @@ extension MTLRenderCommandEncoder {
         setFragmentTexture(texture, index: 0)
         drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instances.count)
     }
-}
-
-// Forward 0x101a87d50 (95 insns) — name INFERRED. ⚑ GAP: the address sits in the MetalRender.swift range (no
-// forward_fn file tag). It is kept here as a fileprivate free function until the review owner moves it.
-// (rect, size) in d0-d5, no self; computes minX, maxX, minY, maxY in that order and returns a 4-element
-// [VertexIn] (stride 0x20): pos (x', y', 0, 1) with x' = 2x/w - 1, y' = 1 - 2y/h; uv (0,0) (1,0) (0,1) (1,1).
-fileprivate func subtitleVertices(rect: CGRect, size: CGSize) -> [VertexIn] {
-    let minX = Float(rect.minX * 2 / size.width - 1)
-    let maxX = Float(rect.maxX * 2 / size.width - 1)
-    let minY = Float(1 - rect.minY * 2 / size.height)
-    let maxY = Float(1 - rect.maxY * 2 / size.height)
-    return [
-        VertexIn(pos: SIMD4<Float>(minX, minY, 0, 1), uv: SIMD2<Float>(0, 0)),
-        VertexIn(pos: SIMD4<Float>(maxX, minY, 0, 1), uv: SIMD2<Float>(1, 0)),
-        VertexIn(pos: SIMD4<Float>(minX, maxY, 0, 1), uv: SIMD2<Float>(0, 1)),
-        VertexIn(pos: SIMD4<Float>(maxX, maxY, 0, 1), uv: SIMD2<Float>(1, 1)),
-    ]
 }
 
 // Pipeline statics — names INFERRED; each is a swift_once global whose initializer calls 0x101ac2df0 with
@@ -462,7 +445,7 @@ private func packAssAtlas(layers: [AssLayerSource]) -> (MTLTexture, [AssAtlasIns
     guard !layers.isEmpty else {
         return nil
     }
-    let maxSize = maxAtlasTextureSize
+    let maxSize = MetalRender.maxTextureSize
     let maxWidth = layers.map(\.width).max() ?? 1
     var area = 0
     for layer in layers {
@@ -534,11 +517,6 @@ private func nextPowerOfTwo(_ value: Int) -> Int {
     value == 0 ? 1 : 1 << (Int.bitWidth - (value - 1).leadingZeroBitCount)
 }
 
-// Forward 0x101a839c8 initializes the static at 0x104c63700 (once 0x1044ed2b0) — name INFERRED.
-// ⚑ GAP: the initializer is tagged KSPlayer/MetalRender.swift, so this belongs to MetalRender as a static; kept
-// here as a file-private global until the review owner moves it. `supportsFamily` 0x3eb = .apple3.
-private let maxAtlasTextureSize = MetalRender.device.supportsFamily(.apple3) ? 16384 : 8192
-
 #if canImport(UIKit)
 extension SubtitleTextInfo {
     // Forward 0x101ac26a4 (222 insns) — name INFERRED. Indirect result (x8) of (MTLTexture, CGRect)?; self in x20.
@@ -592,36 +570,6 @@ extension SubtitleTextInfo {
             }
         }
         return (texture, CGRect(x: x - scale * insets.left, y: y - scale * insets.top, width: textureWidth, height: textureHeight))
-    }
-}
-
-// ⚑ GAP (review): Forward 0x1019ea6c4 (528 insns) is an NSAttributedString → CGContext text renderer in the
-// Utility.swift range (escape-check lines 200/210; CTFramesetter, rounded background path, stroke/shadow
-// attribute enumeration, helpers 0x1019eaf04 / 0x1019eba7c / 0x1019eb8bc). It has no Sources body and is outside
-// this lane's files, so this file-private stand-in only carries the call shape and returns nil (text is not drawn).
-extension NSAttributedString {
-    fileprivate func subtitleContext(width _: CGFloat, scale _: CGFloat, strokeWidth _: CGFloat, backgroundColor _: UIColor, strokeColor _: UIColor, insets _: UnsafeMutablePointer<UIEdgeInsets>?) -> CGContext? {
-        nil
-    }
-}
-
-// Forward 0x1019eb754 (72 insns) — name INFERRED. ⚑ GAP: Utility.swift range; kept file-private here.
-// CGBitmapContextGetData (nil → nil), width, height, bytesPerRow; .rgba8Unorm (0x46) texture, shaderRead, shared;
-// replace region (0, 0, width, height) with the context bytes.
-extension CGContext {
-    fileprivate func subtitleTexture() -> MTLTexture? {
-        guard let data else {
-            return nil
-        }
-        let width = width
-        let height = height
-        let bytesPerRow = bytesPerRow
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
-        descriptor.usage = .shaderRead
-        descriptor.storageMode = .shared
-        let texture = MetalRender.device.makeTexture(descriptor: descriptor)
-        texture?.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: data, bytesPerRow: bytesPerRow)
-        return texture
     }
 }
 #endif
