@@ -870,6 +870,10 @@ public class ThumbnailSession {
     /// The JPEG-or-fallback tail shared by all three generators (inlined at every site; name
     /// inferred). JPEG at quality 0.72 (0x3fe70a3d70a3d70a); if encoding fails, redraw into an
     /// 8-bit RGBX context and retry; last resort is an in-memory UIImage.
+    /// `@inline(__always)`: no out-of-line body in Forward; generateSequentially 0x101a2b040 carries it
+    /// inline after resized 0x101a24fb0 (data 0x1019e97b8 @0x101a2badc, CGBitmapContextCreate @0x101a2bb30,
+    /// draw/CreateImage, second data call, UIImage allocWithZone), where the build called it out of line.
+    @inline(__always)
     private static func makeThumbnail(cgImage: CGImage, time: TimeInterval) -> FFThumbnail {
         if let data = cgImage.data(type: .jpg, quality: 0.72) {
             return FFThumbnail(jpegData: data, time: time)

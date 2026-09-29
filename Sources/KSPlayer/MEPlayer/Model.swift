@@ -246,7 +246,14 @@ public final class Packet: ObjectQueueItem {
     }
     // ⚑[tool=export_trie_oracle ref=Packet.corePacket:vpMV result=property descriptor present ⇒ the GETTER is public; the private setter is unobservable and is kept as reconstructed]
     // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o, instr 16 / size 64)
-    public private(set) var corePacket = av_packet_alloc()
+    // ⚑ Forward pfi `$s8KSPlayer6PacketC04coreB0SpySo8AVPacketVGSgvpfi` = 0x10002d9d4 (merged `mov x0,#0; ret` nil
+    //   initializer, hence src_file KSAVPlayer.swift); all 3 inlined construction sites (0x101a1aee8 transcode,
+    //   0x101a51310, 0x101a675e4) store nil at +0x30 with the other defaults, then av_packet_alloc →
+    //   swift_beginAccess(+0x30, modify) → store: the allocation is an init-body reassignment.
+    public private(set) var corePacket: UnsafeMutablePointer<AVPacket>?
+    init() {
+        corePacket = av_packet_alloc()
+    }
     // ⚑ s105: field record [5] of 7 on descriptor 0x1039effec, mangle `Sb` = Swift.Bool. Declared
     // HERE rather than appended because a stored property's order is its layout: the record sits
     // between corePacket [4] and assetTrack [6], and `timebase`/`isKeyFrame` below are computed,
@@ -530,6 +537,26 @@ public final class VideoVTBFrame: MEFrame {
         self.doviData = doviData
         self.rpuBuffer = rpuBuffer
     }
+}
+
+// ⚑ Forward 0x101a654f4 (Model.swift, 69 insns, unnamed internal; lane-12 gap): MasteringDisplayMetadata passed
+//   by value (x0–x2) → 8× [UInt8].append(UInt16) 0x1019e7290, 2× append(UInt32) 0x1019e7374, 0x101a83650, Data.
+//   Sole caller CAMetalLayer.updateInfo 0x101a84b18 (MetalRender.swift, lane 12). Placed after VideoVTBFrame's
+//   deinit 0x101a65480 per Forward layout. Name/shape INFERRED (lane 12's local `data(_:)` signature).
+func data(_ displayData: MasteringDisplayMetadata) -> Data { // INFERRED
+    var bytes = [UInt8]()
+    bytes.append(displayData.display_primaries_r_x)
+    bytes.append(displayData.display_primaries_r_y)
+    bytes.append(displayData.display_primaries_g_x)
+    bytes.append(displayData.display_primaries_g_y)
+    bytes.append(displayData.display_primaries_b_x)
+    bytes.append(displayData.display_primaries_b_y)
+    bytes.append(displayData.white_point_x)
+    bytes.append(displayData.white_point_y)
+    bytes.append(displayData.minLuminance)
+    bytes.append(displayData.maxLuminance)
+    bytes.reverse()
+    return Data(bytes)
 }
 
 extension VideoVTBFrame {

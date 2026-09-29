@@ -81,7 +81,7 @@ public enum FFmpegUtility {
                     break
                 }
                 if i == 0, let timebase = outputStreamInfo.timeBaseMap[packet.pointee.stream_index] {
-                    let timestamp = packet.pointee.pts != Int64.min ? packet.pointee.pts : packet.pointee.dts != Int64.min ? packet.pointee.dts : 0
+                    let timestamp = packet.pointee.timestamp // Forward 0x101a1a030: ldp pts/dts [x28,#8] + csel (AVPacket.timestamp getter)
                     startPlayTime = CMTime(value: timestamp * Int64(timebase.num), timescale: timebase.den).seconds
                 }
                 _ = outputStreamInfo.transcode(packet: packet, block: nil)
