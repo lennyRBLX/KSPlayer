@@ -25,48 +25,258 @@ public final class AssImageParse: KSParseProtocol {
     // Identical to the KSParseProtocol extension default, which is why ICF folded the two onto
     // one address — the fold is the CONSEQUENCE of them matching, not evidence of inheritance.
     public func parsePart(scanner _: Scanner) -> [SubtitlePart] { [] }
-    // ⚑ TERMINAL DEFERRAL → P4 M2 (existence-CHECKED session 19, RE-VERIFIED session 25 [2026-07-10] — the block
-    //   HOLDS; name recovery EXHAUSTED — safe `false` fallback per the cardinal rule, NOT fabricated. Unblock needs a
-    //   symbolicated/app-context build or upstream Forward source; NOT further binary analysis — do NOT re-open as
-    //   pending work). RE-VERIFY (P43): recover_swift_function_name → all 4 helpers 'npl'(spurious #file:None); the
-    //   3 flag accessors FUN_1019b982c/98fc/99cc + shared reader FUN_101b1d474 → #function None.  ⚑[tool=resolve_fun_pins ref=FUN_1019b982c:0x1019b982c result=RESOLVES_UNIQUELY] = static KSPlayer.KSOptions.isASSUseImageRender.getter : Swift.Bool
-    //   ⚠️ THREE OF THE FOUR ARE NOW NAMED (session 63). `recover_swift_function_name` genuinely
-    //   fails on them, but the ORPHANED export trie carries an ADDRESS->symbol map, and the flags
-    //   are KSOptions statics, so the three accessors have real identities (each named in its own
-    //   marker below; together they supersede the FAILED-SEARCH pin). The fourth helper does NOT
-    //   resolve, which is now a VERIFIED negative rather than an unverified one.
-    //   ⚠️ WHICH accessor backs WHICH of the `flag150/151/152` placeholders in the spine below is
-    //   NOT established — the address list and the flag numbering appear in different orders and
-    //   nothing here pairs them. Deciding it needs the call sites read at 0x101a96b98. The three
-    //   names are evidence; the pairing would be a guess, so it is left open.
-    // ⚑[tool=export_trie_oracle ref=KSOptions.isASSUseImageRender.getter:0x1019b982c result=NAMED (static, Bool)]
-    // ⚑[tool=export_trie_oracle ref=KSOptions.isSRTUseImageRender.getter:0x1019b98fc result=NAMED (static, Bool)]
-    // ⚑[tool=export_trie_oracle ref=KSOptions.preferEffectSubtitle.getter:0x1019b99cc result=NAMED (static, Bool)]
-    // ⚑[tool=export_trie_oracle ref=AssImageParse.flagReaderHelper:0x101b1d474 result=absent from the export trie — VERIFIED negative, name unrecovered]
-    //   canParse = FUN_101a96b98 (~298i, anchor-verified). Decoded spine:
-    //     if flag151, scanner.string.contains(" --> ")  -> scanner.charactersToBeSkipped = nil; scanner.scanString("WEBVTT"); return true
-    //     guard scanner.string.contains("Format: Name,") else { return false }
-    //     if flag150 { return true };  guard flag152 else { return false }
-    //     // deep ASS detection: helpers + a 10-regex ASS-override-tag complexity scan of the text before "[Events]"
-    //   BLOCKER — the primitives are deterministically UN-NAMEABLE, so a faithful body cannot be written:
-    //   * 3 gate flags @0x104c63150/151/152 = KSOptions PRIVATE static Bools (read by SubtitleDecode.init next to
-    //     KSOptions.fontsDir) — no Ghidra symbol (KSOptions.fontsDir got one; these did NOT), absent from field
-    //     reflection (statics), getters log no #function, ABSENT from base cce7002.
-    //     ⚑[tool=recover_swift_function_name+get_xrefs_to ref=DAT_104c63150/151/152 result=FAILED-SEARCH]
-    //   * 4 detection helpers FUN_101a8e3b8/8f72c/90748/910ac (~2500i; parse [Fonts]/Format:/Style:, ASS tags) —
-    //     names unrecoverable (#function spurious). ⚑[tool=recover_swift_function_name ref=FUN_101a8e3b8 result=FAILED-SEARCH]
-    //   * the 10-regex array lives in SubtitleDecode.swift (\p drawing, \c&H color, \kf karaoke, \an, \t, \r, alpha, \fscy/\fsp).
-    //   Reconstructing functionally would FABRICATE 3 KSOptions API statics + 4 method names the binary can't confirm
-    //   (§1/P28). Returning false keeps the safe fallback (text-path AssParse); the image-render CONSUMER
-    //   (AssIncrementImageRenderer) is Batch 5 (deferred) so NO regression. Unblock: a symbolicated/app-context
-    //   build or the upstream Forward source. Full decode -> ledger later.101 + subtitle spec 8.8.
-    public func canParse(scanner: Scanner) -> Bool { false }
+    // canParse: thunk 0x101a8f5a4 → body FUN_101a96b98 (298i). Gate flags paired by getter address:
+    //   DAT_104c63150 = isASSUseImageRender (0x1019b982c), 151 = isSRTUseImageRender (0x1019b98fc),
+    //   152 = preferEffectSubtitle (0x1019b99cc) — all existing KSOptions statics.
+    //   0x101a96c10 access 151 → " --> " contains → setCharactersToBeSkipped:nil (0x101a96c98) → scanString("WEBVTT");
+    //   "Format: Name," contains → 150 → 152 → bl 0x101a8e3b8 (0x101a96dd0) → "[Events]" _range options w1=#0x1
+    //   (0x101a96e30), nil → content[...] (0x101a96ea0), else content[upperBound...] (0x1000215b8) →
+    //   bl 0x101a8f72c / 0x101a90748 / 0x101a910ac → 10-pattern loop (0x101a96f38, options #0x401) over the
+    //   static array 0x1044eb5d0 (assEffectTagPatterns, SubtitleDecode.swift).
+    public func canParse(scanner: Scanner) -> Bool {
+        if KSOptions.isSRTUseImageRender, scanner.string.contains(" --> ") {
+            scanner.charactersToBeSkipped = nil
+            _ = scanner.scanString("WEBVTT")
+            return true
+        }
+        guard scanner.string.contains("Format: Name,") else {
+            return false
+        }
+        if KSOptions.isASSUseImageRender {
+            return true
+        }
+        guard KSOptions.preferEffectSubtitle else {
+            return false
+        }
+        let content = scanner.string
+        if assHasCustomStyle(content) {
+            return true
+        }
+        let events: Substring
+        if let range = content.range(of: "[Events]", options: .caseInsensitive) {
+            events = content[range.upperBound...]
+        } else {
+            events = content[...]
+        }
+        if assHasDialogueEffect(events) || assHasLegacyEffect(events) || assHasDialogueStyle(events) {
+            return true
+        }
+        for pattern in assEffectTagPatterns where events.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil {
+            return true
+        }
+        return false
+    }
     // parse 0x101a8f5a8: Forward passes `scanner.string.contains(" --> ") ? <SRT→ASS converter 0x101aa0390>(…) : scanner.string`.
     //   The converter lives in KSParseProtocol.swift (closed lane 10, no Sources decl) → GAP review; until it exists
     //   the plain-content arm is the only one written.
     public func parse(url _: URL, scanner: Scanner) throws -> KSSubtitleProtocol {
         AssIncrementImageRenderer(content: scanner.string)
     }
+}
+
+// ASS effect/style detection helpers (Forward AssImageParse.swift function range 0x101a8e3b8…0x101a92a14).
+// All names unrecovered (no trie entry, #function spurious); signatures follow the Forward register use.
+// Callers: AssImageParse.canParse 0x101a96b98, SubtitleDecode.init 0x101a697b8 (helper @0x101a8e3b8),
+// SubtitleDecode.text 0x101a6a568.
+
+// 0x101a8e3b8 (893i): "[Fonts]" _range options #0x1; lines = outlined split(whereSeparator: isNewline) 0x101a8dfdc
+// (Int.max, true); "Format:"/"Style:" _range options #0x9 (.caseInsensitive|.anchored); Format fields kept only
+// when both "Name" and "Fontname" present; Style → name (value("Name") ?? values.first) vs "Default", then 0x101a92198.
+func assHasCustomStyle(_ content: String) -> Bool { // INFERRED
+    if content.range(of: "[Fonts]", options: .caseInsensitive) != nil {
+        return true
+    }
+    var format = [String]()
+    for line in content.split(whereSeparator: \.isNewline) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.range(of: "Format:", options: [.caseInsensitive, .anchored]) != nil {
+            let fields = trimmed.dropFirst("Format:".count).split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if fields.contains(where: { $0.caseInsensitiveCompare("Name") == .orderedSame }), fields.contains(where: { $0.caseInsensitiveCompare("Fontname") == .orderedSame }) {
+                format = fields
+            }
+        } else if trimmed.range(of: "Style:", options: [.caseInsensitive, .anchored]) != nil {
+            let values = trimmed.dropFirst("Style:".count).split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard let name = assStyleValue("Name", format: format, values: values) ?? values.first else {
+                continue
+            }
+            if !name.isEmpty, name.caseInsensitiveCompare("Default") != .orderedSame {
+                return true
+            }
+            if assStyleIsCustom(format: format, values: values) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+// 0x101a8f72c (1031i, Substring): "Format:" → index of the "Effect" field; "Dialogue:"/"Comment:" lines →
+// split after the first ":" (maxSplits index+1, keep empties) → Effect non-empty and != "!Effect".
+func assHasDialogueEffect(_ text: Substring) -> Bool { // INFERRED
+    var effectIndex: Int?
+    for line in text.split(whereSeparator: \.isNewline) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.range(of: "Format:", options: [.caseInsensitive, .anchored]) != nil {
+            effectIndex = trimmed.dropFirst("Format:".count).split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.firstIndex { $0.caseInsensitiveCompare("Effect") == .orderedSame }
+            continue
+        }
+        guard let effectIndex, trimmed.range(of: "Dialogue:", options: [.caseInsensitive, .anchored]) != nil || trimmed.range(of: "Comment:", options: [.caseInsensitive, .anchored]) != nil else {
+            continue
+        }
+        let colon = trimmed.firstIndex(of: ":") ?? trimmed.endIndex
+        let fields = trimmed[colon...].dropFirst().split(separator: ",", maxSplits: effectIndex + 1, omittingEmptySubsequences: false)
+        guard effectIndex < fields.count else {
+            continue
+        }
+        let effect = fields[effectIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !effect.isEmpty, effect.caseInsensitiveCompare("!Effect") != .orderedSame {
+            return true
+        }
+    }
+    return false
+}
+
+// 0x101a90748 (601i, Substring): header-less event lines (not Dialogue:/Comment:/Format:/Style:, not "[") →
+// split maxSplits 8 keep empties → field 7 non-empty and != "!Effect".
+func assHasLegacyEffect(_ text: Substring) -> Bool { // INFERRED
+    for line in text.split(whereSeparator: \.isNewline) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.range(of: "Dialogue:", options: [.caseInsensitive, .anchored]) == nil,
+              trimmed.range(of: "Comment:", options: [.caseInsensitive, .anchored]) == nil,
+              trimmed.range(of: "Format:", options: [.caseInsensitive, .anchored]) == nil,
+              trimmed.range(of: "Style:", options: [.caseInsensitive, .anchored]) == nil,
+              !trimmed.hasPrefix("[")
+        else {
+            continue
+        }
+        let parts = trimmed.split(separator: ",", maxSplits: 8, omittingEmptySubsequences: false)
+        guard parts.count > 7 else {
+            continue
+        }
+        let effect = parts[7].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !effect.isEmpty, effect.caseInsensitiveCompare("!Effect") != .orderedSame {
+            return true
+        }
+    }
+    return false
+}
+
+// 0x101a910ac (1031i, Substring): same shape as 0x101a8f72c with the "Style" field vs "Default".
+func assHasDialogueStyle(_ text: Substring) -> Bool { // INFERRED
+    var styleIndex: Int?
+    for line in text.split(whereSeparator: \.isNewline) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.range(of: "Format:", options: [.caseInsensitive, .anchored]) != nil {
+            styleIndex = trimmed.dropFirst("Format:".count).split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.firstIndex { $0.caseInsensitiveCompare("Style") == .orderedSame }
+            continue
+        }
+        guard let styleIndex, trimmed.range(of: "Dialogue:", options: [.caseInsensitive, .anchored]) != nil || trimmed.range(of: "Comment:", options: [.caseInsensitive, .anchored]) != nil else {
+            continue
+        }
+        let colon = trimmed.firstIndex(of: ":") ?? trimmed.endIndex
+        let fields = trimmed[colon...].dropFirst().split(separator: ",", maxSplits: styleIndex + 1, omittingEmptySubsequences: false)
+        guard styleIndex < fields.count else {
+            continue
+        }
+        let style = fields[styleIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !style.isEmpty, style.caseInsensitiveCompare("Default") != .orderedSame {
+            return true
+        }
+    }
+    return false
+}
+
+// 0x101a920c8 (52i): x0x1 name, x2 format, x3 values; caseInsensitive firstIndex over format, bounds-checked into values.
+func assStyleValue(_ name: String, format: [String], values: [String]) -> String? { // INFERRED
+    guard let index = format.firstIndex(where: { $0.caseInsensitiveCompare(name) == .orderedSame }), index < values.count else {
+        return nil
+    }
+    return values[index]
+}
+
+// 0x101a926b8 (83i): value → Double(_:) (strtod_clocale), nil tag 1.
+func assStyleDouble(_ name: String, format: [String], values: [String]) -> Double? { // INFERRED
+    guard let value = assStyleValue(name, format: format, values: values) else {
+        return nil
+    }
+    return Double(value)
+}
+
+// 0x101a92804 (39i): x3x4 expected String between format (x2) and values (x5); empty → false.
+func assStyleDiffers(_ name: String, format: [String], expected: String, values: [String]) -> Bool { // INFERRED
+    guard let value = assStyleValue(name, format: format, values: values), !value.isEmpty else {
+        return false
+    }
+    return value.caseInsensitiveCompare(expected) != .orderedSame
+}
+
+// 0x101a928a0 (93i): d0 expected; ABS(v - expected) > 0.01 (epsilon @0x103487958).
+func assStyleDiffers(_ name: String, format: [String], expected: Double, values: [String]) -> Bool { // INFERRED
+    guard let value = assStyleValue(name, format: format, values: values), let number = Double(value) else {
+        return false
+    }
+    return abs(number - expected) > 0.01
+}
+
+// 0x101a92a14 (90i): ABS(v) > 0.01.
+func assStyleIsNonZero(_ name: String, format: [String], values: [String]) -> Bool { // INFERRED
+    guard let value = assStyleValue(name, format: format, values: values), let number = Double(value) else {
+        return false
+    }
+    return abs(number) > 0.01
+}
+
+// 0x101a92198 (328i): x0 format, x1 values. Fontname/Arial (0x101a921d0 + caseInsensitiveCompare), Fontsize 20
+// (fmov d0 #20 → 0x101a928a0), 4 colours (0x101a92804), Bold/Italic/Underline/StrikeOut (0x101a92a14),
+// ScaleX/ScaleY 100, Spacing/Angle 0, BorderStyle 1 inline via 0x101a926b8 + fabs/fcmp, Outline 1 / Shadow 0
+// (0x101a928a0), Alignment != "2" (0x101a925f4, cmp #0x32), MarginL/R/V 10 (0x101a928a0, tail).
+func assStyleIsCustom(format: [String], values: [String]) -> Bool { // INFERRED
+    if let fontname = assStyleValue("Fontname", format: format, values: values), !fontname.isEmpty, fontname.caseInsensitiveCompare("Arial") != .orderedSame {
+        return true
+    }
+    if assStyleDiffers("Fontsize", format: format, expected: 20, values: values) {
+        return true
+    }
+    if assStyleDiffers("PrimaryColour", format: format, expected: "&H00FFFFFF", values: values)
+        || assStyleDiffers("SecondaryColour", format: format, expected: "&H000000FF", values: values)
+        || assStyleDiffers("OutlineColour", format: format, expected: "&H00000000", values: values)
+        || assStyleDiffers("BackColour", format: format, expected: "&H64000000", values: values)
+    {
+        return true
+    }
+    if assStyleIsNonZero("Bold", format: format, values: values)
+        || assStyleIsNonZero("Italic", format: format, values: values)
+        || assStyleIsNonZero("Underline", format: format, values: values)
+        || assStyleIsNonZero("StrikeOut", format: format, values: values)
+    {
+        return true
+    }
+    if let scaleX = assStyleDouble("ScaleX", format: format, values: values), abs(scaleX - 100) > 0.01 {
+        return true
+    }
+    if let scaleY = assStyleDouble("ScaleY", format: format, values: values), abs(scaleY - 100) > 0.01 {
+        return true
+    }
+    if let spacing = assStyleDouble("Spacing", format: format, values: values), abs(spacing) > 0.01 {
+        return true
+    }
+    if let angle = assStyleDouble("Angle", format: format, values: values), abs(angle) > 0.01 {
+        return true
+    }
+    if let borderStyle = assStyleDouble("BorderStyle", format: format, values: values), abs(borderStyle - 1) > 0.01 {
+        return true
+    }
+    if assStyleDiffers("Outline", format: format, expected: 1, values: values) || assStyleDiffers("Shadow", format: format, expected: 0, values: values) {
+        return true
+    }
+    if let alignment = assStyleValue("Alignment", format: format, values: values), alignment != "2" {
+        return true
+    }
+    if assStyleDiffers("MarginL", format: format, expected: 10, values: values) || assStyleDiffers("MarginR", format: format, expected: 10, values: values) {
+        return true
+    }
+    return assStyleDiffers("MarginV", format: format, expected: 10, values: values)
 }
 
 // AssIncrementImageRenderer @0x1039f1534 — NEW `actor` ($defaultActor; type_kind_gate). Fields reflection-ordered
@@ -445,15 +655,9 @@ final class AssImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubtitleProto
         if let frame = ass_render_frame(renderer, currentTrack, millisecond, &changed), changed != 0 {
             let images = frame.pointee.linkedImages()
             if !images.isEmpty {
-                // Forward calls the [CGRect] bounding-rect helper 0x1019e7b40 (Forward Utility.swift, not in Sources →
-                //   GAP review); its body is inlined here until the decl exists.
+                // Forward: rects → `bl 0x1019e7b40` ([CGRect].boundingRect, Utility.swift), result in d0-d3.
                 let rects = images.map { CGRect(x: Int($0.dst_x), y: Int($0.dst_y), width: Int($0.w), height: Int($0.h)) }
-                let rect: CGRect
-                if let minX = rects.map(\.minX).min(), let minY = rects.map(\.minY).min(), let maxX = rects.map(\.maxX).max(), let maxY = rects.map(\.maxY).max() {
-                    rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-                } else {
-                    rect = .zero
-                }
+                let rect = rects.boundingRect
                 let layers = images.compactMap { image -> SubtitleImageInfo.AssLayer? in
                     guard image.w > 0, image.h > 0, let bitmap = image.bitmap else {
                         return nil

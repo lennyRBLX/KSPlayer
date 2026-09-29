@@ -14,6 +14,23 @@ import UIKit
 import AppKit
 #endif
 
+// Static [String] object 0x1044eb5b0 (count 10, elements @0x1044eb5d0, SubtitleDecode.swift data region), read
+// directly (no once-token) by AssImageParse.canParse 0x101a96b98 (loop `mov w23,#0xb` over 0x1044eb5d8, each
+// element → StringProtocol._range(of:options: 0x401 = .regularExpression|.caseInsensitive)) and SubtitleDecode.text
+// 0x101a6a568. Element literals read verbatim from the static object. Name unrecovered.
+let assEffectTagPatterns = [ // INFERRED
+    #"\\(?:move|pos|org|fad|fade|clip|iclip|t)\s*\("#,
+    #"\\(?:frx|fry|frz|fr|fax|fay|pbo|blur|be|xbord|ybord|xshad|yshad)\s*[-+]?\d"#,
+    #"\\(?:kf|ko|K|k)\s*\d"#,
+    #"\\p\s*[1-9]"#,
+    #"\\(?:alpha|[1-4]a)&H"#,
+    #"\\(?:an|a)\s*\d+"#,
+    #"\\(?:fn|fs|fscx|fscy|fsp)\s*[^\\{}]*"#,
+    #"\\(?:bord|shad)\s*[-+]?\d"#,
+    #"\\(?:[1-4]?c)&H"#,
+    #"\\r[^\\{}]*"#,
+]
+
 // SubtitleDecode @0x1039f0530 — Forward 1.3.17. 10 stored fields (reflection-authoritative), types §8.3/§8.6.
 // The recon's VideoSwresample `scale` bitmap path is GONE — the binary uses the ASS-image pipeline
 // (assImageRenderer/pendingASSImageSubtitles); +assetTrack/isASS/fontsDir/subtitleHeader. Bodies → P4 M2.
@@ -41,20 +58,12 @@ class SubtitleDecode: DecodeProtocol {
     private var pendingASSImageSubtitles: [(subtitle: String, start: Int64, duration: Int64)] = [] // §8.6
     // init(assetTrack:options:) — Batch 4 Tier 3a. FUN_101a6914c (via __allocating_init thunk 0x101a69100). Base  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     // cce7002 init is the adaptation reference, reworked for Forward's added fields (assetTrack/isASS/fontsDir/
-    // subtitleHeader §8.3) + a codecContext time_base set (like FFmpegDecode). isASS = codec_id in {SSA/ASS/EIA_608}
+    // subtitleHeader §8.3). isASS = codec_id in {SSA/ASS/EIA_608}
     // (DAT_1044eb330/334/338 read = 0x17004/0x17016/0x1700a). Only the non-optional stored field (assetTrack) needs
     // setting; the rest take their declared defaults (nil / AVSubtitle() / [] / 0 / false). Throwing: createContext
     // do/catch. FFmpeg fields accessed SYMBOLICALLY (this build is FFmpeg 7.1, non-stock ABI).
-    // ⚑ DEFERRED (Tier 3b — a dedicated SubtitleModel-ASS-style SUBSYSTEM pass; full reverse-engineering in
-    //   play/reconstruction/tier3b_ass_style_serializer_analysis.md): the !isASS arm is
-    //   .split(whereSeparator: \.isNewline).map { $0.hasPrefix("Style: Default,") ? SubtitleModel.<assDefaultStyle> : String($0) }.joined("\n").
-    //   The match-branch (FUN_101aa17f4) REPLACES the embedded "Style: Default," with an app-styled ASS line built
-    //   from ~8 SubtitleModel ASS-style statics (config-derived defaults) — NOT a filter (earlier framing was wrong).
-    //   Simplified here to String(cString:) (base behavior — faithful for isASS + zero-flag paths); assParse sees the
-    //   raw header meanwhile. Committing the serializer = adding ~8 recon-named public statics → its own pass.
-    // ⚑ DEFERRED (Batch 5, TERMINAL): the flag-gated assImageRenderer build (dec 257-320) — gated on the SAME
-    //   un-nameable KSOptions private static Bools DAT_104c63150/151/152 as AssImageParse.canParse={false}; with the
-    //   feature off (always-current) the ASS-header falls through to assParse.canParse below. Not fabricated (cardinal rule).
+    // L7 lane 15: the !isASS Style-line rewrite (0x101aa17f4 = assDefaultStyleLine, KSOptions statics) and the
+    //   flag-gated AssIncrementImageRenderer arm are now written from the Forward body (see inline notes).
     // ⚑ P55 REFINEMENT (session 32): `options` is `KSOptions?` (was non-optional — a Tier-3a faithfulness error).
     //   Forward's binary FUN_101a6914c guards `if options == nil { fontsDir = String?.none }` (disasm @0x101a692a8);  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     //   the FFmpegSubtitle.init caller passes nil (`mov x1,#0x0` @0x101a9f5d8). Nullable options flows to createContext
@@ -64,22 +73,39 @@ class SubtitleDecode: DecodeProtocol {
         startTime = assetTrack.startTime.seconds
         fontsDir = options?.fontsDir?.path
         isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.pointee.codec_id)
-        var parsed: AssParse?
+        // 0x101a69378 bl createContext (pkt_timebase store at +0x5c is FFmpegAssetTrack.createContext inlined);
+        // success stores +0x18 (0x101a69504), error (cbz x21 @0x101a69380) logs and skips the store — no
+        // separate time_base write in Forward.
         do {
             codecContext = try assetTrack.createContext(options: options)
-            codecContext?.pointee.time_base = assetTrack.timebase.rational
-            if let pointer = codecContext?.pointee.subtitle_header {
-                let subtitleHeader = String(cString: pointer)
-                self.subtitleHeader = subtitleHeader
-                let assParse = AssParse()
-                if assParse.canParse(scanner: Scanner(string: subtitleHeader)) {
-                    parsed = assParse
-                }
-            }
         } catch {
             KSLog(error as CustomStringConvertible)
         }
-        assParse = parsed
+        // 0x101a69520/28: codecContext nil or subtitle_header nil → assParse (+0x48) = nil, return.
+        guard let pointer = codecContext?.pointee.subtitle_header else {
+            assParse = nil
+            return
+        }
+        var subtitleHeader = String(cString: pointer)
+        // !isASS (tbz w22 @0x101a6953c): outlined split 0x101a699dc (Int.max, true; predicate == "\r\n" (0xa0d) ||
+        // == "\n" (0xa)), map hasPrefix("Style: Default,") (0x10057cbc0) ? 0x101aa17f4 : String(sub), joined "\n".
+        if !isASS {
+            subtitleHeader = subtitleHeader.split { $0 == "\r\n" || $0 == "\n" }.map { $0.hasPrefix("Style: Default,") ? assDefaultStyleLine() : String($0) }.joined(separator: "\n")
+        }
+        self.subtitleHeader = subtitleHeader
+        // Gates (DAT_104c63150 isASSUseImageRender && isASS) || (151 isSRTUseImageRender && !isASS) ||
+        // (152 preferEffectSubtitle && isASS && 0x101a8e3b8(header)) → AssIncrementImageRenderer(fontsDir:header:)
+        // 0x101a92d2c stored at +0x10 and into assetTrack+0x108 (subtitleRender, FUN_101a2119c), assParse nil;
+        // else AssParse() + Scanner(string:) → canParse 0x101a97464.
+        if (KSOptions.isASSUseImageRender && isASS) || (KSOptions.isSRTUseImageRender && !isASS) || (KSOptions.preferEffectSubtitle && isASS && assHasCustomStyle(subtitleHeader)) {
+            let renderer = AssIncrementImageRenderer(fontsDir: fontsDir, header: subtitleHeader)
+            assImageRenderer = renderer
+            assetTrack.subtitleRender = renderer
+            assParse = nil
+        } else {
+            let assParse = AssParse()
+            self.assParse = assParse.canParse(scanner: Scanner(string: subtitleHeader)) ? assParse : nil
+        }
     }
 
     // ── FFmpeg provenance (P32) — every av* symbol named in this class is ffmpeg_name_oracle result=CONFIRMED

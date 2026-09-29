@@ -53,6 +53,44 @@ private func makeTextSubtitlePart(start: Double, end: Double, text: String) -> S
     return SubtitlePart(start, end, render: .right(textInfo))
 }
 
+// 0x101aa17f4 (414i, Forward KSParseProtocol.swift region): builds the app-styled ASS `Style: Default,` line.
+// 23-element [String] (allocObject 0x190) joined with "," (0x10345736c, w0 #0x2c) and appended to "Style: ".
+// Reads (storage → KSOptions static, by addressor/once init): 0x1044e50a8 textFontName, 0x1044e50b8 subtitleFontSize
+// (+5.0 @0x101aa18a4), 0x1044e50c0 subtitleFontSizeScale (fmul, Int trap → BinaryInteger.description);
+// colours "&H%08X" (x22 @0x101aa1948) of 0x1019e83bc (UIColor.abgr) for textColor (once 0x1019b9d00),
+// textBackgroundColor (0x1019ba0dc), textStrokeColor (0x1019b9e14), textShadowColor (0x1019ba2c8);
+// 0x104c631b0/1 textBold/textItalic ("1"/"0" cinc); literals 0,0,100,100,0,0,1; 0x104c63168 textStrokeWidth
+// (Double.description); textShadowColor == .clear (0x101aa1c74) ? "0" : "\(textShadowBlurRadius)" (Double.write
+// @0x101aa1cc4); textPosition (once 0x1019bada8) .alignment 0x101abb264 + left/right/verticalMargin descriptions; "1".
+// Callers: SubtitleDecode.init 0x101a69614, SRT→ASS converter 0x101aa0390. Name unrecovered.
+func assDefaultStyleLine() -> String { // INFERRED
+    "Style: " + [
+        "Default",
+        KSOptions.textFontName,
+        Int((KSOptions.subtitleFontSize + 5) * KSOptions.subtitleFontSizeScale).description,
+        String(format: "&H%08X", KSOptions.textColor.abgr),
+        String(format: "&H%08X", KSOptions.textBackgroundColor.abgr),
+        String(format: "&H%08X", KSOptions.textStrokeColor.abgr),
+        String(format: "&H%08X", KSOptions.textShadowColor.abgr),
+        KSOptions.textBold ? "1" : "0",
+        KSOptions.textItalic ? "1" : "0",
+        "0",
+        "0",
+        "100",
+        "100",
+        "0",
+        "0",
+        "1",
+        KSOptions.textStrokeWidth.description,
+        KSOptions.textShadowColor == .clear ? "0" : "\(KSOptions.textShadowBlurRadius)",
+        KSOptions.textPosition.alignment,
+        KSOptions.textPosition.leftMargin.description,
+        KSOptions.textPosition.rightMargin.description,
+        KSOptions.textPosition.verticalMargin.description,
+        "1",
+    ].joined(separator: ",")
+}
+
 // [SubtitlePart]: KSSubtitleProtocol — WT 0x1041da3d8, async fp 0x10356ca60 → 0x101aa0e6c → FUN_101aa0cec.
 //   Linear scan over the (sorted) parts: collect those covering query.time, stop at the first later start.
 extension [SubtitlePart]: KSSubtitleProtocol {
@@ -141,12 +179,18 @@ public extension KSParseProtocol {
 
 // swiftlint:disable cyclomatic_complexity
 extension String {
-    func build(textPosition: inout TextPosition, attributed: [NSAttributedString.Key: Any]? = nil) -> NSAttributedString {
+    // Forward 0x101a9b5c8: x0 = &textPosition, x1 = styleMap (AssParse passes self.styleMap @0x101a9a810),
+    // x2 = attributed. Vector-drawing runs ("m " / " m " with a pos( / move( override) are dropped
+    // (hasPrefix "m " / " m ", then two StringProtocol.contains) before parseStyle 0x101a9d234.
+    func build(textPosition: inout TextPosition, styleMap: [String: ASSStyle]?, attributed: [NSAttributedString.Key: Any]? = nil) -> NSAttributedString { // INFERRED label styleMap
         let lineCodes = splitStyle()
         let attributedStr = NSMutableAttributedString()
         var attributed = attributed ?? [:]
-        for lineCode in lineCodes {
-            attributedStr.append(lineCode.0.parseStyle(attributes: &attributed, style: lineCode.1, textPosition: &textPosition))
+        for (text, style) in lineCodes {
+            if text.hasPrefix("m ") || text.hasPrefix(" m "), let style, style.contains("pos(") || style.contains("move(") {
+                continue
+            }
+            attributedStr.append(text.parseStyle(attributes: &attributed, style: style, textPosition: &textPosition, styleMap: styleMap))
         }
         return attributedStr
     }
@@ -191,14 +235,19 @@ extension String {
         return result
     }
 
-    func parseStyle(attributes: inout [NSAttributedString.Key: Any], style: String?, textPosition: inout TextPosition) -> NSAttributedString {
+    // Forward 0x101a9d234 (1490 insns): x0 = &attributes, x1/x2 = style, x3 = &textPosition, x4 = styleMap.
+    // \b / \i are bold / italic flags (scanInt == 1, nil clears); \fs keeps the last parsed size; \r<name>
+    // resets attributes + textPosition from styleMap.match(key:) (FUN_101a9ad30); \shad and \4c only
+    // mutate an existing NSShadow. The font is rebuilt from the existing .font attribute at the end.
+    func parseStyle(attributes: inout [NSAttributedString.Key: Any], style: String?, textPosition: inout TextPosition, styleMap: [String: ASSStyle]?) -> NSAttributedString { // INFERRED label styleMap
         guard let style else {
             return NSAttributedString(string: self, attributes: attributes)
         }
         var fontName: String?
-        var fontSize: Float?
+        var fontSize: CGFloat?
+        var isBold = false
+        var isItalic = false
         let subStyleArr = style.components(separatedBy: "\\")
-        var shadow = attributes[.shadow] as? NSShadow
         for item in subStyleArr {
             let itemStr = item.replacingOccurrences(of: " ", with: "")
             let scanner = Scanner(string: itemStr)
@@ -210,7 +259,7 @@ extension String {
                     textPosition.ass(alignment: scanner.scanUpToCharacters(from: .newlines))
                 }
             case "b":
-                attributes[.expansion] = scanner.scanFloat()
+                isBold = scanner.scanInt() == 1
             case "c":
                 attributes[.foregroundColor] = scanner.scanUpToCharacters(from: .newlines).flatMap(UIColor.init(assColor:))
             case "f":
@@ -218,18 +267,25 @@ extension String {
                 if char == "n" {
                     fontName = scanner.scanUpToCharacters(from: .newlines)
                 } else if char == "s" {
-                    fontSize = scanner.scanFloat()
+                    if let size = scanner.scanFloat() {
+                        fontSize = CGFloat(size)
+                    }
                 }
             case "i":
-                attributes[.obliqueness] = scanner.scanFloat()
+                isItalic = scanner.scanInt() == 1
+            case "r":
+                if let name = scanner.scanUpToCharacters(from: .newlines), let assStyle = styleMap?.match(key: name) {
+                    attributes = assStyle.attrs
+                    textPosition = assStyle.textPosition
+                }
             case "s":
                 if scanner.scanString("had") != nil {
                     if let size = scanner.scanFloat() {
-                        shadow = shadow ?? NSShadow()
-                        shadow?.shadowOffset = CGSize(width: CGFloat(size), height: CGFloat(size))
+                        let shadow = attributes[.shadow] as? NSShadow
+                        shadow?.shadowOffset = CGSize(width: CGFloat(size), height: -CGFloat(size))
                         shadow?.shadowBlurRadius = CGFloat(size)
+                        attributes[.shadow] = shadow
                     }
-                    attributes[.shadow] = shadow
                 } else {
                     attributes[.strikethroughStyle] = scanner.scanInt()
                 }
@@ -243,11 +299,10 @@ extension String {
                         attributes[.foregroundColor] = color
                     } else if char == "2" {
                         // 还不知道这个要设置到什么颜色上
-//                        attributes[.backgroundColor] = color
                     } else if char == "3" {
                         attributes[.strokeColor] = color
                     } else if char == "4" {
-                        shadow = shadow ?? NSShadow()
+                        let shadow = attributes[.shadow] as? NSShadow
                         shadow?.shadowColor = color
                         attributes[.shadow] = shadow
                     }
@@ -256,10 +311,17 @@ extension String {
                 break
             }
         }
-        // Apply font attributes if available
-        if let fontName, let fontSize {
-            let font = UIFont(name: fontName, size: CGFloat(fontSize)) ?? UIFont.systemFont(ofSize: CGFloat(fontSize))
-            attributes[.font] = font
+        if let font = attributes[.font] as? UIFont {
+            // Forward calls the UIFont helper 0x1019f222c (UXKit.swift) with (fontName, size), then
+            // `.with(weight: .bold)` (0x1019f1e40) / `.italic` (0x1019f205c).
+            var newFont = font.with(name: fontName, size: fontSize ?? font.pointSize)
+            if isBold {
+                newFont = newFont.with(weight: .bold)
+            }
+            if isItalic {
+                newFont = newFont.italic
+            }
+            attributes[.font] = newFont
         }
         return NSAttributedString(string: self, attributes: attributes)
     }

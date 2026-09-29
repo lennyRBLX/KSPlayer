@@ -175,7 +175,7 @@ public class AssParse: KSParseProtocol {
         text = text.replacingOccurrences(of: "\\n", with: "\n")
         text = text.replacingOccurrences(of: "\\h", with: " ") // ASS hard-space (FUN_101a99ef0 @472, "\h"->" "; base original lacked it)  ⚑[tool=resolve_fun_pins ref=FUN_101a99ef0:0x101a99ef0 result=RESOLVES_UNIQUELY] = KSPlayer.AssParse.parsePart(scanner: __C.NSScanner) -> [KSPlayer.SubtitlePart]
         let textInfo = SubtitleTextInfo(
-            text: text.build(textPosition: &textPosition, attributed: attributes),
+            text: text.build(textPosition: &textPosition, styleMap: styleMap, attributed: attributes),
             position: textPosition, // ASS textPosition (audit-confirmed)
             displaySize: displaySize, // = self.displaySize (ASS PlayResX/Y); binary copies self+0x20/+0x28 @FUN_101a99ef0:487-490 (NOT nil)  ⚑[tool=resolve_fun_pins ref=FUN_101a99ef0:0x101a99ef0 result=RESOLVES_UNIQUELY] = KSPlayer.AssParse.parsePart(scanner: __C.NSScanner) -> [KSPlayer.SubtitlePart]
             styleRole: .primary, // =0 (audit-confirmed)

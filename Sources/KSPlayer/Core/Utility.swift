@@ -294,6 +294,18 @@ func * (left: CGRect, right: CGFloat) -> CGRect {
     CGRect(origin: left.origin * right, size: left.size * right)
 }
 
+// 0x1019e7b40 (228i, Forward Utility.swift): x0 = [CGRect], result CGRect in d0-d3; min(minX)/min(minY)/max(maxX)/
+// max(maxY) over the array, .zero when empty. Called by AssImageRenderer.search 0x101a93b14 (`bl 0x1019e7b40`).
+// Not exported → internal.
+extension Array where Element == CGRect {
+    var boundingRect: CGRect { // INFERRED
+        guard let minX = map(\.minX).min(), let minY = map(\.minY).min(), let maxX = map(\.maxX).max(), let maxY = map(\.maxY).max() else {
+            return .zero
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+}
+
 func - (left: CGSize, right: CGSize) -> CGSize {
     CGSize(width: left.width - right.width, height: left.height - right.height)
 }

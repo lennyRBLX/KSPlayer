@@ -102,6 +102,20 @@ public extension UIFont {
         descriptor = descriptor.withMatrix(matrix)
         return UIFont(descriptor: descriptor, size: pointSize) as UIFont? ?? self
     }
+
+    // L7 lane 15: Forward 0x1019f222c (UXKit.swift, directly after with(angle:) 0x1019f2150; no trie symbol →
+    // internal). self in x20, x0/x1 = name (String?), d0 = size: fontDescriptor → when a name is given,
+    // symbolicTraits, fontDescriptorWithFamily: (nil → original), fontDescriptorWithSymbolicTraits: (original
+    // traits, nil → current) → fontWithDescriptor:size: ?? self. Called by String.parseStyle 0x101a9d234.
+    internal func with(name: String?, size: CGFloat) -> UIFont { // INFERRED
+        var descriptor = fontDescriptor
+        if let name {
+            let traits = descriptor.symbolicTraits
+            descriptor = descriptor.withFamily(name) as UIFontDescriptor? ?? descriptor
+            descriptor = descriptor.withSymbolicTraits(traits) ?? descriptor
+        }
+        return UIFont(descriptor: descriptor, size: size) as UIFont? ?? self
+    }
 }
 #endif
 
