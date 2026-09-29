@@ -69,8 +69,9 @@ class SubtitleDecode: DecodeProtocol {
     //   the FFmpegSubtitle.init caller passes nil (`mov x1,#0x0` @0x101a9f5d8). Nullable options flows to createContext
     //   (already `KSOptions?`). Other caller MEPlayerItemTrack:304 passes non-nil (binds unchanged).
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions?) {
-        self.assetTrack = assetTrack
+        // 0x101a69244 CMTime.seconds → +0x28 (startTime) precedes 0x101a6924c str x24,[x25,#0x38] (assetTrack).
         startTime = assetTrack.startTime.seconds
+        self.assetTrack = assetTrack
         fontsDir = options?.fontsDir?.path
         isASS = [AV_CODEC_ID_SSA, AV_CODEC_ID_ASS, AV_CODEC_ID_EIA_608].contains(assetTrack.codecpar.pointee.codec_id)
         // 0x101a69378 bl createContext (pkt_timebase store at +0x5c is FFmpegAssetTrack.createContext inlined);
@@ -79,7 +80,9 @@ class SubtitleDecode: DecodeProtocol {
         do {
             codecContext = try assetTrack.createContext(options: options)
         } catch {
-            KSLog(error as CustomStringConvertible)
+            // 0x101a693a4 `cmp w8,#0x2; b.cs` + 0x101a6947c `mov w0,#0x2`: Forward logs at .error (LogLevel
+            // case index 2), i.e. the KSLog(_ error:) overload inlined (error() as NSError @0x101a6943c).
+            KSLog(error)
         }
         // 0x101a69520/28: codecContext nil or subtitle_header nil → assParse (+0x48) = nil, return.
         guard let pointer = codecContext?.pointee.subtitle_header else {

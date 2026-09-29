@@ -54,7 +54,10 @@ public extension KSOptions {
 }
 
 // §7.2 — Souce→Source. Fields srtCacheInfoPath, srtInfoCaches (dropped the recon's stored `infos`, §5.1).
-public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
+// `@unchecked Sendable` is a marker conformance (no record in the binary) — the URLSubtitleInfo precedent: it lets
+// addCache spell Forward's `Task { [weak self] in … }` under Swift 6 (SendingClosureRisksDataRace otherwise; a
+// `nonisolated(unsafe) let` alias + `[weak alias]` capture does NOT launder it — measured, lane 15 check).
+public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource, @unchecked Sendable {
     private let srtCacheInfoPath: String
     // 因为plist不能保存URL
     private var srtInfoCaches: [String: [String]]
@@ -95,12 +98,15 @@ public class PlistCacheSubtitleDataSource: CacheSubtitleDataSource {
         let path = downloadURL.absoluteString
         var array = srtInfoCaches[file] ?? [String]()
         // L7 Forward @0x101aa55b4: Array<String>.contains(_:) (Equatable, FUN_10001e034), not contains(where:).
-        // ⚑ GAP: Forward persists via `Task { [weak self] in … }` (TaskPriority nil + FUN_101a03fd4), not
-        //   DispatchQueue.global().async — left as is (lane rule: no new Task {}).
+        // L7 lane 15: Forward persists via `Task { [weak self] in … }`, not DispatchQueue.global().async:
+        //   0x101aa5674 TaskPriority? = nil (storeEnumTagSinglePayload w1=1), 0x101aa56a4 weak box (weakInit),
+        //   0x101aa56c8 context {isolation nil,nil; box}, 0x101aa56ec Task.init helper FUN_101a03fd4 with async fp
+        //   0x10356cde0 → 0x101aac618 → body 0x101aa577c: swift_weakLoadStrong, srtInfoCaches bridged to NSDictionary
+        //   (0x101aa5808), srtCacheInfoPath → NSString (0x101aa582c), write(toFile:atomically: w3=0) @0x101aa5848.
         if !array.contains(path) {
             array.append(path)
             srtInfoCaches[file] = array
-            DispatchQueue.global().async { [weak self] in
+            Task { [weak self] in
                 guard let self else {
                     return
                 }

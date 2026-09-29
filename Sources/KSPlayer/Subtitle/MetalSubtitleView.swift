@@ -224,29 +224,407 @@ public class MetalSubtitleView: MTKView, MTKViewDelegate {
 // swift_getObjectType. x0 is images, x1 texts, w2 dynamicRange, d0/d1 size and d2 scale. No symbol exists
 // (internal), so the name is INFERRED (vtable-ledger: no slot — extension method, Forward 0x101ac11ec,
 // caller draw(in:) 0x101ac0e24).
-// Forward body:
-//   brightness = 1, and when dynamicRange != .sdr with KSOptions.subtitleExposure (0x104c6314c) != 0,
-//     brightness = max(exp2(subtitleExposure), 0)
-//   setFragmentSamplerState(MetalRender.samplerState, 0)
-//   var instances = []
-//   per-image 0x101ac1444(scale, size, brightness, i, images, self, &instances)
-//   atlas draw 0x101ac23b4(size, brightness, instances)
-//   per-text 0x101ac25b0(size, scale, brightness, i, texts)
-//   endEncoding()
-// ⚑ Writer GAP (L7 lane 12 batch 3): the draw tree under 0x101ac1444 / 0x101ac23b4 / 0x101ac25b0 is not
-// reconstructed here. It is about 2400 instructions and covers palette and texture quads, ASS atlas packing
-// (0x101ac3110) and the text layout at 0x101ac26a4. It needs KSOptions 0x1019c4770 (1291 insns, unpaired in
-// the build) and the text-image helper 0x1019ea6c4. Its three swift_once pipeline statics also need Metal
-// functions that are absent from Shaders.metal: vertexTexture, assAtlasVertex, paletteFragment, plus two
-// 16-byte fragment names at 0x103d3a490 and 0x103d3a4b0.
-// Until then the body keeps only the helper's own sampler setup and endEncoding, so nothing crashes; the
-// brightness value is left out because nothing here reads it yet.
+// The two loops are `if count != 0 { i = 0; repeat { closure(i, …) } while i != count }` with no range trap,
+// i.e. `indices.forEach` whose closure stayed out of line: per-image 0x101ac1444 (x0 i, x1 images, x2 encoder,
+// x3 &instances, x4 Self; d0 scale, d1/d2 size, s3 brightness) and per-text 0x101ac25b0 (x0 i, x1 texts,
+// x2 encoder, x3 Self; d0/d1 size, d2 scale, s3 brightness). Capture order follows first use in each body.
+// brightness: `tst w2,#0xff` is dynamicRange.isHDR (ICF'd getter 0x1019e1af0); exposure 0x104c6314c is read under
+// beginAccess, `fcvt d` → exp2 (0x10345bc5c) → `fcvt s`, then `fcsel ge` against 0 = Swift max(0, v).
 extension MTLRenderCommandEncoder {
     func drawSubtitle(images: [SubtitleImageInfo], texts: [SubtitleTextInfo], dynamicRange: DynamicRange, size: CGSize, scale: CGFloat) {
+        var brightness: Float = 1
+        if dynamicRange.isHDR, KSOptions.subtitleExposure != 0 {
+            brightness = max(0, Float(exp2(Double(KSOptions.subtitleExposure))))
+        }
         setFragmentSamplerState(MetalRender.samplerState, index: 0)
+        var instances = [AssLayerSource]()
+        images.indices.forEach { index in
+            let image = images[index]
+            let colors = assLayerColors(role: image.styleRole)
+            let rect = image.rect * scale
+            switch image.source {
+            case let .prerendered(texture):
+                drawTexture(rect: rect, size: size, brightness: brightness, texture: texture)
+            case let .palette(bitmap, palette, width, height, stride):
+                // 0x101ac1544..0x101ac1cfc: width/height > 0, then the bitmap's withUnsafeBytes (inline, slice,
+                // large and empty Data arms) builds an .r8Uint (0xd) texture; a nil base or nil texture skips the draw.
+                guard width > 0, height > 0 else { break }
+                let texture: MTLTexture? = bitmap.withUnsafeBytes { buffer in
+                    guard let baseAddress = buffer.baseAddress else { return nil }
+                    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Uint, width: width, height: height, mipmapped: false)
+                    descriptor.usage = .shaderRead
+                    descriptor.storageMode = .shared
+                    guard let texture = MetalRender.device.makeTexture(descriptor: descriptor) else { return nil }
+                    texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: baseAddress, bytesPerRow: stride)
+                    return texture
+                }
+                if let texture {
+                    drawPalette(rect: rect, size: size, brightness: brightness, texture: texture, palette: palette)
+                }
+            case let .assBlend(layers, boundingRect):
+                // 0x101ac1618..0x101ac19e8: GetWidth/GetHeight guards, reserveCapacity(count + layers.count)
+                // (overflow-checked), then one 0x50-byte AssLayerSource per non-empty layer. The colour word is
+                // RGBA with inverted alpha: lanes c>>24, c>>16&0xff, c>>8&0xff, 0xff & ~c (`bic`), ucvtf.4s / 255.
+                let scaleX = boundingRect.width > 0 ? rect.width / boundingRect.width : 1
+                let scaleY = boundingRect.height > 0 ? rect.height / boundingRect.height : 1
+                instances.reserveCapacity(instances.count + layers.count)
+                for layer in layers where layer.w > 0 && layer.h > 0 {
+                    let x = rect.minX + scaleX * (Double(layer.dstX) - boundingRect.minX)
+                    let y = rect.minY + scaleY * (Double(layer.dstY) - boundingRect.minY)
+                    var color = layer.color
+                    if let colors {
+                        let styleColor: UIColor?
+                        switch layer.type {
+                        case .character:
+                            styleColor = colors.0
+                        case .outline:
+                            styleColor = colors.1
+                        case .shadow:
+                            styleColor = colors.2
+                        case .other:
+                            styleColor = nil
+                        }
+                        if let styleColor {
+                            color = styleColor.assColor(replacing: color)
+                        }
+                    }
+                    let rgba = SIMD4<Float>(Float(color >> 24), Float((color >> 16) & 0xFF), Float((color >> 8) & 0xFF), Float(0xFF - (color & 0xFF))) / 255
+                    instances.append(AssLayerSource(bitmap: layer.bitmap, width: layer.w, height: layer.h, stride: layer.stride,
+                                                    origin: SIMD2<Float>(Float(x), Float(y)),
+                                                    size: SIMD2<Float>(Float(scaleX * Double(layer.w)), Float(scaleY * Double(layer.h))),
+                                                    color: rgba))
+                }
+            }
+        }
+        drawAtlas(size: size, brightness: brightness, layers: instances)
+        #if canImport(UIKit)
+        texts.indices.forEach { index in
+            if let (texture, rect) = texts[index].subtitleTexture(size: size, scale: scale) {
+                drawTexture(rect: rect, size: size, brightness: brightness, texture: texture)
+            }
+        }
+        #endif
         endEncoding()
     }
+
+    // Forward 0x101ac1f68 — name INFERRED. Pipeline once 0x1044ef610 → 0x101ac2d18 (storage 0x1044ef618).
+    // Vertex bytes at index 0; fragment: texture 0, palette bytes 0 (skipped on a nil base), texture size 1,
+    // brightness 2; triangle strip of 4.
+    private func drawPalette(rect: CGRect, size: CGSize, brightness: Float, texture: MTLTexture, palette: Data) {
+        setRenderPipelineState(palettePipeline)
+        let vertices = subtitleVertices(rect: rect, size: size)
+        setVertexBytes(vertices, length: MemoryLayout<VertexIn>.stride * vertices.count, index: 0)
+        setFragmentTexture(texture, index: 0)
+        palette.withUnsafeBytes { buffer in
+            if let baseAddress = buffer.baseAddress {
+                setFragmentBytes(baseAddress, length: buffer.count, index: 0)
+            }
+        }
+        var textureSize = SIMD2<Float>(Float(texture.width), Float(texture.height))
+        setFragmentBytes(&textureSize, length: MemoryLayout<SIMD2<Float>>.size, index: 1)
+        var brightness = brightness
+        setFragmentBytes(&brightness, length: MemoryLayout<Float>.size, index: 2)
+        drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    }
+
+    // Forward 0x101ac2260 — name INFERRED. Pipeline once 0x1044ef620 → 0x101ac2c68 (storage 0x1044ef628).
+    private func drawTexture(rect: CGRect, size: CGSize, brightness: Float, texture: MTLTexture) {
+        setRenderPipelineState(subtitlePipeline)
+        let vertices = subtitleVertices(rect: rect, size: size)
+        setVertexBytes(vertices, length: MemoryLayout<VertexIn>.stride * vertices.count, index: 0)
+        setFragmentTexture(texture, index: 0)
+        var brightness = brightness
+        setFragmentBytes(&brightness, length: MemoryLayout<Float>.size, index: 0)
+        drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    }
+
+    // Forward 0x101ac23b4 — name INFERRED. Packs through 0x101ac3110, then one instanced strip:
+    // buffer = device.makeBuffer(bytes:length: count * 0x30 (checked), options: []), pipeline once 0x1044ef638 →
+    // 0x101ac2cc0 (storage 0x1044ef640), viewport (fcvtn.2s) vertex bytes 1, instance buffer 2, brightness fragment 0,
+    // atlas texture fragment 0.
+    private func drawAtlas(size: CGSize, brightness: Float, layers: [AssLayerSource]) {
+        guard let (texture, instances) = packAssAtlas(layers: layers), !instances.isEmpty,
+              let buffer = MetalRender.device.makeBuffer(bytes: instances, length: instances.count * MemoryLayout<AssAtlasInstance>.stride, options: [])
+        else {
+            return
+        }
+        setRenderPipelineState(assAtlasPipeline)
+        var viewport = SIMD2<Float>(Float(size.width), Float(size.height))
+        setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.size, index: 1)
+        setVertexBuffer(buffer, offset: 0, index: 2)
+        var brightness = brightness
+        setFragmentBytes(&brightness, length: MemoryLayout<Float>.size, index: 0)
+        setFragmentTexture(texture, index: 0)
+        drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instances.count)
+    }
 }
+
+// Forward 0x101a87d50 (95 insns) — name INFERRED. ⚑ GAP: the address sits in the MetalRender.swift range (no
+// forward_fn file tag). It is kept here as a fileprivate free function until the review owner moves it.
+// (rect, size) in d0-d5, no self; computes minX, maxX, minY, maxY in that order and returns a 4-element
+// [VertexIn] (stride 0x20): pos (x', y', 0, 1) with x' = 2x/w - 1, y' = 1 - 2y/h; uv (0,0) (1,0) (0,1) (1,1).
+fileprivate func subtitleVertices(rect: CGRect, size: CGSize) -> [VertexIn] {
+    let minX = Float(rect.minX * 2 / size.width - 1)
+    let maxX = Float(rect.maxX * 2 / size.width - 1)
+    let minY = Float(1 - rect.minY * 2 / size.height)
+    let maxY = Float(1 - rect.maxY * 2 / size.height)
+    return [
+        VertexIn(pos: SIMD4<Float>(minX, minY, 0, 1), uv: SIMD2<Float>(0, 0)),
+        VertexIn(pos: SIMD4<Float>(maxX, minY, 0, 1), uv: SIMD2<Float>(1, 0)),
+        VertexIn(pos: SIMD4<Float>(minX, maxY, 0, 1), uv: SIMD2<Float>(0, 1)),
+        VertexIn(pos: SIMD4<Float>(maxX, maxY, 0, 1), uv: SIMD2<Float>(1, 1)),
+    ]
+}
+
+// Pipeline statics — names INFERRED; each is a swift_once global whose initializer calls 0x101ac2df0 with
+// bitDepth 8 (`mov w4,#0x8`). Function-name strings are read from the Forward binary (small-string movz/movk and
+// __cstring 0x103d3a4b0 / 0x103d3a4d0).
+// ⚑ GAP (review): Shaders.metal has none of vertexTexture / paletteFragment / subtitleFragment / assAtlasVertex /
+// assLayerFragment, so the first subtitle draw would hit the fatalError below until those shaders exist.
+// 0x1044ef610 → 0x101ac2d18, storage 0x1044ef618
+private let palettePipeline = makeSubtitlePipeline(vertexFunction: "vertexTexture", fragmentFunction: "paletteFragment", bitDepth: 8)
+// 0x1044ef620 → 0x101ac2c68, storage 0x1044ef628
+private let subtitlePipeline = makeSubtitlePipeline(vertexFunction: "vertexTexture", fragmentFunction: "subtitleFragment", bitDepth: 8)
+// 0x1044ef638 → 0x101ac2cc0, storage 0x1044ef640
+private let assAtlasPipeline = makeSubtitlePipeline(vertexFunction: "assAtlasVertex", fragmentFunction: "assLayerFragment", bitDepth: 8)
+
+// Forward 0x101ac2df0 (200 insns) — name INFERRED. The fragment name goes into the fatalError message; colorAttachments[0]
+// is fetched twice (pixelFormat, then the force-unwrapped attachment for the three blend setters: enabled,
+// destinationRGB 5, destinationAlpha 5). KSOptions.colorPixelFormat is inlined (`cmp w21,#0xa` → 0x5e : 0x50).
+// fatalError file "KSPlayer/MetalSubtitleView.swift" (0x103d3a450, len 0x20), line 0x23e.
+private func makeSubtitlePipeline(vertexFunction: String, fragmentFunction: String, bitDepth: Int32) -> MTLRenderPipelineState {
+    let descriptor = MTLRenderPipelineDescriptor()
+    descriptor.vertexFunction = MetalRender.library.makeFunction(name: vertexFunction)
+    descriptor.fragmentFunction = MetalRender.library.makeFunction(name: fragmentFunction)
+    descriptor.colorAttachments[0].pixelFormat = KSOptions.colorPixelFormat(bitDepth: bitDepth)
+    let colorAttachment = descriptor.colorAttachments[0]!
+    colorAttachment.isBlendingEnabled = true
+    colorAttachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+    colorAttachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+    do {
+        return try MetalRender.device.makeRenderPipelineState(descriptor: descriptor)
+    } catch {
+#sourceLocation(file: "KSPlayer/MetalSubtitleView.swift", line: 574)
+        fatalError("MetalSubtitleView: failed to compile '\(fragmentFunction)' pipeline: \(error)")
+#sourceLocation()
+    }
+}
+
+// Forward 0x101ac1da0 (114 insns) — name INFERRED. w0 = role; returns x0/x1/x2 = (fill, outline, shadow) or nil.
+// Only .secondary with a non-nil KSOptions.secondaryTextStyle (0x1044e50c8, beginAccess) resolves colours, via
+// KSOptions.textStyle(role: .secondary) (0x1019c4770). Outline: strokeWidth (+0x38) > 0 ? strokeColor : .clear.
+// Shadow: `==` .clear first (0x103458674), then blur (+0x58) > 0, offset.width != 0, offset.height != 0.
+fileprivate func assLayerColors(role: SubtitleTextRole) -> (UIColor, UIColor, UIColor)? {
+    guard role == .secondary, KSOptions.secondaryTextStyle != nil else {
+        return nil
+    }
+    let style = KSOptions.textStyle(role: .secondary)
+    let outlineColor = style.textStrokeWidth > 0 ? style.textStrokeColor : UIColor.clear
+    let shadowColor: UIColor
+    if style.textShadowColor == UIColor.clear {
+        shadowColor = UIColor.clear
+    } else if style.textShadowBlurRadius > 0 || style.textShadowOffset.width != 0 || style.textShadowOffset.height != 0 {
+        shadowColor = style.textShadowColor
+    } else {
+        shadowColor = UIColor.clear
+    }
+    return (style.textColor, outlineColor, shadowColor)
+}
+
+// Forward 0x101ac2a1c (147 insns) — name INFERRED. self (UIColor) in x20, w0 = ASS colour word (RRGGBBTT, TT =
+// transparency). getRed(_:green:blue:alpha:) with alpha preset to 1; on failure the word is returned unchanged.
+// Transparency is computed first (trap order), clamped as `v < 1 ? round(255 - max(0,v)*255) : 0`, which is
+// Swift max(0, min(1, v)); each channel as `c < 255 ? max(0,c) : 255` = max(0, min(255, c)).
+extension UIColor {
+    fileprivate func assColor(replacing color: UInt32) -> UInt32 {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 1
+        guard getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return color
+        }
+        let transparency = UInt32((255 - max(0, min(1, (1 - Double(color & 0xFF) / 255) * alpha)) * 255).rounded())
+        let r = UInt32(max(0, min(255, (red * 255).rounded())))
+        let g = UInt32(max(0, min(255, (green * 255).rounded())))
+        let b = UInt32(max(0, min(255, (blue * 255).rounded())))
+        return r << 24 | g << 16 | b << 8 | transparency
+    }
+}
+
+// Forward 0x101ac3110 (513 insns, no forward_fn file tag; MetalSubtitleView range) — name INFERRED. Shelf packing:
+// maxSize = the MetalRender static at 0x104c63700 (once 0x1044ed2b0 → 0x101a839c8:
+// device.supportsFamily(.apple3) ? 16384 : 8192); start width = max(1, pow2(min(max(64, max width ?? 1,
+// ceil(sqrt(max(Σ w*h, 1)))), maxSize))), doubled (checked) while it still fits; a layer wider than the atlas, or a
+// row past maxSize, restarts the pass. Height = pow2(y + rowHeight) ≤ maxSize. .r8Unorm (0xa) texture, shaderRead,
+// shared; each bitmap replaces region (origin, w, h) at its stride and yields an AssAtlasInstance with uv / (W, H).
+private func packAssAtlas(layers: [AssLayerSource]) -> (MTLTexture, [AssAtlasInstance])? {
+    guard !layers.isEmpty else {
+        return nil
+    }
+    let maxSize = maxAtlasTextureSize
+    let maxWidth = layers.map(\.width).max() ?? 1
+    var area = 0
+    for layer in layers {
+        area += layer.width * layer.height
+    }
+    let side = Int(Double(max(area, 1)).squareRoot().rounded(.up))
+    var atlasWidth = max(1, nextPowerOfTwo(min(max(64, maxWidth, side), maxSize)))
+    while atlasWidth <= maxSize {
+        var origins = [SIMD2<Int>]()
+        origins.reserveCapacity(layers.count)
+        var x = 0
+        var y = 0
+        var rowHeight = 0
+        var fits = true
+        for layer in layers {
+            if layer.width > atlasWidth {
+                fits = false
+                break
+            }
+            if x + layer.width > atlasWidth {
+                y += rowHeight
+                x = 0
+                rowHeight = 0
+            }
+            if y + layer.height > maxSize {
+                fits = false
+                break
+            }
+            origins.append(SIMD2<Int>(x, y))
+            x += layer.width
+            rowHeight = max(rowHeight, layer.height)
+        }
+        if fits {
+            let atlasHeight = nextPowerOfTwo(y + rowHeight)
+            guard atlasHeight <= maxSize else {
+                return nil
+            }
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: atlasWidth, height: atlasHeight, mipmapped: false)
+            descriptor.usage = .shaderRead
+            descriptor.storageMode = .shared
+            guard let texture = MetalRender.device.makeTexture(descriptor: descriptor) else {
+                return nil
+            }
+            var instances = [AssAtlasInstance]()
+            instances.reserveCapacity(layers.count)
+            let width = Float(atlasWidth)
+            let height = Float(atlasHeight)
+            for (index, layer) in layers.enumerated() {
+                let origin = origins[index]
+                layer.bitmap.withUnsafeBytes { buffer in
+                    if let baseAddress = buffer.baseAddress {
+                        texture.replace(region: MTLRegionMake2D(origin.x, origin.y, layer.width, layer.height), mipmapLevel: 0, withBytes: baseAddress, bytesPerRow: layer.stride)
+                    }
+                }
+                instances.append(AssAtlasInstance(origin: layer.origin, size: layer.size,
+                                                  uvOrigin: SIMD2<Float>(Float(origin.x) / width, Float(origin.y) / height),
+                                                  uvSize: SIMD2<Float>(Float(layer.width) / width, Float(layer.height) / height),
+                                                  color: layer.color))
+            }
+            return (texture, instances)
+        }
+        atlasWidth *= 2
+    }
+    return nil
+}
+
+// Inlined twice in 0x101ac3110 — name INFERRED: `v == 0` → 1, else 1 << (64 - clz(v - 1)) (smart shift, 0 at 64).
+private func nextPowerOfTwo(_ value: Int) -> Int {
+    value == 0 ? 1 : 1 << (Int.bitWidth - (value - 1).leadingZeroBitCount)
+}
+
+// Forward 0x101a839c8 initializes the static at 0x104c63700 (once 0x1044ed2b0) — name INFERRED.
+// ⚑ GAP: the initializer is tagged KSPlayer/MetalRender.swift, so this belongs to MetalRender as a static; kept
+// here as a file-private global until the review owner moves it. `supportsFamily` 0x3eb = .apple3.
+private let maxAtlasTextureSize = MetalRender.device.supportsFamily(.apple3) ? 16384 : 8192
+
+#if canImport(UIKit)
+extension SubtitleTextInfo {
+    // Forward 0x101ac26a4 (222 insns) — name INFERRED. Indirect result (x8) of (MTLTexture, CGRect)?; self in x20.
+    // Width is displaySize?.width ?? size.width / scale; the position is self.position ?? KSOptions.textPosition
+    // (once 0x1044e5288); `.center` horizontal alignment adds a centred NSMutableParagraphStyle over the whole
+    // string. Renderer 0x1019ea6c4 gets (width - (left + right margin), scale, strokeWidth; backgroundColor,
+    // strokeColor, &insets). Frame: top → scale*verticalMargin, bottom → H - content - scale*verticalMargin,
+    // else centred; leading/trailing likewise, with content = max(extent - scale*(inset pair), 1). Result origin is
+    // shifted back by scale*insets.left/top; size is the texture's width/height.
+    fileprivate func subtitleTexture(size: CGSize, scale: CGFloat) -> (MTLTexture, CGRect)? {
+        guard text.length > 0 else {
+            return nil
+        }
+        let attributedText = NSMutableAttributedString(attributedString: text)
+        let width = displaySize?.width ?? size.width / scale
+        let style = KSOptions.textStyle(role: styleRole)
+        let position = position ?? KSOptions.textPosition
+        if position.horizontalAlign == .center {
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .center
+            attributedText.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: attributedText.length))
+        }
+        var insets = UIEdgeInsets.zero
+        guard let context = attributedText.subtitleContext(width: width - (position.leftMargin + position.rightMargin), scale: scale, strokeWidth: style.textStrokeWidth, backgroundColor: style.textBackgroundColor, strokeColor: style.textStrokeColor, insets: &insets),
+              let texture = context.subtitleTexture()
+        else {
+            return nil
+        }
+        let textureWidth = Double(texture.width)
+        let textureHeight = Double(texture.height)
+        let y: CGFloat
+        if position.verticalAlign == .top {
+            y = scale * position.verticalMargin
+        } else {
+            let contentHeight = max(textureHeight - scale * insets.top - scale * insets.bottom, 1)
+            if position.verticalAlign == .bottom {
+                y = size.height - contentHeight - scale * position.verticalMargin
+            } else {
+                y = (size.height - contentHeight) * 0.5
+            }
+        }
+        let x: CGFloat
+        if position.horizontalAlign == .leading {
+            x = scale * position.leftMargin
+        } else {
+            let contentWidth = max(textureWidth - scale * insets.left - scale * insets.right, 1)
+            if position.horizontalAlign == .trailing {
+                x = size.width - contentWidth - scale * position.rightMargin
+            } else {
+                x = (size.width - contentWidth) * 0.5
+            }
+        }
+        return (texture, CGRect(x: x - scale * insets.left, y: y - scale * insets.top, width: textureWidth, height: textureHeight))
+    }
+}
+
+// ⚑ GAP (review): Forward 0x1019ea6c4 (528 insns) is an NSAttributedString → CGContext text renderer in the
+// Utility.swift range (escape-check lines 200/210; CTFramesetter, rounded background path, stroke/shadow
+// attribute enumeration, helpers 0x1019eaf04 / 0x1019eba7c / 0x1019eb8bc). It has no Sources body and is outside
+// this lane's files, so this file-private stand-in only carries the call shape and returns nil (text is not drawn).
+extension NSAttributedString {
+    fileprivate func subtitleContext(width _: CGFloat, scale _: CGFloat, strokeWidth _: CGFloat, backgroundColor _: UIColor, strokeColor _: UIColor, insets _: UnsafeMutablePointer<UIEdgeInsets>?) -> CGContext? {
+        nil
+    }
+}
+
+// Forward 0x1019eb754 (72 insns) — name INFERRED. ⚑ GAP: Utility.swift range; kept file-private here.
+// CGBitmapContextGetData (nil → nil), width, height, bytesPerRow; .rgba8Unorm (0x46) texture, shaderRead, shared;
+// replace region (0, 0, width, height) with the context bytes.
+extension CGContext {
+    fileprivate func subtitleTexture() -> MTLTexture? {
+        guard let data else {
+            return nil
+        }
+        let width = width
+        let height = height
+        let bytesPerRow = bytesPerRow
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+        let texture = MetalRender.device.makeTexture(descriptor: descriptor)
+        texture?.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: data, bytesPerRow: bytesPerRow)
+        return texture
+    }
+}
+#endif
 
 // AssLayerSource @0x1039f23bc
 // ⚑[tool=field_surface ref=AssLayerSource:fieldmd result=7 let] Every record lacks IsVar; `bitmap`
