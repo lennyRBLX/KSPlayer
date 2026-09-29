@@ -524,7 +524,10 @@ public actor DirectoryWatcher {
     /// `KSPlayer.DirectoryWatcher.watchNew(fileURL: Foundation.URL, completion: @Sendable (Swift.Bool) -> ())`.
     /// Name, labels, completion type and arity were all inferred and all wrong; there is no
     /// `qos:` parameter.
-    @used func watchNew(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
+    /// L7 lanes 14+15 `package`: the trie exports it with its method descriptor (`…FTq`), like
+    /// watchModify, and ProAVPlayer's RemuxerIOAction.reconstruct Task (0x101b820e0) calls vtable +0x90
+    /// (slot 6) cross-module.
+    @used package func watchNew(fileURL: URL, completion: @escaping @Sendable (Bool) -> Void) {
         // Tear down any existing source first (inlined cancel + clear).
         source?.cancel()
         source = nil
