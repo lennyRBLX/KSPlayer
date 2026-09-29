@@ -184,9 +184,10 @@ class VideoSwresample: FrameChange {
         let pbuf: PixelBufferProtocol
         if format == AV_PIX_FMT_VIDEOTOOLBOX {
             pbuf = unsafeBitCast(frame.data.3, to: CVPixelBuffer.self)
-        } else if dstWidth == nil, dstHeight == nil,
-                  format == AV_PIX_FMT_RGBA || format == AV_PIX_FMT_YUV420P10LE
-                  || format == AV_PIX_FMT_YUV422P10LE || format == AV_PIX_FMT_YUV444P10LE {
+        // Forward 0x101a66770-0x101a667a0: `cmeq`/`umaxv` of the format against lanes [62, 64, 68, 26]. Lanes 0-2
+        // come from the static array 0x1044eb2d8 (count 3: YUV420P10LE, YUV422P10LE, YUV444P10LE), which is
+        // AVPixelFormat.leftShift's array literal. Lane 3 (`movi v2.4s,#0x1a`) is RGBA.
+        } else if dstWidth == nil, dstHeight == nil, format.leftShift > 0 || format == AV_PIX_FMT_RGBA {
             let pixelBuffer = PixelBuffer(frame: frame)
             // Forward 0x101a666f8: a direct class-field store (beginAccess on PixelBuffer+0x30) in this
             // branch, ahead of the common-tail witness set below.

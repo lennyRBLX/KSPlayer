@@ -1141,6 +1141,10 @@ public final class FormatContext: @unchecked Sendable {
         // PlayList arm (0x101a3527c..0x101a3540c): swift_dynamicCast flags 6 @0x101a352c0, PlayList wt +0x20
         // (currentStream), MovieStream wt +0x10 (duration, read twice) and +0x18 (files). A count of 2 or more
         // rewrites formatCtx.duration and stores seekByBytes = 1 (`strb w8,[x24,#0x58]` @0x101a3623c).
+        // `duration` is a local held in d8 (`mov v8.16b,v0.16b` @0x101a35378 / `ucvtf d8,x23` @0x101a35450); neither
+        // arm stores +0x28. The field store `str d8,[x24,#0x28]` @0x101a354ec comes after byteSeek (+0x59), and the
+        // fmul @0x101a353bc and the bitrate arm @0x101a35ef4/0x101a35f80 read d8, not self+0x28.
+        let duration: Double
         if let ioContext, let playList = ioContext as? PlayList, let stream = playList.currentStream,
            stream.duration > Double(durationSeconds + 3600)
         {
@@ -1159,6 +1163,7 @@ public final class FormatContext: @unchecked Sendable {
         let flags = formatCtx.pointee.iformat.pointee.flags
         maxFrameDuration = flags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10 : 3600
         byteSeek = flags & AVFMT_NO_BYTE_SEEK == 0 && flags & (AVFMT_TS_DISCONT | AVFMT_NOTIMESTAMPS) != 0 && formatName != "ogg"
+        self.duration = duration
         var assetTracks = [FFmpegAssetTrack]()
         for i in 0 ..< Int(formatCtx.pointee.nb_streams) {
             guard let stream = formatCtx.pointee.streams[i] else { continue }
