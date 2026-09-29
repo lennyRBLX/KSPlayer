@@ -390,25 +390,10 @@ extension CAMetalLayer: Drawable, DrawableRenderResult {
     public func updateInfo(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?) {
         // Forward 0x101a84b18. Byte appends go through the [UInt8].append(UInt16/UInt32) helpers
         // (KSParseProtocol.swift, Forward 0x1019e7290 / 0x1019e7374) and the pixel-buffer EDR metadata
-        // through PixelBufferProtocol.edrMetadata (0x101a88500), as Forward calls them. Two callees
-        // still have no declaration in this source and stay local: the MasteringDisplayMetadata byte
-        // packer 0x101a654f4 (Model.swift, lane 13 GAP) and the layer EDR-headroom check 0x1019f26e4
-        // (a CAMetalLayer extension in Core/UXKit.swift, review GAP).
-        func data(_ displayData: MasteringDisplayMetadata) -> Data {
-            var bytes = [UInt8]()
-            bytes.append(displayData.display_primaries_r_x)
-            bytes.append(displayData.display_primaries_r_y)
-            bytes.append(displayData.display_primaries_g_x)
-            bytes.append(displayData.display_primaries_g_y)
-            bytes.append(displayData.display_primaries_b_x)
-            bytes.append(displayData.display_primaries_b_y)
-            bytes.append(displayData.white_point_x)
-            bytes.append(displayData.white_point_y)
-            bytes.append(displayData.minLuminance)
-            bytes.append(displayData.maxLuminance)
-            bytes.reverse()
-            return Data(bytes)
-        }
+        // through PixelBufferProtocol.edrMetadata (0x101a88500), as Forward calls them. The
+        // MasteringDisplayMetadata byte packer is the module-level `data(_:)` in Model.swift (Forward
+        // 0x101a654f4, `bl` at 0x101a84b88; declared by lane 13, 9635b38). The layer EDR-headroom check
+        // 0x1019f26e4 (a CAMetalLayer extension in Core/UXKit.swift, review GAP) stays local.
         #if !os(tvOS)
         func isEDRScreen() -> Bool {
             guard let view = delegate as? UIView else {
