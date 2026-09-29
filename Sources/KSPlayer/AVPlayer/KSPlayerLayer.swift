@@ -111,12 +111,11 @@ open class KSPlayerLayer: NSObject {
     public private(set) var options: KSOptions
     // Binary field 5, between options and player. `KSPlayerLayer.subtitleView.getter :
     // KSPlayer.MetalSubtitleView` in the trie; the type already exists in Subtitle/.
-    // internal, not public: MetalSubtitleView is an internal type, so `public` cannot compile.
-    // The binary's access level for this field is not tool-readable (the impl oracle is
-    // final-types-only and this class is open), so the narrowest spelling that builds is used.
+    // L7 lane 15: public. The trie carries `KSPlayerLayer.subtitleView` vpMV (property descriptor,
+    // public-exclusive), and MetalSubtitleView is public now (lane 12), so `public` compiles.
     // Forward: `let` (field flags 0, no vtable g/s/m; trie has only vg/vpMV/vpWvd).
     // No declaration default: both designated inits (0x1019ca41c, 0x1019caaf4) build it from subtitleModel.
-    let subtitleView: MetalSubtitleView
+    public let subtitleView: MetalSubtitleView
 
     public var player: MediaPlayerProtocol {
         didSet {

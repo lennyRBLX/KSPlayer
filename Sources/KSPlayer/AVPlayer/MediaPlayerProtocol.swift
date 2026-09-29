@@ -618,7 +618,10 @@ extension MediaPlayback {
     /// `withCheckedContinuation(isolation: nil, function: "seek(time:)")`, else the unsafe-continuation
     /// fallback running closure 0x1019deb8c, which calls wt+0x60 `seek(time:completion:)` with a
     /// completion that resumes the continuation with the Bool.
-    nonisolated func seek(time: TimeInterval) async -> Bool {
+    /// L7 lane 15 `public`: a generic protocol-extension member is emitted only for a caller or as
+    /// public API, and Forward has no caller — a full __text scan finds no `bl 0x1019de8f0` and no
+    /// adrp/add or adrp/ldr of its async function pointer 0x103568048 (ctx 0x90) — yet the body exists.
+    public nonisolated func seek(time: TimeInterval) async -> Bool {
         await withCheckedContinuation { continuation in
             seek(time: time) { finished in
                 continuation.resume(returning: finished)

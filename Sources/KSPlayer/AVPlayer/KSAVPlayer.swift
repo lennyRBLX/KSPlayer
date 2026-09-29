@@ -241,17 +241,11 @@ open class KSAVPlayer: @unchecked Sendable {
         }
     }
 
-    public private(set) var isReadyToPlay: Bool = false {
-        didSet {
-            if isReadyToPlay != oldValue {
-                if isReadyToPlay {
-                    // L7 lane 9: the class is nonisolated in Forward, so the delegate call needs the
-                    // hop that readyToPlay() (0x1019a402c, readyTime + runOnMainThread) already carries.
-                    readyToPlay()
-                }
-            }
-        }
-    }
+    // L7 lane 15: no observer. updateStatus's tail 0x1019a74ec beginAccess(modify) + 0x1019a74f0
+    //   `strb w23(=1)` stores the field with no oldValue load or compare, then 0x1019a74f8
+    //   `ldr x8,[x8,#0x418]; blr x8` calls readyToPlay() (slot 93) unconditionally; the trie has no
+    //   `vW` observer symbol. The call is written at that site.
+    public private(set) var isReadyToPlay: Bool = false
 
     #if os(xrOS)
     public var allowsExternalPlayback = false
@@ -651,30 +645,95 @@ open class KSAVPlayer: @unchecked Sendable {
 
 extension KSAVPlayer {
     public var player: AVQueuePlayer { playerView.player }
-    @objc private func moviePlayDidEnd(notification _: Notification) {
-        if !options.isLoopPlay {
-            playbackState = .finished
-        }
-    }
+    // L7 lane 15: the @objc moviePlayDidEnd / playerItemFailedToPlayToEndTime methods are gone. Forward
+    //   has neither selector string; their bodies are the two NotificationCenter sink closures in
+    //   observer(playerItem:) (0x1019a8528, 0x1019a85e0).
 
+    /// updateStatus(item:) async entry @0x1019a5e30: MainActor.shared + swift_task_switch to its
+    /// executor (`@MainActor`); the status-sink Task (0x1019a8b18) tests x20 after the call (`throws`).
+    /// Body 0x1019a5ecc + continuations 0x1019a676c/67d8 (video), 0x1019a6e6c/6ed0 (audible),
+    /// 0x1019a705c/70d0 (legible + tail). Line literals: first(where:) check 0x182 = 386,
+    /// compactMap check 0x19d = 413, KSLog line 0x1a7 = 423.
     @MainActor
-    @objc private func playerItemFailedToPlayToEndTime(notification: Notification) {
-        var playError: Error?
-        if let userInfo = notification.userInfo {
-            if let error = userInfo["error"] as? Error {
-                playError = error
-            } else if let error = userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError {
-                playError = error
-            } else if let errorCode = (userInfo["error"] as? NSNumber)?.intValue {
-                playError = NSError(domain: "AVMoviePlayer", code: errorCode, userInfo: nil)
+    private func updateStatus(item: AVPlayerItem) async throws {
+        if item.status == .readyToPlay {
+            mediaPlayerTracks = []
+            item.preferredForwardBufferDuration = options.preferredForwardBufferDuration
+            options.findTime = CACurrentMediaTime()
+            // Local array (ctx +0x250), filled by the async AVMediaPlayerTrack init (fn ptr 0x103566c10),
+            // then one modify access on mediaPlayerTracks → append(contentsOf:) 0x1019c7a4c.
+            var videoTracks = [AVMediaPlayerTrack]()
+            for track in item.tracks {
+                if track.assetTrack?.mediaType == .video {
+                    try await videoTracks.append(AVMediaPlayerTrack(track: track))
+                }
             }
+            mediaPlayerTracks.append(contentsOf: videoTracks)
+            // count == 0 skips straight to the audible pass (0x1019a66cc); a non-empty list with no
+            // playable track stores KSPlayerError(0, "VideoTracks are not even playable.") and returns.
+            if !videoTracks.isEmpty {
+                guard let track = videoTracks.first(where: { $0.isPlayable }) else {
+                    error = KSPlayerError(errorCode: .videoTracksUnplayable)
+                    return
+                }
+                // presentationSize (0x103466920) read three times: width > 0, height > 0, value;
+                // else formatDescription (+0x88) ?.naturalSize (0x101a0aeac) ?? .zero.
+                naturalSize = item.presentationSize.width > 0 && item.presentationSize.height > 0 ? item.presentationSize : track.naturalSize
+                if let formatDescription = track.formatDescription {
+                    // dovi (+0x81 tag) / dv_profile 7 (+0x7a) / 0x101a0abb4 → strb into KSOptions.dynamicRange;
+                    // then vtable 0x448 nominalFrameRate(track:), isDovi 0x101a236d8, KSOptions vtable 0xa40.
+                    options.dynamicRange = track.dynamicRange ?? .sdr
+                    options.updateVideo(refreshRate: nominalFrameRate(track: track), isDovi: track.isDovi, formatDescription: formatDescription)
+                }
+            }
+            let audioTracks = try await mediaSelectionTracks(.audible)
+            // Inlined AVMediaSelectionTrack.isEnabled setter with newValue = true: group (+0x18) cbz,
+            // weak playerItem (+0x20), selectMediaOption:inMediaSelectionGroup:.
+            audioTracks.first?.isEnabled = true
+            mediaPlayerTracks.append(contentsOf: audioTracks)
+            let subtitles = try await mediaSelectionTracks(.legible)
+            subtitleTracks.append(contentsOf: subtitles)
+            // 0x1019a716c `fcmp d0,#0.0; b.mi; b.gt` skip: proceeds on zero or NaN.
+            if duration == 0 || duration.isNaN {
+                duration = item.duration.seconds
+            }
+            // Float sum (vectorised fadd), `fmul` by Float(duration), `fmul` by 0.125; stored only
+            // when |bits| < inf and != 0 (0x1019a7468-0x1019a747c), then fcvtzs.
+            let estimatedDataRates = item.tracks.compactMap { $0.assetTrack?.estimatedDataRate }
+            let size = estimatedDataRates.reduce(0, +) * Float(duration) / 8
+            if size.isFinite, size != 0 {
+                fileSize = Int64(size)
+            }
+            isReadyToPlay = true
+            readyToPlay()
+        } else if item.status == .failed {
+            error = item.error
+        } else if let error = item.error {
+            KSLog(error, line: 423)
         }
-        delegate?.finish(player: self, error: playError)
     }
 
-    private func updateStatus(item: AVPlayerItem) {
-        // ⚑ UNRESOLVED → KSAVPlayer M2: readyToPlay/failed handling rebuilt on the reworked fields
-        //   (mediaPlayerTracks:[any MediaPlayerTrack] / subtitleTracks, naturalSize, duration, fileSize, error).
+    /// INFERRED name. Forward 0x1019a75b4 (async, ctx 0x130; called with AVMediaCharacteristicAudible
+    /// then Legible): MainActor hop, `playerView.player.items()` → first (empty ⇒ return []),
+    /// `.asset`, then the imported async `loadMediaSelectionGroup(for:)` (checked-continuation
+    /// "_createCheckedThrowingContinuation(_:)" + completion block 0x1019a9078; 0x1019a78f0 throws on
+    /// error). 0x1019a7944: nil group ⇒ []; else `options` mapped (reserve + MainActor check line
+    /// 0x241 = 577) through AVMediaSelectionTrack.init(option:) 0x10199f6ac, storing group (+0x18)
+    /// and weak playerItem (+0x20). Direct call, no vtable slot; no symbol, so no discriminator.
+    @MainActor
+    func mediaSelectionTracks(_ characteristic: AVMediaCharacteristic) async throws -> [AVMediaSelectionTrack] {
+        guard let item = playerView.player.items().first else {
+            return []
+        }
+        guard let group = try await item.asset.loadMediaSelectionGroup(for: characteristic) else {
+            return []
+        }
+        return group.options.map { option in
+            let track = AVMediaSelectionTrack(option: option)
+            track.group = group
+            track.playerItem = item
+            return track
+        }
     }
 
     private func updatePlayableDuration(item: AVPlayerItem) {
@@ -860,14 +919,67 @@ extension KSAVPlayer {
         pipController = KSOptions.pictureInPictureType.init(playerLayer: playerLayer)
     }
 
+    /// observer(playerItem:) @0x1019a2f38. observerPlayerItemCancellables = Set() (beginAccess modify,
+    /// _swiftEmptySetSingleton) precedes the nil test; no removeObserver calls. Every sink is stored
+    /// with a 0x21 modify access + AnyCancellable.store(in:).
     private func observer(playerItem: AVPlayerItem?) {
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)
-        // ⚑ UNRESOLVED → KSAVPlayer M2: the 5 KVO NSKeyValueObservations (status / loadedTimeRanges / bufferEmpty /
-        //   likelyToKeepUp / bufferFull) → observerPlayerItemCancellables Combine sinks (updateStatus/updatePlayableDuration/loadState).
+        observerPlayerItemCancellables = Set()
         guard let playerItem else { return }
-        NotificationCenter.default.addObserver(self, selector: #selector(moviePlayDidEnd), name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
-        NotificationCenter.default.addObserver(self, selector: #selector(playerItemFailedToPlayToEndTime), name: .AVPlayerItemFailedToPlayToEndTime, object: playerItem)
+        // closure 0x1019b29b0 → 0x1019a8528 (inlined former moviePlayDidEnd).
+        NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: playerItem).sink { [weak self] _ in
+            guard let self else { return }
+            if !self.options.isLoopPlay {
+                self.playbackState = .finished
+            }
+        }.store(in: &observerPlayerItemCancellables)
+        // closure 0x1019b29b8 → 0x1019a85e0: each arm calls the error setter 0x1019a1870; no delegate call.
+        NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime, object: playerItem).sink { [weak self] notification in
+            guard let self else { return }
+            if let userInfo = notification.userInfo {
+                if let error = userInfo["error"] as? Error {
+                    self.error = error
+                } else if let error = userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError {
+                    self.error = error
+                } else if let errorCode = (userInfo["error"] as? NSNumber)?.intValue {
+                    self.error = NSError(domain: "AVMoviePlayer", code: errorCode, userInfo: nil)
+                }
+            }
+        }.store(in: &observerPlayerItemCancellables)
+        // keypath 0x103567240; closure 0x1019a89c0: Task (nil executor, throwing) → 0x1019a8b18 weak-loads
+        // self, calls updateStatus 0x1019a5e30, `cbz x20` on return.
+        playerItem.publisher(for: \.status, options: [.initial, .new]).removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self, weak playerItem] _ in
+            guard let self, let playerItem else { return }
+            Task { [weak self] in
+                try await self?.updateStatus(item: playerItem)
+            }
+        }.store(in: &observerPlayerItemCancellables)
+        // closure 0x1019a8ce8: inlined runOnMainThread; inner 0x1019b2b34 → 0x1019a8f3c weak-loads self
+        // and calls updatePlayableDuration 0x1019a7c80 with the captured item.
+        playerItem.publisher(for: \.loadedTimeRanges, options: [.initial, .new]).receive(on: DispatchQueue.main).sink { [weak self, weak playerItem] _ in
+            guard let self, let playerItem else { return }
+            runOnMainThread { [weak self] in
+                self?.updatePlayableDuration(item: playerItem)
+            }
+        }.store(in: &observerPlayerItemCancellables)
+        // keypaths 0x103567288 / 0x1035672c8 / 0x103567308; sink calls vtable 0x440 updatePlaybackBuffer().
+        Publishers.CombineLatest3(
+            playerItem.publisher(for: \.isPlaybackBufferEmpty, options: [.initial, .new]),
+            playerItem.publisher(for: \.isPlaybackLikelyToKeepUp, options: [.initial, .new]),
+            playerItem.publisher(for: \.isPlaybackBufferFull, options: [.initial, .new])
+        ).sink { [weak self] _, _, _ in
+            self?.updatePlaybackBuffer()
+        }.store(in: &observerPlayerItemCancellables)
+        // CMTime(seconds: options.playbackTimeInterval (+0x50), preferredTimescale: 0x3b9aca00), queue .main,
+        // block 0x1019a8ff4 → vtable 0x430 changePlaybackTime(time:) with NO executor check; result
+        // bridged to Any and assigned at self+0x18 (0x1019b22a4).
+        // ⚑ GAP: Forward's changePlaybackTime is nonisolated; here it is @MainActor because the
+        //   ProAVPlayer override is @MainActor, and a probe shows that mismatch is an error even in
+        //   Swift 5 mode. assumeIsolated keeps it compiling until the override is fixed.
+        periodicTimeObserver = playerView.player.addPeriodicTimeObserver(forInterval: CMTime(seconds: options.playbackTimeInterval, preferredTimescale: 1_000_000_000), queue: .main) { [weak self] time in
+            MainActor.assumeIsolated {
+                self?.changePlaybackTime(time: time.seconds)
+            }
+        }
     }
 }
 
@@ -1098,7 +1210,11 @@ class AVMediaPlayerTrack: @preconcurrency MediaPlayerTrack {
         }
     }
 
-    init(track: AVPlayerItemTrack) {
+    // L7 lane 15: async fn ptr 0x103566c10 → 0x10199fcc4 (ctx 0xf0) hops to MainActor.shared's
+    //   executor; the caller's continuation 0x1019a676c tests x20 → 0x1019a6e18 (throws). The body
+    //   0x10199fdc4 (rotation from preferredTransform etc.) is NOT transcribed here.
+    @MainActor
+    init(track: AVPlayerItemTrack) async throws {
         self.track = track
         trackID = track.assetTrack?.trackID ?? 0
         mediaType = track.assetTrack?.mediaType ?? .video
