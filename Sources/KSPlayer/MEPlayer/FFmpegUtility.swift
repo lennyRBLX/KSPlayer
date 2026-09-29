@@ -48,8 +48,8 @@ public enum FFmpegUtility {
     //   internal fields-only init. Forward's trie has no OutputStreamInfo init symbol.
     //   DEFERRED arms (not reconstructed, see the notes inline): the audio re-encode arm
     //   (AudioTranscodeContext 0x101a1c02c), the subtitle re-encode arm (SubtitleTranscodeContext +
-    //   encoder helper 0x101a08a94), the HEVC extradata repair, and the 2-element `String?` static array
-    //   0x1044e9128 whose contents the evidence does not carry.
+    //   encoder helper 0x101a08a94), and the HEVC extradata repair. All three are GAPs (L7 lane 16, I6):
+    //   each needs a callee with no decl in this tree — see the inline notes.
     public static func write(formatContext: FormatContext, to: String, isMergeStream: Bool, formatContextOptions: [String : Any]?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, allowAudioCodecs: [AVCodecID]?) throws -> OutputStreamInfo {
         // `cbz x24` @0x101a1d0f8: the nil arm builds the empty dictionary (0x1019c3148).
         var formatContextOptions = formatContextOptions ?? [:]
@@ -133,8 +133,14 @@ public enum FFmpegUtility {
                     videoIndex = index
                 }
             } else if track.mediaType == .subtitle {
-                // ⚑ DEFERRED: Forward first tests `<static [String?] 0x1044e9128>.contains(formatName)`
-                //   (0x1019f27cc) && track.isImageSubtitle (+0xe8); array contents not in evidence.
+                // ⚑ L7 lane 16: 0x101a1db04-0x101a1db74 — swift_initStaticObject(<[String?] metadata cache
+                //   0x1044e9128>, 0x1044e9140): count 2, "mp4", "mov" (static object dumped, I6) →
+                //   contains(formatName) (0x1019f27cc), array destroyed (0x10345cb14, 2 elements), then
+                //   track+0xe8 `ldrb; cmp #1` (isImageSubtitle) → continue. Then the "hls" compare
+                //   (nil formatName → fall through, 0x101a1db80).
+                if ["mp4", "mov"].contains(formatName), track.isImageSubtitle {
+                    continue
+                }
                 if formatName == "hls" {
                     continue
                 }
@@ -146,24 +152,32 @@ public enum FFmpegUtility {
             index += 1
             let codecpar = track.codecpar
             if track.mediaType == .audio {
-                // ⚑ DEFERRED: when allowAudioCodecs is non-empty and lacks codec_id, Forward builds
-                //   AudioTranscodeContext(codecpar, allowAudioCodecs[0]) (alloc 0x60, init 0x101a1c02c, throws),
-                //   stores it in transcodeMap, sets timeBaseMap[trackID] to its encoder time_base (+0x54)
-                //   and calls avcodec_parameters_from_context instead of the copy below.
+                // ⚑ GAP (L7 lane 16, I6): when allowAudioCodecs is non-nil, non-empty and does not contain
+                //   codec_id, Forward builds AudioTranscodeContext(codecpar, allowAudioCodecs[0]) (alloc 0x60,
+                //   init 0x101a1c02c, throws → 0x101a1ea24), inserts it into transcodeMap[trackID] (0x1019b3c2c),
+                //   sets timeBaseMap[trackID] = encodeContext.time_base (+0x54, via 0x1019c1a6c) and calls
+                //   avcodec_parameters_from_context(stream.codecpar, encodeContext) (0x1029f5738) instead of the
+                //   copy; the sample_rate == 0 → 48000 check below is shared. Blocked: that init's encoder
+                //   builder 0x101a08a94 has no decl (AVFFmpegExtension.swift's Forward range), so the
+                //   (codecpar, codecID) throwing init cannot be written here.
                 avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
                 if stream.pointee.codecpar.pointee.sample_rate == 0 {
                     stream.pointee.codecpar.pointee.sample_rate = 48000
                 }
             } else if track.mediaType == .video {
-                // ⚑ DEFERRED: HEVC (0xad) with extradata_size < 30 first repairs extradata from one read
-                //   packet (NAL parse 0x101a0ce98/0x101a0c470, 0x101a0be50, hevcExtradata 0x101a0ba94),
-                //   then performSeek(time: 0, flags: 1).
+                // ⚑ GAP (L7 lane 16, I6): HEVC (0xad) with extradata_size < 30 first repairs extradata from one
+                //   read packet (NAL parse 0x101a0ce98/0x101a0c470, 0x101a0be50, hevcExtradata 0x101a0ba94),
+                //   then performSeek(time: 0, flags: 1). Blocked: 0x101a0be50 exists only as a local func
+                //   inside KSOptions makeDecode, and 0x101a0ce98/0x101a0c470 are two Forward functions folded
+                //   into one parseNALUnits(data:size:codecID:) stub — no callee decl with a matching signature.
                 avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
                 // 0x101a19338 = MediaPlayerTrack.codecs specialized for FFmpegAssetTrack; byte-swapped, nil → 0.
                 stream.pointee.codecpar.pointee.codec_tag = track.codecs?.bigEndian ?? 0
             } else if track.mediaType == .subtitle {
-                // ⚑ DEFERRED: codecID = MOV_TEXT (0x17005) when the static array contains formatName, else
-                //   WEBVTT (0x17012) for "hls"; codec_id != codecID → SubtitleTranscodeContext arm.
+                // ⚑ GAP (L7 lane 16, I6): codecID = MOV_TEXT (0x17005) when ["mp4", "mov"] contains formatName,
+                //   else WEBVTT (0x17012, 0x101a1e000) for "hls"; codec_id != codecID → SubtitleTranscodeContext
+                //   arm: createContext(options:) (0x101a07dc8 @0x101a1e0b0) + the encoder builder 0x101a08a94
+                //   (@0x101a1e0c4, no decl in this tree) + accessor 0x101a1f2a4. Blocked on 0x101a08a94.
                 avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
             }
         }

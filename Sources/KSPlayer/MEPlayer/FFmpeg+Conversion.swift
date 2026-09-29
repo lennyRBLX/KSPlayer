@@ -15,6 +15,7 @@ import AVFoundation   // AVMediaType — the p8 slot's type, read from the binar
 import FFmpegKit
 import Libavcodec
 import Libavformat
+import Libswresample
 
 // ── FFmpegAssetTrack members Forward emits inside this file (#fileID contiguity) ─────────────
 // Order: Forward __text order — transcode(packet:) 0x101a1ae90, stop() 0x101a1be30.
@@ -178,65 +179,202 @@ public final class BSFTranscodeContext: TranscodeProtocol {  // `final` not bina
 
 }
 
-//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio, STRUCTURE-ONLY).
+//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio).
 //  Forward type (binary-confirmed name). TranscodeProtocol conformer for the AUDIO re-encode path.
-//  Built by the re-encode driver FUN_101a1d014 (P3-owner) — OFF the remux→segments (M3) path and OFF
-//  the P3 DV-decode path (P18 triage). Its witness bodies are the deep swr/fifo audio re-encode engine
-//  → DEFERRED (cardinal: structure faithful now; the engine is reconstructed with its behavioral test in
-//  the owner phase, NOT invented here). Descriptor 0x1039ef050 / accessor 0x101a1f284; vtable-empty
-//  (real methods in the TranscodeProtocol witness table). 9 stored fields (reflection-authoritative).
+//  Built by FFmpegUtility.write()'s audio arm (0x101a1d014 family). Descriptor 0x1039ef050 / accessor
+//  0x101a1f284; vtable-empty (real methods in the TranscodeProtocol witness table). 9 stored fields
+//  (reflection-authoritative). Witness bodies reconstructed in L7 lane 16 (I6) from 0x101a1c02c..0x101a1cc2c.
 public final class AudioTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (M2 verifies)
     // Field types: field-record concrete where resolvable; ⚑ = symref/§7-walled → name-inference-flagged.
     let decodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
     let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
-    var decodedFrame:  UnsafeMutablePointer<AVFrame>? = nil      // field-record concrete (optional)
+    // ⚑ L7 lane 16: Forward init 0x101a1c068-0x101a1c06c — av_frame_alloc() (0x103240100) is the FIRST
+    //   store (`str x0,[self,#0x20]`), before either context exists → a field default, not an init statement.
+    var decodedFrame:  UnsafeMutablePointer<AVFrame>? = av_frame_alloc()  // field-record concrete (optional)
     // ⚑[tool=field_surface ref=AudioTranscodeContext.fifo,pts result=forward OpaquePointer (non-optional), Int64]
     var fifo:          OpaquePointer                             // AVAudioFifo*; Forward init 0x101a1c104 `str x0,[self,#0x28]` after a cbz→brk unwrap
     var pts:           Int64 = 0                                 // Forward init 0x101a1c070 `stp xzr,xzr,[self,#0x30]` (pts, swrContext)
     var swrContext:    OpaquePointer? = nil                      // ⚑ SwrContext* (opaque; codebase typealiases SwrContext=OpaquePointer)
-    var channel:       AVChannelLayout = AVChannelLayout()       // field-record concrete
-    var sampleFormat:  AVSampleFormat = AVSampleFormat(rawValue: -1)  // field-record concrete (AV_SAMPLE_FMT_NONE)
-    var sampleRate:    Int32 = 0                                 // ⚑ symref-walled; FFmpeg sample_rate is `int`(32) + siblings are FFmpeg-typed → Int32. l2_field_gate's `Int?` is an UNSCOPED property-symbol (another class's sampleRate) — adjudicated noise.
+    // ⚑ L7 lane 16: channel/sampleFormat/sampleRate have NO default store in Forward's init (0x101a1c02c):
+    //   their only writes are the decode-context copies at 0x101a1c108-0x101a1c12c → no initial values here.
+    var channel:       AVChannelLayout                           // field-record concrete
+    var sampleFormat:  AVSampleFormat                            // field-record concrete
+    var sampleRate:    Int32                                     // ⚑ symref-walled; FFmpeg sample_rate is `int`(32) + siblings are FFmpeg-typed → Int32. l2_field_gate's `Int?` is an UNSCOPED property-symbol (another class's sampleRate) — adjudicated noise.
 
-    // init: vtable-empty class, devirt init (slot 0, no readable body) → minimal inferred init taking the
-    // two non-optional codec contexts. Real signature unrecoverable → P3/owner refines. ⚑ inferred.
+    // ⚑ GAP (L7 lane 16, I6): Forward's init 0x101a1c02c is `(codecpar pointer x0, codecID x1) throws`:
+    //   decodeContext = try codecpar.createContext(options: nil) (0x101a07dc8, x0=nil, x20=codecpar), then
+    //   encodeContext = try <0x101a08a94>(codecID) — an AVCodecParameters encoder-context builder with NO
+    //   decl in this tree (its Forward range belongs to AVFFmpegExtension.swift, not this file) → not invented.
+    //   A throw from either lands in swift_deallocPartialClassInstance(self, meta, 0x60, 7) (0x101a1c0a8).
+    //   The signature below stays the inferred placeholder; everything AFTER the two contexts is Forward's.
     public init(decodeContext: UnsafeMutablePointer<AVCodecContext>,
                 encodeContext: UnsafeMutablePointer<AVCodecContext>) {
         self.decodeContext = decodeContext
         self.encodeContext = encodeContext
         // Forward init 0x101a1c0ec-0x101a1c104: av_audio_fifo_alloc(encode +0x15c sample_fmt,
-        // +0x164 ch_layout.nb_channels, +0x178 frame_size)!. The rest of that init (decoder/encoder
-        // construction via 0x101a07dc8 / 0x101a08a94, channel/format/rate copy, swr setup 0x101a1c198)
-        // is its own unit.
+        // +0x164 ch_layout.nb_channels, +0x178 frame_size)!.
         fifo = av_audio_fifo_alloc(encodeContext.pointee.sample_fmt, encodeContext.pointee.ch_layout.nb_channels, encodeContext.pointee.frame_size)!
+        // ⚑ L7 lane 16: 0x101a1c108-0x101a1c12c — `ldp x8,x9,[self,#0x10]` reloads both contexts FROM SELF
+        //   (hence `self.`), then copies decode ch_layout (+0x160, 24 B) → +0x40, sample_fmt (+0x15c) → +0x58,
+        //   sample_rate (+0x158) → +0x5c.
+        channel = self.decodeContext.pointee.ch_layout
+        sampleFormat = self.decodeContext.pointee.sample_fmt
+        sampleRate = self.decodeContext.pointee.sample_rate
+        // ⚑ L7 lane 16: 0x101a1c130-0x101a1c17c — ALL six operands are loaded before the single
+        //   av_channel_layout_compare (0x103237220) call, then fmt (w24/w25) and rate (w20/w23) are compared
+        //   in that order → a 3-tuple `!=` (a short-circuit `||` would load fmt/rate after the opaque C call,
+        //   as transcode 0x101a1c2ec does). The lhs rate is w20 — the value just stored to +0x5c, not reloaded
+        //   (the lhs fmt IS reloaded from decode+0x15c after the +0x58 store) → lhs rate = self.sampleRate.
+        //   Any difference → setupSwrContext() (0x101a1c184).
+        if (self.decodeContext.pointee.ch_layout, self.decodeContext.pointee.sample_fmt, sampleRate)
+            != (self.encodeContext.pointee.ch_layout, self.encodeContext.pointee.sample_fmt, self.encodeContext.pointee.sample_rate) {
+            setupSwrContext()
+        }
     }
 
-    // ── TranscodeProtocol conformance — re-encode WITNESS bodies STRUCTURE-ONLY (DEFERRED, not invented) ──
-    // The real witness methods live in the TranscodeProtocol witness table; they are the deep swr/fifo audio
-    // re-encode engine, off the M3/P3 path → reconstruct in the owner phase with a re-encode behavioral test.
+    // ⚑ L7 lane 16: 0x101a1c198 — own (non-inlined) function, x20 = self, called from init (0x101a1c184)
+    //   and transcode (0x101a1c310). Loads decode/encode fmt+rate first, then modify-access (0x21) on
+    //   swrContext (+0x38) around swr_alloc_set_opts2 (0x103288ad4; out = encode, in = decode, log 0/nil).
+    //   `cbnz w19` skips on a non-zero result; else swr_init (0x1034499dc, swrContext read unaccessed)
+    //   and on `< 0` a second modify access around swr_free(&swrContext) (0x10344997c).
+    private final func setupSwrContext() { // INFERRED
+        let result = swr_alloc_set_opts2(&swrContext, &encodeContext.pointee.ch_layout, encodeContext.pointee.sample_fmt, encodeContext.pointee.sample_rate, &decodeContext.pointee.ch_layout, decodeContext.pointee.sample_fmt, decodeContext.pointee.sample_rate, 0, nil)
+        if result == 0, swr_init(swrContext) < 0 {
+            swr_free(&swrContext)
+        }
+    }
+
+    // ⚑ L7 lane 16: 0x101a1c990 — own function (x0 frameSize, x1 output, x2/x3 completion, x20 self);
+    //   called out-of-line by the drain witness 0x101a1cc00 with frameSize 1 and INLINED into transcode
+    //   (0x101a1c6ac-0x101a1c7b8, frameSize = encode +0x178). ret starts 0 (0x101a1c9e4); loop while
+    //   av_audio_fifo_size (0x10322e64c) >= frameSize; frameSize 1 re-reads the fifo size (0x101a1c9f8);
+    //   av_frame_alloc nil → break (0x101a1ca14); fills nb_samples/format/ch_layout/sample_rate from the
+    //   encoder; av_frame_get_buffer(frame, 0) (0x103240344) or av_audio_fifo_read (0x10322e654, the frame
+    //   pointer itself = &frame.data) < 0 → av_frame_free + break (0x101a1cad0); nb_samples = read count,
+    //   pts = self.pts, self.pts += count (`adds … b.vs` trap); avcodec_send_frame (0x102a64b44) result is
+    //   held across av_frame_free(&frame) (0x1032401a0); only a >= 0 send drains avcodec_receive_packet
+    //   (0x102a6506c) == 0 → output.pos = -1, ret = completion(output).
+    private final func encodeFrames(frameSize: Int32, output: UnsafeMutablePointer<AVPacket>, completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 { // INFERRED
+        var ret: Int32 = 0
+        while av_audio_fifo_size(fifo) >= frameSize {
+            let size = frameSize == 1 ? av_audio_fifo_size(fifo) : frameSize
+            var frame = av_frame_alloc()
+            guard let outFrame = frame else {
+                break
+            }
+            outFrame.pointee.nb_samples = size
+            outFrame.pointee.format = encodeContext.pointee.sample_fmt.rawValue
+            outFrame.pointee.ch_layout = encodeContext.pointee.ch_layout
+            outFrame.pointee.sample_rate = encodeContext.pointee.sample_rate
+            if av_frame_get_buffer(outFrame, 0) < 0 {
+                av_frame_free(&frame)
+                break
+            }
+            // ⚑ L7 lane 16: x1 = the AVFrame pointer itself (data is at +0x0) — a pointer cast, not an array.
+            let samples = av_audio_fifo_read(fifo, UnsafeMutableRawPointer(outFrame).assumingMemoryBound(to: UnsafeMutableRawPointer?.self), size)
+            if samples < 0 {
+                av_frame_free(&frame)
+                break
+            }
+            outFrame.pointee.nb_samples = samples
+            outFrame.pointee.pts = pts
+            pts += Int64(samples)
+            let result = avcodec_send_frame(encodeContext, outFrame)
+            av_frame_free(&frame)
+            if result >= 0 {
+                while avcodec_receive_packet(encodeContext, output) == 0 {
+                    output.pointee.pos = -1
+                    ret = completion(output)
+                }
+            }
+        }
+        return ret
+    }
+
+    // req1 — ⚑ L7 lane 16: 0x101a1c260 (witness thunk 0x101a1cbe0 `ldr x20,[x20]`).
+    //   avcodec_send_packet (0x102a1a424) < 0 → return it. Short-circuit layout / fmt / rate compare against
+    //   the cached fields (0x101a1c2dc-0x101a1c308) → setupSwrContext() then re-cache (0x101a1c314-0x101a1c330).
+    //   Read accesses on decodedFrame/swrContext are hoisted out of the receive loop (0x101a1c334/0x101a1c348).
+    //   Nil decodedFrame → re-test receive (0x101a1c378: `continue`). Swr path (0x101a1c398-0x101a1c6a0):
+    //   linesize via av_samples_get_buffer_size(&linesize, enc nb_channels, nb_samples, enc fmt, 1)
+    //   (0x10325c4c0, result unused); a range map of per-channel UInt8 allocations (reserve 0x1019afcf0 +
+    //   swift_slowAlloc(linesize, -1)); swr_get_out_samples (0x10328a524); the 8-way data tuple map
+    //   (0x1019afcc4 reserve 8 + 8 unrolled appends); swr_convert (0x103289134) with both array bases;
+    //   an UnsafeMutablePointer<UnsafeMutableRawPointer?> of outData.count (`lsr #60` check + slowAlloc) filled
+    //   element-wise (vectorized copy, alias check 0x101a1c624); av_audio_fifo_write (0x10322e548); then the
+    //   optional per-channel deallocs (0x101a1c7c4), the data dealloc (0x101a1c694). Non-swr path
+    //   (0x101a1c460): fifo_write(fifo, <frame ptr>, nb_samples). Then av_frame_unref (0x1032401d4) and
+    //   the inlined encodeFrames(frameSize: encode +0x178).
     public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
                           output: UnsafeMutablePointer<AVPacket>,
                           completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
-        // UNRESOLVED → re-encode engine (witness slot1 @0x101a1c260, 460 instr: swr_convert + AVAudioFifo
-        // buffering + encode). NOT reconstructed — structure-only scope.
-        return 0  // ⚑ UNRESOLVED stub value — req1 body not reconstructed
+        var ret = avcodec_send_packet(decodeContext, input)
+        if ret < 0 {
+            return ret
+        }
+        if decodeContext.pointee.ch_layout != channel || decodeContext.pointee.sample_fmt != sampleFormat || decodeContext.pointee.sample_rate != sampleRate {
+            setupSwrContext()
+            channel = decodeContext.pointee.ch_layout
+            sampleFormat = decodeContext.pointee.sample_fmt
+            sampleRate = decodeContext.pointee.sample_rate
+        }
+        while avcodec_receive_frame(decodeContext, decodedFrame) == 0 {
+            guard let decodedFrame else {
+                continue
+            }
+            if let swrContext {
+                var linesize = Int32(0)
+                let nbSamples = decodedFrame.pointee.nb_samples
+                _ = av_samples_get_buffer_size(&linesize, encodeContext.pointee.ch_layout.nb_channels, nbSamples, encodeContext.pointee.sample_fmt, 1)
+                let outData: [UnsafeMutablePointer<UInt8>?] = (0 ..< Int(encodeContext.pointee.ch_layout.nb_channels)).map { _ in
+                    UnsafeMutablePointer<UInt8>.allocate(capacity: Int(linesize))
+                }
+                let outSamples = swr_get_out_samples(swrContext, nbSamples)
+                let frameBuffer = Array(tuple: decodedFrame.pointee.data).map { UnsafePointer<UInt8>($0) }
+                let samples = swr_convert(swrContext, outData, outSamples, frameBuffer, nbSamples)
+                let data = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: outData.count)
+                for i in 0 ..< outData.count {
+                    data[i] = UnsafeMutableRawPointer(outData[i])
+                }
+                _ = av_audio_fifo_write(fifo, data, samples)
+                outData.forEach { $0?.deallocate() }
+                data.deallocate()
+            } else {
+                // ⚑ L7 lane 16: 0x101a1c460 — x1 = the AVFrame pointer itself (&frame.data), a pointer cast.
+                _ = av_audio_fifo_write(fifo, UnsafeMutableRawPointer(decodedFrame).assumingMemoryBound(to: UnsafeMutableRawPointer?.self), decodedFrame.pointee.nb_samples)
+            }
+            av_frame_unref(decodedFrame)
+            ret = encodeFrames(frameSize: encodeContext.pointee.frame_size, output: output, completion: completion)
+        }
+        return ret
     }
+
+    // req2 — ⚑ L7 lane 16: witness 0x101a1cc00 = `ldr x20,[x20]; mov w0,#1; bl 0x101a1c990` (drain the fifo
+    //   in whatever-is-left chunks).
     public func drain(_ output: UnsafeMutablePointer<AVPacket>,
                       completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
-        // UNRESOLVED → re-encode drain (witness slot2 @0x101a1c990, 99 instr). Structure-only.
-        return 0  // ⚑ UNRESOLVED stub value — real body is the 0x101a1c990(flush: 1, …) drain, not reconstructed
+        encodeFrames(frameSize: 1, output: output, completion: completion)
     }
+
+    // req3 — ⚑ L7 lane 16: 0x101a1cb1c. av_frame_free(&decodedFrame) under a modify access (0x21);
+    //   each context copied to a stack slot → avcodec_free_context (0x102d53ac8) (a `let` field cannot be
+    //   passed inout, so a local var copy); swr_free(&swrContext) under a modify access; av_audio_fifo_free
+    //   (0x10322e2f8).
     public func close() {
-        // UNRESOLVED → re-encode teardown (witness slot3 @0x101a1cb1c, 45 instr: swr_free/fifo_free/etc). Structure-only.
+        av_frame_free(&decodedFrame)
+        var decodeContext: UnsafeMutablePointer<AVCodecContext>? = self.decodeContext
+        avcodec_free_context(&decodeContext)
+        var encodeContext: UnsafeMutablePointer<AVCodecContext>? = self.encodeContext
+        avcodec_free_context(&encodeContext)
+        swr_free(&swrContext)
+        av_audio_fifo_free(fifo)
     }
 }
 
-//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio, STRUCTURE-ONLY).
+//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio).
 //  Forward type (binary-confirmed name). TranscodeProtocol conformer for the SUBTITLE re-encode path.
-//  Built by the re-encode driver FUN_101a1d014 (P3-owner) — OFF the remux→segments (M3) path. Witness
-//  bodies (decode→AVSubtitle→encode) DEFERRED (cardinal: structure faithful now, engine reconstructed in
-//  the owner phase — also the P4 subtitles owner). Descriptor 0x1039ef094 / accessor 0x101a1f2a4;
-//  vtable-empty (witness-table methods). 3 stored fields (reflection-authoritative, all concrete).
+//  Descriptor 0x1039ef094 / accessor 0x101a1f2a4; vtable-empty (witness-table methods). 3 stored fields
+//  (reflection-authoritative, all concrete). Witness bodies: L7 lane 16 (I6).
 public final class SubtitleTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (M2 verifies)
     let decodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
     let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
@@ -249,29 +387,52 @@ public final class SubtitleTranscodeContext: TranscodeProtocol {  // `final` not
         self.encodeContext = encodeContext
     }
 
-    // ── TranscodeProtocol conformance — re-encode WITNESS bodies STRUCTURE-ONLY (DEFERRED, not invented) ──
+    // req1 — ⚑ L7 lane 16: 0x101a1cc50 (witness thunk 0x101a1cda8). gotSubtitle = 0 on the stack;
+    //   avcodec_decode_subtitle2 (0x102a1a98c) under a MODIFY access (0x21) on subtitle (+0x20);
+    //   `< 0` or gotSubtitle == 0 → return ret. av_new_packet(output, 0x100000) (0x102d61a08, result
+    //   unused); data (+0x18) / size (+0x20) loaded BEFORE the READ access (0x20) for
+    //   avcodec_encode_subtitle (0x102a64918); `< 0` → return; av_shrink_packet(output, ret) (0x102d61ab8),
+    //   size = ret, then pts/dts/duration copied from input (+0x8/+0x10/+0x40) — pos is NOT stamped.
     public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
                           output: UnsafeMutablePointer<AVPacket>,
                           completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
-        // UNRESOLVED → subtitle re-encode (witness slot1 @0x101a1cc50, 82 instr: decode_subtitle→encode). Structure-only.
-        return 0  // ⚑ UNRESOLVED stub value — req1 body not reconstructed
+        var gotSubtitle: Int32 = 0
+        var ret = avcodec_decode_subtitle2(decodeContext, &subtitle, &gotSubtitle, input)
+        guard ret >= 0, gotSubtitle != 0 else {
+            return ret
+        }
+        _ = av_new_packet(output, 1024 * 1024)
+        ret = avcodec_encode_subtitle(encodeContext, output.pointee.data, output.pointee.size, &subtitle)
+        guard ret >= 0 else {
+            return ret
+        }
+        av_shrink_packet(output, ret)
+        output.pointee.size = ret
+        output.pointee.pts = input.pointee.pts
+        output.pointee.dts = input.pointee.dts
+        output.pointee.duration = input.pointee.duration
+        return completion(output)
     }
     public func drain(_ output: UnsafeMutablePointer<AVPacket>,
                       completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
-        // UNRESOLVED → re-encode drain (req2 — shared/trivial witness). Structure-only.
         return 0  // req2 = shared ICF fold 0x10002dab0 (`mov w0,#0; ret`)
     }
+    // req3 — ⚑ L7 lane 16: witness 0x101a1cdc8 tail-calls the merged body 0x101a1cf7c with x2 = avsubtitle_free
+    //   (0x10294d330): modify access (0x21) on +0x20 → free(&field); then both contexts via stack copies →
+    //   avcodec_free_context (0x102d53ac8). VideoTranscodeContext.close() is the same body with av_frame_free.
     public func close() {
-        // UNRESOLVED → re-encode teardown (witness slot3 @0x101a1cdc8, 19 instr). Structure-only.
+        avsubtitle_free(&subtitle)
+        var decodeContext: UnsafeMutablePointer<AVCodecContext>? = self.decodeContext
+        avcodec_free_context(&decodeContext)
+        var encodeContext: UnsafeMutablePointer<AVCodecContext>? = self.encodeContext
+        avcodec_free_context(&encodeContext)
     }
 }
 
-//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio, STRUCTURE-ONLY).
+//  Forward 1.3.17 reconstruction — P2 remux cluster (re-encode trio).
 //  Forward type (binary-confirmed name). TranscodeProtocol conformer for the VIDEO re-encode path.
-//  Built by the re-encode driver FUN_101a1d014 (P3-owner) — OFF the remux→segments (M3) path. Witness
-//  bodies (decode→encode re-encode) DEFERRED (cardinal: structure faithful now, engine reconstructed in
-//  the owner phase). Descriptor 0x1039ef0d8 / accessor 0x101a1f2c4; vtable-empty (witness-table methods).
-//  3 stored fields (reflection-authoritative, all field-record concrete).
+//  Descriptor 0x1039ef0d8 / accessor 0x101a1f2c4; vtable-empty (witness-table methods).
+//  3 stored fields (reflection-authoritative, all field-record concrete). Witness bodies: L7 lane 16 (I6).
 public final class VideoTranscodeContext: TranscodeProtocol {  // `final` not binary-pinned (M2 verifies)
     let decodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
     let encodeContext: UnsafeMutablePointer<AVCodecContext>      // field-record concrete
@@ -284,20 +445,42 @@ public final class VideoTranscodeContext: TranscodeProtocol {  // `final` not bi
         self.encodeContext = encodeContext
     }
 
-    // ── TranscodeProtocol conformance — re-encode WITNESS bodies STRUCTURE-ONLY (DEFERRED, not invented) ──
+    // req1 — ⚑ L7 lane 16: 0x101a1ce14 (witness thunk 0x101a1cf10). avcodec_send_packet (0x102a1a424)
+    //   < 0 → return it; read access (flags 0) on decodedFrame hoisted (0x101a1ce5c); while
+    //   avcodec_receive_frame (0x10294dba0) == 0: avcodec_send_frame (0x102a64b44) with the optional frame
+    //   (no nil test), av_frame_unref (0x1032401d4) BEFORE the result test, then a >= 0 send drains
+    //   avcodec_receive_packet (0x102a6506c) == 0 → output.pos = -1, ret = completion(output).
     public func transcode(_ input: UnsafeMutablePointer<AVPacket>,
                           output: UnsafeMutablePointer<AVPacket>,
                           completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
-        // UNRESOLVED → video re-encode (witness slot1 @0x101a1ce14, 59 instr: decode→encode). Structure-only.
-        return 0  // ⚑ UNRESOLVED stub value — req1 body not reconstructed
+        var ret = avcodec_send_packet(decodeContext, input)
+        if ret < 0 {
+            return ret
+        }
+        while avcodec_receive_frame(decodeContext, decodedFrame) == 0 {
+            let result = avcodec_send_frame(encodeContext, decodedFrame)
+            av_frame_unref(decodedFrame)
+            if result >= 0 {
+                while avcodec_receive_packet(encodeContext, output) == 0 {
+                    output.pointee.pos = -1
+                    ret = completion(output)
+                }
+            }
+        }
+        return ret
     }
     public func drain(_ output: UnsafeMutablePointer<AVPacket>,
                       completion: (UnsafeMutablePointer<AVPacket>) -> Int32) -> Int32 {
-        // UNRESOLVED → re-encode drain (req2 — shared/trivial witness, no distinct VTC slot). Structure-only.
         return 0  // req2 = shared ICF fold 0x10002dab0 (`mov w0,#0; ret`)
     }
+    // req3 — ⚑ L7 lane 16: witness 0x101a1cf30 tail-calls the merged body 0x101a1cf7c with x2 = av_frame_free
+    //   (0x1032401a0) — same shape as SubtitleTranscodeContext.close().
     public func close() {
-        // UNRESOLVED → re-encode teardown (witness slot3 @0x101a1cf30, 19 instr). Structure-only.
+        av_frame_free(&decodedFrame)
+        var decodeContext: UnsafeMutablePointer<AVCodecContext>? = self.decodeContext
+        avcodec_free_context(&decodeContext)
+        var encodeContext: UnsafeMutablePointer<AVCodecContext>? = self.encodeContext
+        avcodec_free_context(&encodeContext)
     }
 }
 
