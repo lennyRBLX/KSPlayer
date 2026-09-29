@@ -117,14 +117,15 @@ final actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubt
         self.fontsDir = fontsDir
         self.header = header
         basicFontSize = Int(KSOptions.subtitleFontSize)
-        for line in header.components(separatedBy: "\n") {
-            if line.hasPrefix("Style: Default") {
-                let parts = line.components(separatedBy: ",")
-                if parts.count > 2, let fontSize = Int(parts[2]), fontSize > 0 {
-                    basicFontSize = fontSize
-                    self.header = Self.rewriteHeader(basicFontSize: fontSize, header: header)
-                }
-                break
+        // L7 b5: `first(where:)`, not a `for … { if hasPrefix { …; break } }` loop — Forward places the inlined
+        //   Int(String) digit loops mid-body (cmp #'+' at insn 165/194, traps at 330); the for/break spelling sinks
+        //   them past the renderer tail (probe: 166/238, traps 371). Probe of this spelling: same layout, masked 0.94
+        //   (residue = reloc offsets + the real AssImageRenderer alloc path).
+        if let line = header.components(separatedBy: "\n").first(where: { $0.hasPrefix("Style: Default") }) {
+            let parts = line.components(separatedBy: ",")
+            if parts.count > 2, let fontSize = Int(parts[2]), fontSize > 0 {
+                basicFontSize = fontSize
+                self.header = Self.rewriteHeader(basicFontSize: fontSize, header: header)
             }
         }
         if let fontsDir {
@@ -202,10 +203,10 @@ final actor AssIncrementImageRenderer: KSSubtitleProtocol { // §8.5-gap: KSSubt
 
     // ⚑[tool=member_surface ref=AssIncrementImageRenderer.search(with:) result=Forward sync (no Ya); body has no swift_task_* call]
     // Forward 0x101a937c4 (mangled `…search4with…tF`, no Ya) is actor-isolated sync: the async witness 0x101a944ec hops
-    //   to the actor, then `currentRenderer().search(with: query)` (0x101a93800 → 0x101a93b14). KEPT nonisolated `[]`:
-    //   the isolated form fails Swift 6 (non-Sendable KSSubtitleQuery / [SubtitlePart] across the protocol requirement)
-    //   → GAP until those types are Sendable.
-    nonisolated func search(with _: KSSubtitleQuery) -> [SubtitlePart] { [] }
+    //   to the actor, then `currentRenderer().search(with: query)` (0x101a93800 → 0x101a93b14, release of the renderer).
+    func search(with query: KSSubtitleQuery) -> [SubtitlePart] {
+        currentRenderer().search(with: query)
+    }
 }
 
 // AssImageRenderer @0x1039f1584 — Forward 1.3.17. vtable 3, 7 stored fields (reflection-authoritative:

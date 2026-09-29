@@ -329,7 +329,9 @@ extension NSAttributedString {
 // Conformances carried from the recon (reverse-walk confirms NumericComparable; the 4 stdlib ones are
 // GOT-indirect-blind but xref-count-corroborated — ~5 conformance descriptors). The Comparable +
 // NumericComparable extensions (below, unchanged) use only start/end → they transfer faithfully.
-public struct SubtitlePart: CustomStringConvertible, Identifiable {
+// Sendable (marker, no binary record): [SubtitlePart] crosses the actor-isolated sync witness
+//   AssIncrementImageRenderer.search(with:) 0x101a937c4 in Forward (Swift 6 mode). NSAttributedString payload → unchecked.
+public struct SubtitlePart: CustomStringConvertible, Identifiable, @unchecked Sendable {
     public let start: Double
     public var end: Double
 
@@ -342,12 +344,15 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
     /// second — i.e. `String.isEmpty`, not a pointer-null test. The `.left` arm returns `false`,
     /// which is the `?? false` below rather than a `true` default.
     ///
-    /// ⚑ The binary inlines the discriminator test here rather than calling `text`'s getter, but
-    ///   that does NOT decide the spelling: `text?.string.isEmpty ?? false` and a repeated
-    ///   `if case .right` compile to the same code once `text` is inlined. Written in terms of
-    ///   `text` because that member is right here; the alternative is indistinguishable.
+    /// ⚑ L7 b5: the spelling IS distinguishable. Forward 0x101abacac (38 insns, 0xc0 frame) keeps the
+    ///   outlined copy/destroy of the part (0x1019e75f0 / 0x1019e762c) around the `string` call; the
+    ///   optional-chain `text?.string.isEmpty ?? false` optimizes that copy away (30 insns). An `if let`
+    ///   binding of `text` keeps it (probe: 38 insns, same order).
     public var isEmpty: Bool {
-        text?.string.isEmpty ?? false
+        if let text {
+            return text.string.isEmpty
+        }
+        return false
     }
     public init(_ p0: Double, _ p1: Double, _ p2: String) {
         let string = p2.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "")
@@ -453,14 +458,16 @@ public struct SubtitlePart: CustomStringConvertible, Identifiable {
     /// `.left` path, which writes the same parameter to +0x80 (SubtitleImageInfo.styleRole) and
     /// re-stamps the tag at +0x81. Both payload structs carry a `styleRole`, which is what makes the
     /// two-arm form necessary here and impossible in the other two.
+    /// L7 b5: `if case .right … else if case .left`, not a `switch` — the switch hoists the +0x59/+0x5a/+0x80
+    /// loads above the tag test and merges the tail (0x210 frame); the if/else-if chain gives Forward's
+    /// 0x1f0 frame and per-arm stores (probe: instruction-identical modulo the outlined-destroy operands).
     public mutating func change(styleRole: SubtitleTextRole) {
-        switch render {
-        case .left(var info):
-            info.styleRole = styleRole
-            render = .left(info)
-        case .right(var info):
+        if case .right(var info) = render {
             info.styleRole = styleRole
             render = .right(info)
+        } else if case .left(var info) = render {
+            info.styleRole = styleRole
+            render = .left(info)
         }
     }
     public var render: Either<SubtitleImageInfo, SubtitleTextInfo>

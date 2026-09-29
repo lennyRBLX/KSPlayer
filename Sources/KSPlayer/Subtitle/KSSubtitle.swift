@@ -128,7 +128,10 @@ public enum SubtitleRenderMode: Int {
 
 // KSSubtitleQuery @0x1039f1884 — the SubtitleActor lookup key
 // ⚑[tool=field_surface ref=KSSubtitleQuery:fieldmd result=5 let]
-public struct KSSubtitleQuery {
+// Sendable (marker, no binary record): Forward (Swift 6 mode) passes it into the actor-isolated sync witness
+//   AssIncrementImageRenderer.search(with:) 0x101a937c4 (async witness 0x101a944ec hops then calls it).
+//   TextPosition / SubtitleTextRole are not Sendable here → unchecked.
+public struct KSSubtitleQuery: @unchecked Sendable {
     public let time: Double
     public let size: CGSize
     public let verticalAlign: VerticalAlignment?   // ⚑ SwiftUI VerticalAlignment (recon TextPosition survives it)

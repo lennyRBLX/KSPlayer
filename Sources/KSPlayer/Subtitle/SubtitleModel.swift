@@ -917,10 +917,12 @@ public actor SubtitleActor: KSSubtitleProtocol {
             if result.isEmpty {
                 // no fresh parts — the display set is the existing parts active at query.time (0x101ab9380)
                 result = parts.filter { $0.start <= query.time && query.time < $0.end }
-            } else {
+            } else if result.allSatisfy({ !$0.isEmpty && $0.render.left == nil }) {
+                // 898c non-empty pre-pass (0x101ab9024): walks `result` in order; a `.right` part whose
+                //   text.string is empty (tag +0x81 == 1, count 0 → `b` 0x101ab9530) or a `.left` part (image
+                //   Optional tag @+0x70 != 2 → 0x101ab9530) commits `result` as-is. Only an all-non-empty-text
+                //   result reaches the merge below.
                 // merge still-active existing parts not already present, dedup by (start,end) (0x101ab9284).
-                // ⚑ the 898c non-empty pre-pass (0x101ab9024) builds a discarded scratch + short-circuits to
-                //   commit when a result part has empty text.string — that edge case is not modeled here.
                 for part in parts where part.start <= query.time && query.time < part.end && part.end != .infinity {
                     if !result.contains(where: { $0.start == part.start && $0.end == part.end }) {
                         result.append(part)
