@@ -2,7 +2,7 @@
 import XCTest
 
 class SubtitleTest: XCTestCase {
-    func testSrt() {
+    func testSrt() throws {
         let string = """
         1
         00:00:00,050 --> 00:00:11,000
@@ -53,12 +53,13 @@ class SubtitleTest: XCTestCase {
         let scanner = Scanner(string: string)
         let parse = SrtParse()
         XCTAssertEqual(parse.canParse(scanner: scanner), true)
-        let parts = parse.parse(scanner: scanner)
+        // parse(url:scanner:) returns the merged parts as KSSubtitleProtocol; url is unused.
+        let parts = try XCTUnwrap(parse.parse(url: URL(fileURLWithPath: "/"), scanner: scanner) as? [SubtitlePart])
         XCTAssertEqual(parts.count, 9)
         XCTAssertEqual(parts[8].end, 3601.14)
     }
 
-    func testVtt() {
+    func testVtt() throws {
         let string = """
         WEBVTT
         1
@@ -96,7 +97,8 @@ class SubtitleTest: XCTestCase {
         let scanner = Scanner(string: string)
         let parse = VTTParse()
         XCTAssertEqual(parse.canParse(scanner: scanner), true)
-        let parts = parse.parse(scanner: scanner)
+        // parse(url:scanner:) returns the merged parts as KSSubtitleProtocol; url is unused.
+        let parts = try XCTUnwrap(parse.parse(url: URL(fileURLWithPath: "/"), scanner: scanner) as? [SubtitlePart])
         XCTAssertEqual(parts.count, 7)
     }
 }
