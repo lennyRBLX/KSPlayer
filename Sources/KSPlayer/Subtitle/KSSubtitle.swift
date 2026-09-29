@@ -141,6 +141,18 @@ public struct KSSubtitleQuery {
     public let verticalAlign: VerticalAlignment?   // ⚑ SwiftUI VerticalAlignment (recon TextPosition survives it)
     public let textPosition: TextPosition?
     public let textRole: SubtitleTextRole
+
+    // ⚑ init 0x101aa24e8 (23 instr), trie-exported `…textRole…tcfC` = public (the implicit memberwise init
+    //   would be internal). Body: `ldrb [textPosition,#0x28]` / `cmp #1` — when textPosition is non-nil its
+    //   first word (TextPosition.verticalAlign) replaces the verticalAlign argument (`mov w1,#0` = .some),
+    //   then the five fields are stored in declaration order.
+    public init(time: Double, size: CGSize, verticalAlign: VerticalAlignment?, textPosition: TextPosition?, textRole: SubtitleTextRole) {
+        self.time = time
+        self.size = size
+        self.verticalAlign = textPosition?.verticalAlign ?? verticalAlign
+        self.textPosition = textPosition
+        self.textRole = textRole
+    }
 }
 
 public protocol AudioRecognize: SubtitleInfo {

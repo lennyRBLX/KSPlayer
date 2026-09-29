@@ -869,7 +869,13 @@ extension AbstractAVIOContext: DownloadProtocol {}
 // fabricated method here.
 // ⚑[tool=conformance_walker ref=KSPlayer.Drawable:0x1039eda20 result=requirement-names-irreducible]
 public protocol Drawable {
-    // 2 instance Method requirements IRREDUCIBLE — see above.
+    // 2 instance Method requirements, left undeclared. The L7 lane 10 walk of __swift5_proto names
+    // them: all three witness tables (CAMetalLayer 0x1041d9e70, TextureResource 0x1041d9ea0,
+    // DrawableQueue 0x1041d9ed0) forward +0x8 to each conformer's exported
+    // `draw(frame: VideoVTBFrame, display: DisplayEnum, pipeline: VideoPipeline?)` and +0x10 to its
+    // exported `clear()` (DrawableQueue's is the ICF'd `ret` 0x10000e52c). They are held back because
+    // the source's CAMetalLayer witnesses (MetalRender.swift) are internal, and a public protocol's
+    // witnesses on an open class must be public, so declaring them here would fail the build.
 }
 
 //  Reconstructed binary-faithful from Forward 1.3.17 (KSPlayer module).
@@ -1317,7 +1323,19 @@ public struct KSClock {
 // conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (MediaPlayerProtocol.swift..AudioPlayerView.swift).
 // ⚑[tool=type_surface ref=KSDrawable:0x1039ed9f8 result=protocol KSDrawable]
 // Exported (`$s8KSPlayer10KSDrawableMp` / `TL` in the export trie) → public.
-public protocol KSDrawable {}
+// Requirements read off the sole Forward conformance, RealityKit.TextureResource.Drawable : KSDrawable
+// (__swift5_proto record 0x10356c4e8, witness table 0x1041d9e58; trie `...DrawableC8KSPlayer10KSDrawableAFWP`):
+//   +0x8  getter 0x101a84ac0 — `ldr x20,[x20]` then calls the RealityKit dispatch thunk
+//         `TextureResource.Drawable.texture.getter : any MTLTexture` (stub 0x103452c38): a native witness.
+//   +0x10 method 0x101a84ae0 — x0 = the command buffer; `MTLCommandBuffer.present(_: TextureResource.Drawable)`
+//         (stub 0x1034581c4) then `commit`; same body as the exported extension method
+//         `(extension in KSPlayer):TextureResource.Drawable.present(commandBuffer:)` (0x101a84a8c).
+// No conformer in this source tree (the TextureResource.Drawable conformance is a MetalRender.swift gap).
+// ⚑[tool=witness_walk ref=KSDrawable:0x1041d9e58 result=2 requirements, names from witnesses]
+public protocol KSDrawable {
+    var texture: any MTLTexture { get } // INFERRED 0x101a84ac0
+    func present(commandBuffer: any MTLCommandBuffer) // INFERRED 0x101a84ae0
+}
 
 // PlayFileProtocol @0x1039edd00 — declaration shape read from the Forward context descriptor (kind, parent,
 // conformances, case names); members not reconstructed. Placement: gap_unique(inferred) (MediaPlayerProtocol.swift..AudioPlayerView.swift).

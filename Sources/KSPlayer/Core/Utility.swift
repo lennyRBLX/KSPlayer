@@ -82,84 +82,6 @@ public extension String {
     }
 }
 
-public extension UIColor {
-    convenience init?(assColor: String) {
-        var colorString = assColor
-        // 移除颜色字符串中的前缀 &H 和后缀 &
-        if colorString.hasPrefix("&H") {
-            colorString = String(colorString.dropFirst(2))
-        }
-        if colorString.hasSuffix("&") {
-            colorString = String(colorString.dropLast())
-        }
-        if let hex = Scanner(string: colorString).scanInt(representation: .hexadecimal) {
-            self.init(abgr: hex)
-        } else {
-            return nil
-        }
-    }
-    convenience public init(bgr: Int, alpha: CGFloat) {
-        let blue = CGFloat((bgr >> 16) & 0xFF)
-        let green = CGFloat((bgr >> 8) & 0xFF)
-        let red = CGFloat(bgr & 0xFF)
-        self.init(red: red / 255.0, green: green / 255.0, blue: blue / 255.0, alpha: alpha)
-    }
-    public var abgr: Int {
-        var red = CGFloat(0)
-        var green = CGFloat(0)
-        var blue = CGFloat(0)
-        var alpha = CGFloat(0)
-        getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        let r = Int(red * 255)
-        let g = Int(green * 255)
-        let b = Int(blue * 255)
-        let a = 0xFF - Int(alpha * 255)
-        return r | g << 8 | b << 16 | a << 24
-    }
-    public var assColor: String { String(format: "&H%08X", abgr) }
-    public var data: Data { try! NSKeyedArchiver.archivedData(withRootObject: self, requiringSecureCoding: false) }
-    convenience public init?(data: Data) {
-        guard let color = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data) else {
-            return nil
-        }
-        self.init(cgColor: color.cgColor)
-    }
-
-    convenience init(abgr hex: Int) {
-        let alpha = 1 - (CGFloat(hex >> 24 & 0xFF) / 255)
-        let blue = CGFloat((hex >> 16) & 0xFF)
-        let green = CGFloat((hex >> 8) & 0xFF)
-        let red = CGFloat(hex & 0xFF)
-        self.init(red: red / 255.0, green: green / 255.0, blue: blue / 255.0, alpha: alpha)
-    }
-
-    convenience init(rgb hex: Int, alpha: CGFloat = 1) {
-        let red = CGFloat((hex >> 16) & 0xFF)
-        let green = CGFloat((hex >> 8) & 0xFF)
-        let blue = CGFloat(hex & 0xFF)
-        self.init(red: red / 255.0, green: green / 255.0, blue: blue / 255.0, alpha: alpha)
-    }
-
-    func createImage(size: CGSize = CGSize(width: 1, height: 1)) -> UIImage {
-        #if canImport(UIKit)
-        let rect = CGRect(origin: .zero, size: size)
-        UIGraphicsBeginImageContext(rect.size)
-        let context = UIGraphicsGetCurrentContext()
-        context?.setFillColor(cgColor)
-        context?.fill(rect)
-        let image = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return image!
-        #else
-        let image = NSImage(size: size)
-        image.lockFocus()
-        drawSwatch(in: CGRect(origin: .zero, size: size))
-        image.unlockFocus()
-        return image
-        #endif
-    }
-}
-
 extension AVAsset {
     public func generateGIF(beginTime: TimeInterval, endTime: TimeInterval, interval: Double = 0.2, savePath: URL, progress: @escaping (Double) -> Void, completion: @escaping @Sendable (Error?) -> Void) { // ⚑[tool=member_surface ref=AVAsset.generateGIF:0x1019e5948 result=completion Yb @Sendable; no swift_task_*/ScM call]
         let count = Int(ceil((endTime - beginTime) / interval))
@@ -485,8 +407,8 @@ extension Array {
 //      `$s8KSPlayer16DirectoryWatcherC10isWatchingSbvg` = DirectoryWatcher.isWatching.getter :
 //      Swift.Bool, one symbol at 0x101a04e10, not folded. The blanket "no symbols" claim came from
 //      a tool that cannot see that trie; re-check the other slots against it before trusting them.
-//    - Slot 8 is UNRESOLVED (null descriptor address) — declared as nothing.
-// UNRESOLVED slot 8 @descriptor 0x1039ee53c — devirtualized; follow-callees later.
+//    - Slot 8 (descriptor 0x1039ee5b0, Impl dead-stripped) is the method the event-handler Tasks
+//      call; its inlined body is `source = nil` (0x101a05698..0x101a056a4). Name INFERRED.
 /// Watches an HLS-segment directory (or a not-yet-existing file's container)
 /// via a `DispatchSource` file-system-object source, firing a caller-supplied
 /// handler on `.write` / `.delete` events.
@@ -503,7 +425,9 @@ public actor DirectoryWatcher {
     // `DispatchSource.makeFileSystemObjectSource(...)` in slots 5/6, whose static
     // return type is `any DispatchSourceFileSystemObject` → declared as such.
     // (Accessors = vtable slots 0–2, synthesized by this stored `var`.)
-    var source: DispatchSourceFileSystemObject?   // @ +0x70
+    // private: Forward pfi `source05_51A3…LL…vpfi` carries this file's private discriminator
+    // _51A3A3F37FF8E3161AF3B4630C320057 = MD5("KSPlayer" + "Utility.swift").
+    private var source: DispatchSourceFileSystemObject?   // @ +0x70
 
     // MARK: idx3 slot15 @0x101a04e10 — isWatching (4 instr) · name RECOVERED, not inferred (s97)
     // ⚑[tool=export_trie_oracle ref=KSPlayer.DirectoryWatcher.isWatching:0x101a04e10 result=name-recovered]
@@ -553,15 +477,17 @@ public actor DirectoryWatcher {
 
         // setEventHandler — block @0x101a06254 forwards to the body @0x101a05464: weak-self load (return
         // when nil), NSFileManager `fileExistsAtPath:` passed straight to the completion, then close(fd).
-        // ⚑ writer_gap: the body then starts `Task { [weak self] in await self?.<slot 8>() }` (Task spec
-        //   0x101a03fd4, async fp 0x1035697f0) whose inlined callee does `source = nil` only — Forward vtable
-        //   slot 8 (unnamed, dead Impl) has no decl here, so that trailing Task is not written.
+        // The body then starts `Task { [weak self] in await self?.<slot 8>() }` (priority nil, fresh weak box
+        // of the strong self, Task spec 0x101a03fd4, async fp 0x1035697f0) whose inlined callee does
+        // `source = nil` only (0x101a05698).
         // ⚑[tool=bind_oracle ref=_OBJC_CLASS_$_NSFileManager:0x104410520 result=Foundation]
         source.setEventHandler { [weak self] in
             guard let self else { return }
             completion(FileManager.default.fileExists(atPath: fileURL.path))
             close(fd)
-            _ = self
+            Task { [weak self] in
+                await self?.removeSource()
+            }
         }
         // setCancelHandler — block @0x101a062b8 → 0x101a063ec: completion(false) then close(fd)
         // (context = completion fn/ctx + fd).
@@ -610,16 +536,17 @@ public actor DirectoryWatcher {
         // when nil), then `parent.appendingPathComponent(lastPathComponent)` + `fileExistsAtPath:`; only
         // the exists path calls completion(true) and close(fd). Context order: weak self, parent,
         // lastPathComponent, completion, fd.
-        // ⚑ writer_gap: the exists path then starts `Task { [weak self] in await self?.<slot 8>() }`
-        //   (Task spec 0x101a03fd4, async fp 0x1035697d8) whose inlined callee does `source = nil` only —
-        //   Forward vtable slot 8 (unnamed, dead Impl) has no decl here, so that Task is not written.
+        // The exists path then starts `Task { [weak self] in await self?.<slot 8>() }` (Task spec 0x101a03fd4,
+        // async fp 0x1035697d8) whose inlined callee does `source = nil` only.
         // ⚑[tool=bind_oracle ref=Foundation.URL.appendingPathComponent:0x104109a70 result=appendingPathComponent]
         source.setEventHandler { [weak self] in
             guard let self else { return }
             if FileManager.default.fileExists(atPath: parent.appendingPathComponent(lastPathComponent).path) {
                 completion(true)
                 close(fd)
-                _ = self
+                Task { [weak self] in
+                    await self?.removeSource()
+                }
             }
         }
         // setCancelHandler — block @0x101a07b58 is a thunk of 0x101a063ec (slot 5's cancel body):
@@ -644,6 +571,19 @@ public actor DirectoryWatcher {
     @used func cancel() {
         source?.cancel()                          // guarded cancel on the live source
         source = nil                              // *(self+0x70) = 0; release old
+    }
+
+    // MARK: slot 8 @descriptor 0x1039ee5b0 — Impl dead-stripped (VFE); only reached inlined from the
+    // watchModify/watchNew event-handler Tasks (async fp 0x1035697f0 / 0x1035697d8), whose body after the
+    // executor hop is: ldr x0,[self,#0x70]; str xzr,[self,#0x70]; release. Flags 0x10 = sync instance method.
+    func removeSource() { // INFERRED name — evidence: vtable slot 8 descriptor 0x1039ee5b0, inlined body 0x101a05698
+        source = nil
+    }
+
+    // Forward deinit 0x101a0641c / __deallocating_deinit 0x101a06488 (27 insns each): load +0x70; when
+    // non-nil retain, OS_dispatch_source.cancel(), release; then the field release + defaultActor_destroy.
+    deinit {
+        source?.cancel()
     }
 }
 
@@ -832,8 +772,8 @@ public extension Data {
                 }
             }
         } else if symbol.contains("[playlist]") {
-            // Forward 0x1019e8f2c: `return <scanner PLS parser @0x1019eefdc>()` — a 1045-insn Scanner method
-            // with no decl here (writer_gap); the entry list stays empty until that decl exists.
+            // Forward 0x1019e8f2c: `bl 0x1019eefdc` with x20 = scanner; its result is the return value.
+            entrys = scanner.parsePls()
         }
         return entrys
     }
@@ -892,6 +832,51 @@ extension Scanner {
             return (title ?? url.lastPathComponent, url, extinf)
         }
         return nil
+    }
+
+    /*
+     [playlist]
+     File1=http://example.com/stream.mp3
+     Title1=Example
+     Length1=-1
+     NumberOfEntries=1
+     Version=2
+     */
+    // Forward 0x1019eefdc (1045 insns, self = Scanner in x20), emitted right after parseM3U 0x1019ee3f0; sole
+    // caller Data.parsePlaylist 0x1019e8f2c ("[playlist]" arm). Keys are small-string literals "File", "Title",
+    // "Length", "NumberOfEntries", "Version", "=", "duration"; NumberOfEntries/Version exit the loop
+    // (0x1019effd0 -> 0x1019ef26c). The tail is urls.keys.sorted() (0x101673080 copy + 0x1019f0030 sort)
+    // then an inlined compactMap building Optional<(String, URL, [String: String])>.
+    func parsePls() -> [(String, URL, [String: String])] { // INFERRED name — evidence: Forward 0x1019eefdc
+        var urls = [Int: URL]()
+        var titles = [Int: String]()
+        var lengths = [Int: String]()
+        while !isAtEnd {
+            if scanString("File") != nil {
+                if let index = scanInt(), scanString("=") != nil, let value = scanUpToCharacters(from: .newlines), let url = URL(string: value) {
+                    urls[index] = url
+                }
+            } else if scanString("Title") != nil {
+                if let index = scanInt(), scanString("=") != nil, let value = scanUpToCharacters(from: .newlines) {
+                    titles[index] = value
+                }
+            } else if scanString("Length") != nil {
+                if let index = scanInt(), scanString("=") != nil, let value = scanUpToCharacters(from: .newlines) {
+                    lengths[index] = value
+                }
+            } else if scanString("NumberOfEntries") != nil || scanString("Version") != nil {
+                break
+            }
+        }
+        return urls.keys.sorted().compactMap { index in
+            guard let url = urls[index] else {
+                return nil
+            }
+            let title = titles[index]
+            var extinf = [String: String]()
+            extinf["duration"] = lengths[index]
+            return (title ?? url.lastPathComponent, url, extinf)
+        }
     }
 }
 
@@ -1179,25 +1164,24 @@ public extension Either {
 // ⚑[tool=type_surface ref=BitWriter:0x1039ee5b8 result=struct BitWriter]
 // ⚑[tool=field_surface ref=BitWriter:fieldmd result=2 var] Lazy owner (no build metadata); fields follow
 // Forward's record order, IsVar bits and resolved types.
+// bitPosition private + `= 0`: Forward pfi 0x10002d9d4 `bitPosition05_51A3…LLSivpfi` carries this file's
+// private discriminator _51A3A3F37FF8E3161AF3B4630C320057 = MD5("KSPlayer" + "Utility.swift").
 struct BitWriter {
     var data: [UInt8]
-    var bitPosition: Int
+    private var bitPosition: Int = 0
     init(size: Int) {
+        // Forward 0x101a064f4 (23 insns) builds only the zeroed buffer and returns bitPosition 0 in x1.
         data = [UInt8](repeating: 0, count: size)
-        bitPosition = 0
     }
-    func putBits(_ p0: UInt8, _ p1: Int) {
-        // Forward 0x101a06550 is `mutating` (inout self in x20); the decl is not, so the body runs on
-        // local copies until the decl gap (writer_gap: add `mutating`) is closed.
-        var data = data
-        var bitPosition = bitPosition
+    // mutating: Forward 0x101a06550 reads/writes self through x20 (data +0, bitPosition +8, stored once
+    // after the loop).
+    mutating func putBits(_ p0: UInt8, _ p1: Int) {
         for i in (0 ..< p1).reversed() {
             if (p0 >> i) & 1 == 1 {
                 data[bitPosition / 8] |= 0x80 >> (bitPosition % 8)
             }
             bitPosition += 1
         }
-        _ = (data, bitPosition)
     }
     func toData() -> Data {
         Data(data)
