@@ -174,7 +174,8 @@ final class ConversionToM3U8 {
 /// FUN_101b6fcf8 (args: track, tracks; no self). Display name = name, or description (0x101a1fd10) if the name is empty.
 /// If another track has the same display name, `" #" + trackID` is appended.
 /// ⚑ NAME INFERRED (no symbol).
-private func trackName(_ track: FFmpegAssetTrack, tracks: [FFmpegAssetTrack]) -> String {
+// L7: internal — ProAVPlayer 0x101b79024 calls it directly (bl 0x101b6fcf8 @0x101b79548).
+func trackName(_ track: FFmpegAssetTrack, tracks: [FFmpegAssetTrack]) -> String {
     let name = track.name.isEmpty ? track.description : track.name
     for other in tracks where other !== track {
         if (other.name.isEmpty ? other.description : other.name) == name {

@@ -25,8 +25,25 @@ public struct KSVideoPlayer {
         self.url = url
         self.options = options
     }
-    public init(playerLayer: KSPlayerLayer) { fatalError("L7: KSVideoPlayer.init — Forward body unread") }
-    public init?(coordinator: KSVideoPlayer.Coordinator) { fatalError("L7: KSVideoPlayer.init — Forward body unread") }
+    // L7: Forward 0x1019d6d98 calls the Coordinator init body 0x1019dd320 and reads the MainActor
+    // KSPlayerLayer's url/options synchronously with no swift_task_switch or executor check, so the
+    // init itself is MainActor-isolated.
+    @MainActor
+    public init(playerLayer: KSPlayerLayer) {
+        coordinator = Coordinator(playerLayer: playerLayer)
+        url = playerLayer.url
+        options = playerLayer.options
+    }
+
+    // L7: Forward 0x1019d6f0c: nil check on Coordinator.playerLayer (cbz → return nil), else the
+    // init(playerLayer:) body inlined (0x1019dd320, url, options, ObservedObject), no hop.
+    @MainActor
+    public init?(coordinator: KSVideoPlayer.Coordinator) {
+        guard let playerLayer = coordinator.playerLayer else {
+            return nil
+        }
+        self.init(playerLayer: playerLayer)
+    }
 }
 
 extension KSVideoPlayer: Equatable {
@@ -93,8 +110,12 @@ extension KSVideoPlayer: UIViewRepresentable {
     }
     #endif
 
+    // L7: Forward 0x1019d74a0 (updateUIView 0x1019d749c is a 1-insn merged thunk to it) keeps the
+    // view live: first `coordinator.playerLayer?` (ObservedObject storage self+8) vtable +0x288 =
+    // KSPlayerLayer.updateUIView(_:) with x0 = the view, then the context.coordinator URL check.
     @MainActor
-    private func updateView(_: UIView, context: Context) {
+    private func updateView(_ view: UIView, context: Context) {
+        coordinator.playerLayer?.updateUIView(view)
         if context.coordinator.playerLayer?.url != url {
             _ = context.coordinator.makeView(url: url, options: options)
         }
@@ -137,8 +158,34 @@ extension KSVideoPlayer: UIViewRepresentable {
         // ⚑ BINARY HAS THIS, SOURCE DID NOT — field record 4, `Published<Bool>`, with a complete
         //   public accessor set plus the `$isRecord` projected value. Default false is proven: its
         //   `vpfi` @0x10002dab0 is `mov w0,#0`, ICF-folded with `_isMuted`/`_isScaleAspectFill`/`_state`.
+        // L7: didSet body Forward 0x1019d8d28 (called by the setter 0x1019d9488 and modify with the
+        // old value): `==` old → exit; false arm → player witness +0x70 stopRecord(); true arm →
+        // swift_once KSOptions.recordDir, optional check, playerLayer check, fileExists/createDirectory
+        // (willThrow + errorRelease = try?), fileExists again, pathExtension "m3u8"/isEmpty → "ts",
+        // Date().description + "." + ext, appendingPathComponent, witness +0x68 startRecord(url:).
         @Published
-        public var isRecord: Bool = false
+        public var isRecord: Bool = false {
+            didSet {
+                if isRecord != oldValue {
+                    if isRecord {
+                        if let url = KSOptions.recordDir, let playerLayer {
+                            if !FileManager.default.fileExists(atPath: url.path) {
+                                try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                            }
+                            if FileManager.default.fileExists(atPath: url.path) {
+                                var fileExtension = playerLayer.url.pathExtension
+                                if fileExtension == "m3u8" || fileExtension.isEmpty {
+                                    fileExtension = "ts"
+                                }
+                                playerLayer.player.startRecord(url: url.appendingPathComponent(Date().description + "." + fileExtension))
+                            }
+                        }
+                    } else {
+                        playerLayer?.player.stopRecord()
+                    }
+                }
+            }
+        }
 
         @Published
         public var playbackRate: Float = 1.0 {

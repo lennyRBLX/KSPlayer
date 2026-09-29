@@ -156,14 +156,39 @@ public class KSPictureInPictureController: AVPictureInPictureController {
 // therefore 6 of 10; the other four are pinned above rather than guessed into existence.
 @available(tvOS 14.0, *)
 @MainActor
+// L7 lane 9: all 10 requirements, in witness-table order (wt 0x1041d45a0). req1 0x1019c7698 bridges
+// the value (`_bridgeAnythingToObjectiveC` 0x1034595ec) and sends selref 0x10440dee0 = "setValue:forKey:";
+// req4 0x1019c77d8 is `mov x0,x20; b` to selref 0x10440bcb0 = "invalidatePlaybackState"; req5 0x1019c77e0
+// bridges the key and sends selref 0x10440e8c8 = "valueForKey:" with an indirect Any? result. All three
+// are satisfied by the inherited NSObject/AVPictureInPictureController members.
 public protocol KSPictureInPictureProtocol: AnyObject {
+    var isPictureInPictureActive: Bool { get }
+    func setValue(_ value: Any?, forKey key: String)
     init?(playerLayer: AVPlayerLayer)
     init(contentSource: AVPictureInPictureController.ContentSource)
-    var isPictureInPictureActive: Bool { get }
+    func invalidatePlaybackState()
+    func value(forKey key: String) -> Any?
     func start(layer: KSComplexPlayerLayer)
     func didStart(layer: KSComplexPlayerLayer)
     func stop(restoreUserInterface: Bool)
     static func play(layer: KSComplexPlayerLayer)
+}
+
+// L7 lane 9: two internal protocol-extension members, laid out in KSPictureInPictureController.o just ahead
+// of the witnesses. 0x1019c7410 (19 insns) takes an owned indirect Any? (x0) plus Self/wt (x1/x2), sends wt+0x10
+// setValue(_:forKey: "delegate") and destroys the Any? (0x1019c78a4) = a setter; its getter is dead-stripped.
+// 0x1019c7454 (37 insns) sends wt+0x30 value(forKey: "pictureInPictureViewController") (30-byte literal
+// 0x103d349e0) and conditionally casts (swift_dynamicCast flags 6) = a getter. Callers: KSComplexPlayerLayer
+// configPIPDelegate 0x1019d1e8c, stop 0x1019d268c, reCheckSubtitle, DidStartPictureInPicture 0x1019d609c.
+extension KSPictureInPictureProtocol {
+    var delegate: Any? {
+        get { value(forKey: "delegate") }
+        set { setValue(newValue, forKey: "delegate") }
+    }
+
+    var pictureInPictureViewController: UIViewController? {
+        value(forKey: "pictureInPictureViewController") as? UIViewController
+    }
 }
 
 @available(tvOS 14.0, *)

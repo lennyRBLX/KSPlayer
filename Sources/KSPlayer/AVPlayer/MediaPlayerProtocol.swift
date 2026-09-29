@@ -24,7 +24,10 @@ public protocol MediaPlayback: AnyObject {
     var dynamicInfo: DynamicInfo { get }
     var ioContext: AbstractAVIOContext? { get }
     func prepareToPlay()
-    func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void))
+    /// ⚑ L7 lane 9: `nonisolated`. Forward's async default 0x1019de8f0 (closure 0x1019deb8c) calls this
+    /// requirement (wt+0x60) straight from a nonisolated continuation closure — no hop, no assumeIsolated —
+    /// and both witnesses (KSAVPlayer.seek, KSMEPlayer.seek) are nonisolated.
+    nonisolated func seek(time: TimeInterval, completion: @escaping (@MainActor @Sendable (Bool) -> Void))
     func startRecord(url: URL)
     func stopRecord()
     func stop()
@@ -607,6 +610,20 @@ public extension MediaPlayerProtocol {
     /// the closure is empty.
     func updateProgress(to progress: CGFloat) {
         seek(time: progress * duration) { _ in }
+    }
+}
+
+extension MediaPlayback {
+    /// Forward 0x1019de8f0: `swift_task_switch(_, nil, nil)` entry (nonisolated), then on iOS 18+
+    /// `withCheckedContinuation(isolation: nil, function: "seek(time:)")`, else the unsafe-continuation
+    /// fallback running closure 0x1019deb8c, which calls wt+0x60 `seek(time:completion:)` with a
+    /// completion that resumes the continuation with the Bool.
+    nonisolated func seek(time: TimeInterval) async -> Bool {
+        await withCheckedContinuation { continuation in
+            seek(time: time) { finished in
+                continuation.resume(returning: finished)
+            }
+        }
     }
 }
 

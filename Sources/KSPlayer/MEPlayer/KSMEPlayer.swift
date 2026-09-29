@@ -314,14 +314,13 @@ extension KSMEPlayer: MEPlayerDelegate {
         if let outputURL = options.outputURL {
             playerItem.startRecord(url: outputURL, mediaType: options.outputMediaType)
         }
+        // Forward retains the descriptor ONCE (0x101a3c13c) and releases it once at the end: the guard binds the
+        // chain directly (a separate optional `let` + `guard let` shadow costs a second retain / release_n 2).
 #sourceLocation(file: "KSPlayer/KSMEPlayer.swift", line: 300)
-        let audioDescriptor = (tracks(mediaType: .audio).first { $0.isEnabled }
-            as? FFmpegAssetTrack)?
-            .audioDescriptor
-#sourceLocation()
-        guard let audioDescriptor else {
+        guard let audioDescriptor = (tracks(mediaType: .audio).first { $0.isEnabled } as? FFmpegAssetTrack)?.audioDescriptor else {
             return
         }
+#sourceLocation()
         audioDescriptor.updateAudioFormat()
         KSLog("[audio] audio type=\(audioOutput) prepare audioFormat (sync)", line: 305)
         audioOutput.prepare(audioFormat: audioDescriptor.audioFormat)
@@ -353,6 +352,8 @@ extension KSMEPlayer: MEPlayerDelegate {
     //   and calls MainActor UIView API from it with NO executor check — the decl-level isolation that makes that
     //   compile under Swift 6 (MediaPlayerTrack: Sendable? nonisolated centerRotate?) is not resolvable here.
     //   Also needs an `#if os(iOS)` guard (UIDeviceOrientationDidChangeNotification is tvOS/visionOS-unavailable).
+    //   The observer body 0x101a41164 has NO Task (no swift_task_create) and NO assumeIsolated / executor check:
+    //   weak-load self → videoOutput → activeWindowScene (0x101a02f64) interfaceOrientation → setTransform.
     public func sourceDidOpened() {
         isReadyToPlay = true
         seekable = playerItem.seekable
@@ -647,14 +648,11 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
     //   The build called KSOptions.sceneSize's getter (whose fallback is .zero) instead. Same precedent as
     //   VRBoxDisplayModel.set(frame:encoder:) in SphereDisplayModel.swift.
     public var naturalSize: CGSize {
-        guard !options.display.isSphere, let naturalSize = playerItem.naturalSize else {
-            #if canImport(CallKit)
-            return UIApplication.sceneSize
-            #else
-            return KSOptions.sceneSize
-            #endif
-        }
-        return naturalSize
+        #if canImport(CallKit)
+        options.display.isSphere ? UIApplication.sceneSize : playerItem.naturalSize ?? UIApplication.sceneSize
+        #else
+        options.display.isSphere ? KSOptions.sceneSize : playerItem.naturalSize ?? KSOptions.sceneSize
+        #endif
     }
 
     public var isExternalPlaybackActive: Bool { false }
@@ -728,7 +726,10 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
             seekTime = time
         }
         let isSameTime = currentPlaybackTime == seekTime
-        playerItem.send(.seek(to: seekTime, useCache: options.seekUsePacketCache) { [weak self, videoOutput = self.videoOutput] result in
+        // Forward 0x101a42944 reads the videoOutput existential (ldr q0 → sp+0x10) BEFORE the options.seekUsePacketCache
+        // access and the weak box: a local ahead of the send, not a capture-list binding (evaluated at closure formation).
+        let videoOutput = videoOutput
+        playerItem.send(.seek(to: seekTime, useCache: options.seekUsePacketCache) { [weak self] result in
             guard let self else { return }
             runOnMainThread { [weak self] in
                 guard let self else { return }
@@ -781,7 +782,8 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     nonisolated public func play() {
         // ⚑ line literal 0x24c = 588 (Forward 0x101a43830 `mov w6,#0x24c`; build had 650).
-        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — see KSPictureInPictureController.swift.
+        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — the requirement is now declared
+        // (lane 9), but it is MainActor and this method is nonisolated: isolation GAP, lane 13.
         KSLog("play \(self)", line: 588)
         playbackState = .playing
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
@@ -794,7 +796,8 @@ extension KSMEPlayer: @preconcurrency MediaPlayerProtocol {
 
     nonisolated public func pause() {
         // ⚑ line literal 0x254 = 596 (Forward 0x101a43a48 `mov w6,#0x254`; build had 661).
-        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — see KSPictureInPictureController.swift.
+        // GAP: Forward calls `pipController?` witness +0x28 directly (no cast) — the requirement is now declared
+        // (lane 9), but it is MainActor and this method is nonisolated: isolation GAP, lane 13.
         KSLog("pause \(self)", line: 596)
         playbackState = .paused
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {

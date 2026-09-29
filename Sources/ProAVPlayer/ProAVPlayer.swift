@@ -18,7 +18,7 @@ import KSPlayer
 /// (overrides + new methods on KSAVPlayer), which a `final` subclass would not emit (the SRC `final` gave
 /// no own vtable). ⚑ EXACT-LAYOUT = tracked structural debt: matching the 16 own slots needs member-level
 /// `final`/override reconstruction not yet done (same class as the LocalHLSServer residual).
-class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDelegate (binary conf@0x1035715a0); reqs → M2
+nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDelegate (binary conf@0x1035715a0); reqs → M2
     // 4 reflection fields (order = layout). Optionality from the mangle Sg.
     // task's Failure = Error PROVEN (known-answer control: KSAVPlayer.error `Error?` symref → the
     // same protocol descriptor 0x10536d100); Success = AVPlayerItem (So-mangle). Access level is not
@@ -103,50 +103,9 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     override func readyToPlay() {
         player.automaticallyWaitsToMinimizeStalling = true
         super.readyToPlay()
-        // Forward: a MainActor Task (ctx 0x1041e11e8) whose body calls an async ProAVPlayer method @0x101b79024
-        // that this tree does not declare (writer GAP). Its body is inlined here: pick the wanted audio track
-        // and select the matching HLS audio rendition (#file lines 132/134/142).
+        // L7: Forward Task ctx 0x1041e11e8, body 0x101b78e54 weak-loads self and tail-calls 0x101b79024.
         Task { @MainActor [weak self] in
-            guard let self, let m3u8Info = self.m3u8Info, let currentItem = self.player.currentItem else {
-                return
-            }
-            // Forward reads ConversionInfo.assetTracks (private, +0x10), which init assigns from formatContext.assetTracks.
-            let audioTracks = m3u8Info.remuxerIOAction.formatContext.assetTracks.filter { $0.mediaType == .audio }
-            guard let wantedTrack = self.options.wantedAudio(tracks: audioTracks),
-                  let track = audioTracks.first(where: { $0.trackID == wantedTrack.trackID })
-            else {
-                return
-            }
-            // Forward calls trackName(_:tracks:) @0x101b6fcf8 (private to ConversionToM3U8.swift): same logic inlined.
-            var name = track.name.isEmpty ? track.description : track.name
-            for other in audioTracks where other !== track {
-                if (other.name.isEmpty ? other.description : other.name) == name {
-                    name = name + " #" + track.trackID.description
-                    break
-                }
-            }
-            for retry in 0 ..< 10 {
-                guard self.player.currentItem === currentItem else {
-                    return
-                }
-                if let group = try? await currentItem.asset.loadMediaSelectionGroup(for: .audible) {
-                    guard self.player.currentItem === currentItem else {
-                        return
-                    }
-                    if let option = group.options.first(where: { option in
-                        ((option.propertyList() as? [String: Any])?["MediaSelectionOptionsName"] as? String ?? option.displayName) == name
-                    }) {
-                        if currentItem.currentMediaSelection.selectedMediaOption(in: group) != option {
-                            currentItem.select(option, in: group)
-                        }
-                        return
-                    }
-                }
-                guard retry < 9 else {
-                    return
-                }
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
+            await self?.selectWantedAudioTrack()
         }
         if let seekToTime {
             KSLog("currentTime=\(player.currentTime().seconds) seek to \(seekToTime.seconds) startPlayTime=\(m3u8Info?.remuxerIOAction.startPlayTime ?? 0)", file: "ProAVPlayer/ProAVPlayer.swift", function: "readyToPlay()", line: 105)
@@ -167,13 +126,48 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
             }
         }
     }
+    // L7: Forward 0x101b79024 (direct call from 0x101b78ec0, no vtable slot; hops to MainActor → 0x101b790f0).
+    // ⚑ NAME INFERRED (no symbol).
+    @MainActor private final func selectWantedAudioTrack() async {
+        guard let m3u8Info, let currentItem = player.currentItem else {
+            return
+        }
+        let audioTracks = m3u8Info.assetTracks.filter { $0.mediaType == .audio }
+        guard let wantedTrack = options.wantedAudio(tracks: audioTracks),
+              let track = audioTracks.first(where: { $0.trackID == wantedTrack.trackID })
+        else {
+            return
+        }
+        let name = trackName(track, tracks: audioTracks)
+        for retry in 0 ..< 10 {
+            guard player.currentItem === currentItem else {
+                return
+            }
+            if let group = try? await currentItem.asset.loadMediaSelectionGroup(for: .audible) {
+                guard player.currentItem === currentItem else {
+                    return
+                }
+                if let option = group.options.first(where: { option in
+                    ((option.propertyList() as? [String: Any])?["MediaSelectionOptionsName"] as? String ?? option.displayName) == name
+                }) {
+                    if currentItem.currentMediaSelection.selectedMediaOption(in: group) != option {
+                        currentItem.select(option, in: group)
+                    }
+                    return
+                }
+            }
+            guard retry < 9 else {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
     override func nominalFrameRate(track: MediaPlayerTrack) -> Float {
         let nominalFrameRate = track.nominalFrameRate
-        if nominalFrameRate == 0, let m3u8Info {
-            // Forward iterates ConversionInfo.assetTracks (private, +0x10) = formatContext.assetTracks.
-            for assetTrack in m3u8Info.remuxerIOAction.formatContext.assetTracks where assetTrack.mediaType == .video && assetTrack.isEnabled {
-                return assetTrack.nominalFrameRate
-            }
+        // L7: Forward 0x101b7a46c loads m3u8Info+0x10 (assetTracks) without retaining m3u8Info; found track → release array,
+        // read +0x58 @0x101b7a5dc, release track.
+        if nominalFrameRate == 0, let assetTrack = m3u8Info?.assetTracks.first(where: { $0.mediaType == .video && $0.isEnabled }) {
+            return assetTrack.nominalFrameRate
         }
         return nominalFrameRate
     }
@@ -233,9 +227,8 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
         let isPlaybackBufferEmpty = currentItem.isPlaybackBufferEmpty
         let isPlaybackLikelyToKeepUp = currentItem.isPlaybackLikelyToKeepUp
         let isPlaybackBufferFull = currentItem.isPlaybackBufferFull
-        // Forward subtracts ConversionInfo.currentPlaybackTime (private, +0x40: the last player time handed to
-        // updateCurrentPlaybackTime); the item's current time stands in for it (writer GAP).
-        let loadingBuffer = m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) - currentItem.currentTime().seconds
+        // L7: Forward 0x101b7b284 ldp d1,d2,[m3u8Info,#0x38] = demuxerTime, currentPlaybackTime.
+        let loadingBuffer = m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) - m3u8Info.currentPlaybackTime
         KSLog("loading buffer=\(loadingBuffer),empty=\(isPlaybackBufferEmpty),likelyToKeepUp=\(isPlaybackLikelyToKeepUp),full=\(isPlaybackBufferFull), isPlaying=\(isPlaying)", file: "ProAVPlayer/ProAVPlayer.swift", function: "update(loadState:oldValue:)", line: 231)
         if Int(loadingBuffer) > 8 {
             runOnMainThread { [weak self] in
@@ -246,18 +239,24 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                 self.player.playImmediately(atRate: self.playbackRate)
             }
         }
-        // Forward calls an async ConversionInfo method @0x101b6adc8 (not declared in this tree: writer GAP) whose
-        // body hops to demuxerIO and sends .resume.
+        // L7: Forward Task body trampoline 0x101b7d4a8 tail-calls 0x101b6adc8 (merged with ConversionInfo's identical body).
         Task {
             await m3u8Info.demuxerIO.send(.resume)
         }
     }
+    @MainActor
     override func changePlaybackTime(time: Double) {
         let currentTime = time + (m3u8Info?.remuxerIOAction.startPlayTime ?? 0)
         delegate?.changePlaybackTime(player: self, time: currentTime)
-        // Forward then runs `if duration > 0, currentTime >= duration { if fileSize > 0 { playbackState = .finished }
-        // else { duration = currentTime } }`. duration/playbackState are `public private(set)` in KSAVPlayer, so that
-        // block cannot be written from this module (writer GAP).
+        // L7: Forward 0x101b7b8c8 duration access, fcmp/fccmp #2,gt/b.hi; fileSize b.lt → str d9 @0x101b7b918,
+        // else playbackState.setter(4) @0x101b7b910.
+        if duration > 0, currentTime >= duration {
+            if fileSize > 0 {
+                playbackState = .finished
+            } else {
+                duration = currentTime
+            }
+        }
         if playbackState == .playing, let m3u8Info {
             m3u8Info.updateCurrentPlaybackTime(time)
         }
@@ -265,14 +264,14 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     override func seek(time: Double, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
         let startPlayTime = m3u8Info?.remuxerIOAction.startPlayTime ?? 0
         if time < startPlayTime {
-            // Forward sets `playbackState = .seeking` here; the setter is private(set) in KSAVPlayer (writer GAP).
+            playbackState = .seeking   // L7: Forward playbackState.setter(3) call 0x1019a2964 in 0x101b7b984
             Task { [weak self] in
-                guard let self, let m3u8Info = self.m3u8Info else {
+                guard let self else {
                     return
                 }
-                // Forward: `time` is referenced before `completion` (inlined ConversionInfo.seek(time:completion:)).
-                let seekTime = time
-                let seekCompletion: @Sendable (Bool) -> Void = { finished in
+                // L7: seekCompletion 0x101b7bee0 (strong self + completion) → Task @MainActor [weak self] 0x101b7c040;
+                // m3u8Info released before the final hop (Forward 0x101b7beb4) ⇒ optional-chained temporary, not a guard binding.
+                await self.m3u8Info?.seek(time: time) { finished in
                     Task { @MainActor [weak self] in
                         guard let self else {
                             return
@@ -283,13 +282,6 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                         completion(finished)
                     }
                 }
-                await m3u8Info.demuxerIO.send(.seek(to: seekTime, completion: { [weak m3u8Info] finished in
-                    guard m3u8Info != nil else {
-                        return
-                    }
-                    // Forward: on success it first runs remuxerIOAction.reconstruct (private: writer GAP).
-                    seekCompletion(finished)
-                }))
             }
         } else {
             super.seek(time: time - startPlayTime) { [weak self] finished in
@@ -299,14 +291,15 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                     guard let self else {
                         return
                     }
-                    // Forward inlines ConversionInfo.seek(time:completion:) here (not declared in this tree: writer GAP).
-                    Task { [weak self] in
-                        guard let self, let m3u8Info = self.m3u8Info else {
+                    // L7: nonisolated Task — Forward 0x101b7bc88 stores a nil isolation (stp xzr,xzr) and this site's async fn ptr
+                    // 0x103571670 shares body 0x101b7d52c with the nonisolated-branch Task (0x103571570); plain Task{} inherits MainActor here.
+                    Task { @concurrent [weak self] in
+                        guard let self else {
                             return
                         }
-                        // Forward: `time` is referenced before `completion` (inlined ConversionInfo.seek(time:completion:)).
-                        let seekTime = time
-                        let seekCompletion: @Sendable (Bool) -> Void = { finished in
+                        // L7: seekCompletion 0x101b7bee0 (strong self + completion) → Task @MainActor [weak self] 0x101b7c040;
+                        // m3u8Info released before the final hop (Forward 0x101b7beb4) ⇒ optional-chained temporary, not a guard binding.
+                        await self.m3u8Info?.seek(time: time) { finished in
                             Task { @MainActor [weak self] in
                                 guard let self else {
                                     return
@@ -317,13 +310,6 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
                                 completion(finished)
                             }
                         }
-                        await m3u8Info.demuxerIO.send(.seek(to: seekTime, completion: { [weak m3u8Info] finished in
-                            guard m3u8Info != nil else {
-                                return
-                            }
-                            // Forward: on success it first runs remuxerIOAction.reconstruct (private: writer GAP).
-                            seekCompletion(finished)
-                        }))
                     }
                 }
             }
@@ -332,6 +318,7 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
     }
 
     /// Forward `ProAVPlayer.reset` @ `0x101b7c6e4`; body and cleanup refs: `5cf964654b0ad471a415f6404bd514a97c30a397dffc0b7d65ddc40fa73cae6e`, `b43bbafa67d940027f9762caf377baafec4e7b0423910732f64792d97fa30fe2`.
+    @MainActor
     override func reset() {
         task?.cancel()
         if let m3u8Info {
@@ -358,7 +345,8 @@ class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + ConversionInfoDel
         hasEndOfStream = true                                            // [*(self+hasEndOfStream)=1]
         guard let currentItem = player.currentItem else { return }       // [player=FUN_1019a1730; currentItem==0 -> return]  ⚑[tool=resolve_fun_pins ref=FUN_1019a1730:0x1019a1730 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.player.getter : __C.AVQueuePlayer
         if let m3u8Info {                                                // self.m3u8Info != nil
-            if m3u8Info.maxBufferDuration < currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) {  // [+0x48 < duration.seconds - startPlayTime]
+            // L7: Forward 0x101b7cd44-58 computes duration.seconds - startPlayTime (fcsel) before loading +0x48 (maxBufferDuration).
+            if currentItem.duration.seconds - (m3u8Info.remuxerIOAction.startPlayTime ?? 0) > m3u8Info.maxBufferDuration {
                 Task { @MainActor in                                    // [true: MainActor Task; alloc 0x38 @0x1041e1328]
                     // body 7d66c → 7cedc → 7cf80 → 7d01c
                     try await Task.sleep(nanoseconds: 100_000_000)
@@ -406,8 +394,10 @@ class ProPlayerItem: AVPlayerItem {
 
 // ⚑[tool=member_add ref=KSOptions.localHLSServerPort:0x101b76e90 result=missing; mangled KSOptionsC11ProAVPlayerE — ProAVPlayer's extension, fwd_file ProAVPlayer.swift]
 // Moved from KSPlayer's `public extension KSOptions`; defaults are the binary-read values of 44a57762.
+// L7: public — Forward emits getter/setter/modify for all three (0x101b76e90..0x101b7709c; getter beginAccess @0x101b76eb8)
+// beside the plain addressors 0x101b76e6c/78/84; only a public static var keeps that accessor set under WMO.
 extension KSOptions {
-    nonisolated(unsafe) static var localHLSServerPort: UInt16 = 8887
-    nonisolated(unsafe) static var maxM3U8FileSize: Int64 = 1_073_741_824
-    nonisolated(unsafe) static var minM3U8BufferDuration: Int64 = 60
+    public nonisolated(unsafe) static var localHLSServerPort: UInt16 = 8887
+    public nonisolated(unsafe) static var maxM3U8FileSize: Int64 = 1_073_741_824
+    public nonisolated(unsafe) static var minM3U8BufferDuration: Int64 = 60
 }

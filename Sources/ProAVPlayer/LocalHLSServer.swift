@@ -26,13 +26,25 @@ import Network
 /// COMPUTED property at slots 16-18 (a property-triple after 9 method slots — stored props follow field order,
 /// so it can only be a late computed var; null-impl ⇒ unnameable/untyped, MISSING here). Which members are
 /// `final` + prop_c's identity/type are not deterministically recoverable.
-class LocalHLSServer {
+// L7: public — Forward keeps dynamic exclusivity on listener (beginAccess @0x101b70d68 stop, @0x101b7550c probeListener,
+// @0x101b70cd8 ping closure), which WMO strips for an internal class; public-only port.getter 0x101b702c4 is emitted.
+public class LocalHLSServer {
     // 7 reflection fields (order = layout). Mutability kept `var` (M1 under-claim; l2 mutability partial).
     public let port: UInt16                          // init param; self+0x10 (__uint16)
-    public var listener: NWListener                  // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
+    public var listener: NWListener {                // ⚑ was NWListener! IUO → non-optional (init-constructed, self+0x18)
+        // L7: Forward didSet 0x101b70330: oldValue.cancel() @0x101b70428; queue.asyncAfter(.now() + 0.01 @0x103487958)
+        // with a strong-self block whose body 0x101b7622c branches to startListen 0x101b7138c.
+        didSet {
+            oldValue.cancel()
+            queue.asyncAfter(deadline: .now() + 0.01) { [self] in
+                startListen()
+            }
+        }
+    }
     // ⚑ [String: (URL) -> Void] — value CORRECTED from M1's ()->Void: slot13 invokes the block with the
     // request's file URL (blr, x0 = fileURL; context in x20). Keep-alive block per directory-path key (self+0x20).
-    public var keepAliveBlockMap: [String: (URL) -> Void] = [:]
+    // L7: Forward init 0x101b70714 stores __swiftEmptyDictionarySingleton (GOT 0x104112D08) to self+0x20; `[:]` emits a Dictionary(dictionaryLiteral:) call.
+    public var keepAliveBlockMap: [String: (URL) -> Void] = [String: (URL) -> Void]()
 
     /// Binary: FUN_101b705ec (init thunk FUN_101b70274 allocs + tail-calls this with the URL + port).  ⚑[tool=resolve_fun_pins ref=FUN_101b705ec:0x101b705ec result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer  ⚑[tool=resolve_fun_pins ref=FUN_101b70274:0x101b70274 result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.__allocating_init(rootDirectory: Foundation.URL, port: Swift.UInt16) throws -> ProAVPlayer.LocalHLSServer
     /// vtable slot 6 @0x101b70274 is the compiler-emitted ALLOCATING entry point for this init and has no
@@ -128,40 +140,50 @@ class LocalHLSServer {
     //   rules out private. It does not prove public, so the declaration is left unmarked
     //   (internal) rather than promoted.
     //   ⚑[tool=export_trie_oracle ref=LocalHLSServer.ping:0x101b70b64 result=no-discriminator-not-private]
+    // L7: Forward 0x101b70b64 allocs a weak-self box and calls 0x101b753e8 (probeListener(block:) closure-specialized);
+    // block body 0x101b70bb0: weak-load self, `tbnz isReady` → return, else try? NWListener(tcp, reuse, port!) and
+    // assign through the listener modify @0x101b70cc8 + didSet 0x101b70330.
     @used func ping() {
-        // Shared listener-rebuild — a [weak self] CLOSURE (binary FUN_101b70bb0 weak-loads self inside;
-        // NOT a method — corrects the earlier "private recreateListener() method" plan). try? swallows the
-        // NWListener throw (disasm: mov x21,#0; bl _init; cbz x21 @0x101b70cac → skip on error), then cancel
-        // the old listener and re-arm startListen() after 0.01s (FUN_101b70330: NWListener.cancel + queue
-        // .asyncAfter(.now()+0.01){startListen}; delay Double @0x103487958 = 0.01; strong-self block FUN_100004aec).
-        let recreateListener: () -> Void = { [weak self] in
-            guard let self else { return }
+        probeListener { [weak self] isReady in
+            guard let self, !isReady else {
+                return
+            }
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
-            if let newListener = try? NWListener(using: params,
-                                                 on: NWEndpoint.Port(rawValue: self.port)!) {  // Port! trap @0x101b70d3c
-                let oldListener = self.listener
-                self.listener = newListener
-                oldListener.cancel()
-                self.queue.asyncAfter(deadline: .now() + 0.01) { self.startListen() }
+            if let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: self.port)!) {
+                self.listener = listener
             }
         }
-        if listener.state == .ready {
-            let connection = NWConnection(
-                to: .hostPort(host: "127.0.0.1",
-                              port: NWEndpoint.Port(rawValue: port)!),  // ⚑ force-unwrap (binary ==1 trap)
-                using: .tcp)
-            // Keep-alive probe: any state change → recreate the listener. Binary forwards via a reabstraction
-            // thunk (FUN_101b76230 = `mov x1,x20; b recreate`); recreate's (arg & 1)==0 guard is VESTIGIAL —
-            // NWConnection.State is address-only (non-@frozen resilient) so the arg is a pointer (bit0=0) and
-            // recreate never inspects the state (no getEnumTag/VWT; contrast the VWT-decoding sibling
-            // FUN_101b71644). So: recreate on every callback, state ignored.
-            connection.stateUpdateHandler = { _ in recreateListener() }
-            connection.start(queue: queue)
-        } else {
-            // ⚑ KSLog("listener not ready …") omitted — KSLog form UNRESOLVED (as elsewhere in the class).
-            recreateListener()   // force rebuild (binary: recreate called with flag 0 → (0&1)==0)
+    }
+
+    // L7: Forward 0x101b753e8 (#function "probeListener(block:)" @0x103d3e750). `!=`: generic Equatable.== dispatch thunk
+    // @0x101b75584 (lazy wtable 0x100006158); not ready → KSLog(level: .error, "listener not ready") line 124, block(false).
+    // Ready: NWParameters.tcp @0x101b755b8 first, Host.init(_: String) @0x101b755dc (not stringLiteral), endpoint copied (vwt+0x10 @0x101b7567c) and
+    // destroyed after start (@0x101b75728) → both locals; stateUpdateHandler body 0x101b71e74: .waiting/.failed(error) →
+    // KSLog(error) line 140, cancel, block(false); .ready → cancel, block(true).
+    private final func probeListener(block: @escaping (Bool) -> Void) {
+        if listener.state != .ready {
+            KSLog(level: .error, "listener not ready", file: "ProAVPlayer/LocalHLSServer.swift", function: "probeListener(block:)", line: 124)
+            block(false)
+            return
         }
+        let parameters = NWParameters.tcp
+        let endpoint = NWEndpoint.hostPort(host: .init("127.0.0.1"), port: .init(rawValue: port)!)
+        let connection = NWConnection(to: endpoint, using: parameters)
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case let .waiting(error), let .failed(error):
+                KSLog(error, file: "ProAVPlayer/LocalHLSServer.swift", function: "probeListener(block:)", line: 140)
+                connection.cancel()
+                block(false)
+            case .ready:
+                connection.cancel()
+                block(true)
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
     }
 
     /// Binary: FUN_101b70d3c (vtable slot8). ⚑ name from the debug-log string "stop()".  ⚑[tool=resolve_fun_pins ref=FUN_101b70d3c:0x101b70d3c result=RESOLVES_UNIQUELY] = ProAVPlayer.LocalHLSServer.stop() -> ()

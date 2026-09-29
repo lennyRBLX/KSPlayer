@@ -26,13 +26,13 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     // init assigns all four, from a parameter or an init-local — neither of which a
     // declaration initializer can reference, so the default could not have been the source's.
     // Binding now matches the binary's FieldRecord (flags 0x00000000 = `let`).
-    private let assetTracks: [FFmpegAssetTrack]
+    let assetTracks: [FFmpegAssetTrack]  // L7: internal — ProAVPlayer 0x101b790f0 / nominalFrameRate read m3u8Info+0x10
     private let duration: Double
     let subtitles: [MediaPlayerTrack]  // existential array (mangle Say…_pG; non-optional) — internal (was private): ProAVPlayer.createPlayerItem task @0x101b77768 appends it to subtitleTracks
     // weak optional existential (mangle _pSgXw) → ConversionInfoDelegate (AnyObject). 3 reqs → M2.
     weak var delegate: ConversionInfoDelegate? = nil   // internal (was private): ProAVPlayer.createPlayerItem task stores self
     var demuxerTime: Double = 0   // internal (was private, P34): ProAVPlayer.replaceCurrentItem's item-swap closure reads m3u8Info.demuxerTime cross-file
-    private var currentPlaybackTime: Double = 0
+    var currentPlaybackTime: Double = 0  // L7: internal — ProAVPlayer.update(loadState:) reads it (ldp d1,d2,[x21,#0x38] @0x101b7b284)
     let maxBufferDuration: Double  // internal (was private, P34): ProAVPlayer.endOfStream reads m3u8Info.maxBufferDuration cross-file
     // ⚑ binary NON-optional refs (single symref, no Sg); RETIRED from IUO — the designated init assigns all 4.
     let remuxerIOAction: RemuxerIOAction   // internal (was private, P34): ProAVPlayer.replaceCurrentItem reads m3u8Info.remuxerIOAction.startPlayTime cross-file
@@ -173,22 +173,31 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
     /// ConversionInfoDelegate req0); any other value is ignored. ⚑ req NAME + arg TYPE inferred (protocol decl).
     func remuxerDidChangeState(_ state: Int) {
         if state == 2 {                                                    // [cmp/b.eq case 2 @FUN_101b6aca8]
-            Task { [self] in                                              // [swift_retain self; swift_task_create via FUN_101b76920]
-                // ⚑ UNRESOLVED — deep-async body. ENTRY is FUN_101b6b8d8 (async-fn-ptr record DAT_1035711e8,
-                //   ctxSize 0x20; record taken in x3 of the task-create helper), a 27-instr trampoline that
-                //   unpacks the closure box and tail-calls FUN_101b6adc8, which `_swift_task_switch`es to the
-                //   continuation FUN_101b6ade0 — continuation-split (verified deep-async, not assumed). This
-                //   comment previously named FUN_101b6adc8 as the entry, one hop DOWNSTREAM. Captures READ from
-                //   the box capture descriptor: [Optional<any Actor>, ProAVPlayer.ConversionInfo] ⇒ `Task { [self]
-                //   in }` is exact. Internals = "ConversionInfo deep-async closures" sub-unit (P36).
-                //   NOTE the third, structurally identical Task site in this file already named its trampoline
-                //   correctly; these two sites were the inconsistent ones.
-                //   ⚑[tool=llvm-objdump ref=FUN_101b6b8d8:0x101b6b8d8 result=TRAMPOLINE_TO_101b6adc8]
-                _ = self
+            // L7: Task body 0x101b6b8d8 → 0x101b6adc8: generic hop, hop to self+0x58 (demuxerIO), send(.resume) @0x101b6ae24.
+            Task { [self] in
+                await demuxerIO.send(.resume)
             }
         } else if (state & 1) != 0 {                                       // [tbz #0 bit-test — P38 partial, hand-read + audit]
             delegate?.reconstructComplete()
         }
+    }
+
+    // L7: Forward inlines this into ProAVPlayer.seek's Task (0x101b7bd04/0x101b7be58); its send-completion closure
+    // (async fn ptr 0x103571658 → 0x101b6a118/0x101b6a138) sits in this file's region between remuxerDidChangeState and run.
+    func seek(time: Double, completion: @escaping @Sendable (Bool) -> Void) async {
+        await demuxerIO.send(.seek(to: time, completion: { [weak self] finished in
+            guard let self else {
+                return
+            }
+            if finished {
+                // GAP(review): Forward 0x101b6a1d0 `try remuxerIOAction.reconstruct(completion: completion)` (throws, x21
+                // propagated); RemuxerIO.swift declares it private with `(() -> Void)?`.
+                _ = self
+                completion(true)
+            } else {
+                completion(false)
+            }
+        }))
     }
 
     /// @0x101b69598 (nonisolated async; conts 0x101b6960c…0x101b69880). #file "ProAVPlayer/ConversionInfo.swift", KSLog line 87.

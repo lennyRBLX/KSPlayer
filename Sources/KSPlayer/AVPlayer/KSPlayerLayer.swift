@@ -255,15 +255,17 @@ open class KSPlayerLayer: NSObject {
     /// The build-only `init?(coder:)` that sat here is removed: Forward's KSPlayerLayer has no such slot
     /// (vtable_surface B52 build_only); KSComplexPlayerLayer declares its own (F9).
     public init(item: MEPlayerItem, url: URL, delegate: KSPlayerLayerDelegate?) {
+        // L7: item.options is loaded ONCE (0x1019cadc0, before the url copy and KSMEPlayer.init) and
+        // retained x2 (swift_retain_n w1=2 at 0x1019cae30): one reference for self.options, one for the
+        // later reads (isAutoPlay +0x45, SubtitleModel, startPlayRate +0x40) — a local, not repeated loads.
+        let options = item.options
         self.url = url
-        options = item.options
+        self.options = options
         self.delegate = delegate
         let player = KSMEPlayer(item: item)
         self.player = player
-        // L7: Forward never re-reads self.options here; every read uses the item.options value
-        // (let field, loaded once at 0x1019cadc0): isAutoPlay +0x45, SubtitleModel, startPlayRate +0x40.
-        isAutoPlay = item.options.isAutoPlay
-        subtitleModel = SubtitleModel(url: url, options: item.options)
+        isAutoPlay = options.isAutoPlay
+        subtitleModel = SubtitleModel(url: url, options: options)
         subtitleView = MetalSubtitleView(subtitleModel: subtitleModel)
         subtitleView.backgroundColor = .clear
         subtitleView.translatesAutoresizingMaskIntoConstraints = false
@@ -271,7 +273,7 @@ open class KSPlayerLayer: NSObject {
         player.delegate = self
         player.contentMode = .scaleAspectFit
         subtitleView.contentMode = .scaleAspectFit
-        player.playbackRate = item.options.startPlayRate
+        player.playbackRate = options.startPlayRate
         if item.isPreload {
             let action = item.resumeFromPreload()
             state = .preparing
@@ -294,12 +296,10 @@ open class KSPlayerLayer: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(audioInterrupted), name: AVAudioSession.interruptionNotification, object: nil)
     }
 
-    isolated deinit {
-        // L7: Forward __deallocating_deinit 0x1019cfe94 is `adrp/add` of the KSPlayerLayer metadata accessor
-        // + `b 0x1019d2960` ([super dealloc] only): no statement runs, and there is no
-        // swift_task_deinitOnExecutor hop. The upstream cleanup (pip contentSource, observers, now-playing,
-        // remote commands, options.playerLayerDeinit()) is not in Forward's deinit. `isolated` is a GAP.
-    }
+    // L7: Forward __deallocating_deinit 0x1019cfe94 (and KSComplexPlayerLayer's 0x1019d2954) is `adrp/add`
+    // of the metadata accessor + `b 0x1019d2960` ([super dealloc] only): no statement runs and there is
+    // no swift_task_deinitOnExecutor hop, so the deinit is nonisolated and empty.
+    deinit {}
 
     /// ⚑[tool=export_trie_oracle ref=KSPlayerLayer.makeUIView():0x1019cb5f4 result=32-instr]
     /// Mangled `…0A5LayerC10makeUIViewSo0D0CyF` — returns `UIView`, non-optional.
@@ -318,7 +318,8 @@ open class KSPlayerLayer: NSObject {
     ///   `UIView`. Without that correction this body could only be spelled with a force-unwrap
     ///   the binary does not contain.
     /// ⚑[tool=decode_witness_table ref=KSMEPlayer:MediaPlayerProtocol:0x1041d7c68 result=slot4=view.getter:UIView]
-    public func makeUIView() -> UIView {
+    // L7: open — Forward 0x1019d7450 dispatches makeUIView through the isa-masked vtable (`ldr x8,[x8,#0x280]`).
+    open func makeUIView() -> UIView {
         player.view
     }
 
@@ -907,7 +908,9 @@ open class KSPlayerLayer: NSObject {
     ///   this class. (Separately, MediaPlayerDelegate's descriptor reports EIGHT requirements
     ///   against the source's five — three unrecovered methods — but nothing shows this is one of
     ///   them, so it was not added there.)
-    public func reachEndOfStream(player _: some MediaPlayerProtocol) {
+    // L7: open — Forward 0x1019ce750 is the full 32-insn body with no Tf4dn_n dead-arg thunk (the
+    // specialization WMO applies only to the non-open member of the pair).
+    open func reachEndOfStream(player _: some MediaPlayerProtocol) {
         delegate?.playerDidEOF(layer: self)
     }
 
@@ -951,7 +954,9 @@ open class KSPlayerLayer: NSObject {
     /// implements, six with empty extension defaults it does not. That 5/6 split is what
     /// corroborates the ordering, so index 8 is `playerDidClear(layer:)`.
     /// ⚑[tool=decode_witness_table ref=Coordinator:KSPlayerLayerDelegate:0x1041d4d18 result=req8]
-    open func playerDidClear(player _: some MediaPlayerProtocol) {
+    // L7: public — Forward 0x1019ceaf4 is the Tf4dn_n thunk (`mov x0,x1; mov x1,x2; b 0x1019d58f8`),
+    // the dead-arg specialization emitted for the public (non-open) member only.
+    public func playerDidClear(player _: some MediaPlayerProtocol) {
         delegate?.playerDidClear(layer: self)
     }
 
@@ -1304,7 +1309,10 @@ extension KSPlayerLayer {
 open class KSComplexPlayerLayer: KSPlayerLayer {
     public var urls: [URL] = []
     // Both Forward designated inits (0x1019d0238, 0x1019d1068) store 1.
-    public var isPictureInPictureStoped: Bool = true
+    // L7: internal — the trie carries vg/vs/vM/vpfi but no vpMV/vpWvd (the private enterBackgroundTask
+    // pattern, unlike public `urls`), and WillStart 0x1019d29ec / pause store it with no swift_beginAccess
+    // (AccessEnforcementWMO only drops enforcement for storage not visible outside the module).
+    var isPictureInPictureStoped: Bool = true
     // private, and the trie prints the module-hash discriminator on all three accessors:
     // `(enterBackgroundTask in _B3181C2628785004269C41BC3433122F) : Swift.Task<(), Swift.Never>?`
     private var enterBackgroundTask: Task<(), Never>?
@@ -1508,7 +1516,9 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         }
     }
 
-    required public init?(coder: NSCoder) {
+    // L7: unnamed `_` — Forward 0x1019d0f84 releases the owned coder (`bl objc_release`) before the
+    // stored-property inits; a named (lexical) parameter would keep it alive into the trap.
+    required public init?(coder _: NSCoder) {
 #sourceLocation(file: "KSPlayer/KSPlayerLayer.swift", line: 729)
         fatalError("init(coder:) has not been implemented")
 #sourceLocation()
@@ -1558,6 +1568,14 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     public func pipStart() {
         if let pipController = player.pipController {
             pipController.start(layer: self)
+        } else {
+            configPIPDelegate(player: player)
+            Task { [weak self] in
+                // Forward closure 0x1019d1624: sleep 0x11e1a300, one swift_weakLoadStrong, nil -> return.
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard let self else { return }
+                self.player.pipController?.start(layer: self)
+            }
         }
     }
 
@@ -1688,9 +1706,7 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
     override public func play() {
         super.play()
         MPNowPlayingInfoCenter.default().playbackState = .playing
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
+        player.pipController?.invalidatePlaybackState()
         KSOptions.pictureInPictureType.play(layer: self)
     }
 
@@ -1725,37 +1741,49 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         isPictureInPictureStoped = false
         player.pause()
         MPNowPlayingInfoCenter.default().playbackState = .paused
-        if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            (player.pipController as? KSPictureInPictureController)?.invalidatePlaybackState()
-        }
+        player.pipController?.invalidatePlaybackState()
     }
+    // Forward 0x1019d1cd0: super.readyToPlay (direct bl 0x1019cda08), then the out-of-line helper
+    // 0x1019d1d70 under the options guard, then reCheckSubtitle().
     override public func readyToPlay<A>(player: A) where A: MediaPlayerProtocol {
         super.readyToPlay(player: player)
         if options.canStartPictureInPictureAutomaticallyFromInline {
-            if player.pipController == nil {
-                player.configPIP()
-            }
-            if let pipController = player.pipController {
-                #if os(iOS)
-                if let pip = pipController as? AVPictureInPictureController {
-                    pip.canStartPictureInPictureAutomaticallyFromInline = options.canStartPictureInPictureAutomaticallyFromInline
-                }
-                #endif
-                (pipController as? KSPictureInPictureController)?.setValue(self, forKey: "delegate")
-            }
+            configPIPDelegate(player: player)
         }
         reCheckSubtitle()
     }
+
+    // L7: new private helper — Forward 0x1019d1d70 (73 insns, not in the trie) is called out of line
+    // from readyToPlay 0x1019d1d50 and pipStart 0x1019d152c. Body: pipController wt+0xf8 / configPIP
+    // wt+0x168, swift_dynamicCastObjCClass to AVPictureInPictureController, then the KVC "delegate"
+    // store through the protocol-extension setter 0x1019c7410 (KSPictureInPictureController.swift).
+    private final func configPIPDelegate<A: MediaPlayerProtocol>(player: A) {
+        if player.pipController == nil {
+            player.configPIP()
+        }
+        if let pipController = player.pipController {
+            #if os(iOS)
+            if let pip = pipController as? AVPictureInPictureController {
+                pip.canStartPictureInPictureAutomaticallyFromInline = options.canStartPictureInPictureAutomaticallyFromInline
+            }
+            #endif
+            pipController.delegate = self
+        }
+    }
+
+    // Forward 0x1019d1eb4: the view controller comes from the protocol-extension getter 0x1019c7454
+    // (wt+0x30 value(forKey:)), the delegate store
+    // from the extension setter 0x1019c7410 (wt+0x10).
     public final func reCheckSubtitle() {
         guard player.pipController?.isPictureInPictureActive == true else {
             return
         }
-        if let viewController = (player.pipController as? KSPictureInPictureController)?.value(forKey: "pictureInPictureViewController") as? UIViewController {
+        if let viewController = player.pipController?.pictureInPictureViewController {
             addSubtitle(to: viewController.view)
         } else {
             addSubtitle(to: player.view)
         }
-        (player.pipController as? KSPictureInPictureController)?.setValue(self, forKey: "delegate")
+        player.pipController?.delegate = self
     }
     override public func finish<A>(player: A, error: Error?) where A: MediaPlayerProtocol {
         if let error {
@@ -1779,7 +1807,8 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         enterBackgroundTask?.cancel()
         enterBackgroundTask = nil
         super.stop()
-        (player.pipController as? KSPictureInPictureController)?.setValue(nil, forKey: "delegate")
+        // Forward 0x1019d268c: extension setter 0x1019c7410 with a zeroed Any?, i.e. wt+0x10.
+        player.pipController?.delegate = nil
         if player.pipController?.isPictureInPictureActive != true {
             player.pipController = nil
         }
@@ -1916,8 +1945,11 @@ open class KSComplexPlayerLayer: KSPlayerLayer {
         isPictureInPictureStoped = false
         player.contentMode = .scaleAspectFit
     }
+    // Forward body 0x1019d600c (thunk 0x1019d2b84): the view controller comes from the protocol-extension
+    // getter 0x1019c7454 (bl at 0x1019d609c), i.e. the wt+0x30 value(forKey:) requirement — no
+    // concrete-class cast.
     public final func pictureInPictureControllerDidStartPictureInPicture(_ p0: AVPictureInPictureController) {
-        if let viewController = (player.pipController as? KSPictureInPictureController)?.value(forKey: "pictureInPictureViewController") as? UIViewController {
+        if let viewController = player.pipController?.pictureInPictureViewController {
             let view: UIView = viewController.view
             player.view.didStartPIP(to: view)
             addSubtitle(to: view)

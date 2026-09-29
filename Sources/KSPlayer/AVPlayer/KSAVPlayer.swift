@@ -67,8 +67,7 @@ public final class KSAVPlayerView: UIView {
     }
 }
 
-@MainActor
-open class KSAVPlayer {
+open class KSAVPlayer: @unchecked Sendable {
     // Forward 1.3.17 stored fields — reflection order (desc 0x1039ec148); reconstructed session 16 (KSAVPlayer M1 fields).
     // Recon KVO NSKeyValueObservations → Combine observer cancellables; `urlAsset` → `io: Either<URL, AVAsset>`.
     // Every stored field carries an explicit `: Type` annotation. Method bodies that used the removed fields are
@@ -99,23 +98,28 @@ open class KSAVPlayer {
     //   to `(cancellable in _96682D5E1A2F36FD0BE1DC3A2D928BC7)`, so those four are NOT `private` in Forward. Left
     //   spelled `private` here on purpose: mangling cannot separate internal from public, and widening the access
     //   level re-scopes their l2 field checks from UNCHECKED to CHECKED for a reason unrelated to this batch.
-    var cancellable: AnyCancellable?
-    var periodicTimeObserver: Any?
-    private let playerView: KSAVPlayerView = KSAVPlayerView()
+    private var cancellable: AnyCancellable?
+    private var periodicTimeObserver: Any?
+    private let playerView: KSAVPlayerView
     public var io: Either<URL, AVAsset>
     public var shouldSeekTo: Double?
-    var playerLooper: AVPlayerLooper?
-    var mediaPlayerTracks: [any MediaPlayerTrack] = []
+    private var playerLooper: AVPlayerLooper?
+    private var mediaPlayerTracks: [any MediaPlayerTrack] = []
     public var subtitleTracks: [any MediaPlayerTrack] = []
-    var observerCancellables: Set<AnyCancellable> = []
-    var observerPlayerItemCancellables: Set<AnyCancellable> = []
-    var observerLoopCancellables: Set<AnyCancellable> = []
+    // ⚑ L7-9 `Set()` not `[]`: the shared vpfi 0x1000b701c is `ldr x0,[GOT 0x104112d10]; ret` and
+    //   0x104112d10 binds libswiftCore/__swiftEmptySetSingleton; `[]` builds from _swiftEmptyArrayStorage.
+    private var observerCancellables: Set<AnyCancellable> = Set()
+    private var observerPlayerItemCancellables: Set<AnyCancellable> = Set()
+    private var observerLoopCancellables: Set<AnyCancellable> = Set()
     // DIVERGENCE DISCHARGED (opened s16, closed s98). Binary field 11 is
     // `(any KSPictureInPictureProtocol)?` — field record `KSPictureInPictureProtocol_pSg`, and the
     // trie prints the same for this class's accessors. The protocol it needed is now declared.
     public var pipController: (any KSPictureInPictureProtocol)?
     public weak var delegate: MediaPlayerDelegate?
-    public private(set) var duration: TimeInterval = 0
+    // ⚑ L7-9 setter widened to `public`: ProAVPlayer.changePlaybackTime (Forward 0x101b7b7e8) writes it
+    //   cross-module — 0x101b7b8c8 beginAccess(modify) on the offset global 0x104c63070 then 0x101b7b918
+    //   `str d9,[x19,x20]` (direct storage store). Not `open`: KSPlayer-internal writes are direct.
+    public var duration: TimeInterval = 0
     // Forward 1.3.17: `fileSize` is `Int64` (known-answer control 0x10536e600 == Int64 via Foundation.Progress / Alamofire
     //   byte-count fields). MediaPlayback.fileSize migrated Double→Int64 (session 16b); l2 UNCHECKED (GOT-external field-record).
     public var fileSize: Int64 = 0
@@ -219,12 +223,19 @@ open class KSAVPlayer {
         }
     }
 
-    public private(set) var playbackState: MediaPlaybackState = .idle {
+    // ⚑ L7-9 setter widened to `public`: ProAVPlayer.changePlaybackTime (Forward 0x101b7b7e8) sets it
+    //   cross-module — 0x101b7b908 `mov w0,#4` (.finished) then 0x101b7b910 `bl 0x1019a2964` = this
+    //   setter, called directly (not through the vtable), so it is `public`, not `open`.
+    public var playbackState: MediaPlaybackState = .idle {
         didSet {
             if playbackState != oldValue {
                 playOrPause()
                 if playbackState == .finished {
-                    delegate?.finish(player: self, error: nil)
+                    // Forward 0x1019a24a8: weak box + inlined runOnMainThread fork around the finish call.
+                    runOnMainThread { [weak self] in
+                        guard let self else { return }
+                        self.delegate?.finish(player: self, error: nil)
+                    }
                 }
             }
         }
@@ -234,8 +245,9 @@ open class KSAVPlayer {
         didSet {
             if isReadyToPlay != oldValue {
                 if isReadyToPlay {
-                    options.readyTime = CACurrentMediaTime()
-                    delegate?.readyToPlay(player: self)
+                    // L7 lane 9: the class is nonisolated in Forward, so the delegate call needs the
+                    // hop that readyToPlay() (0x1019a402c, readyTime + runOnMainThread) already carries.
+                    readyToPlay()
                 }
             }
         }
@@ -278,19 +290,38 @@ open class KSAVPlayer {
     //   the allocating init through vtable +0x408, i.e. `self.init(io:options:)`. The designated body is
     //   shared FUN 0x1019b1b30 (called from both 0x1019a2dc0 and 0x1019a2e18).
     //   isolation: none of the three entries calls swift_task_*/ScM; class stays @MainActor as declared.
+    @MainActor
     public required convenience init(url: URL, options: KSOptions) {
         self.init(io: .left(url), options: options)
     }
 
+    @MainActor
     public convenience init(asset: AVAsset, options: KSOptions) {
         self.init(io: .right(asset), options: options)
     }
 
+    // SE-0411: the MainActor `playerView` default value needs a MainActor designated init.
+    @MainActor
+    // ⚑ L7-9 body = Forward shared FUN 0x1019b1b30 (tail of both 0x1019a2dc0 and 0x1019a2e18):
+    //   0x1019b1d74 bl setAudioSession BEFORE 0x1019b1d78..d84 KSAVPlayerView alloc+init stored at +0x38;
+    //   0x1019b1db0 io take-init (offset global 0x104c63048); 0x1019b1dbc options store (0x104c63098);
+    //   0x1019b1dc4 playerView.player (0x1044e46b0) → 0x1019b1dd4 swift_getKeyPath + 0x1019b1df8
+    //   NSObject.publisher(for:options: 5 = [.initial, .new]) → 0x1019b1e2c DispatchQueue.main +
+    //   0x1019b1ec0 receive(on:options: nil) → 0x1019b1f14 weak box + 0x1019b1f58 sink(closure 0x1019a2e48:
+    //   MainActor check line 244, weakLoadStrong, bl 0x1019a2f38 = observer(playerItem:)) → 0x1019b1f94
+    //   beginAccess 0x21 on observerCancellables (0x1044e4750) + 0x1019b1f9c AnyCancellable.store(in:).
     public init(io: Either<URL, AVAsset>, options: KSOptions) {
         options.setAudioSession()
+        playerView = KSAVPlayerView()
         self.io = io // ⚑ M2: recon built AVURLAsset(url:options:avOptions)→urlAsset; binary stores io:Either<URL,AVAsset>
         self.options = options
-        // ⚑ UNRESOLVED → KSAVPlayer M2: currentItem observation (was `itemObservation` KVO → observer(playerItem:)) via observerCancellables
+        player.publisher(for: \.currentItem)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] playerItem in
+                guard let self else { return }
+                self.observer(playerItem: playerItem)
+            }
+            .store(in: &observerCancellables)
     }
 
     // ── s106: existing tail declarations follow Forward order. `init(io:options:)` and
@@ -309,7 +340,7 @@ open class KSAVPlayer {
         case let .left(url):
             return AVPlayerItem(asset: AVURLAsset(url: url, options: options.avOptions))
         case let .right(asset):
-            return AVPlayerItem(asset: asset)
+            return await AVPlayerItem(asset: asset)
         }
     }
 
@@ -425,6 +456,7 @@ open class KSAVPlayer {
         playbackState = .playing }
 
     // ⚑[tool=override_table ref=ProAVPlayer:0x1039f52c4 result=override idx7 → KSAVPlayer desc 0x1039ec488] open: ProAVPlayer overrides it
+    @MainActor
     open func changePlaybackTime(time: TimeInterval) { delegate?.changePlaybackTime(player: self, time: time) }
 
     // KSPlayer.KSAVPlayer.update(loadState:oldValue:) @0x1019a4db8 — 167 instr, vtable slot 97.
@@ -602,6 +634,7 @@ open class KSAVPlayer {
     //    0x1041d3f78, matching that requirement's `some MediaPlayerProtocol` parameter.
     // ⚑[tool=bind_oracle ref=_swiftEmptyArrayStorage:0x104112d00 result=libswiftCore]
     // ⚑[tool=export_trie_oracle ref=KSAVPlayerView.player:0x1044e46b0 result=player]
+    @MainActor
     open func reset() {
         options.reset()
         isReadyToPlay = false
@@ -624,6 +657,7 @@ extension KSAVPlayer {
         }
     }
 
+    @MainActor
     @objc private func playerItemFailedToPlayToEndTime(notification: Notification) {
         var playError: Error?
         if let userInfo = notification.userInfo {
@@ -821,6 +855,7 @@ extension KSAVPlayer {
     /// ⚑[tool=decode_objc_selector ref=0x10440bf70 result=layer]
     /// ⚑[tool=bind_oracle ref=__got:0x104112e20 result=_swift_dynamicCastObjCClassUnconditional]
     /// ⚑[tool=export_trie_oracle ref=KSOptions.pictureInPictureType:0x104c632c0 result=KSPictureInPictureProtocol.Type]
+    @MainActor
     public func configPIP() {
         pipController = KSOptions.pictureInPictureType.init(playerLayer: playerLayer)
     }
@@ -838,7 +873,8 @@ extension KSAVPlayer {
 
 extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     public var view: UIView { playerView }
-    public var currentPlaybackTime: TimeInterval {
+    // Forward seek 0x1019a4300 inlines this getter with no hop: nonisolated, not witness-inferred MainActor.
+    nonisolated public var currentPlaybackTime: TimeInterval {
         get {
             if let shouldSeekTo {
                 return shouldSeekTo
@@ -858,7 +894,7 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     //   binary carries no `vs`/`vM` for it. The body stays `nil`; returning nil needs no conformance.
     // ⚑[tool=export_trie_oracle ref=KSAVPlayer.subtitleDataSource.getter:0x1019a911c result=ConstantSubtitleDataSource-optional]
     public var subtitleDataSource: (any ConstantSubtitleDataSource)? { self }
-    public var isPlaying: Bool { player.timeControlStatus == .playing }
+    nonisolated public var isPlaying: Bool { player.timeControlStatus == .playing }
 
     public var numberOfBytesTransferred: Int64 {
         guard let playerItem = player.currentItem, let accesslog = playerItem.accessLog(), let event = accesslog.events.first else {
@@ -883,7 +919,8 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         playbackState = .paused
     }
 
-    public func prepareToPlay() {
+    // Forward 0x1019a9e20: Task context isolation (0,0) — nonisolated, not the witness-inferred MainActor.
+    nonisolated public func prepareToPlay() {
         KSLog("prepareToPlay \(self)", line: 657)
         options.prepareTime = CACurrentMediaTime()
         isReadyToPlay = false
@@ -909,12 +946,17 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
     }
 
     // Ref 0x1019aa5d4 ignores custom IO and forwards URL to the asset path.
+    // ⚑ L7-9 `io.left` (Utility.swift Either.left getter, inlined): Forward 0x1019aa5d4 allocas an
+    //   Either<URL,AbstractAVIOContext> copy + three URL temporaries, getEnumCaseMultiPayload == 1 → destroy,
+    //   else VWT initializeWithTake chain 0x1019aa748/758/768 then initializeWithCopy into the new Either;
+    //   `if case let .left(url) = io` binds in place (one temporary) and cannot produce that chain.
     public func replace(io: Either<URL, AbstractAVIOContext>, options: KSOptions) {
-        if case let .left(url) = io {
+        if let url = io.left {
             replace(io: Either<URL, AVAsset>.left(url), options: options)
         }
     }
 
+    @MainActor
     public func replace(io: Either<URL, AVAsset>, options: KSOptions) {
         KSLog("replaceUrl \(self)", line: 690)
         reset()
@@ -960,12 +1002,16 @@ extension KSAVPlayer: @preconcurrency MediaPlayerProtocol {
         }
     }
 
-    public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
-        var tracks = [MediaPlayerTrack]()
-        for track in mediaPlayerTracks where track.mediaType == mediaType {
-            tracks.append(track)
-        }
-        return tracks
+    // tracks(mediaType:) @0x1019aad54: Forward walks the array by index with a bounds-check `b.hs`→`brk`
+    // and appends through reserveCapacity/_growArrayBuffer — the inlined `filter`, not a for-where loop
+    // (scratch A/B vs Forward: filter 0.924 with the residual only field-offset/register naming; for-where 0.605).
+    // ⚑ L7-9 `filter`, nonisolated: Forward 0x1019aad54 is the inlined `filter` specialization (per-element
+    //   `cmp/b.hs` bounds check, in-place append into the stack result; a for-in/append spelling is a different
+    //   shape) and its predicate carries NO swift_task_isCurrentExecutor (stub 0x10345d0c0) — unlike select's
+    //   sibling predicate 0x1019ab370 (check, line 736). A MainActor-isolated tracks would give the predicate
+    //   that check (build: inlined isCurrentExecutor/reportUnexpectedExecutor), so tracks is nonisolated.
+    nonisolated public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
+        mediaPlayerTracks.filter { $0.mediaType == mediaType }
     }
 
     public func select(track: some MediaPlayerTrack) {
@@ -1127,55 +1173,84 @@ extension KSAVPlayer: @preconcurrency ConstantSubtitleDataSource {
     }
 }
 
-// AVMediaSelectionTrack @0x1039ec0e0 — declaration shape read from the Forward context descriptor (kind, parent,
-// conformances, case names); members not reconstructed. Placement: gap_upper(inferred) (resource_bundle_accessor.swift..KSAVPlayer.swift).
+// AVMediaSelectionTrack @0x1039ec0e0 — descriptor flags 0x80000050, 6 fields, vtable size 1 (the
+// initializer, Impl NULL: the allocating init is dead, the caller allocates inline and `bl`s the
+// initializing init). Placement: gap_upper(inferred) (resource_bundle_accessor.swift..KSAVPlayer.swift).
 // ⚑[tool=type_surface ref=AVMediaSelectionTrack:0x1039ec0e0 result=class AVMediaSelectionTrack: MediaPlayerTrack, SubtitleInfo]
-final class AVMediaSelectionTrack: MediaPlayerTrack, SubtitleInfo {
-    // ⚑[tool=field_surface ref=AVMediaSelectionTrack:fieldmd result=6 fields size 80] `group` and
-    // `playerItem` export vpfi (declaration defaults). The only vtable entry, the initializer,
-    // has a NULL Impl (dead-stripped), so no stored values are readable.
+// ⚑ L7-9 `public`: group getter/setter/modify 0x10199f0f8/0x10199f138/(ICF 0x100153330) and playerItem
+//   getter/setter/modify 0x10199f17c/0x10199f1b0/0x10199f1f8 are standalone bodies (dynamic
+//   swift_beginAccess, weakLoadStrong/weakAssign, full modify coroutine with resume 0x10199f274) with
+//   NO code or data reference anywhere in Forward (blscan + relscan), and both vpfi exist. WMO only
+//   keeps unreferenced accessors of a final class when they are externally visible; an internal class
+//   with public vars emits nothing (scratch experiment). isEnabled.modify 0x10199f4c8 exists for the
+//   same reason. Witnesses of a public conformance must be public, so the members follow.
+// ⚑ L7-9 isolation: Forward's isEnabled getter/setter send currentMediaSelection (0x1034605c0),
+//   selectedMediaOptionInMediaSelectionGroup: (0x103467ea0) and selectMediaOption:inMediaSelectionGroup:
+//   (0x103467e60) directly; AVPlayerItem is NS_SWIFT_UI_ACTOR in this SDK, so the direct send needs
+//   `@MainActor` on isEnabled and a @preconcurrency conformance (the AVMediaPlayerTrack pattern above).
+public final class AVMediaSelectionTrack: @preconcurrency MediaPlayerTrack, @preconcurrency SubtitleInfo {
     let option: AVMediaSelectionOption
-    var group: AVMediaSelectionGroup? = nil
-    weak var playerItem: AVPlayerItem? = nil
-    let name: String
-    let trackID: Int32
-    let languageCode: String?
+    public var group: AVMediaSelectionGroup? = nil
+    public weak var playerItem: AVPlayerItem? = nil
+    public let name: String
+    public let trackID: Int32
+    public let languageCode: String?
 
-    init() {
-        option = AVMediaSelectionOption()
-        name = ""
-        trackID = 0
-        languageCode = nil
+    /// init(option:) @0x10199f6ac (the only caller is 0x1019a7acc, the media-selection loop of the
+    /// updateStatus async body, which then stores `group` (+0x18) and `playerItem` (+0x20, weakAssign)).
+    /// Read from the bytes: group = nil, playerItem weakInit nil, option → +0x10; `propertyList`
+    /// (selref 0x10440c880) bridged to Any and cast to `SDySSypG` = [String: Any] (0x10356ce30);
+    /// "MediaSelectionOptionsPersistentID" (0x103d342f0) `as? Int32` ?? 0 → +0x38;
+    /// "MediaSelectionOptionsName" (0x103d342d0) `as? String` → +0x28, else `displayName`
+    /// (selref 0x10440b190); a failed dictionary cast stores trackID 0 and takes displayName.
+    /// ⚑ No Forward symbol name for 0x10199f6ac (the list carries only the NULL vtable slot); the
+    ///   argument label `option` is not recoverable from the bytes.
+    /// `locale` (selref 0x10440c048) → Locale? → Locale.languageCode (0x103452800) → +0x40.
+    init(option: AVMediaSelectionOption) {
+        self.option = option
+        // Optional dictionary, not `if let`: Forward tests the cast (`cbz w0`) and the result (`cbz x20`)
+        // separately and folds `?? 0` into `csel w8,w8,wzr,ne` (scratch A/B: 0.975, residual = movi only).
+        let dic = option.propertyList() as? [String: Any]
+        trackID = dic?["MediaSelectionOptionsPersistentID"] as? Int32 ?? 0
+        name = dic?["MediaSelectionOptionsName"] as? String ?? option.displayName
+        languageCode = option.locale?.languageCode
     }
 
-    func search(with query: KSSubtitleQuery) async -> [SubtitlePart] { [] }
-    var mediaType: AVFoundation.AVMediaType { option.mediaType }
-    var nominalFrameRate: Float { get { 1.0 } set {} }
-    var bitRate: Int64 { 0 }
-    var reorderSize: Int32 { 0 }
-    var bitDepth: Int32 { 0 }
-    var isEnabled: Bool {
+    public func search(with query: KSSubtitleQuery) async -> [SubtitlePart] { [] }
+    public var mediaType: AVFoundation.AVMediaType { option.mediaType }
+    public var nominalFrameRate: Float { get { 1.0 } set {} }
+    public var bitRate: Int64 { 0 }
+    public var reorderSize: Int32 { 0 }
+    public var bitDepth: Int32 { 0 }
+    /// getter @0x10199f2e4 / setter @0x10199f42c / modify @0x10199f4c8: beginAccess(read) on group
+    /// (+0x18) then `cbz`, beginAccess(read) + swift_weakLoadStrong on playerItem (+0x20) then `cbz`;
+    /// `currentMediaSelection` → `selectedMediaOptionInMediaSelectionGroup:` → `cbz` (nil ⇒ false) →
+    /// NSObject `==` (0x103458674) against option (+0x10). Setter: `tbz` newValue selects option or 0,
+    /// then `selectMediaOption:inMediaSelectionGroup:`.
+    @MainActor
+    public var isEnabled: Bool {
         get {
             if let group, let playerItem {
-                // `currentMediaSelection` is main-actor isolated in the SDK; read it through KVC
-                // from this nonisolated class.
-                return (playerItem.value(forKey: "currentMediaSelection") as? AVMediaSelection)?.selectedMediaOption(in: group) == option
+                return playerItem.currentMediaSelection.selectedMediaOption(in: group) == option
             }
             return false
         }
         set {
-            if let group, let playerItem {
-                playerItem.select(newValue ? option : nil, in: group)
+            // `if let group` + `playerItem?.`: Forward borrows group with no objc_retain and releases only
+            // playerItem and the option (0x10199f4ac/0x10199f4b0); `if let group, let playerItem` adds a
+            // retain/release of group (scratch A/B: 1.000 vs 0.840).
+            if let group {
+                playerItem?.select(newValue ? option : nil, in: group)
             }
         }
     }
-    var isImageSubtitle: Bool { false }
-    var rotation: UInt16 { 0 }
-    var dovi: DOVIDecoderConfigurationRecord? { nil }
-    var fieldOrder: FFmpegFieldOrder { .unknown }
-    var formatDescription: CMFormatDescription? { nil }
-    var subtitleID: String { String(describing: trackID) }
-    var delay: TimeInterval { 0 }
-    var renderMode: SubtitleRenderMode { .srtView }
-    var description: String { name }
+    public var isImageSubtitle: Bool { false }
+    public var rotation: UInt16 { 0 }
+    public var dovi: DOVIDecoderConfigurationRecord? { nil }
+    public var fieldOrder: FFmpegFieldOrder { .unknown }
+    public var formatDescription: CMFormatDescription? { nil }
+    public var subtitleID: String { String(describing: trackID) }
+    public var delay: TimeInterval { 0 }
+    public var renderMode: SubtitleRenderMode { .srtView }
+    public var description: String { name }
 }
