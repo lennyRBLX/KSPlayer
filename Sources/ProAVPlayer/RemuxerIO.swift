@@ -142,7 +142,15 @@ public actor DemuxerIO {
     private var ioWaiter: CheckedContinuation<Void, Never>?
     // `public` = `…5stateAC5StateOvpMV`; setter NOT public — descriptor slots 11 (Setter) and 12 (Modify)
     // are unnamed while the getter at slot 10 is named `vgTq`. ⚑ same private(set)-vs-internal(set) pin.
-    public private(set) var state: State = .ready                           // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
+    // initial .ready confirmed (init sets state=.ready, FUN_101b6b184); case order gold-confirmed (field-record)
+    // didSet = Forward FUN_101b7e7b4 (param = oldValue; called by every state store in send(_:)): inlined
+    //   KSLog gate `logLevel > 2` (.warning), message "[DemuxerIO] state change: " (0x103d3eb20, 26) +
+    //   oldValue + " -> " + state, file #fileID 0x103d3e930, function "state", line 0x41 = 65.
+    public private(set) var state: State = .ready {
+        didSet {
+            KSLog("[DemuxerIO] state change: \(oldValue) -> \(state)", file: "ProAVPlayer/RemuxerIO.swift", function: "state", line: 65)
+        }
+    }
     private var seekTime: Double = 0
     private var seekingCompletionHandler: (@Sendable (Bool) async throws -> Void)?
     // OPTIONALITY RESOLVED (supersedes the `UNRES → M2` pin). Field record index 9 is
@@ -206,27 +214,51 @@ public actor DemuxerIO {
             guard state == .ready || state == .seeking else { return }   // state & 0xfd == 0
             ioTask?.cancel()
             if state == .ready { state = .reading }
-            ioTask = Task { /* UNRESOLVED — async read loop (slot28 FUN_101b7ff0c) */ }
+            // Read task — FUN_101b7f678 (Task(name:priority:operation:)) name "KSPlayer-DemuxerIO-read"
+            //   (0x103d3e970, 23), priority .utility, context {nil isolation, weak box} ⇒ nonisolated
+            //   `[weak self]`; result stored to ioTask (self+0x80). Body 0x101b7f9b4/fb64/fc28/fc70/fccc:
+            //   weakLoadStrong → start log (line 0x59) → `while !isCancelled` + state-1 < 3 (hop to self)
+            //   → readingLoop() (async entry 0x101b7fef4) → re-read state on self → stop log (line 0x5e).
+            ioTask = Task(name: "KSPlayer-DemuxerIO-read", priority: .utility) { [weak self] in
+                guard let self else { return }
+                KSLog("[DemuxerIO] reading loop start", file: "ProAVPlayer/RemuxerIO.swift", function: "send(_:)", line: 89)
+                while !Task.isCancelled {
+                    let state = await self.state
+                    guard state == .reading || state == .seeking || state == .paused else { break }
+                    await self.readingLoop()
+                }
+                let state = await self.state
+                KSLog("[DemuxerIO] reading loop stop state=\(state)", file: "ProAVPlayer/RemuxerIO.swift", function: "send(_:)", line: 94)
+            }
         case .pause:                                                     // x23==1 → state 3
             guard state == .reading else { return }
             state = .paused
+        // Forward spawns no Task here: state=1, didSet, ioWaiter resume + nil, return.
         case .resume:                                                    // x23==2 → state 1
             guard state == .paused else { return }
             state = .reading
             ioWaiter?.resume(); ioWaiter = nil
-            ioTask = Task { /* UNRESOLVED — async read loop */ }
+        // ioAction call = project the existential, load RemuxerIOAction+0x20 (outputStreamInfo),
+        //   OSI vtable +0x120 (writeTrailer) — the inlined 3rd DemuxerIOAction requirement.
         case .endOfStream:                                               // x23==3 → state 4
             guard state == .reading || state == .paused else { return }  // state | 2 == 3
             state = .endOfStream
-            // ⚑ UNRESOLVED: ioAction vtbl +0x120 (devirt); not emitted
+            ioAction.writeTrailer()
             delegate?.demuxerDidReachEnd()
+        // Close task — FUN_101b7f678 name "KSPlayer-DemuxerIO-close" (0x103d3e910, 24), priority .utility,
+        //   context {nil isolation, strong self}; body 0x101b813e4 = cancelReading's async entry. The
+        //   returned task is released, not stored.
         case .close:                                                     // x23 default → state 5
             guard state != .closed else { return }
             state = .closed
             ioWaiter?.resume(); ioWaiter = nil
-            ioTask = Task { /* UNRESOLVED */ }
+            Task(name: "KSPlayer-DemuxerIO-close", priority: .utility) {
+                await self.cancelReading()
+            }
+        // Inlined KSLog gate `logLevel > 1` (.error), "[DemuxerIO] failed error=" (0x103d3e950, 25) +
+        //   error (getErrorValue → appendInterpolation), function "send(_:)", line 0x82 = 130.
         case .failed(let error):                                         // tag==1
-            // ⚑ KSLog error form UNRESOLVED (class-wide)
+            KSLog(level: .error, "[DemuxerIO] failed error=\(error)", file: "ProAVPlayer/RemuxerIO.swift", function: "send(_:)", line: 130)
             delegate?.demuxerDidFail(error)
             if state != .closed { state = .failed }
         case .seek(let to, let completion):                             // tag==0
@@ -244,8 +276,10 @@ public actor DemuxerIO {
                 seekingCompletionHandler = completion
             case .ready, .reading, .seeking, .paused:                    // DAT_1044f3418 set
                 seekTime = to
-                if state == .seeking, seekingCompletionHandler != nil {
-                    Task { /* UNRESOLVED — settle the superseded in-flight seek (FUN_101b76bbc) */ }
+                // FUN_101b76bbc (throwing Task, name nil, priority nil), context {nil isolation, handler};
+                //   body 0x101b7f564 = `try await handler(false)`.
+                if state == .seeking, let handler = seekingCompletionHandler {
+                    Task { try await handler(false) }
                 }
                 let wasPaused = (state == .paused)
                 seekingCompletionHandler = completion
@@ -417,13 +451,17 @@ public actor DemuxerIO {
     ///   reads value's low 4 bytes as the Int32 (auVar5._0_4_ → `_swift_allocError`/`_swift_willThrowTypedImpl`
     ///   on the Swift.Int32 metadata). currentTime write = `_swift_beginAccess`(self+0x78); delegate notify
     ///   = weak-load + witness `(*(wt+8))(value)`.
+    // #4: Result.get(). 0x101b812b0 tests w1 byte 1 == 1 (failure case), then
+    //   isPlatformVersionAtLeast(iOS 18) → swift_willThrowTypedImpl(Int32) → swift_allocError(Int32):
+    //   the inlined `get() throws(Failure)` erased into an UNTYPED throw (a typed-throws body returns the
+    //   error unboxed, as waitFirstSegment's inlined copy 0x101b69dd0 does). Otherwise w1 byte 0 != 1
+    //   (Double? non-nil) → currentTime + delegate.
+    // ⚑ Forward's readPacket is untyped `throws`; kept `throws(Int32)` because ConversionInfo.waitFirstSegment
+    //   (`throws(Int32)`, not staged) calls it — GAP joint with ConversionInfo.swift.
     public func readPacket() throws(Int32) {
-        let r = ioAction.performRead(formatCtx: formatContext.formatCtx)
-        if r.isError {
-            throw Int32(bitPattern: UInt32(truncatingIfNeeded: r.value.bitPattern))
-        } else if !r.isEnd {
-            currentTime = r.value
-            delegate?.didUpdateCurrentTime(r.value)
+        if let value = try ioAction.performRead(formatCtx: formatContext.formatCtx).get() {
+            currentTime = value
+            delegate?.didUpdateCurrentTime(value)
         }
     }
 
@@ -495,7 +533,7 @@ protocol DemuxerIOAction {
     ///   to `av_read_frame` (FUN_1030e6e78), which dereferences it as a raw C `AVFormatContext*` (fields
     ///   +0x10/+0x3d/+0x08…), NOT as the Swift `FormatContext` wrapper. Caller-side confirmation (what
     ///   `DemuxerIO.slot29` forwards) is walled → M2.
-    func performRead(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> RemuxerIOAction.ReadResult
+    func performRead(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> Result<Double?, Int32>
 
     /// Teardown/cancel requirement — impl = `RemuxerIOAction` method binary `FUN_101b82c04`
     /// (self=RemuxerIOAction, FIELD-ACCESS-confirmed: reads `outputStreamInfo`@0x20 + the literal
@@ -507,11 +545,13 @@ protocol DemuxerIOAction {
     /// (`recover_swift_function_name` = None; no #function).
     func stop()
 
-    // ⚑ 3rd requirement — DEFERRED WITH EVIDENCE (P43, searched not assumed): walked DemuxerIO's reachable
-    //   async graph (process/readLoop/cancelReading + `_swift_task_switch` continuations, depth 7 / 11 funcs)
-    //   — NO 3rd `ioAction` call found. Either a rarely-/un-invoked protocol req or beyond the core-loop
-    //   graph → the DemuxerIO deep-async wiring unit. Count stays honest at 2/3 declared (req COUNT=3 is
-    //   descriptor-confirmed; the missing impl is not fabricated).
+
+    // 3rd requirement. Protocol descriptor 0x1039f55c0 lists 3 requirements, all flags 0x11
+    //   (instance, sync, Method). The witnesses at 0x1041e1790/98/a0 are deleted (all bind to the same
+    //   import), so the order is unobservable. The third ioAction call is in send(.endOfStream)
+    //   @0x101b7e9d0: project the existential, load RemuxerIOAction+0x20 (outputStreamInfo), then OSI
+    //   vtable +0x120 (writeTrailer). No arguments, Void. ⚑ NAME INFERRED from that body.
+    func writeTrailer()
 }
 
 /// Demuxer delegate — weak-referenced ⇒ `AnyObject`. 4 requirements (protocol desc 0x1039f540c).
@@ -616,11 +656,10 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     ///   req references it as `RemuxerIOAction.ReadResult`.
     /// The `enum { ok(Double); endOfStream; failed(Int32) }` candidate was DISPROVEN (Swift packs that tag in
     /// ONE byte; the binary uses two).
-    struct ReadResult {
-        var value: Double   // @0  — seconds (ok) OR Int32 error-code bits reinterpreted (error)
-        var isEnd: Bool     // @8  — end-of-stream / skip
-        var isError: Bool   // @9  — read failed; `value` carries the code
-    }
+    // ⚑ #4 SUPERSEDES the struct above: the return is `Result<Double?, Int32>`. Same 10-byte layout
+    //   (Double? payload @0 + its tag @8, Result case tag @9 — a multi-payload enum's extra tag byte, which
+    //   is why two bytes are used), and readPacket's inlined typed-throw `get()` proves the Result. No
+    //   `ReadResult` string or type descriptor exists in Forward. The struct is removed.
 
     /// Binary: FUN_101b823b8. Name `performRead(formatCtx:)` recovered high-confidence; the impl of the
     /// `DemuxerIOAction.performRead` requirement. NON-throwing (0 throw machinery here; the actor-side
@@ -635,18 +674,18 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     ///
     /// Reconstructs the control flow, the av_read_frame call, PTS→seconds, the outputStreamInfo write, the
     /// startPlayTime record, and the return struct. KSLog debug/error forms kept UNRESOLVED (class-wide).
-    func performRead(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> ReadResult {
+    func performRead(formatCtx: UnsafeMutablePointer<AVFormatContext>) -> Result<Double?, Int32> {
         // [L106-110] No packet allocated → error result with the -1 (0xffffffff) sentinel.
         guard let packet = self.packet else {
             // isEnd=false, isError=true, value = the 0xffffffff sentinel (Int32(-1) bits).
-            return ReadResult(value: Double(bitPattern: 0xffff_ffff), isEnd: false, isError: true)
+            return .failure(-1)
         }
 
         // [L113] av_read_frame(formatCtx, packet) — FUN_1030e6e78 wraps FFmpeg's av_read_frame (returns Int32).
         let status = av_read_frame(formatCtx, packet)   // ⚑ FUN_1030e6e78; call name/arg-order decompile-grounded
         // [L379-382] Non-zero → error result carrying the status code. isEnd=false, isError=true.
         guard status == 0 else {
-            return ReadResult(value: Double(bitPattern: UInt64(UInt32(bitPattern: status))), isEnd: false, isError: true)
+            return .failure(status)
         }
 
         // ── read ok ──────────────────────────────────────────────────────────────────────────────────
@@ -678,16 +717,13 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //   `CMTime(value: pts * stream.timebase.num (+0xc0), timescale: stream.timebase.den (+0xc4))
         //    - stream.startTime (+0xa0..+0xb0)`, take `.seconds`, clamp to >= 0. Its second return lane is a
         //   flag (1 = "no match / sentinel pts" → treated as skip/EOF). [FUN_101a32e28 L72-96 / L103-104]  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
-        var value: Double
-        var isEnd: Bool
+        let value: Double?
         // ⚑ The seconds computation + the skip/EOF flag are produced together (FUN_101a32e28 returns  ⚑[tool=resolve_fun_pins ref=FUN_101a32e28:0x101a32e28 result=RESOLVES_UNIQUELY] = KSPlayer.FormatContext.time(index: Swift.Int32, timestamp: Swift.Int64) -> Swift.Double?
         //   (Double, flag); flag==1 ⇒ isEnd). Modeled here as the PTS→seconds helper below.
         if let track = formatContext.assetTracks.first(where: { $0.trackID == streamIndex }), track.mediaType == .subtitle {
-            (value, isEnd) = (0, true)                                                  // LAB_101b825b4 (subtitle stream → skip)
-        } else if let seconds = formatContext.time(index: streamIndex, timestamp: pts) {  // FUN_101a32e28 = FormatContext.time
-            (value, isEnd) = (seconds, false)
+            value = nil                                                                 // LAB_101b825b4 (subtitle stream → skip)
         } else {
-            (value, isEnd) = (0, true)                                                  // nil (sentinel pts / no match)
+            value = formatContext.time(index: streamIndex, timestamp: pts)              // FUN_101a32e28 = FormatContext.time; nil = sentinel pts / no match
         }
 
         // [L197-278] packet trace, warning-gated (logLevel > 2), line 395
@@ -722,7 +758,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
 
         // [L372-374] Record startPlayTime on the first non-skip packet: if not isEnd AND startPlayTime is
         //   still nil (tag byte @0x18 == 1), set startPlayTime = value (payload @0x10; tag ← isEnd == 0 ⇒ .some).
-        if !isEnd, startPlayTime == nil {
+        if let value, startPlayTime == nil {
             startPlayTime = value
         }
 
@@ -730,7 +766,7 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         av_packet_unref(packet)   // ⚑ FUN_102d61970
 
         // [L377,385-388] Return: isError=false on the ok path; isEnd + value as computed above.
-        return ReadResult(value: value, isEnd: isEnd, isError: false)
+        return .success(value)
     }
 
     /// Error-recovery on the write-error path — FUN_101b7e2f4. Name `reconstruct(completion:)` RECOVERED
@@ -754,7 +790,10 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
     /// ⚑ CORRECTIONS to the doc below, which had two errors: the OutputStreamInfo +0xb0/+0xb8/+0x128 calls
     ///   are NON-throwing (x21 carries the callee ADDRESS across each `blr` and no error test follows —
     ///   `write()` is the only throwing callee), and the `cbz x21` is a RETHROW, not an early-out.
-    private func reconstruct(completion: (() -> Void)?) throws {
+    // #45: internal (ConversionInfo's seek send-completion funclet 0x101b6a1d0 calls it cross-file with
+    //   `mov x21,#0` + `cbz x21` = `try`); completion ((Bool) -> Void)? = the closure context 0x1041e0c68
+    //   forwarded by thunk 0x10003983c.
+    func reconstruct(completion: ((Bool) -> Void)?) throws {
         // ── Body DEFERRED to owner-phase (blocked on OutputStreamInfo's devirt API + RemuxerIOActionDelegate).
         //    Grounded control flow from FUN_101b7e2f4 (239i; prefetch-cached + disasm-verified — NOT live code, to
         //    avoid fabricating the OutputStreamInfo interface / mis-placing the swifterror-guarded resets, P32/P36):
@@ -771,6 +810,12 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         //         `startPlayTime = nil`                                       // str xzr@+0x10 + tag=1@+0x18 (disasm-confirmed; no-error path ONLY)
         //         `if completion == nil { delegate?.<notify>(2) }`           // weak RemuxerIOActionDelegate req (undeclared) — UNRESOLVED
         //         `Task { completion?() }`                                   // async completion spawn (FUN_101b76920, &DAT_103571988) — UNRESOLVED
+    }
+
+    // DemuxerIOAction 3rd requirement impl, inlined at DemuxerIO.send(.endOfStream): load
+    //   outputStreamInfo@0x20 [retain], then OSI vtable +0x120 [release]. ⚑ NAME INFERRED.
+    func writeTrailer() {
+        outputStreamInfo.writeTrailer()
     }
 
     /// `DemuxerIOAction.cancel()` requirement impl — binary `FUN_101b82c04` (self=RemuxerIOAction,
@@ -829,15 +874,16 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         KSLog(masterM3U8Context, file: "ProAVPlayer/RemuxerIO.swift", function: "write(formatContext:dir:formatContextOptions:masterM3U8Context:)", line: 324)
         // 7. build + return the OSI via its real designated init [L244-247]
         let filename = dir.appendingPathComponent("playlist_%v.m3u8").ffmpegString   // ⚑ was `.path` (approximated); the call at 0x101b85b60 is ffmpegString, now reconstructed  ⚑[tool=resolve_fun_pins ref=FUN_1019f59c4:0x1019f59c4 result=RESOLVES_UNIQUELY] = (extension in KSPlayer):Foundation.URL.ffmpegString.getter : Swift.String
-        return try OutputStreamInfo(formatContext: formatContext,
-                                    filename: filename,
-                                    forceTranscode: false,                  // p4 = 0
-                                    formatContextOptions: options,
-                                    formatName: "hls",                      // p6+p7 = "hls" (0x736c68)
-                                    mediaType: nil,                         // p8 = 0 (null AVMediaType?)
-                                    transcodeCodecIDs: (options["hls_segment_type"] as? String) == "fmp4"
-                                        ? [AV_CODEC_ID_FLAC, AV_CODEC_ID_ALAC, AV_CODEC_ID_EAC3, AV_CODEC_ID_AC3, AV_CODEC_ID_AAC]  // static 0x1044f3798
-                                        : [AV_CODEC_ID_AAC, AV_CODEC_ID_EAC3, AV_CODEC_ID_AC3, AV_CODEC_ID_MP2])                   // static 0x1044f3758
+        // ⚑ L7 lane 14 (#60): Forward `bl 0x101a19724` (FFmpegUtility.write) @0x101b85b9c, w3=0, w5="hls", x7=0.
+        return try FFmpegUtility.write(formatContext: formatContext,
+                                       to: filename,
+                                       isMergeStream: false,
+                                       formatContextOptions: options,
+                                       outFormat: "hls",
+                                       mediaType: nil,
+                                       allowAudioCodecs: (options["hls_segment_type"] as? String) == "fmp4"
+                                           ? [AV_CODEC_ID_FLAC, AV_CODEC_ID_ALAC, AV_CODEC_ID_EAC3, AV_CODEC_ID_AC3, AV_CODEC_ID_AAC]  // static 0x1044f3798
+                                           : [AV_CODEC_ID_AAC, AV_CODEC_ID_EAC3, AV_CODEC_ID_AC3, AV_CODEC_ID_MP2])                   // static 0x1044f3758
     }
 
     // vtable-empty (devirtualized) → M2 via witness-table-anchoring (the e651ff8 technique) + the real init.

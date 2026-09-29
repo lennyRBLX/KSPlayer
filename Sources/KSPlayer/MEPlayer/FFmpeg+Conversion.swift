@@ -309,7 +309,8 @@ public class OutputStreamInfo: @unchecked Sendable { // NON-final (P21): parse_c
     // Map KEYS are Int32 (faithfulness correction, 3 signals: subscript hashes 4 bytes; key = AVPacket
     // stream_index which is C `int`; field-record key = stdlib symref, libswiftCore-walled).
     public var assetTrackMap: [Int32: FFmpegAssetTrack] = [:]      // +0x10  key Int32 (stream_index) ⚑ value confirmed
-    public private(set) var transcodeMap:  [Int32: any TranscodeProtocol] = [:] // +0x18  vtable: getter impl, setter/modify null
+    // ⚑ L7 lane 14: no default — Forward's vpfi set is assetTrackMap/lastDTSMap/hasWriteTrailer/outPacket only.
+    public private(set) var transcodeMap:  [Int32: any TranscodeProtocol] // +0x18  vtable: getter impl, setter/modify null
     // ⚑[tool=binding_gate ref=OutputStreamInfo:__swift5_fieldmd result=pinned — binary says `let`, source cannot be]
     //   Session 61 binding sweep: these fields' FieldRecord flags word is 0x00000000
     //   (= `let`), but the Swift compiler REFUSES that spelling here. Left as `var`.
@@ -330,181 +331,34 @@ public class OutputStreamInfo: @unchecked Sendable { // NON-final (P21): parse_c
     private var lastDTSMap:    [Int32: Int64] = [:]                 // +0x48  key Int32; value Int64 (DTS)
     private var hasWriteTrailer: Bool = false                     // v4 concrete `Sb`
     public let formatCtx:     UnsafeMutablePointer<AVFormatContext>  // v4 concrete (non-optional → init param)
-    private let outPacket:     UnsafeMutablePointer<AVPacket>?  // field flags 0 (`let`); both inits assign it once
+    // ⚑ L7 lane 14: pfi `variable initialization expression of OutputStreamInfo.(outPacket in _3E45B09B…)`
+    //   (0x10199acb8; discriminator = MD5("KSPlayer"+"FFmpeg+Conversion.swift")) → default av_packet_alloc().
+    private let outPacket:     UnsafeMutablePointer<AVPacket>? = av_packet_alloc()  // field flags 0 (`let`)
     public let formatName:    String  // v4 concrete `SS`
     public let removeADTS:    Bool  // v4 concrete `Sb`
 
-    // ── The REAL designated init (= FUN_101a1d014, the SOLE OSI construction site; ~1382-line devirt
-    //    decompile: reconstruction/decompiles/OSI_factory_101a1d014.txt). Reconstructed C1-C4. ────────
-    //  GROUNDED: the avformat_alloc_output_context2 prologue + KSPlayerError throw (C1); the
-    //    avio_open / avformat_write_header epilogue + throws (C3); the 12-field assembly + return, incl.
-    //    av_packet_alloc / formatName-from-oformat / removeADTS (C4). All FFmpeg calls oracle-CONFIRMED
-    //    (reconstruction/osi_factory_ffmpeg_map.json).
-    //  SPINE + honest-deferred (user-gated scope): the per-track loop reconstructs the COPY path + the
-    //    maps (timeBaseMap/streamMapping) + frameRate + avformat_new_stream; the codec-specific TRANSCODE
-    //    ARMS (AAC-ADTS-BSF / subtitle WEBVTT=0x17012·MOV_TEXT=0x17005 / HEVC=0xad extradata — constants
-    //    compile-oracle-decoded) build a per-codec ctx via devirt ctor helpers (recover_swift_function_name
-    //    = None) → reconstructed as named per-arm units (P36/P43). FFmpegAssetTrack field reads are
-    //    offset-grounded, field-name-INFERRED (the shared +0x40 / 18-vs-37 layout debt, P34/§1).
-    //  ⚑ signature (P28, devirt-inferred names): formatContext/filename/formatContextOptions/formatName
-    //    GROUNDED; `forceTranscode` = p4 (tested `& 1`, write→false; CORRECTS the pinned "String?");
-    //    `mediaType`:AVMediaType? = p8 — DERIVED, no longer inferred, and it CORRECTS the pinned
-    //    `flag`:Int. The slot is nil-tested (`ldur x8,[x29-0x140]` / `cbz x8` @0x101a1d4b4) inside the
-    //    per-track loop, then bridged and STRING-COMPARED against the loop element's +0x78 field:
-    //    both sides go through `String._unconditionallyBridgeFromObjectiveC` and the results are
-    //    compared pairwise (`cmp x0,x2` / `ccmp x20,x1,#0,eq` @0x101a1d4e4). An Int slot cannot be
-    //    nil-tested nor bridged. The caller confirms the type: MEPlayerItem.startRecord's trie
-    //    signature is `(url: Foundation.URL, mediaType: __C.AVMediaType?)` and it moves that very
-    //    parameter into x7 (`mov x7,x21` @0x101a484d8) with x21 <- x1 at entry.
-    //    ⚑[tool=bind_oracle ref=String._unconditionallyBridgeFromObjectiveC:0x10410a250 result=CONFIRMED]
-    //    ⚑[tool=export_trie_oracle ref=MEPlayerItem.startRecord(url:mediaType:):0x101a483d4 result=AVMediaType-optional]
-    //    `transcodeCodecIDs` = p9 (a codec-id list: count@+0x10, elems@+0x20).
-    //  FFmpeg provenance — every symbol below is ffmpeg_name_oracle result=CONFIRMED (instr/size fp vs the
-    //  symbolicated FFmpegKit static libs; reconstruction/osi_factory_ffmpeg_map.json):
-    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_output_context2:0x103193858 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_new_stream:0x1031b8714 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_from_context:0x1029f5738 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
-    //   ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED]
-    //   (avio_open @0x1030c0914 CONFIRMED too — not FFMPEG_RE-scanned)
-    //  ⚑ L7 lane 13: Forward's trie has no OSI fC/fc, so this init is not public in Forward (RemuxerIO calls
-    //    FFmpegUtility.write @0x101b85b9c instead). Kept `public` here because ProAVPlayer/RemuxerIO.swift:832 (not a
-    //    lane-13 file) calls it across modules → gap owner "review".
-    public init(formatContext: FormatContext,
-                filename: String,
-                forceTranscode: Bool = false,          // ⚑ p4 name INFERRED
-                // ⚑ p5/p6-p7 OPTIONALITY DERIVED s102 — both are nil-tested by the binary, so neither
-                // can be the non-optional type this init used to declare:
-                //   p5  `cbz x24` @0x101a1d0f8 — an empty Dictionary is a non-null singleton, so a
-                //       non-optional Dictionary can never be zero. The nil arm builds the substitute
-                //       from `__swiftEmptyArrayStorage` (__got 0x104112d00) via 0x1019c3148, which is
-                //       how an empty DICTIONARY LITERAL `[:]` is constructed, and both arms converge
-                //       on one stack slot — i.e. the callee itself applies `?? [:]`.
-                //   p6+p7 `cbz x25` @0x101a1d11c and `cbz x20` @0x101a1e154 — `""` is
-                //       (0, 0xE000000000000000), never (0,0), so a non-optional String cannot be zero.
-                // Slot identity is NOT in doubt — which is what rules out "the parameter ORDER is
-                // wrong" as the competing explanation. The p5 value is converted by 0x101a322c0 and
-                // passed as the AVDictionary** of  ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
-                // (`bl 0x1031941d8` @0x101a1e4a4), then released by  ⚑[tool=ffmpeg_name_oracle ref=av_dict_free:0x10323b034 result=CONFIRMED]
-                // (@0x101a1e4b0). So p5 IS the format-context options and only its optionality was wrong.
-                // ⚑[tool=bind_oracle ref=__swiftEmptyArrayStorage:0x104112d00 result=CONFIRMED]
-                formatContextOptions: [String: Any]?,
-                formatName: String?,
-                // ⚑ p8 DERIVED (was `flag: Int`, inferred). MODULE-QUALIFIED: FFmpeg's C `AVMediaType`
-                // enum collides with AVFoundation's here, the same collision MEPlayerItem.swift:271 names.
-                mediaType: AVFoundation.AVMediaType? = nil,
-                // ⚑ p9 OPTIONALITY DERIVED s102. The stack argument (`ldr x12,[x29,#0x10]`
-                // @0x101a1d354) is NIL-TESTED at 0x101a1dcd4 — on the reloaded slot, not on x12 — then
-                // its count is read at +0x10 and zero-tested (0x101a1dcd8-0x101a1dcdc), and only then
-                // is the element base (x12+0x20, computed speculatively @0x101a1d3f0) walked. The
-                // ELEMENT TYPE is corroborated, not merely inherited: the loop reads 32-bit elements
-                // (`ldr w11,[x10],#0x4` @0x101a1dcf0) and compares each against `[x22,#0x4]`, i.e. a
-                // linear search for a matching codec id. So the list type was right and only the
-                // optionality was wrong; startRecord passes `str xzr,[sp]` @0x101a484b8, i.e. nil.
-                transcodeCodecIDs: [AVCodecID]? = nil) throws {
-        // ── C1: resolve muxer name → avformat_alloc_output_context2 → throw on failure ──────────────
-        // ⚑ DEFERRED general-path (L196-381, dead for write() which passes "hls"): NIL formatName →
-        //   derive the muxer name from filename.pathExtension via a runtime format-registry match; the
-        //   loop internals are not deterministically recoverable (P36/P43 — no static-switch fit).
-        //   CORRECTED s102: the guard is `formatName == nil`, not `formatName.isEmpty`. The binary
-        //   tests the String's DISCRIMINATOR word (`cbz x25` @0x101a1d11c) and the nil arm runs the
-        //   filename-derived path with x28/x2 (the filename String) @0x101a1d150-0x101a1d174; the
-        //   non-nil arm instead converts formatName to a buffer pointer (result +0x20, the
-        //   _StringObject.nativeBias) @0x101a1d13c and skips that path entirely.
-        let resolvedFormatName = formatName
-        var contextPointer: UnsafeMutablePointer<AVFormatContext>?
-        // ⚑[tool=ffmpeg_name_oracle ref=0x103193858 result=CONFIRMED] avformat_alloc_output_context2 (79/316)
-        let allocResult = avformat_alloc_output_context2(&contextPointer, nil, resolvedFormatName, filename)
-        guard let outputContext = contextPointer else {          // L398 guards on ctx == nil
-            // ⚑[tool=ffmpeg_name_oracle ref=avformat_alloc_output_context2:0x103193858 result=CONFIRMED]
-            // ⚑[tool=ffmpeg_name_oracle ref=avformat_write_header:0x1031941d8 result=CONFIRMED]
-            // ⚑ RESOLVED. The `_ = allocResult` discard and the enum-vs-Int question are both gone:
-            //   `code` is `Int32`, and the binary's code operand here IS the live
-            //   avformat_alloc_output_context2 return, i.e. `allocResult`. message is the 35-byte
-            //   literal at 0x103d34ed0 = `formatOutputCreate`'s raw value.
-            throw KSPlayerError(code: allocResult, description: KSPlayerErrorCode.formatOutputCreate.rawValue)
-        }
-        // ⚑ binary also sets an AVFormatContext numeric field (+0x80 = 0x200000 / 2 MiB tuning, L410) —
-        //   which field UNRESOLVED → omitted (non-load-bearing for stream/map setup).
-
-        // ── C2: per-track loop → output streams + maps (SPINE; transcode arms deferred) ─────────────
-        var timeBaseMap:   [Int32: AVRational]            = [:]
-        var streamMapping: [Int32: Int32]                 = [:]
-        let transcodeMap:  [Int32: any TranscodeProtocol] = [:]   // ⚑ populated by the deferred transcode arms
-        var accumulatedFrameRate = 0
-        var outputStreamIndex: Int32 = 0
-        let isHLS = (resolvedFormatName == "hls")                 // local_20c
-        for track in formatContext.assetTracks {                  // formatContext+0x40
-            let trackID = track.trackID                           // +0x10 (map key)
-            timeBaseMap[trackID] = track.timebase.rational        // ⚑ +0xc0 field-inferred (layout debt); Timebase.rational
-            accumulatedFrameRate += Int(track.nominalFrameRate)   // ⚑ +0x58 field-inferred; exact per-branch gating spine-approx
-            streamMapping[trackID] = outputStreamIndex            // ⚑ value = output-stream counter (per-branch selection spine-approx)
-            // ⚑[tool=ffmpeg_name_oracle ref=0x1031b8714 result=CONFIRMED] avformat_new_stream (105/420)
-            guard let outputStream = avformat_new_stream(outputContext, nil) else { continue }
-            // Codec dispatch — SPINE reconstructs the COPY arm (default; oracle-CONFIRMED). The transcode
-            //   arms (gated on transcodeCodecIDs + track.mediaType + codec_id) build a per-codec transcode
-            //   context via the devirt ctor helpers then avcodec_parameters_from_context [ref=0x1029f5738
-            //   CONFIRMED] + transcodeMap[trackID]=ctx — DEFERRED to the OSI-transcode-arm unit (P36/P43).
-            // ⚑[tool=ffmpeg_name_oracle ref=avcodec_parameters_copy:0x1029f5584 result=CONFIRMED] (copy 109/436)
-            //   track.codecpar retyped value→pointer (+0xb8) — passed directly (was withUnsafePointer over the value)
-            _ = avcodec_parameters_copy(outputStream.pointee.codecpar, track.codecpar)   // ⚑ FFmpegAssetTrack.codecpar (+0xb8)
-            if outputStream.pointee.codecpar.pointee.sample_rate == 0 {     // L754
-                outputStream.pointee.codecpar.pointee.sample_rate = 48000
-            }
-            outputStreamIndex += 1
-        }
-
-        // ── C3: avio_open → avformat_write_header → av_dict_free ─────────────────────────────────────
-        // ⚑[tool=ffmpeg_name_oracle ref=0x1030c0914 result=CONFIRMED] avio_open (32/128)
-        // ⚑ THE MESSAGE HERE WAS A SELF-DECLARED STRING AND IT IS NOT ONE — the 16 bytes the binary
-        //   loads equal arm 2 of the rawValue table exactly, so it is `KSPlayerErrorCode.avioOpen`,
-        //   a case the reconstruction did not have until this change. `code` is the live avio_open
-        //   return, which now has to be bound to be thrown.
-        let avioResult = avio_open(&outputContext.pointee.pb, filename, AVIO_FLAG_WRITE)
-        guard avioResult >= 0 else {   // L1246/1249
-            throw KSPlayerError(code: avioResult, description: KSPlayerErrorCode.avioOpen.rawValue)
-        }
-        // ⚑ DEFERRED — build `options` (AVDictionary) from formatContextOptions (FUN_101a322c0, L1262:
-        //   [String:Any] → per-entry AVDictionary inserts, e.g. hls_segment_filename/hls_segment_type). Reconstruct
-        //   as the options-dict unit; spine passes an empty dict (muxer defaults).
-        var options: OpaquePointer?
-        // ⚑[tool=ffmpeg_name_oracle ref=0x1031941d8 result=CONFIRMED] avformat_write_header (143/572)
-        let headerResult = avformat_write_header(outputContext, &options)
-        av_dict_free(&options)   // ⚑[tool=ffmpeg_name_oracle ref=0x10323b034 result=CONFIRMED] av_dict_free (27/108)
-        guard headerResult >= 0 else {                          // L1266 / L1356
-            // ⚑ code is the live avformat_write_header return, `headerResult`; message is the
-            //   26-byte literal at 0x103d34eb0 = `formatWriteHeader`'s raw value.
-            throw KSPlayerError(code: headerResult, description: KSPlayerErrorCode.formatWriteHeader.rawValue)
-        }
-
-        // ── C4: assemble the 12 stored fields + return (implicit) — L1311-1380 ───────────────────────
-        //   removeADTS = isHLS && options["hls_segment_type"]=="fmp4"  (fMP4 segments need raw AAC; L1267-1310)
-        // `?? [:]` is the callee's OWN substitution, read at 0x101a1d0f8-0x101a1d114 (see the init's
-        // p5 note): both the nil and non-nil arms converge on one slot, so every later use sees a
-        // dictionary whether or not the caller passed one.
-        let segmentType = (formatContextOptions ?? [:])["hls_segment_type"] as? String
-        self.formatCtx       = outputContext                                       // +0x58
-        self.url             = filename                                            // +0x30/+0x38
-        self.timeBaseMap     = timeBaseMap                                         // +0x20
-        self.streamMapping   = streamMapping                                       // +0x40
-        self.transcodeMap    = transcodeMap                                        // +0x18 (local_130)
-        self.frameRate       = accumulatedFrameRate                                // +0x28 (local_178)
-        self.assetTrackMap   = [:]                                                 // +0x10 (binary: empty singleton)
-        self.lastDTSMap      = [:]                                                 // +0x48 (empty singleton)
-        self.hasWriteTrailer = false                                              // +0x50
-        // ⚑[tool=ffmpeg_name_oracle ref=0x102d61878 result=CONFIRMED] av_packet_alloc
-        self.outPacket       = av_packet_alloc()                                   // +0x60 (L1325)
-        self.formatName      = String(cString: outputContext.pointee.oformat.pointee.name)  // +0x68 (L1343; binary preconditions oformat/name non-nil)
-        self.removeADTS      = isHLS && (segmentType == "fmp4")                    // +0x78 (bVar10)
-        // ⚑ p8: READ as a per-track media-type FILTER — non-nil gates a bridged string compare of
-        //   this argument against the loop element's +0x78 field (@0x101a1d4b4-0x101a1d4ec). What the
-        //   equal / not-equal arms then DO is NOT read, so no filtering is expressed here.
-        //   ⚑[tool=bind_oracle ref=String._unconditionallyBridgeFromObjectiveC:0x10410a250 result=CONFIRMED]
-        _ = mediaType
-        _ = forceTranscode    // ⚑ p4: gates frameRate accumulation + a streamMapping-value branch (write→false)
-        _ = transcodeCodecIDs // ⚑ p9: the transcode codec allowlist — consumed by the deferred transcode arms
+    // ⚑ L7 lane 14 (#69/#14): internal fields-only init. Forward's trie has no OutputStreamInfo init
+    //   symbol; FFmpegUtility.write's FSO body 0x101a1d014 does all the work and allocates the instance
+    //   last (swift_allocObject 0x79 @0x101a1e828), then stores: the three defaulted fields (+0x10, +0x48,
+    //   +0x50), outPacket's default av_packet_alloc (+0x60), url (+0x30/+0x38), timeBaseMap (+0x20),
+    //   formatCtx (+0x58), formatName = String(cString: oformat.name) with both unwraps trapping
+    //   (brk 0x101a1ee7c / 0x101a1ee80) (+0x68), streamMapping (+0x40), transcodeMap (+0x18),
+    //   frameRate (+0x28), removeADTS (+0x78).
+    init(url: String,
+         formatCtx: UnsafeMutablePointer<AVFormatContext>,
+         timeBaseMap: [Int32: AVRational],
+         streamMapping: [Int32: Int32],
+         transcodeMap: [Int32: any TranscodeProtocol],
+         frameRate: Int,
+         removeADTS: Bool) {
+        self.url = url
+        self.timeBaseMap = timeBaseMap
+        self.formatCtx = formatCtx
+        formatName = String(cString: formatCtx.pointee.oformat.pointee.name)
+        self.streamMapping = streamMapping
+        self.transcodeMap = transcodeMap
+        self.frameRate = frameRate
+        self.removeADTS = removeADTS
     }
 
     public func transcode(packet: UnsafeMutablePointer<AVPacket>, block: ((UnsafeMutablePointer<AVPacket>) -> Void)?) -> Int32 {
@@ -620,31 +474,5 @@ public class OutputStreamInfo: @unchecked Sendable { // NON-final (P21): parse_c
         // FUN_101a39028 = static FFmpegUtility.close(formatCtx:) (#function "close(formatCtx:)", trie
         // $s8KSPlayer13FFmpegUtilityO5close9formatCtxySpySo15AVFormatContextVGSg_tFZ).
         FFmpegUtility.close(formatCtx: formatCtx)
-    }
-
-    // ── Phase-1 test scaffold (⚑ NOT binary-present) — retained so Phase2RemuxTest can exercise slots
-    //    (L7 pilot c: declared LAST so its build-only vtable slot 16 follows Forward's F14 writeTrailer /
-    //    F15 stop instead of displacing them; Forward has no such slot — ledgered as a test scaffold.)
-    //    13/14/15 in isolation without the full factory. The binary's SOLE construction is the designated
-    //    init above (FUN_101a1d014). Not used in any reconstructed path. ──────────────────────────────
-    //    ⚑ It must assign EVERY `let` field, which is why it takes the three the test varies
-    //    as parameters instead of letting the test mutate them afterwards. Six of this
-    //    class's fields have FieldRecord flags 0x00000000 (= `let`) in the binary; a
-    //    designated init that left any of them to a default would not compile, which is
-    //    itself independent confirmation that no such second init exists in the original —
-    //    this one is ours. The literals below are scaffold values, NOT binary-grounded.
-    init(formatCtx: UnsafeMutablePointer<AVFormatContext>,   // ⚑ test scaffold, not in binary
-         outPacket: UnsafeMutablePointer<AVPacket>,
-         streamMapping: [Int32: Int32] = [:],
-         timeBaseMap: [Int32: AVRational] = [:],
-         removeADTS: Bool = false) {
-        self.formatCtx = formatCtx
-        self.streamMapping = streamMapping
-        self.timeBaseMap = timeBaseMap
-        self.removeADTS = removeADTS
-        self.url = ""            // ⚑ scaffold-only value
-        self.frameRate = 0       // ⚑ scaffold-only value
-        self.formatName = ""     // ⚑ scaffold-only value
-        self.outPacket = outPacket
     }
 }

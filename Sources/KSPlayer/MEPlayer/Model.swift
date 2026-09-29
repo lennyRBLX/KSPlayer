@@ -664,13 +664,7 @@ public class Remuxer { // not final: Forward vtable has 9 slots (slot 7 write(_:
                 mediaType: AVFoundation.AVMediaType?) throws {
         formatCtx = formatContext.formatCtx
         self.mediaType = mediaType
-        outputStreamInfo = try OutputStreamInfo(formatContext: formatContext,
-                                                filename: filename,
-                                                forceTranscode: true,
-                                                formatContextOptions: nil,
-                                                formatName: nil,
-                                                mediaType: mediaType,
-                                                transcodeCodecIDs: nil)
+        outputStreamInfo = try FFmpegUtility.write(formatContext: formatContext, to: filename, isMergeStream: true, formatContextOptions: nil, outFormat: nil, mediaType: mediaType, allowAudioCodecs: nil)
     }
 
     // ── write (slot7 @0x101a65df0, 94 instr) — FAITHFUL (DTS-clamp + lock + → slot13) ─────────────

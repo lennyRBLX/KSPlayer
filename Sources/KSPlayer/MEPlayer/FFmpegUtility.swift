@@ -42,11 +42,146 @@ import QuartzCore
 import UIKit
 
 public enum FFmpegUtility {
+    // ⚑ L7 lane 14 (#69/#14): 0x101a19724 (9 insns) tail-calls 0x101a1d014, this function's FSO body
+    //   (1952 insns, no self). All the OutputStreamInfo construction work lives here; the class is
+    //   allocated only at the very end (swift_allocObject 0x79 @0x101a1e828) through OutputStreamInfo's
+    //   internal fields-only init. Forward's trie has no OutputStreamInfo init symbol.
+    //   DEFERRED arms (not reconstructed, see the notes inline): the audio re-encode arm
+    //   (AudioTranscodeContext 0x101a1c02c), the subtitle re-encode arm (SubtitleTranscodeContext +
+    //   encoder helper 0x101a08a94), the HEVC extradata repair, and the 2-element `String?` static array
+    //   0x1044e9128 whose contents the evidence does not carry.
     public static func write(formatContext: FormatContext, to: String, isMergeStream: Bool, formatContextOptions: [String : Any]?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, allowAudioCodecs: [AVCodecID]?) throws -> OutputStreamInfo {
-        // 0x101a19724 (9 insns): forwards every argument into OutputStreamInfo's designated init
-        // body 0x101a1d014 (FFmpeg+Conversion.swift); isMergeStream → forceTranscode,
-        // outFormat → formatName, allowAudioCodecs → transcodeCodecIDs.
-        try OutputStreamInfo(formatContext: formatContext, filename: to, forceTranscode: isMergeStream, formatContextOptions: formatContextOptions, formatName: outFormat, mediaType: mediaType, transcodeCodecIDs: allowAudioCodecs)
+        // `cbz x24` @0x101a1d0f8: the nil arm builds the empty dictionary (0x1019c3148).
+        var formatContextOptions = formatContextOptions ?? [:]
+        var outFormat = outFormat
+        // `cbz x25` @0x101a1d11c → URL(string:) 0x103452440 → pathExtension 0x1034522cc (`cbz` on its count).
+        if outFormat == nil, let url = URL(string: to), url.pathExtension.isEmpty {
+            if let mediaType {
+                // Set<String> from the empty-set singleton; insert 0x101a2e308 takes track+0x18/+0x20 (codecName).
+                var codecNames = Set<String>()
+                for track in formatContext.assetTracks where track.mediaType == mediaType {
+                    codecNames.insert(track.codecName)
+                }
+                if codecNames.count == 1, let codecName = codecNames.first {
+                    if codecName == "aac" {
+                        outFormat = "adts"
+                    } else if codecName == "pcm_bluray" {
+                        // "mpegts_m2ts_mode" @0x101a1edbc, Int 1, set through 0x1019b3b50.
+                        formatContextOptions["mpegts_m2ts_mode"] = 1
+                        outFormat = "mpegts"
+                    } else {
+                        outFormat = "data"
+                    }
+                } else {
+                    outFormat = "data"
+                }
+            } else if let name = formatContext.formatName.split(separator: ",").first {
+                // formatContext+0x48 split on "," (0x1019f14c0), first element → String(Substring).
+                outFormat = String(name)
+            }
+        }
+        var outputFormatCtx: UnsafeMutablePointer<AVFormatContext>?
+        let ret = avformat_alloc_output_context2(&outputFormatCtx, nil, outFormat, to)
+        guard let formatCtx = outputFormatCtx else {
+            // `mov x0,#0x0; bl 0x101a39028` @0x101a1d278 before the throw.
+            close(formatCtx: outputFormatCtx)
+            throw KSPlayerError(code: ret, description: KSPlayerErrorCode.formatOutputCreate.rawValue)
+        }
+        // `mov w8,#0x200000; str w8,[x19,#0x80]` @0x101a1d240 — AVFormatContext.flags.
+        formatCtx.pointee.flags = AVFMT_FLAG_AUTO_BSF
+        var transcodeMap = [Int32: any TranscodeProtocol]()
+        // oformat `cbz` → brk; name `cbz` → nil (0x101a1d25c-0x101a1d2dc).
+        let formatName = formatCtx.pointee.oformat.pointee.name.map { String(cString: $0) }
+        var timeBaseMap = [Int32: AVRational]()
+        var streamMapping = [Int32: Int32]()
+        var frameRate = 0
+        var index: Int32 = 0
+        var audioIndex: Int32 = 0
+        var videoIndex: Int32 = 0
+        var isFirstAudio = true
+        var isFirstVideo = true
+        for track in formatContext.assetTracks {
+            // x7 `cbz` @0x101a1d4b8, then the bridged compare against track+0x78.
+            if let mediaType, track.mediaType != mediaType {
+                continue
+            }
+            let trackID = track.trackID
+            timeBaseMap[trackID] = track.timebase.rational
+            // Compare order audio (x29-0x158), video (-0x1c0), subtitle (-0x210).
+            if track.mediaType == .audio {
+                frameRate += Int(track.nominalFrameRate)
+                if isMergeStream {
+                    if !isFirstAudio {
+                        streamMapping[trackID] = audioIndex
+                        continue
+                    }
+                    isFirstAudio = false
+                    audioIndex = index
+                }
+            } else if track.mediaType == .video {
+                // track+0x13d (isImage) under beginAccess, only when the muxer is "hls".
+                if formatName == "hls", track.isImage {
+                    continue
+                }
+                frameRate += Int(track.nominalFrameRate)
+                if isMergeStream {
+                    if !isFirstVideo {
+                        streamMapping[trackID] = videoIndex
+                        continue
+                    }
+                    isFirstVideo = false
+                    videoIndex = index
+                }
+            } else if track.mediaType == .subtitle {
+                // ⚑ DEFERRED: Forward first tests `<static [String?] 0x1044e9128>.contains(formatName)`
+                //   (0x1019f27cc) && track.isImageSubtitle (+0xe8); array contents not in evidence.
+                if formatName == "hls" {
+                    continue
+                }
+            }
+            guard let stream = avformat_new_stream(formatCtx, nil) else {
+                continue
+            }
+            streamMapping[trackID] = index
+            index += 1
+            let codecpar = track.codecpar
+            if track.mediaType == .audio {
+                // ⚑ DEFERRED: when allowAudioCodecs is non-empty and lacks codec_id, Forward builds
+                //   AudioTranscodeContext(codecpar, allowAudioCodecs[0]) (alloc 0x60, init 0x101a1c02c, throws),
+                //   stores it in transcodeMap, sets timeBaseMap[trackID] to its encoder time_base (+0x54)
+                //   and calls avcodec_parameters_from_context instead of the copy below.
+                avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+                if stream.pointee.codecpar.pointee.sample_rate == 0 {
+                    stream.pointee.codecpar.pointee.sample_rate = 48000
+                }
+            } else if track.mediaType == .video {
+                // ⚑ DEFERRED: HEVC (0xad) with extradata_size < 30 first repairs extradata from one read
+                //   packet (NAL parse 0x101a0ce98/0x101a0c470, 0x101a0be50, hevcExtradata 0x101a0ba94),
+                //   then performSeek(time: 0, flags: 1).
+                avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+                // 0x101a19338 = MediaPlayerTrack.codecs specialized for FFmpegAssetTrack; byte-swapped, nil → 0.
+                stream.pointee.codecpar.pointee.codec_tag = track.codecs?.bigEndian ?? 0
+            } else if track.mediaType == .subtitle {
+                // ⚑ DEFERRED: codecID = MOV_TEXT (0x17005) when the static array contains formatName, else
+                //   WEBVTT (0x17012) for "hls"; codec_id != codecID → SubtitleTranscodeContext arm.
+                avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
+            }
+        }
+        let result = avio_open(&formatCtx.pointee.pb, to, AVIO_FLAG_WRITE)
+        if result < 0 {
+            close(formatCtx: formatCtx)
+            throw KSPlayerError(code: result, description: KSPlayerErrorCode.avioOpen.rawValue)
+        }
+        var avOptions = formatContextOptions.avOptions
+        let headerResult = avformat_write_header(formatCtx, &avOptions)
+        av_dict_free(&avOptions)
+        guard headerResult >= 0 else {
+            close(formatCtx: formatCtx)
+            throw KSPlayerError(code: headerResult, description: KSPlayerErrorCode.formatWriteHeader.rawValue)
+        }
+        // "hls_segment_type" @0x101a1e768, dynamicCast Any → String, compared with "fmp4".
+        let removeADTS = formatName == "hls" && formatContextOptions["hls_segment_type"] as? String == "fmp4"
+        return OutputStreamInfo(url: to, formatCtx: formatCtx, timeBaseMap: timeBaseMap, streamMapping: streamMapping, transcodeMap: transcodeMap, frameRate: frameRate, removeADTS: removeADTS)
     }
     public static func conversion(url: URL, options: KSOptions?, outputURL: URL, outFormat: String?, mediaType: AVFoundation.AVMediaType?, loadSecond: Int, progress: (@Sendable (Double, Double) -> Bool)?, completion: @escaping @Sendable (String, Bool) -> Void) throws -> Task<(), Never> {
         // 0x101a19748 (302 insns): URL.ffmpegString (0x1019f59c4) on both URLs, then the String
