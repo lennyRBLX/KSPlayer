@@ -995,7 +995,25 @@ private struct FlickerDetector {
 // AudioFormatProtocol @0x1039f00b0 — declaration shape read from the Forward context descriptor (kind, parent,
 // conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (MetalPlayView.swift..Resample.swift).
 // ⚑[tool=type_surface ref=AudioFormatProtocol:0x1039f00b0 result=protocol AudioFormatProtocol: AnyObject, Equatable]
-protocol AudioFormatProtocol: AnyObject, Equatable {}
+// Requirements: order and types from the Forward witness tables (AVAudioFormat wt 0x1041d8e40, CMFormatDescription
+// wt 0x1041d8e88; +0x10..+0x40). Names INFERRED from the witnessed getters (AVAudioFormat objc selectors /
+// KSPlayer extension getters 0x101a6364c, 0x101a65204, 0x101a6362c, 0x101a65224, 0x101a652b0, 0x101a652f8, 0x101a6368c).
+protocol AudioFormatProtocol: AnyObject, Equatable {
+    // INFERRED +0x10: 0x101a65118 -[AVAudioFormat sampleRate] / 0x101a6364c CMFormatDescriptionRef.sampleRate (Double)
+    var sampleRate: Double { get }
+    // INFERRED +0x18: 0x101a65120 -> 0x101a63468 AVAudioFormat.sampleSize / 0x101a65204 (UInt32)
+    var sampleSize: UInt32 { get }
+    // INFERRED +0x20: 0x101a65124 -[AVAudioFormat channelCount] / 0x101a6362c (UInt32)
+    var channelCount: UInt32 { get }
+    // INFERRED +0x28: 0x101a6512c -[AVAudioFormat commonFormat] / 0x101a65304 -> 0x101a65224 (AVAudioCommonFormat)
+    var commonFormat: AVAudioCommonFormat { get }
+    // INFERRED +0x30: 0x101a65134 -[AVAudioFormat isInterleaved] / 0x101a652b0 (Bool)
+    var isInterleaved: Bool { get }
+    // INFERRED +0x38: 0x101a63420 AVAudioFormat.layout / 0x101a652f8 (UnsafePointer<AudioChannelLayout>?)
+    var layout: UnsafePointer<AudioChannelLayout>? { get }
+    // INFERRED +0x40: 0x101a6514c -[AVAudioFormat formatDescription] / 0x101a6368c (CMFormatDescription)
+    var formatDescription: CMFormatDescription { get }
+}
 
 extension AudioStreamBasicDescription {
     // ⚑[tool=member_add ref=AudioStreamBasicDescription.sampleRate.getter:0x1000ef030 result=dne; placed before sampleSize 0x101a65168 (Forward addr ICF-shared, order inferred)]

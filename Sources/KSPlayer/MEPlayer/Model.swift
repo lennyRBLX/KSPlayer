@@ -502,6 +502,12 @@ public final class AudioFrame: MEFrame {
     }
 }
 
+// Conformance descriptors 0x10356b5b8 (AVAudioFormat, wt 0x1041d8e40) and 0x10356b5d4 (CMFormatDescription,
+// wt 0x1041d8e88) sit between AudioFrame's and VideoVTBFrame's records; witness thunks 0x101a65118.. are Model.swift.
+extension AVAudioFormat: AudioFormatProtocol {}
+
+extension CMFormatDescription: AudioFormatProtocol {}
+
 public final class VideoVTBFrame: MEFrame {
     // Field layout = reflection ORDER (Forward 1.3.17; desc 0x1039f0120, size 0xc60=3168 B).
     // Forward-NEW vs upstream: pixelBuffer (RENAMED from corePixelBuffer), adjustBuffer,

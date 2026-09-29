@@ -814,22 +814,19 @@ final class RemuxerIOAction: DemuxerIOAction {   // binary conformance (conf@0x1
         if completion == nil {
             delegate?.remuxerDidChangeState(2)
         }
-        // GAP(owner 15, joint Utility.swift): Task @0x101b7e62c (ctx 0x38 {isolation nil, self, completion}, async fn
-        // ptr 0x103571988 → 0x101b85c74 → body 0x101b820e0/0x101b82144/0x101b82234/0x101b8229c):
-        //   Task {
-        //       let url = dir.appendingPathComponent("segment_0_00001.ts")      // String 0x103d3e090 (18)
-        //       await directoryWatcher.watchNew(fileURL: url) { [weak self] isNew in   // actor hop, vtable +0x90 (slot 6)
-        //           guard let self else { return }                               // closure 0x101b85d4c → 0x101b822e0
-        //           if let completion {
-        //               completion(isNew)
-        //           } else {
-        //               delegate?.remuxerDidChangeState(isNew ? 1 : 0)          // wt +8 with `param_1 & 1`
-        //           }
-        //       }
-        //   }
-        // Not emitted: DirectoryWatcher.watchNew (Utility.swift, lane 15) is internal; Forward calls it cross-module
-        // (trie `$s8KSPlayer16DirectoryWatcherC8watchNew7fileURL10completiony…`), so it must be `package` like
-        // watchModify. Until then completion is never invoked on this path.
+        // Task @0x101b7e62c (ctx 0x38 {isolation nil, self, completion}, async fn ptr 0x103571988 → 0x101b85c74 →
+        // body 0x101b820e0/0x101b82144/0x101b82234/0x101b8229c). watchNew is `package` (Utility.swift, lane 15 6b32023).
+        Task {
+            let url = dir.appendingPathComponent("segment_0_00001.ts") //  String 0x103d3e090 (18)
+            await directoryWatcher.watchNew(fileURL: url) { [weak self] isNew in //  actor hop, vtable +0x90 (slot 6)
+                guard let self else { return } //  closure 0x101b85d4c → 0x101b822e0
+                if let completion {
+                    completion(isNew)
+                } else {
+                    delegate?.remuxerDidChangeState(isNew ? 1 : 0) //  wt +8 with `param_1 & 1`
+                }
+            }
+        }
     }
 
     // DemuxerIOAction 3rd requirement impl, inlined at DemuxerIO.send(.endOfStream): load

@@ -190,11 +190,8 @@ final class ConversionInfo: DemuxerIODelegate, RemuxerIOActionDelegate {   // bi
                 return
             }
             if finished {
-                // GAP(joint Utility.swift, lane 15): Forward 0x101b6a1d0 `try remuxerIOAction.reconstruct(completion: completion)`
-                // (throws, x21 propagated). Held until reconstruct's watchNew Task can be spelled (DirectoryWatcher.watchNew
-                // internal → package); without it the completion would never fire.
-                _ = self
-                completion(true)
+                // 0x101b6a1d0 `bl 0x101b7e2f4` (mov x21,#0 / cbz x21 → propagate); completion ctx 0x1041e0c68 via 0x10003983c.
+                try self.remuxerIOAction.reconstruct(completion: completion)
             } else {
                 completion(false)
             }
