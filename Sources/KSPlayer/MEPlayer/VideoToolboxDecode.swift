@@ -331,58 +331,6 @@ class DecompressionSession {
 }
 #endif
 
-extension CMFormatDescription {
-    // ⚑ REMOVED (s106): the `isConvertNALSize` parameter and the AVCC→AnnexB rewrite it guarded
-    //   (avio_open_dyn_buf → avio_wb32/avio_write → avio_close_dyn_buf). The flag's only producer,
-    //   FFmpegAssetTrack's `extradata[4] == 0xFE` test, is proven absent from that class's designated
-    //   init, so the branch is unreachable in Forward. Corroborated from the consumer side:
-    //   VideoToolboxDecode.decodeFrame has 40 callees and exactly three in the FFmpeg band
-    //   (ff_dovi_get_metadata CONFIRMED, one UNKNOWN, one an ICF-folded free/close family) — no
-    //   avio_* call of any kind, where this branch would need four.
-    //   ⚑ FAITHFUL-PARTIAL: proven the branch cannot be entered and that decodeFrame does not call
-    //   avio_*; NOT proven that no outlined copy of this helper exists — it emits no symbol under
-    //   this name (a real trie negative, since the trie does carry fileprivate members with
-    //   discriminators), which is equally consistent with having been inlined.
-    //   ⚑[tool=llvm-objdump ref=VideoToolboxDecode.decodeFrame:0x101a6ce44-0x101a6d734 result=no-avio-callee]
-    //   ⚑[tool=export_trie_oracle ref=CMFormatDescription.getSampleBuffer:trie result=NOT-IN-TRIE]
-    fileprivate func getSampleBuffer(data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
-        try createSampleBuffer(data: data, size: size)
-    }
-
-    private func createSampleBuffer(data: UnsafeMutablePointer<UInt8>?, size: Int) throws -> CMSampleBuffer {
-        var blockBuffer: CMBlockBuffer?
-        var sampleBuffer: CMSampleBuffer?
-        // swiftlint:disable line_length
-        var status = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: data, blockLength: size, blockAllocator: kCFAllocatorNull, customBlockSource: nil, offsetToData: 0, dataLength: size, flags: 0, blockBufferOut: &blockBuffer)
-        if status == noErr {
-            status = CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: self, sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
-            if let sampleBuffer {
-                return sampleBuffer
-            }
-        }
-        // ⚑ Both failure edges of CMBlockBufferCreateWithMemoryBlock/CMSampleBufferCreate converge
-        //   on ONE throw at 0x101a0bcd4-0x101a0bd18; code is the LIVE failing OSStatus (`w22`).
-        throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
-        // swiftlint:enable line_length
-    }
-}
-
-extension CMVideoCodecType {
-    var avc: String {
-        switch self {
-        case kCMVideoCodecType_MPEG4Video:
-            return "esds"
-        case kCMVideoCodecType_H264:
-            return "avcC"
-        case kCMVideoCodecType_HEVC:
-            return "hvcC"
-        case kCMVideoCodecType_VP9:
-            return "vpcC"
-        default: return "avcC"
-        }
-    }
-}
-
 // ⚑ Forward-added protocol (absent from KSPlayer source). Resolved from the FFmpegAssetTrack.bitStreamFilter
 //   field-record symref → protocol descriptor 0x1039f0820 (kind=Protocol). Requirements deferred
 //   (minimal no-conformer declare). The field is a 16-byte class-existential (init nil): the descriptor's

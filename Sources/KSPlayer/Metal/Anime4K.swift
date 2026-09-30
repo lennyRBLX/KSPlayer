@@ -49,7 +49,10 @@ public class Anime4K {
     var displayActualW: Float = 0
     var displayActualH: Float = 0
 
+    // L7 lane 21: Forward keeps the designated init out of line (self in x20; exportShader @0x101a81064 and
+    // Anime4KPipeline @0x101a79b84 both `bl 0x101a70318`); the build inlined it into both callers.
     // ⚑[invented=init(name:url:device:usePrecompiled:bufferCount:) addr=0x101a70318 exhaustion=name_exhaustion_gate approved=jweaver]
+    @inline(never)
     init(name: String, url: String, device: MTLDevice, usePrecompiled: Bool, bufferCount: Int) throws {
         self.name = name
         self.bufferCount = max(bufferCount, 1)
@@ -403,8 +406,11 @@ public class Anime4K {
 
         // Forward @0x101a76298..0x101a762c4: four scalar Floats held in s8/s9/s10/s0 across the
         // width/height sends, then `stp s8,s9` / `stp s10,s0` into one 16-byte stack slot — a plain
-        // 4-Float tuple, not a SIMD4 lane-insert chain.
-        var sizes = (
+        // 4-Float tuple, not a SIMD4 lane-insert chain. L7 lane 21: all four values are computed before
+        // the first store, so the tuple is assigned as one value (an initializing `var sizes = (…)` stores
+        // each element right after its scvtf).
+        var sizes: (Float, Float, Float, Float)
+        sizes = (
             Float(resizedTexture.width),
             Float(resizedTexture.height),
             Float(outputTexture.width),

@@ -354,8 +354,51 @@ extension CMFormatDescription {
     }
 }
 
-// ⚑ GAP: Forward 0x101a0bc64 (a throwing helper) and 0x101a0bda8 (FourCC → atom-key String) sit between
-// hevcExtradata and the helper below; neither is reconstructed in lane 18.
+// L7 lane 21: the two helpers Forward places between hevcExtradata (ends @0x101a0bc60) and the helper below
+// (@0x101a0be50), moved here from VideoToolboxDecode.swift.
+extension CMFormatDescription {
+    // ⚑ REMOVED (s106): the `isConvertNALSize` parameter and the AVCC→AnnexB rewrite it guarded
+    //   (avio_open_dyn_buf → avio_wb32/avio_write → avio_close_dyn_buf); decodeFrame calls no avio_*.
+    //   ⚑[tool=llvm-objdump ref=VideoToolboxDecode.decodeFrame:0x101a6ce44-0x101a6d734 result=no-avio-callee]
+    /// @0x101a0bc64 (no symbol; called out of line from VideoToolboxDecode.decodeFrame). One body, no private
+    /// wrapper: CMBlockBufferCreateWithMemoryBlock → CMSampleBufferCreateReady (@0x101a0bd5c: allocator,
+    /// dataBuffer, self, 1, 0, nil, 0, nil, &out); both failure edges converge on one throw @0x101a0bcd4 with the
+    /// live failing OSStatus and the 33-char codecVideoReceiveFrame text.
+    func getSampleBuffer(data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
+        var blockBuffer: CMBlockBuffer?
+        var sampleBuffer: CMSampleBuffer?
+        // swiftlint:disable line_length
+        var status = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: data, blockLength: size, blockAllocator: kCFAllocatorNull, customBlockSource: nil, offsetToData: 0, dataLength: size, flags: 0, blockBufferOut: &blockBuffer)
+        if status == noErr {
+            status = CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, formatDescription: self, sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
+            if let sampleBuffer {
+                return sampleBuffer
+            }
+        }
+        throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
+        // swiftlint:enable line_length
+    }
+}
+
+extension CMVideoCodecType {
+    /// @0x101a0bda8 — Forward compares 'av01' → "av1C", 'hvc1' → "hvcC", 'mp4v' → "esds", 'vp09' → "vpcC",
+    /// else "avcC" (the H264 case folds into the default).
+    var avc: String {
+        switch self {
+        case kCMVideoCodecType_MPEG4Video:
+            return "esds"
+        case kCMVideoCodecType_H264:
+            return "avcC"
+        case kCMVideoCodecType_HEVC:
+            return "hvcC"
+        case kCMVideoCodecType_VP9:
+            return "vpcC"
+        case kCMVideoCodecType_AV1:
+            return "av1C"
+        default: return "avcC"
+        }
+    }
+}
 
 /// ⚑ NAME INFERRED — Forward 0x101a0be50 (no symbol). x0 data, x1 nalUnitHeaderLength, x2 nalUnits; no self,
 /// so it is written as a free func (owner undecidable). Called from KSOptions.makeDecode (@0x1019b6448..)

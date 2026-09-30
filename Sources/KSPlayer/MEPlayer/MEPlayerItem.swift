@@ -623,6 +623,9 @@ public final class MEPlayerItem: @unchecked Sendable {
     // Forward setter 0x101a482e0 carries a didSet: after the weak assign it reloads the delegate and,
     //   when state is in the static set 0x1044ea258 = [2, 3, 4, 5] (.ready, .reading, .seeking, .paused)
     //   and !isPreload, calls witness slot +0x10 = req1 sourceDidOpened().
+    // L7 lane 21: the setter stays out of line in Forward (KSMEPlayer.replace(item:) @0x101a3c50c/@0x101a3c7bc,
+    //   init(url:options:) @0x101a3e818 and init(item:) @0x101a3eca0 `bl 0x101a482e0`); the build inlined it.
+    @inline(never)
     public weak var delegate: MEPlayerDelegate? {
         didSet {
             if let delegate, [State.ready, .reading, .seeking, .paused].contains(state), !isPreload {

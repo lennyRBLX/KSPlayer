@@ -247,16 +247,11 @@ public final class AudioGraphPlayer: AudioBaseOutput, AudioOutput, AudioDynamics
         AUGraphInitialize(graph)
     }
 
-    // stop() @0x101a11138 (FrameOutput requirement 3). New in Forward — the flat class did this
-    // in deinit; that deinit is gone (DisposeAUGraph has exactly one caller now, stop()).
     // flush() is NOT overridden: FrameOutput requirement 2 resolves to the inherited
     // AudioBaseOutput.flush @0x101a117b0.
-    public func stop() {
-        AUGraphStop(graph)
-        AUGraphUninitialize(graph)
-        AUGraphClose(graph)
-        DisposeAUGraph(graph)
-    }
+    // L7 lane 21: `stop()` removed. Forward has no AudioGraphPlayer.stop symbol (the class vtable holds
+    // only slot 0, init) and nothing called it; its body equalled invalidate(), so MergeFunctions folded
+    // invalidate() into a 1-insn thunk (build) where Forward keeps the 14-insn body @0x101a11138.
 
     /// ⚑ 0x101a11138 — the full AUGraph teardown, in this order. The body loads ONE field and
     /// passes it to three calls plus a tail-call; `graph` is this class's only `AUGraph`-typed

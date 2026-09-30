@@ -30,6 +30,8 @@ class MEFilter {
     }
 
     // UNRESOLVED→P3: init devirt; isAudio not stored (field removed), threading to setup is caller-side
+    // L7 lane 21: out of line in Forward (FFmpegDecode.init @0x101a21d60 `bl 0x101a3b8f0`); the build inlined it.
+    @inline(never)
     public init(timebase: Timebase, isAudio: Bool, nominalFrameRate: Float, options: KSOptions) {
         graph = avfilter_graph_alloc()
         graph?.pointee.opaque = Unmanaged.passUnretained(options).toOpaque()
@@ -73,6 +75,9 @@ class MEFilter {
     }
 
     // UNRESOLVED→P3: filter() devirt — not binary-anchored; isAudio source + exact dedup unverified
+    // L7 lane 21: out of line in Forward as the closure specialization 0x101a3b988 (213 insns, called from
+    //   FFmpegDecode.decodeFrame @0x101a2220c); the build inlined filter and its closure.
+    @inline(never)
     public func filter(
         options: KSOptions,
         inputFrame: UnsafeMutablePointer<AVFrame>,
