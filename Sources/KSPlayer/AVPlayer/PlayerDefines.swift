@@ -1135,6 +1135,18 @@ public protocol PreLoadProtocol {
 // at the same 0x68) or `position`.
 // ⚑[tool=decode_witness_table ref=KSPlayer.PreLoadProtocol:0x1039ede48 result=reqs-1-2-3-ICF-folded]
 
+// The two extension defaults named above, bodies read in full. Neither witness table uses them
+// (see the correction), so they exist only as the trie's `(extension in KSPlayer)` getters.
+// Access is not decidable from the trie (Forward exports internals too); written internal.
+extension PreLoadProtocol {
+    /// @0x10002dc44, 2 instructions: `movi v0.2D, #0` / `ret`.
+    var downloadSpeed: Double { 0 }
+
+    /// @0x1001a1394, 2 instructions: `ldr x2, [x1, #0x10]` / `br x2` — a tail call through the
+    /// witness table's req1 slot, i.e. `position`.
+    var bytesRead: UInt64 { position }
+}
+
 // Sole requirement, and it is NOT a duplicate of PreLoadProtocol's req8 — it is a different
 // overload of the same base name, distinguished by its second label and type. Both exist as
 // separate symbols on the same class:
@@ -1303,9 +1315,11 @@ public struct KSClock {
     // property's order is its layout. Default read from its own variable-initialization
     // expression @0x1000b783c, which is `fmov d0, #1.00000000 / ret`.
     // ⚑[tool=vpfi_initializer_oracle ref=KSClock.rate:0x1000b783c result=1.0]
-    // Access ⚑ INFERRED from the two fields it sits between; the trie exports getter, setter and
-    // modify for it, which is what establishes `var` rather than `let`.
-    public internal(set) var rate = 1.0
+    // Access: the trie exports getter, setter, modify and a property descriptor (MV) for it. The
+    // restricted-setter siblings `position`/`time` export only getter + MV, because an internal setter
+    // on a stored property does not survive -O WMO, so a surviving setter means a public one.
+    // ⚑[tool=export_trie_oracle ref=KSClock.rate result=vg+vs+vM+vpMV; siblings vg+vpMV only]
+    public var rate = 1.0
     public internal(set) var time = CMTime.zero {
         didSet {
             lastMediaTime = CACurrentMediaTime()

@@ -701,7 +701,11 @@ extension MetalPlayView {
     }
 }
 
-class MetalView: UIView {
+// `public`: Forward carries `MetalView.__allocating_init(frame:)` @0x10197b388, the synthesized
+// `init(frame:)` override stub. Under WMO an internal subclass with an unavailable `init?(coder:)`
+// does not emit that allocating entry; a public one does (scratch compile, both spellings), and the
+// sibling `MetalPlayView` is public with the same shape. Members keep their existing access.
+public class MetalView: UIView {
     // NO STORED PROPERTIES. MetalView's binary field descriptor reports NumFields=0, so the
     // `private let render = MetalRender()` that used to sit here is a field the binary does not
     // have. It is not needed either: the render entry point is an extension on

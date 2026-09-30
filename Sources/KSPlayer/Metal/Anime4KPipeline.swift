@@ -954,4 +954,9 @@ class Average {
         pointer = 0
         numbers = []
     }
+
+    /// INFERRED name. Forward vtable slot #7 is a Method entry with a NULL Impl (dead-stripped) and
+    /// no trie symbol, so neither its name nor its signature is recoverable; declared as the
+    /// placeholder that reproduces the slot. See vtable-surface/ledger.md "INFERRED names".
+    func unreadSlot7() {}
 }

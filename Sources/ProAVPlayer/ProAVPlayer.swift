@@ -27,50 +27,10 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
     private var task: Task<AVPlayerItem, Error>? = nil
     private var hasEndOfStream: Bool = false
 
-    /// `FUN_101b7c164`. Name RECOVERED (`recover_swift_function_name` high, 1 label; #file ProAVPlayer.swift;
-    /// `param_1 & 1` ⇒ `needSeek: Bool`, P28-clean). ProAVPlayer's own vtable slot15. On `needSeek`: snapshot
-    /// `player.currentTime` → `seekToTime` + advance the remuxer live-window `startPlayTime` by the last seekable
-    /// range; then, on the main thread, rebuild the `ProPlayerItem` from the current asset and install it.
-    /// Disasm-confirmed: needSeek block is `tbz w21,#0`-guarded (@0x101b7c260); `self.player` = KSAVPlayer's
-    /// public accessor (FUN_1019a1730); the item-swap runs via `runOnMainThread` (FUN_101a03e88).  ⚑[tool=resolve_fun_pins ref=FUN_1019a1730:0x1019a1730 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.player.getter : __C.AVQueuePlayer  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()
-    func replaceCurrentItem(needSeek: Bool) {
-        KSLog("", file: "ProAVPlayer/ProAVPlayer.swift", function: "replaceCurrentItem(needSeek:)", line: 303)
-        if needSeek {                                                        // [tbz w21,#0 @0x101b7c260]
-            seekToTime = player.currentTime()                               // self.player.currentTime() → seekToTime (CMTime?)
-            if let firstRange = player.currentItem?.seekableTimeRanges.first?.timeRangeValue,   // element 0: ldr x8,[x20,#0x20]
-               let m3u8Info {                                               // self.m3u8Info != nil
-                // `.start` (vs .end/.duration) — DISASM-CONFIRMED: CMTimeRangeValue writes the range @sp+0x60,
-                // get_seconds loads x0,x1=[sp+0x60]/x2=[sp+0x70] = the CMTime @offset 0 (.start; .duration = sp+0x78)
-                m3u8Info.remuxerIOAction.startPlayTime =
-                    (m3u8Info.remuxerIOAction.startPlayTime ?? 0) + firstRange.start.seconds  // *(remux+0x10); tag=0 (.some)
-            }
-        }
-        runOnMainThread { [weak self] in                                    // FUN_101a03e88 = Utility.runOnMainThread; weak-self capture (0x1041e1198)  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()
-            guard let self,
-                  let asset = player.currentItem?.asset as? AVURLAsset else { return }  // currentItem.asset as? AVURLAsset
-            let item: ProPlayerItem
-            if hasEndOfStream {                                             // self.hasEndOfStream
-                item = ProPlayerItem(url: asset.url)                       // initWithURL: (inherited AVPlayerItem init)
-                hasEndOfStream = false
-            } else {
-                item = ProPlayerItem(asset: asset)                        // initWithAsset:
-            }
-            item.m3u8Info = m3u8Info                                       // ProPlayerItem.m3u8Info = self.m3u8Info
-            if let m3u8Info {                                             // [cbz x20 @0x101b7c640 — guard the ConversionInfo]
-                // FUN_101b69fc4 = ConversionInfo.updateCurrentPlaybackTime (receiver x20=m3u8Info; arg d8 =
-                // demuxerTime - (startPlayTime ?? 0) computed here @0x101b7c644-660). NOT a ProAVPlayer method.
-                m3u8Info.updateCurrentPlaybackTime(m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0))
-            }
-            player.automaticallyWaitsToMinimizeStalling = false
-            (self as KSAVPlayer).replaceCurrentItem(playerItem: item)     // KSAVPlayer.replaceCurrentItem(playerItem:) — FUN_1019a563c (P34: private→internal). Upcast resolves the base-name shadow from the needSeek: overload (super-in-closure unsupported); ProAVPlayer doesn't override it ⇒ same dispatch as the binary.  ⚑[tool=resolve_fun_pins ref=FUN_1019a563c:0x1019a563c result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.replaceCurrentItem(playerItem: __C.AVPlayerItem?) -> ()
-        }
-    }
-
-    /// req0 witness `FUN_101b7cc78` = `FUN_101b7c164(0)` — refresh the current item without seeking.  ⚑[tool=resolve_fun_pins ref=FUN_101b7cc78:0x101b7cc78 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.reconstructComplete() -> ()
-    func reconstructComplete() {
-        replaceCurrentItem(needSeek: false)
-    }
-    private var seekToTime: CMTime? = nil
+    /// INFERRED name. Forward vtable slot #9 is a Getter entry with a NULL Impl (dead-stripped) and no
+    /// trie symbol, so neither its name nor its type is recoverable; declared as the placeholder that
+    /// reproduces the slot. See vtable-surface/ledger.md "INFERRED names".
+    var unreadSlot9: Bool { false }
 
     // Adds no designated init + all 4 stored props defaulted ⇒ inherits KSAVPlayer's designated
     // `init(io:options:)` (Forward emits ProAVPlayer.init(io:options:) fC+fc, no init(url:)) and with it
@@ -126,9 +86,11 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
             }
         }
     }
-    // L7: Forward 0x101b79024 (direct call from 0x101b78ec0, no vtable slot; hops to MainActor → 0x101b790f0).
+    // L7: Forward 0x101b79024 (direct call from 0x101b78ec0; hops to MainActor → 0x101b790f0).
+    // Own vtable slot #10: Forward's descriptor carries an async Method entry whose impl is this
+    // body's AFP, so the method is NOT `final` (the call site is devirtualized because it is private).
     // ⚑ NAME INFERRED (no symbol).
-    @MainActor private final func selectWantedAudioTrack() async {
+    @MainActor private func selectWantedAudioTrack() async {
         guard let m3u8Info, let currentItem = player.currentItem else {
             return
         }
@@ -162,6 +124,12 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
     }
+
+    /// req0 witness `FUN_101b7cc78` = `FUN_101b7c164(0)` — refresh the current item without seeking.  ⚑[tool=resolve_fun_pins ref=FUN_101b7cc78:0x101b7cc78 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.reconstructComplete() -> ()
+    func reconstructComplete() {
+        replaceCurrentItem(needSeek: false)
+    }
+    private var seekToTime: CMTime? = nil
     override func nominalFrameRate(track: MediaPlayerTrack) -> Float {
         let nominalFrameRate = track.nominalFrameRate
         // L7: Forward 0x101b7a46c loads m3u8Info+0x10 (assetTracks) without retaining m3u8Info; found track → release array,
@@ -317,6 +285,45 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
         shouldSeekTo = time
     }
 
+    /// `FUN_101b7c164`. Name RECOVERED (`recover_swift_function_name` high, 1 label; #file ProAVPlayer.swift;
+    /// `param_1 & 1` ⇒ `needSeek: Bool`, P28-clean). ProAVPlayer's own vtable slot15 (last own slot, declared after the slot 10-14 members; text sits between seek and reset). On `needSeek`: snapshot
+    /// `player.currentTime` → `seekToTime` + advance the remuxer live-window `startPlayTime` by the last seekable
+    /// range; then, on the main thread, rebuild the `ProPlayerItem` from the current asset and install it.
+    /// Disasm-confirmed: needSeek block is `tbz w21,#0`-guarded (@0x101b7c260); `self.player` = KSAVPlayer's
+    /// public accessor (FUN_1019a1730); the item-swap runs via `runOnMainThread` (FUN_101a03e88).  ⚑[tool=resolve_fun_pins ref=FUN_1019a1730:0x1019a1730 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.player.getter : __C.AVQueuePlayer  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()
+    func replaceCurrentItem(needSeek: Bool) {
+        KSLog("", file: "ProAVPlayer/ProAVPlayer.swift", function: "replaceCurrentItem(needSeek:)", line: 303)
+        if needSeek {                                                        // [tbz w21,#0 @0x101b7c260]
+            seekToTime = player.currentTime()                               // self.player.currentTime() → seekToTime (CMTime?)
+            if let firstRange = player.currentItem?.seekableTimeRanges.first?.timeRangeValue,   // element 0: ldr x8,[x20,#0x20]
+               let m3u8Info {                                               // self.m3u8Info != nil
+                // `.start` (vs .end/.duration) — DISASM-CONFIRMED: CMTimeRangeValue writes the range @sp+0x60,
+                // get_seconds loads x0,x1=[sp+0x60]/x2=[sp+0x70] = the CMTime @offset 0 (.start; .duration = sp+0x78)
+                m3u8Info.remuxerIOAction.startPlayTime =
+                    (m3u8Info.remuxerIOAction.startPlayTime ?? 0) + firstRange.start.seconds  // *(remux+0x10); tag=0 (.some)
+            }
+        }
+        runOnMainThread { [weak self] in                                    // FUN_101a03e88 = Utility.runOnMainThread; weak-self capture (0x1041e1198)  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()
+            guard let self,
+                  let asset = player.currentItem?.asset as? AVURLAsset else { return }  // currentItem.asset as? AVURLAsset
+            let item: ProPlayerItem
+            if hasEndOfStream {                                             // self.hasEndOfStream
+                item = ProPlayerItem(url: asset.url)                       // initWithURL: (inherited AVPlayerItem init)
+                hasEndOfStream = false
+            } else {
+                item = ProPlayerItem(asset: asset)                        // initWithAsset:
+            }
+            item.m3u8Info = m3u8Info                                       // ProPlayerItem.m3u8Info = self.m3u8Info
+            if let m3u8Info {                                             // [cbz x20 @0x101b7c640 — guard the ConversionInfo]
+                // FUN_101b69fc4 = ConversionInfo.updateCurrentPlaybackTime (receiver x20=m3u8Info; arg d8 =
+                // demuxerTime - (startPlayTime ?? 0) computed here @0x101b7c644-660). NOT a ProAVPlayer method.
+                m3u8Info.updateCurrentPlaybackTime(m3u8Info.demuxerTime - (m3u8Info.remuxerIOAction.startPlayTime ?? 0))
+            }
+            player.automaticallyWaitsToMinimizeStalling = false
+            (self as KSAVPlayer).replaceCurrentItem(playerItem: item)     // KSAVPlayer.replaceCurrentItem(playerItem:) — FUN_1019a563c (P34: private→internal). Upcast resolves the base-name shadow from the needSeek: overload (super-in-closure unsupported); ProAVPlayer doesn't override it ⇒ same dispatch as the binary.  ⚑[tool=resolve_fun_pins ref=FUN_1019a563c:0x1019a563c result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.replaceCurrentItem(playerItem: __C.AVPlayerItem?) -> ()
+        }
+    }
+
     /// Forward `ProAVPlayer.reset` @ `0x101b7c6e4`; body and cleanup refs: `5cf964654b0ad471a415f6404bd514a97c30a397dffc0b7d65ddc40fa73cae6e`, `b43bbafa67d940027f9762caf377baafec4e7b0423910732f64792d97fa30fe2`.
     @MainActor
     override func reset() {
@@ -332,8 +339,6 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
         super.reset()
     }
 
-    // MARK: slot15 @0x101b7c164 — replaceCurrentItem(needSeek:) (M2)
-
     // ── ConversionInfoDelegate conformance (binary conf@0x1035715a0, wt 0x1041e1340 → req0 101b7cc78 /
     //    req1 101b7cc80 / req2 101b7d3b4). ProAVPlayer receives the coordinator's lifecycle callbacks.
     //    Names inferred from ConversionInfo's forwards; behaviors reconstructed from the witness bodies.
@@ -341,7 +346,8 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
     /// req1 witness `FUN_101b7cc80` — mark end-of-stream; if the un-drained lead  ⚑[tool=resolve_fun_pins ref=FUN_101b7cc80:0x101b7cc80 result=RESOLVES_UNIQUELY] = ProAVPlayer.ProAVPlayer.endOfStream() -> ()
     /// (`currentItem.duration - remuxerIOAction.startPlayTime`) exceeds `maxBufferDuration`, schedule the
     /// end-of-stream item work on the main actor.
-    func endOfStream() {
+    /// `final`: Forward's 16-slot vtable has no entry for it (slot 15 is `replaceCurrentItem(needSeek:)`).
+    final func endOfStream() {
         hasEndOfStream = true                                            // [*(self+hasEndOfStream)=1]
         guard let currentItem = player.currentItem else { return }       // [player=FUN_1019a1730; currentItem==0 -> return]  ⚑[tool=resolve_fun_pins ref=FUN_1019a1730:0x1019a1730 result=RESOLVES_UNIQUELY] = KSPlayer.KSAVPlayer.player.getter : __C.AVQueuePlayer
         if let m3u8Info {                                                // self.m3u8Info != nil
