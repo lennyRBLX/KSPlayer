@@ -165,7 +165,9 @@ public final class EmptySubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     // L7 lane 20: pfi 0x10199b068 passes bundle (x4) from swift_once global 0x104c63040, whose initializer
     // 0x10199a310 is the SPM resource-bundle lookup (read by ~35 other functions) = `Bundle.module`, loaded unretained.
     public let name: String = NSLocalizedString("no show subtitle", bundle: .module, comment: "")
-    public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
+    // L7 lane 20: pfi 0x10002dab0 = `mov w0,#0x0; ret` (568-way fold, shared with URLSubtitleInfo.renderMode = .image)
+    // → tag 0 = `.image`, not the previously inferred `.srtView` (tag 2).
+    public var renderMode: SubtitleRenderMode = .image
     public init() {}
     // search witness 0x10199fbc4 (async) returns __swiftEmptyArrayStorage — the "no show subtitle" has no parts.
     // ⚑[tool=member_surface ref=EmptySubtitleInfo.search(with:) result=Forward sync (no Ya); body has no swift_task_* call]

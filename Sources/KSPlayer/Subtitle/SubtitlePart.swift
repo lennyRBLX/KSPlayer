@@ -20,13 +20,15 @@ import SwiftUI
 public struct TextPosition {
     public var verticalAlign: VerticalAlignment = .bottom
     public var horizontalAlign: HorizontalAlignment = .center
-    public var leftMargin: CGFloat = 0
-    public var rightMargin: CGFloat = 0
+    // L7 lane 20: the leftMargin and rightMargin pfi rows both resolve to 0x100a4365c = `fmov d0,#10.0; ret` (the 5-way fold
+    // verticalMargin's pfi already matches), so all three stored defaults are 10; the init's default arguments are separate.
+    public var leftMargin: CGFloat = 10
+    public var rightMargin: CGFloat = 10
     public var verticalMargin: CGFloat = 10
 
     // init 0x101abac2c (23 instr), trie-exported `…verticalMargin…tcfC` = public, so explicit (the implicit
     // memberwise init would be internal). The body first runs the stored-property initializers — `bl`
-    // VerticalAlignment.bottom.getter, `bl` HorizontalAlignment.center.getter (the 0/0/10 CGFloat defaults are
+    // VerticalAlignment.bottom.getter, `bl` HorizontalAlignment.center.getter (the 10/10/10 CGFloat defaults are
     // dead stores) — then stores the five arguments in declaration order.
     public init(verticalAlign: VerticalAlignment = .bottom, horizontalAlign: HorizontalAlignment = .center, leftMargin: CGFloat = 0, rightMargin: CGFloat = 0, verticalMargin: CGFloat = 10) {
         self.verticalAlign = verticalAlign
