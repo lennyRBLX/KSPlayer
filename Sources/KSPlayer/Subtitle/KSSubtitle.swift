@@ -162,7 +162,9 @@ public final class EmptySubtitleInfo: KSSubtitleProtocol, SubtitleInfo {
     public var isEnabled: Bool = true
     public let subtitleID: String = ""
     public var delay: TimeInterval = 0
-    public let name: String = NSLocalizedString("no show subtitle", comment: "")
+    // L7 lane 20: pfi 0x10199b068 passes bundle (x4) from swift_once global 0x104c63040, whose initializer
+    // 0x10199a310 is the SPM resource-bundle lookup (read by ~35 other functions) = `Bundle.module`, loaded unretained.
+    public let name: String = NSLocalizedString("no show subtitle", bundle: .module, comment: "")
     public var renderMode: SubtitleRenderMode = .srtView // ⚑ default inferred → M2
     public init() {}
     // search witness 0x10199fbc4 (async) returns __swiftEmptyArrayStorage — the "no show subtitle" has no parts.

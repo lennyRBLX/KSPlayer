@@ -215,13 +215,14 @@ extension KSVideoPlayer: UIViewRepresentable {
         /// L7 lane 20: Forward setter 0x1019da600 — after the swap, a non-nil old layer reads `player` (offset global
         /// 0x104c634f0), witness 30 `pipController.getter` (`ldr x25,[x22,#0xf8]`), then req0 of
         /// KSPictureInPictureProtocol (`ldr x8,[x22,#0x8]`) = `isPictureInPictureActive`; `tbnz w22,#0` skips the
-        /// delegate clear (weak assign @0x1019da708) and `pause()` (vtable +0x2d0) while PiP is active, and a nil
+        /// delegate clear (weak assign @0x1019da708) and `stop()` (vtable +0x2d0 = slot 63 at vtable offset 27; `pause()` is
+        /// slot 61, +0x2c0) while PiP is active, and a nil
         /// pipController (`cbz x20`) falls into them — `KSPlayerLayer.isPictureInPictureActive`'s exact chain.
         public var playerLayer: KSPlayerLayer? {
             didSet {
                 if let oldValue, !oldValue.isPictureInPictureActive {
                     oldValue.delegate = nil
-                    oldValue.pause()
+                    oldValue.stop()
                 }
             }
         }
