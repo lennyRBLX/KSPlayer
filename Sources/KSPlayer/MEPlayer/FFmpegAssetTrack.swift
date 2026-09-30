@@ -113,7 +113,10 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
     // The protocol has been retyped to match, so this no longer diverges from either side.
     public private(set) var rotation: UInt16 = 0
     public var dovi: DOVIDecoderConfigurationRecord?
-    public internal(set) var fieldOrder: FFmpegFieldOrder
+    // L7 lane 18: public setter. The trie exports getter, setter and modify (like `dovi`), while the
+    // restricted-setter sibling `rotation` exports only a getter. A non-public setter on a stored
+    // property does not survive -O WMO. ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.fieldOrder result=vg+vs+vM+vpMV]
+    public var fieldOrder: FFmpegFieldOrder
     public var isImage: Bool = false                       // ⚑ 30 NEW · init population deferred (disposition/side-data)
     public var isStillImage: Bool = false                  // ⚑ 31 NEW · init population deferred
     var closedCaptionsTrack: FFmpegAssetTrack?

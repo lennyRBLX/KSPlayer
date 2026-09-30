@@ -49,7 +49,10 @@ public class MetalRender {
     /// (`typedef NS_ENUM(NSUInteger, MTLStorageMode) { MTLStorageModeShared = 0, ... }`), which
     /// is what licenses spelling it `.shared` rather than `MTLStorageMode(rawValue: 0)!`.
     /// Trie: `static KSPlayer.MetalRender.fragmentTextureStorageMode.getter : __C.MTLStorageMode`.
-    @used nonisolated(unsafe) static var fragmentTextureStorageMode: MTLStorageMode = .shared
+    /// L7 lane 18: `public static let`. The trie set is getter + addressor + storage + property
+    /// descriptor (vgZ/vau/vpZ/vpZMV) with NO setter or modify. MV is emitted for public properties
+    /// only, and a `var` would also export vsZ/vMZ.
+    public static let fragmentTextureStorageMode: MTLStorageMode = .shared
     static let commandQueue = MetalRender.device.makeCommandQueue()
     static let samplerState: MTLSamplerState? = {
         let samplerDescriptor = MTLSamplerDescriptor()

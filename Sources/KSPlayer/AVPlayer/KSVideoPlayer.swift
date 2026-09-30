@@ -17,7 +17,9 @@ public typealias UIViewRepresentable = NSViewRepresentable
 #endif
 
 public struct KSVideoPlayer {
-    @ObservedObject public private(set) var coordinator: Coordinator
+    // L7 lane 18: public setter. The trie exports coordinator getter, setter and modify, and a
+    // private setter would be stripped under -O WMO. ⚑[tool=export_trie_oracle ref=KSVideoPlayer.coordinator result=vg+vs+vM+vpMV]
+    @ObservedObject public var coordinator: Coordinator
     public let url: URL
     public let options: KSOptions
     public init(coordinator: Coordinator, url: URL, options: KSOptions) {
