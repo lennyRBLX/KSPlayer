@@ -285,34 +285,11 @@ public final class MEPlayerItem: @unchecked Sendable {
     private let preloadClock = ContinuousClock()            // 40 ⚑ init calls Swift.ContinuousClock.init(); ContinuousClock vs .Instant pending
     private var lastPacketMediaType: AVFoundation.AVMediaType = .video // 41 init AVMediaTypeVideo (AVFoundation constant; codebase disambiguates from FFmpeg AVMediaType)
 
-    nonisolated(unsafe) private static var onceInitial: Void = {
-        var result = avformat_network_init()
-        av_log_set_callback { ptr, level, format, args in
-            guard let format else {
-                return
-            }
-            var log = String(cString: format)
-            let arguments: CVaListPointer? = args
-            if let arguments {
-                log = NSString(format: log, arguments: arguments) as String
-            }
-            if let ptr {
-                let avclass = ptr.assumingMemoryBound(to: UnsafePointer<AVClass>.self).pointee
-                if avclass == avfilter_get_class() {
-                    let context = ptr.assumingMemoryBound(to: AVFilterContext.self).pointee
-                    if let opaque = context.graph?.pointee.opaque {
-                        let options = Unmanaged<KSOptions>.fromOpaque(opaque).takeUnretainedValue()
-                        options.filter(log: log)
-                    }
-                }
-            }
-            // 找不到解码器
-            if log.hasPrefix("parser not found for codec") {
-                KSLog(level: .error, log)
-            }
-            KSLog(level: LogLevel(rawValue: level) ?? .warning, log)
-        }
-    }()
+    // Forward MEPlayerItem.init 0x101a4bae0 runs swift_once(0x1044ea3f0, 0x101a0a688), and 0x101a0a688 is
+    // setLogCallback() itself (AVFFmpegExtension.swift): `av_log_set_callback(0x101a0aa5c)`, a 3-insn tail call.
+    // So the initializer is setLogCallback() alone, with no avformat_network_init call. The only av_log closure,
+    // 0x101a0aa5c, is referenced only from 0x101a0a688, so no second inline copy exists (lane 19).
+    nonisolated(unsafe) private static var onceInitial: Void = setLogCallback()
 
     public convenience init(url: URL, options: KSOptions) {
         self.init(io: .left(url), options: options)

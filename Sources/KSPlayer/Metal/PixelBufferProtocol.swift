@@ -416,16 +416,26 @@ class PixelBuffer: PixelBufferProtocol {
         heights[planeIndex]
     }
 
+    // Forward 0x101a8acd4 switches on format (+0x80). RGB24 (2), ARGB (0x19) and RGBA (0x1a) give alphaInfo
+    // 0 / 4 / 3 (.none / .first / .last). Those three build PointerImagePipeline(rgbData:stride:width:height:alphaInfo:)
+    // inline (allocObject 0x34: buffers[0]!.contents(), lineSize[0], width, height, alphaInfo) and call its
+    // cgImage() @0x101a8ada4. Every other format takes the VideoSwresample path (lane 19).
     func cgImage() -> CGImage? {
-        let image: CGImage?
-        if format == AV_PIX_FMT_RGB24 {
-            image = CGImage.make(rgbData: buffers[0]!.contents().assumingMemoryBound(to: UInt8.self), linesize: Int(lineSize[0]), width: width, height: height)
-        } else {
+        let alphaInfo: CGImageAlphaInfo
+        switch format {
+        case AV_PIX_FMT_RGB24:
+            alphaInfo = .none
+        case AV_PIX_FMT_ARGB:
+            alphaInfo = .first
+        case AV_PIX_FMT_RGBA:
+            alphaInfo = .last
+        default:
             let scale = VideoSwresample(dovi: nil)
-            image = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) })?.cgImage()
+            let image = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) })?.cgImage()
             scale.shutdown()
+            return image
         }
-        return image
+        return PointerImagePipeline(rgbData: buffers[0]!.contents().assumingMemoryBound(to: UInt8.self), stride: lineSize[0], width: width, height: height, alphaInfo: alphaInfo).cgImage()
     }
 
     public func matche(formatDescription: CMVideoFormatDescription) -> Bool {

@@ -54,7 +54,7 @@ class SubtitleDecode: DecodeProtocol {
     // `[(subtitle: Swift.String, start: Swift.Int64, duration: Swift.Int64)]`:
     //   $s8KSPlayer14SubtitleDecodeC24pendingASSImageSubtitles33_F85593AD49D6A91639A62D57F41DA4BDLLSaySS8subtitle_s5Int64V5startAH8durationtGvpfi
     // The `33_…LL` discriminator also confirms `private`. No call site changes: the field is
-    // declared and never read (its bodies are still deferred), so this is a declaration-only fix.
+    // declared here and drained by setupASSImageRenderer(header:) (lane 19); the append in text() is still deferred.
     private var pendingASSImageSubtitles: [(subtitle: String, start: Int64, duration: Int64)] = [] // §8.6
     // init(assetTrack:options:) — Batch 4 Tier 3a. FUN_101a6914c (via __allocating_init thunk 0x101a69100). Base  ⚑[tool=resolve_fun_pins ref=FUN_101a6914c:0x101a6914c result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.init(assetTrack: KSPlayer.FFmpegAssetTrack, options: KSPlayer.KSOptions?) -> KSPlayer.SubtitleDecode
     // cce7002 init is the adaptation reference, reworked for Forward's added fields (assetTrack/isASS/fontsDir/
@@ -259,7 +259,7 @@ class SubtitleDecode: DecodeProtocol {
     // ⚑ DEFERRED (Batch 5, TERMINAL — un-nameable primitives, consistent with AssImageParse.canParse={false}): the
     //   ASS-image detection+render arm of text() — the 4 detection helpers FUN_101a8e3b8/8f72c/90748/910ac, the
     //   10-regex complexity scan (DAT_1044eb5d0), the 3 KSOptions static gate flags (DAT_104c6315x), the
-    //   assImageRenderer Task (FUN_101a03fd4) + pendingASSImageSubtitles buffering + lazy setup (FUN_101a6bc08).
+    //   assImageRenderer Task (FUN_101a03fd4) + pendingASSImageSubtitles buffering (lazy setup FUN_101a6bc08 = setupASSImageRenderer, lane 19).
     //   canParse={false} makes that path dead → deferring is zero-regression (spine-preserved-by-omission).
     func decodeFrame(from packet: UnsafeMutablePointer<AVPacket>) -> ([SubtitlePart], timestamp: Int64, timebase: Timebase)? {
         guard let codecContext else {
@@ -328,5 +328,36 @@ class SubtitleDecode: DecodeProtocol {
         // rect data into parts (Forward moves this before delivery; base freed it after the loop). FUN_101a69f54 @0x101a6a1ac.
         avsubtitle_free(&subtitle)
         return (parts, timestamp, timebase)
+    }
+
+    // Forward vtable slot 22 (impl 0x101a6bc08, 115 insns). The slot is unexported, so the name is INFERRED
+    // (vtable-surface/ledger.md, lane 19). Its one caller is text() @0x101a6b010, which passes the unwrapped
+    // subtitleHeader (+0x70/+0x78) right after appending to pendingASSImageSubtitles. Nothing happens once
+    // +0x10 is set (cbnz @0x101a6bc6c). Otherwise it does four things:
+    //   1. builds the renderer from +0x60/+0x68 fontsDir and the header (0x101a92d2c)
+    //   2. stores it at +0x10
+    //   3. assigns it to assetTrack+0x108 subtitleRender (0x101a2119c)
+    //   4. takes +0x80 and leaves [] (@0x101a6bd38)
+    // A non-empty take goes to a Task (0x101a03fd4, ctx {pending, renderer}). That Task loops at resumes 0x101a6bdec
+    // and 0x101a6bec0 (stride 0x20), awaiting renderer.add(subtitle:start:duration:) (0x101a8f32c) on the actor.
+    // `@used private`: the caller, text()'s ASS arm, is still deferred. Even so the build gives this method a vtable
+    // slot. It is declared last, after decodeFrame(from:), so it follows the Forward order (lane 19 pass 1: declared
+    // before doFlushCodec it pushed doFlushCodec/shutdown to other slots).
+    @used private func setupASSImageRenderer(header: String) {
+        guard assImageRenderer == nil else {
+            return
+        }
+        let renderer = AssIncrementImageRenderer(fontsDir: fontsDir, header: header)
+        assImageRenderer = renderer
+        assetTrack.subtitleRender = renderer
+        let pending = pendingASSImageSubtitles
+        pendingASSImageSubtitles = []
+        if !pending.isEmpty {
+            Task {
+                for item in pending {
+                    await renderer.add(subtitle: item.subtitle, start: item.start, duration: item.duration)
+                }
+            }
+        }
     }
 }

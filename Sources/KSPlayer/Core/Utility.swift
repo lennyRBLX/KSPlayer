@@ -267,7 +267,8 @@ extension CGSize {
         @used get { CGSize(width: height, height: width) }
     }
 
-    var toPoint: CGPoint {
+    // public: the trie carries `vg` AND the `vpMV` property descriptor (lane 19).
+    public var toPoint: CGPoint {
         CGPoint(x: width, y: height)
     }
 
@@ -1425,8 +1426,9 @@ public enum Either<Left, Right> {
     case left(Left), right(Right)
 }
 
+// left/right: public (the extension default) — the trie carries `vg` AND `vpMV` for both (lane 19).
 public extension Either {
-    internal var left: Left? { get {
+    var left: Left? { get {
         if case let .left(value) = self {
             return value
         }
@@ -1435,7 +1437,7 @@ public extension Either {
     init(_ left: Left, or _: Right.Type) { self = .left(left) }
     init(_ left: Left) { self = .left(left) }
     init(_ right: Right) { self = .right(right) }
-    internal var right: Right? { get {
+    var right: Right? { get {
         if case let .right(value) = self {
             return value
         }
