@@ -46,7 +46,7 @@ public enum FFmpegUtility {
     //   (1952 insns, no self). All the OutputStreamInfo construction work lives here; the class is
     //   allocated only at the very end (swift_allocObject 0x79 @0x101a1e828) through OutputStreamInfo's
     //   internal fields-only init. Forward's trie has no OutputStreamInfo init symbol.
-    //   DEFERRED arm: the HEVC extradata repair (see the note inline).
+    //   L7 lane 18: the HEVC extradata repair arm (0x101a1de74) is written inline in the video branch.
     public static func write(formatContext: FormatContext, to: String, isMergeStream: Bool, formatContextOptions: [String : Any]?, outFormat: String?, mediaType: AVFoundation.AVMediaType?, allowAudioCodecs: [AVCodecID]?) throws -> OutputStreamInfo {
         // `cbz x24` @0x101a1d0f8: the nil arm builds the empty dictionary (0x1019c3148).
         var formatContextOptions = formatContextOptions ?? [:]
@@ -164,11 +164,31 @@ public enum FFmpegUtility {
                     stream.pointee.codecpar.pointee.sample_rate = 48000
                 }
             } else if track.mediaType == .video {
-                // ⚑ GAP (L7 lane 16, I6): HEVC (0xad) with extradata_size < 30 first repairs extradata from one
-                //   read packet (NAL parse 0x101a0ce98/0x101a0c470, 0x101a0be50, hevcExtradata 0x101a0ba94),
-                //   then performSeek(time: 0, flags: 1). Blocked: 0x101a0be50 exists only as a local func
-                //   inside KSOptions makeDecode, and 0x101a0ce98/0x101a0c470 are two Forward functions folded
-                //   into one parseNALUnits(data:size:codecID:) stub — no callee decl with a matching signature.
+                // L7 lane 18: HEVC extradata repair @0x101a1de74..0x101a1e288, before the copy (x22 = codecpar).
+                //   codec_id (+0x4) == 0xad, extradata_size (+0x18) `cmp #0x1d; b.gt` → `< 30`;
+                //   av_packet_alloc 0x102d61878 into a var (x29-0xc8) that av_packet_free 0x102d618b8 frees on
+                //   every path, nil included; av_read_frame 0x1030e6e78 on formatCtx (+0x18); data! (trap
+                //   @0x101a1ee80) is unwrapped before size, then again for be50; the inlined PacketNalData
+                //   dispatcher re-reads codec_id (not a literal); be50 @0x101a1e144, hevcExtradata @0x101a1e158.
+                //   extradata_size = Int32(count) (trapping), allocate(capacity: count) (swift_slowAlloc
+                //   0x10345d018), Data.copyBytes(to:count:) 0x1034525c0, then the pointer store (+0x10).
+                //   performSeek 0x101a329d8 (d0 = 0, w0 = 1) runs whenever the read succeeded; result unused.
+                if codecpar.pointee.codec_id == AV_CODEC_ID_HEVC, codecpar.pointee.extradata_size < 30 {
+                    var packet = av_packet_alloc()
+                    if let packet, av_read_frame(formatContext.formatCtx, packet) == 0 {
+                        let nalUnits = PacketNalData(data: packet.pointee.data!, size: Int(packet.pointee.size), codecID: codecpar.pointee.codec_id).nals
+                        if let formatDescription = formatDescription(data: packet.pointee.data!, nalUnitHeaderLength: 4, nalUnits: nalUnits),
+                           let extradata = formatDescription.hevcExtradata
+                        {
+                            codecpar.pointee.extradata_size = Int32(extradata.count)
+                            let pointer = UnsafeMutablePointer<UInt8>.allocate(capacity: extradata.count)
+                            extradata.copyBytes(to: pointer, count: extradata.count)
+                            codecpar.pointee.extradata = pointer
+                        }
+                        _ = formatContext.performSeek(time: 0, flags: AVSEEK_FLAG_BACKWARD)
+                    }
+                    av_packet_free(&packet)
+                }
                 avcodec_parameters_copy(stream.pointee.codecpar, codecpar)
                 // 0x101a19338 = MediaPlayerTrack.codecs specialized for FFmpegAssetTrack; byte-swapped, nil → 0.
                 stream.pointee.codecpar.pointee.codec_tag = track.codecs?.bigEndian ?? 0

@@ -392,23 +392,11 @@ open class KSOptions {
         }
     }
 
-    // Forward 0x1019b604c + autoreleasepool body 0x1019b611c. The HEVC parameter-set helper 0x101a0be50
-    // (VPS/SPS/PPS kind-1 NAL entries → CMVideoFormatDescriptionCreateFromHEVCParameterSets) has no
-    // declaration in this source and is written as a local func.
+    // Forward 0x1019b604c + autoreleasepool body 0x1019b611c. The HEVC parameter-set helper 0x101a0be50 is the
+    // free `formatDescription(data:nalUnitHeaderLength:nalUnits:)` in AVFoundationExtension.swift (L7 lane 18).
+    // @0x1019b6448..: data! is unwrapped before size is read; the NAL dispatcher is inlined with the literal
+    // codec 0xad (AV_CODEC_ID_HEVC); be50 gets (data!, 4, nals).
     func makeDecode(packet: Packet) -> DecodeProtocol {
-        func formatDescription(data: UnsafePointer<UInt8>, nalUnitHeaderLength: Int, nalUnits: [NALEntry]) -> CMFormatDescription? {
-            guard let vps = nalUnits.first(where: { $0.kind == 1 && $0.type == 32 }),
-                  let sps = nalUnits.first(where: { $0.kind == 1 && $0.type == 33 }),
-                  let pps = nalUnits.first(where: { $0.kind == 1 && $0.type == 34 })
-            else {
-                return nil
-            }
-            let parameterSetPointers = [data + Int(vps.offset), data + Int(sps.offset), data + Int(pps.offset)]
-            let parameterSetSizes = [Int(truncatingIfNeeded: vps.length), Int(truncatingIfNeeded: sps.length), Int(truncatingIfNeeded: pps.length)]
-            var formatDescription: CMFormatDescription?
-            _ = CMVideoFormatDescriptionCreateFromHEVCParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: 3, parameterSetPointers: parameterSetPointers, parameterSetSizes: parameterSetSizes, nalUnitHeaderLength: Int32(nalUnitHeaderLength), extensions: nil, formatDescriptionOut: &formatDescription)
-            return formatDescription
-        }
         let assetTrack = packet.assetTrack!
         process(assetTrack: assetTrack)
         return autoreleasepool { () -> DecodeProtocol in
@@ -421,7 +409,7 @@ open class KSOptions {
                         return decode
                     }
                     if assetTrack.codecpar.pointee.codec_id == AV_CODEC_ID_HEVC, let corePacket = packet.corePacket {
-                        let nalUnits = parseNALUnits(data: corePacket.pointee.data!, size: Int(corePacket.pointee.size), codecID: AV_CODEC_ID_HEVC)
+                        let nalUnits = PacketNalData(data: corePacket.pointee.data!, size: Int(corePacket.pointee.size), codecID: AV_CODEC_ID_HEVC).nals
                         assetTrack.formatDescription = formatDescription(data: corePacket.pointee.data!, nalUnitHeaderLength: 4, nalUnits: nalUnits)
                         process(assetTrack: assetTrack)
                         if let decode = VideoToolboxDecode(assetTrack: assetTrack, options: self, asynchronous: true) {

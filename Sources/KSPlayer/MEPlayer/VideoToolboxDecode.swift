@@ -115,15 +115,17 @@ class VideoToolboxDecode: DecodeProtocol {
             return
         }
         // P3a Phase B Step 2 — Dolby-Vision RPU extraction (binary L120-236 @0x101a6ce44, ADDITIVE).
-        let nalUnits = parseNALUnits(data: data, size: Int(corePacket.size), codecID: codecID)
+        // L7 lane 18: the PacketNalData dispatcher is inlined here (@0x101a6cf14..; codecID = self+0x18,
+        // Annex-B arm @0x101a6d6ac → 0x101a0c470, else 0x101a0ce98).
+        let nalUnits = PacketNalData(data: data, size: Int(corePacket.size), codecID: codecID).nals
         for nalUnit in nalUnits {
-            // L155: HEVC (kind 1) DV-RPU NAL (type 0x3e = 62).
-            guard nalUnit.kind == 1, nalUnit.type == 62 else { continue }
+            // L155: .h265 (tag 1) DV-RPU NAL (value 0x3e = 62) @0x101a6cfbc.
+            guard nalUnit.type == .h265(.unspec62) else { continue }
             // EPB-strip — H.265 emulation-prevention removal. Forward (0x101a6ce44) computes offset+2 with
             // an overflow check BEFORE length-2, and bounds-checks each read with an unsigned
             // `readIdx <u allocLen` trap and no add-overflow check: Span's checked subscript, not raw pointer math.
-            let start = Int(nalUnit.offset) + 2
-            let allocLen = Int(nalUnit.length) - 2
+            let start = nalUnit.start + 2
+            let allocLen = nalUnit.count - 2
             let stripped = UnsafeMutablePointer<UInt8>.allocate(capacity: allocLen)
             let src = UnsafeBufferPointer(start: data + start, count: allocLen).span
             var strippedLen = 0

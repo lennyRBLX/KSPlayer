@@ -1137,8 +1137,10 @@ public protocol PreLoadProtocol {
 
 // The two extension defaults named above, bodies read in full. Neither witness table uses them
 // (see the correction), so they exist only as the trie's `(extension in KSPlayer)` getters.
-// Access is not decidable from the trie (Forward exports internals too); written internal.
-extension PreLoadProtocol {
+// `public`: a generic protocol-extension member is emitted only for a caller or as public API. Neither
+// body has a caller in Forward, yet both exist. Written internal, pass 20260930T000109863496Z reported
+// both rows declared_not_emitted (the same argument as MediaPlayback.seek(time:) in L7 lane 15).
+public extension PreLoadProtocol {
     /// @0x10002dc44, 2 instructions: `movi v0.2D, #0` / `ret`.
     var downloadSpeed: Double { 0 }
 

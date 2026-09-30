@@ -1024,18 +1024,7 @@ public extension CMFormatDescription {
         return nil
     }
 
-    /// @0x101a0ba94 — extensions as? [String: Any] → "SampleDescriptionExtensionAtoms" as? [String: Any] → "hvcC" as? Data.
-    public var hevcExtradata: Data? {
-        // Forward @0x101a0bc58: the `as? Data` failure `tbz`s to the shared nil return (no csel),
-        // so the Data cast is the third binding of the chain, not a returned `as?`.
-        if let extensions = CMFormatDescriptionGetExtensions(self) as? [String: Any],
-           let atoms = extensions["SampleDescriptionExtensionAtoms"] as? [String: Any],
-           let hvcC = atoms["hvcC"] as? Data
-        {
-            return hvcC
-        }
-        return nil
-    }
+    // L7 lane 18: hevcExtradata (@0x101a0ba94) moved to AVFoundationExtension.swift (Forward's file).
 }
 
 /// Forward @0x101a04924 (150 insns): no `useSystemHTTPProxy` guard — the body opens with
