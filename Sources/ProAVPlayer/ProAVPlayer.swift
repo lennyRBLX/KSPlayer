@@ -295,12 +295,14 @@ nonisolated class ProAVPlayer: KSAVPlayer, ConversionInfoDelegate {   // + Conve
         KSLog("", file: "ProAVPlayer/ProAVPlayer.swift", function: "replaceCurrentItem(needSeek:)", line: 303)
         if needSeek {                                                        // [tbz w21,#0 @0x101b7c260]
             seekToTime = player.currentTime()                               // self.player.currentTime() → seekToTime (CMTime?)
-            if let firstRange = player.currentItem?.seekableTimeRanges.first?.timeRangeValue,   // element 0: ldr x8,[x20,#0x20]
-               let m3u8Info {                                               // self.m3u8Info != nil
+            if let firstRange = player.currentItem?.seekableTimeRanges.first,   // element 0: ldr x8,[x20,#0x20]
+               let remuxerIOAction = m3u8Info?.remuxerIOAction {             // self.m3u8Info != nil; only remuxerIOAction retained
                 // `.start` (vs .end/.duration) — DISASM-CONFIRMED: CMTimeRangeValue writes the range @sp+0x60,
                 // get_seconds loads x0,x1=[sp+0x60]/x2=[sp+0x70] = the CMTime @offset 0 (.start; .duration = sp+0x78)
-                m3u8Info.remuxerIOAction.startPlayTime =
-                    (m3u8Info.remuxerIOAction.startPlayTime ?? 0) + firstRange.start.seconds  // *(remux+0x10); tag=0 (.some)
+                // L7 lane 20: the NSValue is bound, not the range — Forward loads startPlayTime (`fcsel d9` @0x101b7c2c0)
+                // BEFORE the CMTimeRangeValue call, so `.timeRangeValue` is evaluated inside the sum.
+                remuxerIOAction.startPlayTime =
+                    (remuxerIOAction.startPlayTime ?? 0) + firstRange.timeRangeValue.start.seconds  // *(remux+0x10); tag=0 (.some)
             }
         }
         runOnMainThread { [weak self] in                                    // FUN_101a03e88 = Utility.runOnMainThread; weak-self capture (0x1041e1198)  ⚑[tool=resolve_fun_pins ref=FUN_101a03e88:0x101a03e88 result=RESOLVES_UNIQUELY] = KSPlayer.runOnMainThread(block: @Swift.MainActor @Sendable () -> ()) -> ()

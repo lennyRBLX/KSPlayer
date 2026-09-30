@@ -146,30 +146,29 @@ actor FFmpegSubtitle: @preconcurrency KSSubtitleProtocol {
         //   synchronous SubtitleDecode.decodeFrame(from:) (FUN_101a69f54, resolved this session) and accumulate its parts.
         //   The sync decode returns ([SubtitlePart], timestamp, timebase)? — this sidecar caller uses only .parts (the
         //   timestamp/timebase elements feed the completion-handler wrapper FUN_101a69de8, not the accumulate). ──  ⚑[tool=resolve_fun_pins ref=FUN_101a69de8:0x101a69de8 result=RESOLVES_UNIQUELY] = KSPlayer.SubtitleDecode.decodeFrame(from: Swift.UnsafeMutablePointer<__C.AVPacket>, completionHandler: (Swift.Result<KSPlayer.MEFrame, Swift.Error>) -> ()) -> ()
-        var parts = [SubtitlePart]() // LOCAL accumulator: x28 = empty array @0x101a9f644, grown @0x101a9f75c, released at exit; no store to self+0xa0
-        var pkt = av_packet_alloc() // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o)
-        guard let packet = pkt else {
-            av_packet_free(&pkt) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_free:0x102d618b8 result=CONFIRMED] alloc-nil path ONLY (@0x101a9f688)
-            // ⚑ UNRESOLVED (audit-caught, LOW) — on this OOM-only path the binary ALSO calls FUN_101a18c4c(0.0, 0.0)
-            //   (@0x101a9f698, a two-Double callee) between the packet-free and return. Its semantics are unresolved and
-            //   the path is unreachable unless the packet allocation returns nil (OOM), so its effect is DEFERRED
-            //   (a callee resolution), NOT fabricated. Everything reachable in this init is reconstructed + FAITHFUL.
-            return
-        }
-        // ⚑[tool=ffmpeg_name_oracle ref=av_read_frame:0x1030e6e78 result=CONFIRMED] (avformat/demux.o)
-        while av_read_frame(formatContext.formatCtx, packet) == 0 {
-            // ⚑ BREAK on the first non-subtitle-stream packet — binary @0x101a9f704 `b.ne LAB_101a9f650`
-            //   (exit, NOT skip-and-continue). For a single-stream subtitle sidecar every packet matches.
-            guard packet.pointee.stream_index == subtitleStreamIndex else { break }
-            if let (decoded, _, _) = decode.decodeFrame(from: packet) {
-                parts += decoded
+        var parts = [SubtitlePart]() // LOCAL accumulator: x28 = empty array @0x101a9f644, grown @0x101a9f75c, released on the read exit, stored to self+0xa0 only after the alloc-nil path
+        var packet = av_packet_alloc() // ⚑[tool=ffmpeg_name_oracle ref=av_packet_alloc:0x102d61878 result=CONFIRMED] (avcodec/packet.o)
+        // L7 lane 20: same shape as search(with:). The loop only leaves through the read-fail / foreign-stream exit
+        //   (LAB_101a9f650: av_packet_unref @0x101a9f654, release parts, return — no self+0xa0 store). The fall-through
+        //   is the alloc-nil path: av_packet_free(&packet) @0x101a9f688, then FUN_101a18c4c = the mutating
+        //   [SubtitlePart].adjust(size:) (lane 16) with d0 = d1 = 0 (`movi v0/v1` @0x101a9f68c-90, x20 = &parts
+        //   @0x101a9f694), then self.parts = parts (`ldr x0,[x19,#0xa0]` / `str x8,[x19,#0xa0]` @0x101a9f6c0-c4).
+        if let packet {
+            // ⚑[tool=ffmpeg_name_oracle ref=av_read_frame:0x1030e6e78 result=CONFIRMED] (avformat/demux.o)
+            while true {
+                guard av_read_frame(formatContext.formatCtx, packet) == 0, packet.pointee.stream_index == subtitleStreamIndex else {
+                    av_packet_unref(packet) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_unref:0x102d61970 result=CONFIRMED] exit (@0x101a9f654)
+                    return
+                }
+                if let (decoded, _, _) = decode.decodeFrame(from: packet) {
+                    parts += decoded
+                }
+                av_packet_unref(packet) // loop-body (@0x101a9f6e4)
             }
-            av_packet_unref(packet) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_unref:0x102d61970 result=CONFIRMED] loop-body (@0x101a9f6e4)
         }
-        // ⚑ exit teardown = av_packet_unref, NOT av_packet_free: the binary frees the AVPacket STRUCT only on the
-        //   alloc-nil path (@0x101a9f688); every non-nil exit (read-fail / stream-index break) UNREFs at LAB_101a9f650
-        //   (@0x101a9f654), leaking the struct. Faithful to the binary's teardown (audit-caught free-vs-unref).
-        av_packet_unref(packet) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_unref:0x102d61970 result=CONFIRMED] exit (@0x101a9f654)
+        av_packet_free(&packet) // ⚑[tool=ffmpeg_name_oracle ref=av_packet_free:0x102d618b8 result=CONFIRMED] (@0x101a9f688)
+        parts.adjust(size: .zero)
+        self.parts = parts
     }
 
     // ⚑ L7: explicit deinit (Forward Ffd 0x101a9f8e0): `bl 0x101a3302c` FormatContext.close(), then the inlined

@@ -94,21 +94,22 @@ final class PointerImagePipeline {
     ///   releases the CFData first. On success all three CF objects are released and the CGImage is
     ///   returned WITHOUT a release, i.e. at +1.
     /// ⚑[tool=bind_oracle ref=CGImageCreate:0x104108ed8 result=CoreGraphics-_CGImageCreate]
+    /// Lane 20: Forward loads alphaInfo (+0x30) and selects bitsPerPixel before the multiply, and loads width
+    /// (+0x20) before CGColorSpaceCreateDeviceRGB, i.e. the color space is built as an argument.
     func cgImage() -> CGImage? {
-        let length = bytesPerRow * height
-        guard let data = CFDataCreate(kCFAllocatorDefault, rgbData, length) else {
+        let bitsPerPixel = alphaInfo == .none ? 24 : 32
+        guard let data = CFDataCreate(kCFAllocatorDefault, rgbData, bytesPerRow * height) else {
             return nil
         }
         guard let provider = CGDataProvider(data: data) else {
             return nil
         }
-        let space = CGColorSpaceCreateDeviceRGB()
         return CGImage(width: width,
                        height: height,
                        bitsPerComponent: 8,
-                       bitsPerPixel: alphaInfo == .none ? 24 : 32,
+                       bitsPerPixel: bitsPerPixel,
                        bytesPerRow: bytesPerRow,
-                       space: space,
+                       space: CGColorSpaceCreateDeviceRGB(),
                        bitmapInfo: CGBitmapInfo(rawValue: alphaInfo.rawValue),
                        provider: provider,
                        decode: nil,

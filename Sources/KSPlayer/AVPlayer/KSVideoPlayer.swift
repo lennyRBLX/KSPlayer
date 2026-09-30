@@ -212,10 +212,17 @@ extension KSVideoPlayer: UIViewRepresentable {
         //   Coordinator-side uses went with it. SwiftUI readers re-rooted onto `playerLayer?`.
         public var timemodel = ControllerTimeModel()
         // 在SplitView模式下，第二次进入会先调用makeUIView。然后在调用之前的dismantleUIView.所以如果进入的是同一个View的话，就会导致playerLayer被清空了。最准确的方式是在onDisappear清空playerLayer
+        /// L7 lane 20: Forward setter 0x1019da600 — after the swap, a non-nil old layer reads `player` (offset global
+        /// 0x104c634f0), witness 30 `pipController.getter` (`ldr x25,[x22,#0xf8]`), then req0 of
+        /// KSPictureInPictureProtocol (`ldr x8,[x22,#0x8]`) = `isPictureInPictureActive`; `tbnz w22,#0` skips the
+        /// delegate clear (weak assign @0x1019da708) and `pause()` (vtable +0x2d0) while PiP is active, and a nil
+        /// pipController (`cbz x20`) falls into them — `KSPlayerLayer.isPictureInPictureActive`'s exact chain.
         public var playerLayer: KSPlayerLayer? {
             didSet {
-                oldValue?.delegate = nil
-                oldValue?.pause()
+                if let oldValue, !oldValue.isPictureInPictureActive {
+                    oldValue.delegate = nil
+                    oldValue.pause()
+                }
             }
         }
 
