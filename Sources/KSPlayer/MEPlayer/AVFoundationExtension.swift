@@ -337,9 +337,107 @@ extension AudioChannelLabel {
 // L7 lane 18: Forward places the CMFormatDescription extension (bitDepth … hevcExtradata, ending @0x101a0bc60)
 // and the NAL cluster below in this file: its code runs 0x101a0aac0..0x101a0dc14, after AVFFmpegExtension.swift
 // (ends ~0x101a0aa5c) and before AudioEnginePlayer.swift (0x101a0dc18) in sorted-path .o order, and Forward has
-// no NALUnitParser.swift. Only `hevcExtradata` moves here in this lane; the other members of that extension
-// still live in MediaPlayerProtocol.swift (not owned by lane 18).
+// no NALUnitParser.swift.
+// L7 lane 22: the sibling members move here from MediaPlayerProtocol.swift, in Forward address order: bitDepth
+// 0x101a0aac0, dynamicRange 0x101a0abb4, naturalSize 0x101a0aeac, colorPrimaries/transferFunction/yCbCrMatrix
+// 0x101a0af48..0x101a0af6c (3-insn tails into one merged body), codecType 0x101a0b470, aspectRatio 0x101a0b4f4,
+// displaySize 0x101a0b744, depth 0x101a0b904, fullRangeVideo 0x101a0b9cc, hevcExtradata 0x101a0ba94.
 extension CMFormatDescription {
+    public var bitDepth: Int32 {
+        codecType.bitDepth
+    }
+
+    public var dynamicRange: DynamicRange {
+        let contentRange: DynamicRange
+        if codecType.string == "dvhe" || codecType == kCMVideoCodecType_DolbyVisionHEVC {
+            contentRange = .dolbyVision
+        } else if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String { /// HDR
+            // Forward @0x101a0abb4 has no bitDepth test: dvhe/dvh1 → PQ → HLG → (no transfer, BT.2020) → SDR.
+            contentRange = .hdr10
+        } else if transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG as String { /// HLG
+            contentRange = .hlg
+        } else if transferFunction == nil, colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_2020 as String {
+            contentRange = .hlg
+        } else {
+            contentRange = .sdr
+        }
+        return contentRange
+    }
+
+    public var naturalSize: CGSize {
+        let aspectRatio = aspectRatio
+        return CGSize(width: Int(dimensions.width), height: Int(CGFloat(dimensions.height) * aspectRatio.height / aspectRatio.width))
+    }
+
+    public var colorPrimaries: String? {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary? {
+            return dictionary[kCVImageBufferColorPrimariesKey] as? String
+        } else {
+            return nil
+        }
+    }
+
+    public var transferFunction: String? {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary? {
+            return dictionary[kCVImageBufferTransferFunctionKey] as? String
+        } else {
+            return nil
+        }
+    }
+
+    public var yCbCrMatrix: String? {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary? {
+            return dictionary[kCVImageBufferYCbCrMatrixKey] as? String
+        } else {
+            return nil
+        }
+    }
+
+    public var codecType: FourCharCode {
+        mediaSubType.rawValue
+    }
+
+    public var aspectRatio: CGSize {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary? {
+            if let ratio = dictionary[kCVImageBufferPixelAspectRatioKey] as? NSDictionary,
+               let horizontal = (ratio[kCVImageBufferPixelAspectRatioHorizontalSpacingKey] as? NSNumber)?.intValue,
+               let vertical = (ratio[kCVImageBufferPixelAspectRatioVerticalSpacingKey] as? NSNumber)?.intValue,
+               horizontal > 0, vertical > 0
+            {
+                return CGSize(width: horizontal, height: vertical)
+            }
+        }
+        return CGSize(width: 1, height: 1)
+    }
+
+    /// @0x101a0b744 — extensions → DisplayWidth/DisplayHeight NSNumber.integerValue; both > 0 → size, else nil.
+    public var displaySize: CGSize? {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary?,
+           let width = (dictionary[kCVImageBufferDisplayWidthKey] as? NSNumber)?.intValue,
+           let height = (dictionary[kCVImageBufferDisplayHeightKey] as? NSNumber)?.intValue,
+           width > 0, height > 0
+        {
+            return CGSize(width: width, height: height)
+        }
+        return nil
+    }
+
+    public var depth: Int32 {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary? {
+            return dictionary[kCMFormatDescriptionExtension_Depth] as? Int32 ?? 24
+        } else {
+            return 24
+        }
+    }
+
+    public var fullRangeVideo: Bool {
+        if let dictionary = CMFormatDescriptionGetExtensions(self) as NSDictionary? {
+            return dictionary[kCMFormatDescriptionExtension_FullRangeVideo] as? Bool ?? false
+        } else {
+            return false
+        }
+    }
+
     /// @0x101a0ba94 — extensions as? [String: Any] → "SampleDescriptionExtensionAtoms" as? [String: Any] → "hvcC" as? Data.
     public var hevcExtradata: Data? {
         // Forward @0x101a0bc58: the `as? Data` failure `tbz`s to the shared nil return (no csel),

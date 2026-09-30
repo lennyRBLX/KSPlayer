@@ -527,6 +527,85 @@ public extension Dictionary where Key == String {
     }
 }
 
+// FFmpeg n8.1.1 libavformat avc.h:29 / hevc.h:98 / av1.h:104 — exported `T` from the linked static Libavformat, prototypes
+// commented out of FFmpegKit's avformat_shim.h (`ff_isom_write_vpcc` is declared there). hevcc takes the 5-arg n8.1.1 form.
+// (`nm -gU` of the built Libavformat: T _ff_isom_write_avcc / _ff_isom_write_hvcc / _ff_isom_write_av1c.)
+@_silgen_name("ff_isom_write_avcc")
+@discardableResult
+private func ff_isom_write_avcc(_ pb: UnsafeMutablePointer<AVIOContext>?, _ data: UnsafePointer<UInt8>?, _ len: Int32) -> Int32
+
+@_silgen_name("ff_isom_write_hvcc")
+@discardableResult
+private func ff_isom_write_hvcc(_ pb: UnsafeMutablePointer<AVIOContext>?, _ data: UnsafePointer<UInt8>?, _ size: Int32, _ psArrayCompleteness: Int32, _ logctx: UnsafeMutableRawPointer?) -> Int32
+
+@_silgen_name("ff_isom_write_av1c")
+@discardableResult
+private func ff_isom_write_av1c(_ pb: UnsafeMutablePointer<AVIOContext>?, _ buf: UnsafePointer<UInt8>?, _ size: Int32, _ writeSeqHeader: Int32) -> Int32
+
+// Extradata → sample-description atom + bitstream filter, Forward 0x101a08508..0x101a08744 (143 insns), attributed to
+// AVFFmpegExtension.swift between Dictionary.avOptions (0x101a08224) and makeADTSBitstreamFilter (0x101a08744). No symbol
+// names it, so the name is INFERRED. x20 = the codec parameters (the caller loads FFmpegAssetTrack.codecpar, +0xb8, into
+// x20): a mutating method passes `&self` with no copy, and `&self` is the vpcc `par`. Returns (Data?, BitStreamFilter.Type?)
+// in x0..x3. One caller: FFmpegAssetTrack.init(stream:) @0x101a20a04, which stores the metatype pair at +0x148.
+//   extradata[0] == 1: size >= 5 && [4] == 0xFE → [4] = 0xFF, Nal3ToNal4 (0x1041d9600/0x1041d9630); Data(bytes:count:)
+//     (0x100036e98) over the whole extradata, size reloaded after the store.
+//   else avio_open_dyn_buf 0x1030c4b64 (≠ 0 → nil) → VP9 (0xa7) ff_isom_write_vpcc 0x10320faa0(nil, pb, d, s, par) /
+//     AV1 (0xe1) ff_isom_write_av1c 0x1030b7b80(pb, d, s, 1) / HEVC (0xad) ff_isom_write_hvcc 0x103104758(pb, d, s, 0, nil) /
+//     else ff_isom_write_avcc 0x1030b8e34(pb, d, s) → avio_close_dyn_buf 0x1030c4eb8 → Data(bytes:count:) → free
+//     0x103253e40; filter AnnexbToCC (0x1041d9620/0x1041d9640) unless AV1 (csel on a codec_id reload).
+//   no extradata: VP9 only, vpcc from par (d nil, s 0) → Data() + append(_:count:) (append(contentsOf:) 0x103452518) → free.
+extension AVCodecParameters {
+    mutating func atomsDataAndFilter() -> (Data?, BitStreamFilter.Type?) { // INFERRED
+        if let extradata {
+            if extradata[0] == 1 {
+                var bitStreamFilter: BitStreamFilter.Type?
+                if extradata_size >= 5, extradata[4] == 0xFE {
+                    extradata[4] = 0xFF
+                    bitStreamFilter = Nal3ToNal4BitStreamFilter.self
+                }
+                return (Data(bytes: extradata, count: Int(extradata_size)), bitStreamFilter)
+            }
+            var ioContext: UnsafeMutablePointer<AVIOContext>?
+            guard avio_open_dyn_buf(&ioContext) == 0 else {
+                return (nil, nil)
+            }
+            if codec_id == AV_CODEC_ID_VP9 {
+                ff_isom_write_vpcc(nil, ioContext, extradata, extradata_size, &self)
+            } else if codec_id == AV_CODEC_ID_AV1 {
+                ff_isom_write_av1c(ioContext, extradata, extradata_size, 1)
+            } else if codec_id == AV_CODEC_ID_HEVC {
+                ff_isom_write_hvcc(ioContext, extradata, extradata_size, 0, nil)
+            } else {
+                ff_isom_write_avcc(ioContext, extradata, extradata_size)
+            }
+            var buffer: UnsafeMutablePointer<UInt8>?
+            let size = avio_close_dyn_buf(ioContext, &buffer)
+            guard let buffer else {
+                return (nil, nil)
+            }
+            let data = Data(bytes: buffer, count: Int(size))
+            free(buffer)
+            return (data, codec_id == AV_CODEC_ID_AV1 ? nil : AnnexbToCCBitStreamFilter.self)
+        } else if codec_id == AV_CODEC_ID_VP9 {
+            var ioContext: UnsafeMutablePointer<AVIOContext>?
+            guard avio_open_dyn_buf(&ioContext) == 0 else {
+                return (nil, nil)
+            }
+            ff_isom_write_vpcc(nil, ioContext, nil, 0, &self)
+            var buffer: UnsafeMutablePointer<UInt8>?
+            let size = avio_close_dyn_buf(ioContext, &buffer)
+            guard let buffer else {
+                return (nil, nil)
+            }
+            var data = Data()
+            data.append(buffer, count: Int(size))
+            free(buffer)
+            return (data, nil)
+        }
+        return (nil, nil)
+    }
+}
+
 // Bitstream-filter setup, Forward 0x101a08744..0x101a08a94 (212 insns), attributed to AVFFmpegExtension.swift
 // and emitted between Dictionary.avOptions (0x101a08224) and AVRational.== (0x101a09454). No symbol names it
 // (not in the export trie), so the name and label are INFERRED. Live-ins: x0/x1 = the filter name String

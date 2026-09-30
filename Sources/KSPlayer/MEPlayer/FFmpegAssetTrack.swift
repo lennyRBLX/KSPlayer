@@ -302,31 +302,13 @@ public final class FFmpegAssetTrack: MediaPlayerTrack {
                 }
             }
             let sar = codecpar.sample_aspect_ratio.size
-            var extradataSize = Int32(0)
-            let extradata = codecpar.extradata
-            let atomsData: Data?
-            if let extradata {
-                extradataSize = codecpar.extradata_size
-                // ⚑ REMOVED (s106): the AVCC marker test `extradata[4] == 0xFE → 0xFF`, which was the
-                //   ONLY producer of a true `isConvertNALSize`. It is absent from this designated init:
-                //   the whole 705-instruction body contains no 0xFE immediate and no byte load or store
-                //   at offset 4 of any pointer. The one byte read-modify-write it does contain
-                //   (@0x101a20608-0x101a20638) tests 2/8/1/4/0x10 and writes 4-or-5 into a different field.
-                //   ⚑[tool=llvm-objdump ref=FFmpegAssetTrack.init(stream:):0x101a202a8-0x101a20dac result=no-0xFE-immediate]
-                atomsData = Data(bytes: extradata, count: Int(extradataSize))
-            } else {
-                // ⚑ REMOVED (session 37): the base VP9-synthetic-extradata path (avio_open_dyn_buf →
-                //   the vpcC-box writer → avio_close_dyn_buf) is PROVEN dead-in-Forward — the designated init
-                //   FUN_101a202a8 omits all three from its callee set, and the vpcC-box WRITER (libavformat's
-                //   isom vpcc writer) is absent from the binary: only the READER FUN_1031606b0 survives, and no
-                //   vpcC fourcc-immediate appears in code. Removing it keeps this layout commit gate-clean with
-                //   no fabricated FFmpeg marker (the deleted call is a `-` line the diff-scoped gate ignores).
-                //   ⚑ FAITHFUL-PARTIAL: proven Forward does NOT synthesize VP9 extradata via that writer; NOT
-                //   proven it does nothing else for VP9-without-extradata → `atomsData = nil` is the minimal
-                //   faithful form; exact VP9-no-extradata handling deferred to the init-body pass (commit-2).
-                //   ⚑[tool=get_function_callees ref=isom_vpcc_writer:absent-in-FUN_101a202a8 result=FAILED-SEARCH] (writer confirmed dead-stripped; only the reader survives)
-                atomsData = nil
-            }
+            // L7 lane 22: Forward @0x101a20a00 loads self.codecpar (+0xb8) into x20 and calls the extradata producer
+            // 0x101a08508 (AVFFmpegExtension.swift) @0x101a20a04; it stores the returned filter at +0x148 (beginAccess
+            // modify), then adds the atom under `codecType.avc` when the Data is non-nil (@0x101a20a30). The 0xFE test
+            // and the dyn-buf writers (vpcc/av1c/hvcc/avcc) live in that producer, not in this body — which supersedes
+            // the s106 / session 37 "REMOVED" notes that stood here.
+            let (atomsData, filter) = self.codecpar.pointee.atomsDataAndFilter()
+            bitStreamFilter = filter
             let format = AVPixelFormat(rawValue: codecpar.format)
             bitDepth = format.bitDepth
             let fullRange = codecpar.color_range == AVCOL_RANGE_JPEG
