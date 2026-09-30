@@ -274,11 +274,11 @@ extension AVPixelFormat {
         }
     }
 
-    // videotoolbox_best_pixel_format
+    // videotoolbox_best_pixel_format. Forward 0x101a09124 (S1 n15, L7 lane 24): alpha arm `tst flags,#0x20` → RGB ? BGRA : AYUV64LE; only callers bl 0x101a33b48/0x101a66420/0x101a8adc8
     var bestPixelFormat: AVPixelFormat {
         if let desc = av_pix_fmt_desc_get(self) {
             if desc.pointee.flags & UInt64(AV_PIX_FMT_FLAG_ALPHA) != 0 {
-                return AV_PIX_FMT_AYUV64LE
+                return desc.pointee.flags & UInt64(AV_PIX_FMT_FLAG_RGB) != 0 ? AV_PIX_FMT_BGRA : AV_PIX_FMT_AYUV64LE
             }
             let depth = desc.pointee.comp.0.depth
             if depth > 10 {
@@ -589,7 +589,7 @@ extension AVCodecParameters {
                 return (nil, nil)
             }
             let data = Data(bytes: buffer, count: Int(size))
-            free(buffer)
+            av_free(buffer) // L7 lane 24 (S1 n10 twin): Forward 0x101a086ec `bl 0x103253e40` = static av_free, not the libc _free stub
             return (data, codec_id == AV_CODEC_ID_AV1 ? nil : AnnexbToCCBitStreamFilter.self)
         } else if codec_id == AV_CODEC_ID_VP9 {
             var ioContext: UnsafeMutablePointer<AVIOContext>?
@@ -604,7 +604,7 @@ extension AVCodecParameters {
             }
             var data = Data()
             data.append(buffer, count: Int(size))
-            free(buffer)
+            av_free(buffer) // L7 lane 24 (S1 n10 twin): Forward 0x101a08728 `bl 0x103253e40` = static av_free
             return (data, nil)
         }
         return (nil, nil)

@@ -419,7 +419,7 @@ class PixelBuffer: PixelBufferProtocol {
     // Forward 0x101a8acd4 switches on format (+0x80). RGB24 (2), ARGB (0x19) and RGBA (0x1a) give alphaInfo
     // 0 / 4 / 3 (.none / .first / .last). Those three build PointerImagePipeline(rgbData:stride:width:height:alphaInfo:)
     // inline (allocObject 0x34: buffers[0]!.contents(), lineSize[0], width, height, alphaInfo) and call its
-    // cgImage() @0x101a8ada4. Every other format takes the VideoSwresample path (lane 19).
+    // cgImage() @0x101a8ada4. Every other format takes the VideoSwresample path (lane 19; attachments L7 lane 24).
     func cgImage() -> CGImage? {
         let alphaInfo: CGImageAlphaInfo
         switch format {
@@ -430,8 +430,19 @@ class PixelBuffer: PixelBufferProtocol {
         case AV_PIX_FMT_RGBA:
             alphaInfo = .last
         default:
-            let scale = VideoSwresample(dovi: nil)
-            let image = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) })?.cgImage()
+            // S1 n15: Forward 0x101a8adc8 `bl 0x101a09124` (bestPixelFormat) → dstFormat .some (+0x40, tag +0x44 = 0).
+            // After a non-nil transfer, 0x101a8b04c..0x101a8b10c: aspectRatio setter 0x101a89104 (self+0x30), then
+            // CVBufferSetAttachment mode 1 for YCbCrMatrix (+0x68), ColorPrimaries (+0x58), TransferFunction (+0x60),
+            // each only when non-nil, then VTCreateCGImageFromCVPixelBuffer; nil transfer → nil (cbz 0x101a8b034).
+            let scale = VideoSwresample(dstFormat: format.bestPixelFormat, dovi: nil)
+            var image: CGImage?
+            if let pixelBuffer = scale.transfer(format: format, width: Int32(width), height: Int32(height), data: buffers.map { $0?.contents().assumingMemoryBound(to: UInt8.self) }, linesize: lineSize.map { Int32($0) }) {
+                pixelBuffer.aspectRatio = aspectRatio
+                pixelBuffer.yCbCrMatrix = yCbCrMatrix
+                pixelBuffer.colorPrimaries = colorPrimaries
+                pixelBuffer.transferFunction = transferFunction
+                image = pixelBuffer.cgImage()
+            }
             scale.shutdown()
             return image
         }

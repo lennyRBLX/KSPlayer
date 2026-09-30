@@ -458,7 +458,7 @@ extension CAMetalLayer: Drawable, DrawableRenderResult {
                 let minLuminance = doviData.minLuminance
                 let maxLuminance = doviData.maxLuminance
                 var scale: Float = 1.0
-                if maxLuminance > 500, !isEDRScreen() {
+                if !(maxLuminance <= 500), !isEDRScreen() { // S2 n7: Forward 0x101a84d78 `fcmp s9,#500; b.ls` skips only when <= 500 (NaN scales)
                     scale = maxLuminance / 500
                 }
                 edrMetadata = CAEDRMetadata.hdr10(minLuminance: minLuminance / scale, maxLuminance: maxLuminance / scale, opticalOutputScale: 10000)

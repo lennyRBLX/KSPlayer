@@ -371,7 +371,7 @@ class VideoSwresample: FrameChange {
                     }
                     if result >= 0, let output, outputSize >= 1 {
                         hdr10PlusData = Data(bytes: output, count: outputSize)
-                        av_free(output)
+                        av_free(output) // S1 n10 refuted (L7 lane 24): Forward 0x101a67aa4 `bl 0x103253e40` = static av_free (`b` libc _free stub 0x10345bd4c, before av_reallocp 0x103253e44 as in libavutil mem.o)
                     }
                 } else if sideData.type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA {
                     let data = sideData.data.withMemoryRebound(to: AVMasteringDisplayMetadata.self, capacity: 1) { $0 }.pointee

@@ -134,7 +134,9 @@ public class Anime4K {
         sizeMap["MAIN"] = (Float(mainWidth), Float(mainHeight))
         sizeMap["NATIVE"] = (Float(nativeWidth), Float(nativeHeight))
         sizeMap["OUTPUT"] = (displayActualW, displayActualH)
-        print("[Anime4K] Size map: MAIN=\(mainWidth)x\(mainHeight), NATIVE=\(nativeWidth)x\(nativeHeight), OUTPUT=\(displayActualW)x\(displayActualH)")
+        // S1 n13: Forward 0x101a71fec..0x101a720e4 converts +0x98/+0x9c with Int(_:) (finite/range traps, fcvtzs)
+        // before description: OUTPUT prints as Int.
+        print("[Anime4K] Size map: MAIN=\(mainWidth)x\(mainHeight), NATIVE=\(nativeWidth)x\(nativeHeight), OUTPUT=\(Int(displayActualW))x\(Int(displayActualH))")
 
         for (index, shader) in shaders.enumerated() {
             if let when = shader.when {
@@ -142,11 +144,25 @@ public class Anime4K {
                 print("[Anime4K] Evaluating WHEN for " + shader.name + ": " + when)
                 print("[Anime4K] Current sizeMap: MAIN=\(sizeMap["MAIN"]?.0 ?? 0)x\(sizeMap["MAIN"]?.1 ?? 0), OUTPUT=\(sizeMap["OUTPUT"]?.0 ?? 0)x\(sizeMap["OUTPUT"]?.1 ?? 0)")
 
-                let tokens = when.split(separator: " ").map(String.init).filter { $0 != "WHEN" }
+                // S1 n13: Forward 0x101a71b00 keeps the tokens [Substring] (split(" ") + filter "WHEN", 0x20 stride). Per
+                // token it first splits on "." (omitting empties; _consumeAndCreateNew 0x1019ac9d8), tests count == 2 &&
+                // parts[1] == "w" / "h" → key String(parts[0]); only then the 6-element [Substring] operator contains
+                // test (0x101a72e94), else Float(token)!.
+                let tokens = when.split(separator: " ").filter { $0 != "WHEN" }
                 var stack = [Float]()
                 for token in tokens {
-                    switch token {
-                    case "+", "-", "*", "/", "<", ">":
+                    let parts = token.split(separator: ".")
+                    if parts.count == 2, parts[1] == "w" {
+                        let key = String(parts[0])
+                        let value = sizeMap[key]!.0
+                        print("[Anime4K]   Push \(key).w = \(value)")
+                        stack.append(value)
+                    } else if parts.count == 2, parts[1] == "h" {
+                        let key = String(parts[0])
+                        let value = sizeMap[key]!.1
+                        print("[Anime4K]   Push \(key).h = \(value)")
+                        stack.append(value)
+                    } else if ["+", "-", "*", "/", "<", ">"].contains(token) {
                         let rhs = stack.removeLast()
                         let lhs = stack.removeLast()
                         let result: Float
@@ -168,22 +184,10 @@ public class Anime4K {
                         }
                         print("[Anime4K]   \(lhs) \(token) \(rhs) = \(result)")
                         stack.append(result)
-                    default:
-                        if token.hasSuffix(".w") {
-                            let key = String(token.dropLast(2))
-                            let value = sizeMap[key]!.0
-                            print("[Anime4K]   Push \(key).w = \(value)")
-                            stack.append(value)
-                        } else if token.hasSuffix(".h") {
-                            let key = String(token.dropLast(2))
-                            let value = sizeMap[key]!.1
-                            print("[Anime4K]   Push \(key).h = \(value)")
-                            stack.append(value)
-                        } else {
-                            let number = Float(token)!
-                            print("[Anime4K]   Push number: \(number)")
-                            stack.append(number)
-                        }
+                    } else {
+                        let number = Float(token)!
+                        print("[Anime4K]   Push number: \(number)")
+                        stack.append(number)
                     }
                 }
 
