@@ -554,6 +554,11 @@ private func ff_isom_write_av1c(_ pb: UnsafeMutablePointer<AVIOContext>?, _ buf:
 //     else ff_isom_write_avcc 0x1030b8e34(pb, d, s) → avio_close_dyn_buf 0x1030c4eb8 → Data(bytes:count:) → free
 //     0x103253e40; filter AnnexbToCC (0x1041d9620/0x1041d9640) unless AV1 (csel on a codec_id reload).
 //   no extradata: VP9 only, vpcc from par (d nil, s 0) → Data() + append(_:count:) (append(contentsOf:) 0x103452518) → free.
+// L7 lane 23 arm order: Forward TESTS a7, e1, ad, but the source arm order is HEVC first. SimplifyCFG folds the chain
+//   to an unweighted `switch`; lowering sorts clusters ascending and swaps the layout-next (first-arm) block to the
+//   fall-through slot, and branch folding then hoists the shared (pb, d, s) movs. The VP9-first spelling gave 149 insns
+//   (opcode ratio 0.945), and HEVC-first gives 143/1.000 (standalone, KSPlayer argv). The order of AV1 and VP9 after HEVC
+//   is not fixed by the binary (HEVC/VP9/AV1 is also exact).
 extension AVCodecParameters {
     mutating func atomsDataAndFilter() -> (Data?, BitStreamFilter.Type?) { // INFERRED
         if let extradata {
@@ -569,12 +574,12 @@ extension AVCodecParameters {
             guard avio_open_dyn_buf(&ioContext) == 0 else {
                 return (nil, nil)
             }
-            if codec_id == AV_CODEC_ID_VP9 {
-                ff_isom_write_vpcc(nil, ioContext, extradata, extradata_size, &self)
+            if codec_id == AV_CODEC_ID_HEVC {
+                ff_isom_write_hvcc(ioContext, extradata, extradata_size, 0, nil)
             } else if codec_id == AV_CODEC_ID_AV1 {
                 ff_isom_write_av1c(ioContext, extradata, extradata_size, 1)
-            } else if codec_id == AV_CODEC_ID_HEVC {
-                ff_isom_write_hvcc(ioContext, extradata, extradata_size, 0, nil)
+            } else if codec_id == AV_CODEC_ID_VP9 {
+                ff_isom_write_vpcc(nil, ioContext, extradata, extradata_size, &self)
             } else {
                 ff_isom_write_avcc(ioContext, extradata, extradata_size)
             }

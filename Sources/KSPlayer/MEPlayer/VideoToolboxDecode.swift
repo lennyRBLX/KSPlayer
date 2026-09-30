@@ -163,10 +163,18 @@ class VideoToolboxDecode: DecodeProtocol {
             }
         }
         do {
-            // ⚑ GAP (L7): Forward @0x101a6d170 first reads session.assetTrack.bitStreamFilter (+0x148) and, when
-            //   set, runs its throwing static requirement (witness +8) on (data, size), then frees the filtered
-            //   buffer after the decode call. BitStreamFilter declares no requirement here, so that step is absent.
-            let sampleBuffer = try session.formatDescription.getSampleBuffer(data: data, size: Int(corePacket.size))
+            // L7 lane 23 (the lane 22 GAP): at @0x101a6d164 Forward sign-extends size, reads
+            //   session.assetTrack.bitStreamFilter (+0x148, beginAccess) once, and when set calls wt+8
+            //   (`blr x8` @0x101a6d1a8). The filtered pair feeds getSampleBuffer. After the decode call it frees
+            //   the buffer (`cbz x27` @0x101a6d3f4 → swift_slowDealloc(p, -1, -1)) before the status check. The
+            //   closure captures the same metatype.
+            var buffer = data
+            var bufferSize = Int(corePacket.size)
+            let bitStreamFilter = session.assetTrack.bitStreamFilter
+            if let bitStreamFilter {
+                (buffer, bufferSize) = try bitStreamFilter.filter(buffer, size: bufferSize)
+            }
+            let sampleBuffer = try session.formatDescription.getSampleBuffer(data: buffer, size: bufferSize)
             var flagOut = VTDecodeInfoFlags(rawValue: 0)
             // THE HOIST IS FORWARD'S, NOT A COMPILE FIX. The closure below escapes, so nothing may
             // capture the raw pointer; the binary reads its packet fields ONCE, up front, and
@@ -187,10 +195,14 @@ class VideoToolboxDecode: DecodeProtocol {
                     return
                 }
                 guard status == noErr else {
+                    // L7 lane 23, Forward closure 0x101a6d734. The three-code mask is at @0x101a6d980. The failure
+                    //   path runs when isKeyFrame is set or `swift_dynamicCastMetatype(filter, AnnexbToCC 0x1041d9620)`
+                    //   is non-nil (@0x101a6d9a4). Otherwise needReconfig is set only for status|8 == kVTInvalidSessionErr,
+                    //   which covers invalid-session and malfunction (@0x101a6e12c).
                     if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                        if isKeyFrame {
+                        if isKeyFrame || bitStreamFilter is AnnexbToCCBitStreamFilter.Type {
                             completionHandler(.failure(KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)))
-                        } else {
+                        } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr {
                             // 解决从后台切换到前台，解码失败的问题
                             self.needReconfig = true
                         }
@@ -216,7 +228,10 @@ class VideoToolboxDecode: DecodeProtocol {
                 self.maxTimestamp += frame.duration // ⚑P3 lastPosition→maxTimestamp
                 completionHandler(.success(frame))
             }
-            // Forward @0x101a6d3f0: no throw and no needReconfig here — log at .error (line 250), then
+            if bitStreamFilter != nil {
+                buffer.deallocate()
+            }
+            // Forward @0x101a6d408: no throw and no needReconfig here — log at .error (line 250), then
             // rebuild the session for the three VT failure codes (didSet invalidates the old one).
             if status != noErr {
                 KSLog(level: .error, "[video] videoToolbox decode error \(status) isKeyFrame=\(isKeyFrame)", line: 250)
@@ -332,8 +347,8 @@ class DecompressionSession {
 #endif
 
 // ⚑ Forward-added protocol (absent from KSPlayer source). Resolved from the FFmpegAssetTrack.bitStreamFilter
-//   field-record symref → protocol descriptor 0x1039f0820 (kind=Protocol). Requirements deferred
-//   (minimal no-conformer declare). The field is a 16-byte class-existential (init nil): the descriptor's
+//   field-record symref → protocol descriptor 0x1039f0820 (kind=Protocol). One requirement (L7 lane 23, below).
+//   The field is a 16-byte class-existential (init nil): the descriptor's
 //   own class-constraint flag reads Any, so the class layout comes from the field-site `& AnyObject`,
 //   not the protocol — kept faithful to the descriptor.
 // ⚑[tool=name_type_at_addr ref=BitStreamFilter:0x1039f0820 result=protocol(kind=3,non-class-constrained)]
@@ -341,14 +356,105 @@ class DecompressionSession {
 //   property descriptor (public-exclusive), and a public stored property's type must be
 //   public. The protocol's own access is not separately observable.
 // ⚑[tool=export_trie_oracle ref=FFmpegAssetTrack.bitStreamFilter:vpMV result=public ⇒ BitStreamFilter public by the type-visibility rule]
-public protocol BitStreamFilter {}
+public protocol BitStreamFilter {
+    // L7 lane 23. Descriptor 0x1039f0820: NumRequirements = 1, flags 0x1 = static method (not an init, not
+    // async), witness-table slot +8. Witnesses: Nal3ToNal4 0x101a70148, AnnexbToCC 0x101a6fe40, both
+    // (x0 data, x1 size) -> (x0, x1), throwing via x21. Sole caller: decodeFrame @0x101a6d1a8 (`blr` on wt+8).
+    // No export or Tq entry names it, so the name and labels are INFERRED (ledger: L7 lane 22/23).
+    static func filter(_ data: UnsafeMutablePointer<UInt8>, size: Int) throws -> (UnsafeMutablePointer<UInt8>, Int) // INFERRED
+}
 
 // Nal3ToNal4BitStreamFilter @0x1039f0840 — declaration shape read from the Forward context descriptor (kind, parent,
 // conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (VideoToolboxDecode.swift..Anime4KPipeline.swift).
 // ⚑[tool=type_surface ref=Nal3ToNal4BitStreamFilter:0x1039f0840 result=enum Nal3ToNal4BitStreamFilter: BitStreamFilter]
-enum Nal3ToNal4BitStreamFilter: BitStreamFilter {}
+enum Nal3ToNal4BitStreamFilter: BitStreamFilter {
+    // Forward 0x101a70148..0x101a702b4 (91 insns). Each NAL has a 3-byte big-endian length prefix; rewrite it as a
+    // 4-byte avio_wb32 length plus avio_write. There are two throw sites: the open status, and constant 0
+    // (`str wzr`) when avio_close_dyn_buf yields nil. So the inner else re-throws `status`, known to be 0 there.
+    // Standalone compile with the KSPlayer argv: 91/91, opcode ratio 0.989. The only difference is the spelling
+    // b.cc/b.lo; the operands differ only in addresses.
+    static func filter(_ data: UnsafeMutablePointer<UInt8>, size: Int) throws -> (UnsafeMutablePointer<UInt8>, Int) {
+        var ioContext: UnsafeMutablePointer<AVIOContext>?
+        let status = avio_open_dyn_buf(&ioContext)
+        if status == 0 {
+            var nalStart = data
+            let end = data + size
+            while nalStart < end {
+                let nalSize = UInt32(nalStart[0]) << 16 | UInt32(nalStart[1]) << 8 | UInt32(nalStart[2])
+                avio_wb32(ioContext, nalSize)
+                nalStart += 3
+                avio_write(ioContext, nalStart, Int32(nalSize))
+                nalStart += Int(nalSize)
+            }
+            var demuxBuffer: UnsafeMutablePointer<UInt8>?
+            let demuxSize = avio_close_dyn_buf(ioContext, &demuxBuffer)
+            if let demuxBuffer {
+                return (demuxBuffer, Int(demuxSize))
+            } else {
+                throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
+            }
+        } else {
+            throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
+        }
+    }
+}
 
 // AnnexbToCCBitStreamFilter @0x1039f085c — declaration shape read from the Forward context descriptor (kind, parent,
 // conformances, case names); members not reconstructed. Placement: gap_lower(inferred) (VideoToolboxDecode.swift..Anime4KPipeline.swift).
 // ⚑[tool=type_surface ref=AnnexbToCCBitStreamFilter:0x1039f085c result=enum AnnexbToCCBitStreamFilter: BitStreamFilter]
-enum AnnexbToCCBitStreamFilter: BitStreamFilter {}
+enum AnnexbToCCBitStreamFilter: BitStreamFilter {
+    // Forward 0x101a6fe40..0x101a70148 (194 insns). Split on Annex-B start codes, testing 00 00 01 (i+2 < size)
+    // before 00 00 00 01 (i+3 < size). Each NAL goes out as a 4-byte avio_wb32 length plus avio_write, and the
+    // tail flushes after the loop. The throw sites match Nal3ToNal4. Standalone: 194/194, opcode ratio 1.000,
+    // with operands differing only in addresses and shift spelling.
+    static func filter(_ data: UnsafeMutablePointer<UInt8>, size: Int) throws -> (UnsafeMutablePointer<UInt8>, Int) {
+        var ioContext: UnsafeMutablePointer<AVIOContext>?
+        let status = avio_open_dyn_buf(&ioContext)
+        if status == 0 {
+            var nalStart = data
+            var i = 0
+            var start = 0
+            while i < size {
+                if i + 2 < size, data[i] == 0x00, data[i + 1] == 0x00, data[i + 2] == 0x01 {
+                    if start == 0 {
+                        start = 3
+                        nalStart += 3
+                    } else {
+                        let len = i - start
+                        avio_wb32(ioContext, UInt32(len))
+                        avio_write(ioContext, nalStart, Int32(len))
+                        start = i + 3
+                        nalStart += len + 3
+                    }
+                    i += 3
+                } else if i + 3 < size, data[i] == 0x00, data[i + 1] == 0x00, data[i + 2] == 0x00, data[i + 3] == 0x01 {
+                    if start == 0 {
+                        start = 4
+                        nalStart += 4
+                    } else {
+                        let len = i - start
+                        avio_wb32(ioContext, UInt32(len))
+                        avio_write(ioContext, nalStart, Int32(len))
+                        start = i + 4
+                        nalStart += len + 4
+                    }
+                    i += 4
+                } else {
+                    i += 1
+                }
+            }
+            let len = size - start
+            avio_wb32(ioContext, UInt32(len))
+            avio_write(ioContext, nalStart, Int32(len))
+            var demuxBuffer: UnsafeMutablePointer<UInt8>?
+            let demuxSize = avio_close_dyn_buf(ioContext, &demuxBuffer)
+            if let demuxBuffer {
+                return (demuxBuffer, Int(demuxSize))
+            } else {
+                throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
+            }
+        } else {
+            throw KSPlayerError(code: status, description: KSPlayerErrorCode.codecVideoReceiveFrame.rawValue)
+        }
+    }
+}
