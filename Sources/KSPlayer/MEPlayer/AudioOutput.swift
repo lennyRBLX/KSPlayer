@@ -199,7 +199,7 @@ public class AudioDataBuffer {
                 // level (.warning; the inlined gate is `warning.caseIndex(3) <= logLevel`,
                 // which the binary folds to `2 < logLevel` — see KSLog, KSOptions.swift:745),
                 // then zero-fill the tail of each output buffer and return the shortfall.
-                KSLog("[audio] leftByteSize=\(residueBytes)")
+                KSLog("[audio] leftByteSize=\(residueBytes)", line: 148) // Forward 0x101a12670 `mov w6,#0x94` (S3B n99)
                 for i in 0 ..< ioData.count {
                     bzero(ioData[i].mData! + Int(ioData[i].mDataByteSize - residueBytes), Int(residueBytes))
                 }

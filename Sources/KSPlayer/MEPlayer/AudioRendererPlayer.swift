@@ -68,8 +68,8 @@ public class AudioRendererPlayer: AudioDataBuffer, AudioOutput {
     private let renderer = AVSampleBufferAudioRenderer()          // @+0x70 (field 5)
     private let synchronizer = AVSampleBufferRenderSynchronizer() // @+0x78 (field 6)
     // requestQueue @+0x80 (field 7) — renamed from the pre-re-parent `serializationQueue`. The
-    // binary label literal @0x103d341b0 (len 0x24).
-    private let requestQueue = DispatchQueue(label: "KSPlayer-AudioRendererPlayer-request")
+    // binary label literal @0x103d341b0 (len 0x24); qos .default: pfi 0x10199aba4 / init 0x101a13598 `bl 0x1034567f0` → GOT 0x1041133b0 DispatchQoS.default getter (S3A n18/n27).
+    private let requestQueue = DispatchQueue(label: "KSPlayer-AudioRendererPlayer-request", qos: .default)
     // startTime @+0x88 (field 8, CMTime) — the first render's presentation time (ns scale); the
     // observer adds the synchronizer's elapsed time to it. flush-work resets it to .zero. init = .zero.
     private var startTime = CMTime.zero

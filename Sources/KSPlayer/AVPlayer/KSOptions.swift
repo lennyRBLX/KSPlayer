@@ -458,7 +458,7 @@ open class KSOptions {
             isDoubleRefreshRate = true
         }
     }
-    public nonisolated(unsafe) static var useSystemHTTPProxy = true
+    public nonisolated(unsafe) static var useSystemHTTPProxy = false // Forward storage 0x104c63110 (__DATA,__common zero-fill = false), read by init @0x1019b3364 (S3B n107)
     public var referer: String? {
         didSet {
             if let referer {

@@ -82,7 +82,7 @@ class SubtitleDecode: DecodeProtocol {
         } catch {
             // 0x101a693a4 `cmp w8,#0x2; b.cs` + 0x101a6947c `mov w0,#0x2`: Forward logs at .error (LogLevel
             // case index 2), i.e. the KSLog(_ error:) overload inlined (error() as NSError @0x101a6943c).
-            KSLog(error)
+            KSLog(error, line: 41) // Forward 0x101a6948c `mov w6,#0x29` (S3A n1)
         }
         // 0x101a69520/28: codecContext nil or subtitle_header nil → assParse (+0x48) = nil (0x101a69558), then
         // subtitleHeader (+0x70) = nil (0x101a69564 `stp xzr,xzr` + release of the old +0x78), return.
