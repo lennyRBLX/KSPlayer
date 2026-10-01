@@ -5,13 +5,3 @@ xcuserdata
 .swiftpm
 Script
 FFmpegKit
-/.reconstruction/
-/caches/
-__pycache__/
-*.pyc
-/.agents/
-/.claude/
-/.codex/
-/.serena/
-AGENTS.md
-/caches/
